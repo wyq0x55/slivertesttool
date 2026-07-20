@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}测试矩阵在线编辑{% endblock %} · Silver Test Platform</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/lanmatrix.css') }}">
+</head>
+<body class="lm-body">
+  <nav class="navbar lm-navbar">
+    <div class="nav-inner">
+      <a class="brand" href="{{ url_for('lanmatrix_pages.projects') }}">🧪 测试矩阵编辑器</a>
+      <div class="nav-links">
+        <a href="{{ url_for('lanmatrix_pages.projects') }}">项目</a>
+        {% if user and user.is_system_admin %}
+        <a href="{{ url_for('lanmatrix_pages.admin_console') }}">管理台</a>
+        <a href="{{ url_for('lanmatrix_pages.admin_db') }}">数据库管理</a>
+        {% endif %}
+        {% if user %}
+        <span class="lm-user">👤 {{ user.display_name or user.username }}</span>
+        <a href="#" id="lm-logout">退出</a>
+        {% endif %}
+      </div>
+    </div>
+  </nav>
+  <main class="lm-main">
+    {% block content %}{% endblock %}
+  </main>
+  <div id="lm-toast" class="lm-toast" hidden></div>
+  <script>
+    window.LM = {
+      projectId: {{ project_id if project_id is defined else 'null' }},
+      user: {{ user | tojson if user is defined else 'null' }},
+      urls: {
+        login: "{{ url_for('lanmatrix_pages.login') }}",
+        register: "{{ url_for('lanmatrix_pages.register') }}",
+        projects: "{{ url_for('lanmatrix_pages.projects') }}"
+      }
+    };
+  </script>
+  <script src="{{ url_for('static', filename='js/lanmatrix/api.js') }}"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

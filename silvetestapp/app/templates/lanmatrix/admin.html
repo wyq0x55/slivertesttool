@@ -1,0 +1,94 @@
+{% extends "lanmatrix/base_lm.html" %}
+{% block title %}管理台{% endblock %}
+{% block content %}
+<div class="lm-page lm-admin">
+  <div class="lm-page-head">
+    <h1>系统管理台</h1>
+    <span class="lm-muted">以系统管理员账户登录，无需 ADMIN_TOKEN。</span>
+  </div>
+
+  <div class="lm-tabs" role="tablist">
+    <button class="lm-tab lm-active" data-tab="users">账号管理</button>
+    <button class="lm-tab" data-tab="models">模型管理</button>
+    <button class="lm-tab" data-tab="license">授权 / 并发</button>
+    <button class="lm-tab" data-tab="tasks">任务管理</button>
+  </div>
+
+  <!-- Accounts -->
+  <section class="lm-tabpane" data-pane="users">
+    <div class="lm-page-head">
+      <h2>账号（Submitter / 管理员）</h2>
+      <button class="lm-btn lm-btn-primary" id="lm-user-new">新建账号</button>
+    </div>
+    <table class="lm-table">
+      <thead><tr><th>用户名</th><th>姓名</th><th>邮箱</th><th>状态</th>
+        <th>系统管理员</th><th>参与项目</th><th></th></tr></thead>
+      <tbody id="lm-user-rows"><tr><td colspan="7" class="lm-muted">加载中…</td></tr></tbody>
+    </table>
+  </section>
+
+  <!-- Models -->
+  <section class="lm-tabpane" data-pane="models" hidden>
+    <div class="lm-page-head"><h2>已注册 .sil 模型</h2></div>
+    <p class="lm-muted">模型以服务器端路径注册，运行时按路径打开（不上传文件）。</p>
+    <div class="lm-card">
+      <div class="lm-inline">
+        <input id="lm-model-name" placeholder="名称（可留空，用文件名）">
+        <input id="lm-model-path" placeholder="服务器端 .sil 绝对路径" class="lm-grow">
+        <button class="lm-btn lm-btn-primary" id="lm-model-add">添加</button>
+      </div>
+    </div>
+    <table class="lm-table">
+      <thead><tr><th>名称</th><th>路径</th><th>存在</th><th></th></tr></thead>
+      <tbody id="lm-model-rows"><tr><td colspan="4" class="lm-muted">加载中…</td></tr></tbody>
+    </table>
+  </section>
+
+  <!-- License -->
+  <section class="lm-tabpane" data-pane="license" hidden>
+    <div class="lm-page-head"><h2>授权并发</h2></div>
+    <div class="lm-card">
+      <div id="lm-license-info" class="lm-muted">加载中…</div>
+      <div class="lm-inline">
+        <label>并发上限 <input type="number" id="lm-license-count" min="1" style="width:6rem"></label>
+        <button class="lm-btn lm-btn-primary" id="lm-license-save">保存</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Tasks -->
+  <section class="lm-tabpane" data-pane="tasks" hidden>
+    <div class="lm-page-head">
+      <h2>全部任务</h2>
+      <button class="lm-btn lm-btn-sm" id="lm-admin-tasks-refresh">刷新</button>
+    </div>
+    <p class="lm-muted">此处可见所有项目及历史遗留（未归属项目）的任务。</p>
+    <table class="lm-table">
+      <thead><tr><th>任务</th><th>项目</th><th>test id</th><th>提交者</th>
+        <th>状态/结果</th><th>进度</th><th>完成时间</th><th></th></tr></thead>
+      <tbody id="lm-admin-task-rows"><tr><td colspan="8" class="lm-muted">加载中…</td></tr></tbody>
+    </table>
+  </section>
+</div>
+
+<dialog id="lm-user-dialog" class="lm-dialog">
+  <form method="dialog" class="lm-card">
+    <h3 id="lm-user-dlg-title">新建账号</h3>
+    <input type="hidden" id="lm-user-id">
+    <label>用户名 <input id="lm-user-username" required></label>
+    <label>姓名 <input id="lm-user-display"></label>
+    <label>邮箱 <input id="lm-user-email" type="email"></label>
+    <label>密码 <input id="lm-user-password" type="password" placeholder="新建必填 / 修改留空不变"></label>
+    <label class="lm-check"><input type="checkbox" id="lm-user-admin"> <span>系统管理员</span></label>
+    <label class="lm-check"><input type="checkbox" id="lm-user-active" checked> <span>启用</span></label>
+    <div class="lm-error" id="lm-user-error" hidden></div>
+    <menu>
+      <button value="cancel" class="lm-btn">取消</button>
+      <button value="ok" id="lm-user-ok" class="lm-btn lm-btn-primary">保存</button>
+    </menu>
+  </form>
+</dialog>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/lanmatrix/admin_console.js') }}"></script>
+{% endblock %}
