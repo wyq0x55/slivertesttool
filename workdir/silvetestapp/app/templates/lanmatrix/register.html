@@ -1,0 +1,67 @@
+{% extends "lanmatrix/base_lm.html" %}
+{% block title %}注册{% endblock %}
+{% block content %}
+<div class="lm-login-wrap">
+  <form id="lm-register-form" class="lm-card lm-login-card" autocomplete="off">
+    <h2>注册新账号</h2>
+    <p class="lm-muted">局域网离线部署 · 创建平台账号</p>
+    <label>用户名
+      <input type="text" name="username" id="lm-username" required autofocus
+             pattern="[A-Za-z0-9_.\-]{3,64}" title="3-64 位，允许字母、数字、下划线、点、连字符">
+    </label>
+    <label>显示名称（可选）
+      <input type="text" name="display_name" id="lm-display-name" maxlength="120">
+    </label>
+    <label>邮箱（可选）
+      <input type="email" name="email" id="lm-email" maxlength="255">
+    </label>
+    <label>密码
+      <input type="password" name="password" id="lm-password" required
+             minlength="{{ password_min_len }}">
+    </label>
+    <label>确认密码
+      <input type="password" name="password2" id="lm-password2" required
+             minlength="{{ password_min_len }}">
+    </label>
+    <button type="submit" class="lm-btn lm-btn-primary">注册</button>
+    <div class="lm-error" id="lm-register-error" hidden></div>
+    <div class="lm-muted" id="lm-register-ok" hidden></div>
+    <p class="lm-muted lm-login-alt">已有账号？<a href="{{ url_for('lanmatrix_pages.login') }}">返回登录</a></p>
+  </form>
+</div>
+<script>
+const NEEDS_APPROVAL = {{ 'true' if needs_approval else 'false' }};
+document.getElementById('lm-register-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const err = document.getElementById('lm-register-error');
+  const okBox = document.getElementById('lm-register-ok');
+  err.hidden = true; okBox.hidden = true;
+  const pw = document.getElementById('lm-password').value;
+  const pw2 = document.getElementById('lm-password2').value;
+  if (pw !== pw2) {
+    err.textContent = '两次输入的密码不一致';
+    err.hidden = false;
+    return;
+  }
+  try {
+    const data = await LMApi.register({
+      username: document.getElementById('lm-username').value.trim(),
+      display_name: document.getElementById('lm-display-name').value.trim(),
+      email: document.getElementById('lm-email').value.trim(),
+      password: pw,
+    });
+    if (data && data.pending) {
+      okBox.textContent = '注册成功，账号待管理员审核激活后即可登录。';
+      okBox.hidden = false;
+      e.target.querySelector('button[type=submit]').disabled = true;
+      return;
+    }
+    // Active account: session established — go straight to projects.
+    window.location = LM.urls.projects;
+  } catch (ex) {
+    err.textContent = ex.message || '注册失败';
+    err.hidden = false;
+  }
+});
+</script>
+{% endblock %}

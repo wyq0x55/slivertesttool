@@ -1,0 +1,38 @@
+{% extends "lanmatrix/base_lm.html" %}
+{% block title %}审计日志{% endblock %}
+{% block content %}
+<div class="lm-page" data-project-id="{{ project_id }}">
+  <div class="lm-page-head">
+    <h1>审计日志</h1>
+    <a class="lm-btn" href="/lanmatrix/projects/{{ project_id }}">返回编辑</a>
+  </div>
+  <table class="lm-table">
+    <thead>
+      <tr><th>时间</th><th>操作</th><th>对象</th><th>操作人</th><th>原值 → 新值</th></tr>
+    </thead>
+    <tbody id="lm-audit-rows"><tr><td colspan="5" class="lm-muted">加载中…</td></tr></tbody>
+  </table>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const pid = Number(document.querySelector(".lm-page").dataset.projectId);
+  const rows = document.getElementById("lm-audit-rows");
+  function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+  function j(v){ if(v==null) return ""; try { return esc(JSON.stringify(v)).slice(0,120);} catch(e){return "";} }
+  LMApi.listAudit(pid, { page: 1, page_size: 200 }).then((data) => {
+    rows.innerHTML = data.items.map((a) => `
+      <tr><td class="lm-muted">${esc((a.created_at||"").replace("T"," ").replace("Z",""))}</td>
+      <td><code>${esc(a.action)}</code></td>
+      <td>${esc(a.object_type)} ${esc(a.object_id||"")}</td>
+      <td>${a.actor_id||""}</td>
+      <td class="lm-muted">${j(a.old_value)} → ${j(a.new_value)}</td></tr>`).join("")
+      || '<tr><td colspan="5" class="lm-muted">暂无日志</td></tr>';
+  }).catch((ex) => {
+    if (ex.status === 401) { window.location = LM.urls.login; return; }
+    rows.innerHTML = `<tr><td colspan="5" class="lm-err">${esc(ex.message)}</td></tr>`;
+  });
+})();
+</script>
+{% endblock %}

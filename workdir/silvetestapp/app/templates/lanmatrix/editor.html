@@ -1,0 +1,111 @@
+{% extends "lanmatrix/base_lm.html" %}
+{% block title %}矩阵编辑{% endblock %}
+{% block content %}
+<div class="lm-editor" data-project-id="{{ project_id }}" data-collab="{{ '1' if collab_available else '0' }}">
+  <div class="lm-toolbar">
+    <div class="lm-tb-left">
+      <strong id="lm-proj-title">项目 #{{ project_id }}</strong>
+      <span class="lm-badge" id="lm-proj-status"></span>
+      <span class="lm-muted" id="lm-grid-engine"></span>
+      <span class="lm-badge lm-collab-badge" id="lm-collab-status" hidden></span>
+    </div>
+    <div class="lm-tb-right">
+      <button class="lm-btn" id="lm-import">导入</button>
+      <button class="lm-btn" id="lm-export">导出 Excel</button>
+      <button class="lm-btn lm-btn-primary" id="lm-run-selected" hidden>队列测试</button>
+      <a class="lm-btn" href="/lanmatrix/projects/{{ project_id }}/fields">字段配置</a>
+      <a class="lm-btn" href="/lanmatrix/projects/{{ project_id }}/tasks">上传任务</a>
+      <a class="lm-btn" href="/lanmatrix/projects/{{ project_id }}/members">成员管理</a>
+      <a class="lm-btn" href="/lanmatrix/projects/{{ project_id }}/audit">审计</a>
+    </div>
+  </div>
+
+  <!-- Fallback sheet switcher: shown by editor.js only when the Univer bundle
+       lacks native worksheet tabs (stale/builtin engine), so test/const/lib stay
+       reachable. Hidden when native Univer tabs are available. -->
+  <div id="lm-sheet-tabs" class="lm-sheet-tabs" hidden></div>
+
+  <div id="lm-grid-host" class="lm-grid-host"></div>
+
+  <div class="lm-statusbar">
+    <span id="lm-count" class="lm-muted"></span>
+    <span id="lm-pager"></span>
+    <span id="lm-dirty" class="lm-muted"></span>
+  </div>
+  <input type="file" id="lm-import-file" accept=".xlsx" hidden>
+</div>
+
+<dialog id="lm-export-dialog" class="lm-dialog">
+  <form method="dialog" class="lm-card">
+    <h3>导出 Excel</h3>
+    <label>格式
+      <select id="lm-export-format">
+        <option value="generic">通用模板 (本平台格式)</option>
+        <option value="test_matrix">测试矩阵 (日文 VHILS 表头)</option>
+      </select>
+    </label>
+    <div class="lm-error" id="lm-export-error" hidden></div>
+    <menu>
+      <button value="cancel" class="lm-btn">关闭</button>
+      <button value="ok" id="lm-export-ok" class="lm-btn lm-btn-primary">导出</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="lm-import-dialog" class="lm-dialog lm-dialog-wide">
+  <form method="dialog" class="lm-card">
+    <h3>导入 Excel</h3>
+    <label>格式
+      <select id="lm-import-format">
+        <option value="generic">通用模板 (本平台导出/模板格式)</option>
+        <option value="test_matrix">测试矩阵 (日文 VHILS 表头)</option>
+        <option value="libfunc">Lib 函数库 (lib_Func / 手順明细)</option>
+        <option value="const">Const 常量表 (No. / 識別子名)</option>
+      </select>
+    </label>
+    <label>模式
+      <select id="lm-import-mode">
+        <option value="upsert">增量合并 (存在则更新)</option>
+        <option value="insert_only">仅新增</option>
+        <option value="update_only" data-generic-only>仅更新</option>
+        <option value="replace_all">整表替换</option>
+      </select>
+    </label>
+    <input type="file" id="lm-import-dialog-file" accept=".xlsx">
+    <div class="lm-import-summary" id="lm-import-summary"></div>
+    <div class="lm-error" id="lm-import-error" hidden></div>
+    <menu>
+      <button value="cancel" class="lm-btn">关闭</button>
+      <button value="commit" id="lm-import-commit" class="lm-btn lm-btn-primary" disabled>确认导入</button>
+    </menu>
+  </form>
+</dialog>
+<dialog id="lm-steps-dialog" class="lm-steps-drawer">
+  <form method="dialog" class="lm-steps-drawer-card">
+    <header class="lm-steps-drawer-head">
+      <h3>步骤明细编辑 · <span id="lm-steps-title" class="lm-muted"></span><span id="lm-steps-task-status" class="lm-badge lm-status-notask" hidden></span></h3>
+      <div class="lm-steps-tools">
+        <button type="button" class="lm-btn lm-btn-sm" id="lm-steps-fullscreen">⛶ 全屏</button>
+        <button type="button" class="lm-btn lm-btn-sm" id="lm-steps-enqueue" hidden>▶ 入队测试</button>
+        <button value="save" id="lm-steps-save" class="lm-btn lm-btn-sm lm-btn-primary">保存步骤</button>
+        <button value="cancel" class="lm-btn lm-btn-sm">关闭</button>
+      </div>
+    </header>
+    <div id="lm-steps-body" class="lm-steps-drawer-body"></div>
+    <div class="lm-error" id="lm-steps-error" hidden></div>
+  </form>
+</dialog>
+{% endblock %}
+{% block scripts %}
+{% if univer_available %}
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/univer/univer.full.umd.css') }}">
+<script src="{{ url_for('static', filename='vendor/univer/univer.full.umd.js') }}"></script>
+{% endif %}
+{% if collab_available %}
+<script src="{{ url_for('static', filename='vendor/collab/collab.umd.js') }}"></script>
+{% endif %}
+<script src="{{ url_for('static', filename='js/lanmatrix/grid.js') }}"></script>
+<script src="{{ url_for('static', filename='js/lanmatrix/steps_editor.js') }}"></script>
+<script src="{{ url_for('static', filename='js/lanmatrix/collab.js') }}"></script>
+<script src="{{ url_for('static', filename='js/lanmatrix/editor.js') }}"></script>
+{% endblock %}

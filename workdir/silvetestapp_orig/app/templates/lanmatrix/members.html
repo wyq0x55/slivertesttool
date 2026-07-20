@@ -1,0 +1,40 @@
+{% extends "lanmatrix/base_lm.html" %}
+{% block title %}成员管理{% endblock %}
+{% block content %}
+<div class="lm-page lm-members" data-project="{{ project_id }}">
+  <div class="lm-page-head">
+    <h1>项目成员</h1>
+    <div class="lm-subnav">
+      <a class="lm-btn lm-btn-sm" href="/lanmatrix/projects/{{ project_id }}">编辑器</a>
+      <a class="lm-btn lm-btn-sm" href="/lanmatrix/projects/{{ project_id }}/tasks">上传任务</a>
+    </div>
+  </div>
+  <p class="lm-muted">只有项目成员才能查看、上传、运行和下载该项目的测试任务。项目管理员可添加/移除成员并调整角色。</p>
+
+  <div class="lm-card lm-member-add" id="lm-member-add" hidden>
+    <h3>添加成员</h3>
+    <div class="lm-inline">
+      <input id="lm-mem-search" placeholder="按用户名 / 姓名搜索…" autocomplete="off">
+      <select id="lm-mem-role">
+        <option value="reader">reader（只读）</option>
+        <option value="reviewer">reviewer（评审）</option>
+        <option value="editor">editor（编辑）</option>
+        <option value="project_admin">project_admin（管理员）</option>
+      </select>
+    </div>
+    <div id="lm-mem-candidates" class="lm-candidates"></div>
+  </div>
+
+  <table class="lm-table lm-members-table">
+    <thead>
+      <tr><th>用户名</th><th>姓名</th><th>角色</th><th></th></tr>
+    </thead>
+    <tbody id="lm-member-rows">
+      <tr><td colspan="4" class="lm-muted">加载中…</td></tr>
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/lanmatrix/members.js') }}"></script>
+{% endblock %}

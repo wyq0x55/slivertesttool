@@ -1,0 +1,100 @@
+{% extends "lanmatrix/base_lm.html" %}
+{% block title %}数据库管理{% endblock %}
+{% block content %}
+<div class="lm-dbadmin">
+  <div class="lm-toolbar">
+    <div class="lm-tb-left">
+      <strong>PostgreSQL 数据库管理</strong>
+      <span class="lm-badge lm-badge-admin">系统管理员</span>
+      <div class="lm-db-tabs">
+        <button class="lm-db-tab is-active" data-tab="browser">表管理（无需 SQL）</button>
+        <button class="lm-db-tab" data-tab="console">SQL 控制台</button>
+      </div>
+    </div>
+    <div class="lm-tb-right">
+      <button class="lm-btn" id="lm-db-refresh">刷新概览</button>
+    </div>
+  </div>
+
+  <!-- ============ 表管理（无需 SQL） ============ -->
+  <div class="lm-db-pane" data-pane="browser">
+    <div class="lm-db-browser">
+      <aside class="lm-db-tablelist">
+        <div class="lm-db-tablelist-head">数据表</div>
+        <ul id="lm-db-tablenav"></ul>
+      </aside>
+      <section class="lm-db-tableview">
+        <div class="lm-db-tableview-head" id="lm-db-tv-head">
+          <span class="lm-muted">← 请选择左侧的表</span>
+        </div>
+        <div class="lm-error" id="lm-db-tv-error" hidden></div>
+        <div class="lm-db-grid-wrap">
+          <table class="lm-table lm-db-grid">
+            <thead id="lm-db-grid-head"></thead>
+            <tbody id="lm-db-grid-body"></tbody>
+          </table>
+        </div>
+        <div class="lm-db-tv-foot">
+          <span class="lm-muted" id="lm-db-tv-count"></span>
+          <span id="lm-db-tv-pager"></span>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- ============ SQL 控制台 ============ -->
+  <div class="lm-db-body lm-db-pane" data-pane="console" hidden>
+    <section class="lm-db-overview">
+      <h3>连接概览</h3>
+      <div id="lm-db-info" class="lm-db-info lm-muted">加载中…</div>
+
+      <h3>数据表 <span class="lm-muted" id="lm-db-tblcount"></span></h3>
+      <div class="lm-db-tables-wrap">
+        <table class="lm-table lm-db-tables">
+          <thead><tr><th>模式</th><th>表名</th><th class="num">估计行数</th><th class="num">占用空间</th><th></th></tr></thead>
+          <tbody id="lm-db-tables"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="lm-db-console">
+      <h3>SQL 控制台</h3>
+      <div class="lm-db-console-tools">
+        <label class="lm-db-ro">
+          <input type="checkbox" id="lm-db-readonly" checked>
+          只读模式（仅允许 SELECT/WITH/SHOW/EXPLAIN，执行后回滚）
+        </label>
+        <button class="lm-btn lm-btn-primary" id="lm-db-run">运行 (Ctrl+Enter)</button>
+      </div>
+      <textarea id="lm-db-sql" class="lm-db-sql" spellcheck="false"
+                placeholder="SELECT * FROM lm_project LIMIT 50;"></textarea>
+      <div class="lm-db-write-warn" id="lm-db-write-warn" hidden>
+        ⚠ 写模式已开启：语句将<strong>直接提交</strong>到数据库，请谨慎操作（建议先备份）。
+      </div>
+      <div class="lm-error" id="lm-db-error" hidden></div>
+      <div class="lm-db-result-meta lm-muted" id="lm-db-meta"></div>
+      <div class="lm-db-result-wrap">
+        <table class="lm-table lm-db-result">
+          <thead id="lm-db-result-head"></thead>
+          <tbody id="lm-db-result-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</div>
+
+<dialog id="lm-db-row-dialog" class="lm-dialog lm-dialog-wide">
+  <form method="dialog" class="lm-card">
+    <h3 id="lm-db-row-title">编辑行</h3>
+    <div id="lm-db-row-form" class="lm-db-row-form"></div>
+    <div class="lm-error" id="lm-db-row-error" hidden></div>
+    <menu>
+      <button value="cancel" class="lm-btn">取消</button>
+      <button value="save" id="lm-db-row-save" class="lm-btn lm-btn-primary">保存</button>
+    </menu>
+  </form>
+</dialog>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/lanmatrix/admin_db.js') }}"></script>
+{% endblock %}

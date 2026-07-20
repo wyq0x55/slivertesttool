@@ -1,0 +1,43 @@
+{% extends "lanmatrix/base_lm.html" %}
+{% block title %}登录{% endblock %}
+{% block content %}
+<div class="lm-login-wrap">
+  <form id="lm-login-form" class="lm-card lm-login-card" autocomplete="off">
+    <h2>测试矩阵在线编辑</h2>
+    <p class="lm-muted">局域网离线部署 · 请使用平台账号登录</p>
+    <label>用户名
+      <input type="text" name="username" id="lm-username" required autofocus>
+    </label>
+    <label>密码
+      <input type="password" name="password" id="lm-password" required>
+    </label>
+    <button type="submit" class="lm-btn lm-btn-primary">登录</button>
+    <div class="lm-error" id="lm-login-error" hidden></div>
+    {% if allow_registration %}
+    <p class="lm-muted lm-login-alt">还没有账号？<a href="{{ url_for('lanmatrix_pages.register') }}">注册新账号</a></p>
+    {% endif %}
+  </form>
+</div>
+<script>
+document.getElementById('lm-login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const err = document.getElementById('lm-login-error');
+  err.hidden = true;
+  try {
+    await LMApi.login(
+      document.getElementById('lm-username').value.trim(),
+      document.getElementById('lm-password').value);
+    const params = new URLSearchParams(window.location.search);
+    let next = params.get('next');
+    // Only allow same-origin relative paths; ignore the login page itself.
+    if (!next || !next.startsWith('/') || next.startsWith('//') || next.indexOf('/lanmatrix/login') === 0) {
+      next = LM.urls.projects;
+    }
+    window.location = next;
+  } catch (ex) {
+    err.textContent = ex.message || '登录失败';
+    err.hidden = false;
+  }
+});
+</script>
+{% endblock %}

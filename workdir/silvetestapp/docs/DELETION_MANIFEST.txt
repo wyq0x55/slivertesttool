@@ -1,0 +1,47 @@
+=== A-group manifest (path | bytes | sha256) BEFORE deletion ===
+app/templates/base.html | 1697 bytes | ec2c4588e20f1403c7bdf7367009ea92cb6d51fdf7a0b4e21cdc8a676ccfed20
+app/templates/index.html | 3447 bytes | abb2ea764a6c8e811eb4e733193050fa9626cdc1f61d469f50abfc745a71ff9f
+app/templates/task_list.html | 2173 bytes | 047754161ee9fb5e52a487983dff0325880efe9d64ea6a190053304d93a1acea
+app/templates/task_detail.html | 2297 bytes | 7c9a9782767f56221beaac32f47b1154dd7ccedf68266b02dd81398bd492165f
+app/templates/admin.html | 4589 bytes | baf01d65b4f7fc21947f73a3d76e6b56666b977830f564f90a5652eca5c97497
+app/templates/not_found.html | 303 bytes | 8d1cb858856d97b7ab7d42f64c7055778f090dcb1e284da7d120530ed8698f59
+app/static/js/upload.js | 12127 bytes | 4a55cde687b50a84a11df61f3309c1b109569258aa50d6914759cfbf559bfb66
+app/static/js/task_list.js | 7185 bytes | c03f357cb1aafbc898060010e8c94e471c2277742729edadc4bff23f10b631ce
+app/static/js/task_detail.js | 4705 bytes | 11dbb521f56a9fd6686a1020692c01ebc5bdcbbe4695a9a7830bf8a5fe351c00
+app/static/js/admin.js | 12291 bytes | 5a4c2df0c0a31ffe53ff2b71ecf86011677f8e99b7f818aeb3624664d43eacc2
+app/static/js/app.js | 2235 bytes | 1dd1039b27ad866e219553bbd5d1a685decf6f9ed740ff3ce735edbd15130e65
+
+=== RESULT ===
+All 11 files removed from the working copy (app/templates/*, app/static/js/*).
+Verification: py_compile OK on all 44 modules; zero live render_template/extends/url_for references to any removed file.
+Kept on purpose: app/static/css/app.css (still used by lanmatrix/base_lm.html).
+
+=== HOW TO RESTORE ===
+Every removed file is preserved in the original upload (silvetestapp__1_.zip).
+To restore one, extract it from that archive by the path above; SHA-256 lets you verify identity.
+
+================================================================
+Category B (owner confirmed no external callers) — CODE REMOVALS
+================================================================
+app/routes/api_routes.py
+  - route  POST /api/uploads          (stage_upload)
+  - route  POST /api/tasks            (create_task)
+  - route  POST /api/tasks/upload     (upload_and_create)
+  - helper _pick_default_sil()
+  - helper _materialise_and_enqueue()
+  - docstring endpoint list updated
+app/services/upload_service.py
+  - stage_upload()
+  - materialise()          (NOTE: materialise_one() is the live one, kept)
+  - _safe_extract()
+  - detect_sil_models()
+  - removed now-unused: import zipfile
+tests/test_api.py
+  - removed _make_bundle(), test_two_step_upload (legacy-only)
+  - migrated E2E to POST /api/tasks/upload_tree:
+      test_upload_tree_and_run, test_upload_tree_requires_model,
+      test_resubmit_after_completion_allowed
+KEPT (B3): app/routes/page_routes.py redirect stubs (one more release)
+
+Verification: py_compile OK on all modules; zero residual references to any
+removed symbol. Runtime pytest NOT run here (needs live PostgreSQL + Flask).

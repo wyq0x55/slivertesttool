@@ -1,0 +1,62 @@
+{% extends "lanmatrix/base_lm.html" %}
+{% block title %}字段配置{% endblock %}
+{% block content %}
+<div class="lm-page" data-project-id="{{ project_id }}">
+  <div class="lm-page-head">
+    <h1>字段配置</h1>
+    <div>
+      <a class="lm-btn" href="/lanmatrix/projects/{{ project_id }}">返回编辑</a>
+      <button class="lm-btn lm-btn-primary" id="lm-add-field">＋ 新增字段</button>
+    </div>
+  </div>
+  <table class="lm-table" id="lm-fields-table">
+    <thead>
+      <tr><th>顺序</th><th>Sheet</th><th>标识</th><th>显示名</th><th>类型</th><th>必填</th><th>只读</th><th>选项/提示</th><th></th></tr>
+    </thead>
+    <tbody id="lm-fields-rows"><tr><td colspan="9" class="lm-muted">加载中…</td></tr></tbody>
+  </table>
+</div>
+
+<dialog id="lm-field-dialog" class="lm-dialog">
+  <form method="dialog" class="lm-card">
+    <h3 id="lm-field-dialog-title">新增字段</h3>
+    <label>字段标识 (英文) <input id="lm-f-key" required placeholder="test_env"></label>
+    <label>显示名称 <input id="lm-f-name" placeholder="测试环境"></label>
+    <label>所在 Sheet 页
+      <select id="lm-f-sheet">
+        <option value="test">test（测试用例）</option>
+        <option value="const">const（常量）</option>
+        <option value="lib">lib（函数库）</option>
+      </select>
+    </label>
+    <label>数据类型
+      <select id="lm-f-type">
+        <option value="text">文本</option>
+        <option value="multiline">多行文本</option>
+        <option value="integer">整数</option>
+        <option value="decimal">小数</option>
+        <option value="boolean">布尔</option>
+        <option value="date">日期</option>
+        <option value="datetime">日期时间</option>
+        <option value="single_select">单选</option>
+        <option value="multi_select">多选</option>
+        <option value="user">用户</option>
+        <option value="url">链接</option>
+        <option value="hex">十六进制</option>
+        <option value="steps">测试手顺 (手順明细)</option>
+      </select>
+    </label>
+    <label>选项 (逗号分隔，用于单选/多选) <input id="lm-f-options"></label>
+    <label>提示文本 <input id="lm-f-help"></label>
+    <label class="lm-inline"><input type="checkbox" id="lm-f-required"> 必填</label>
+    <div class="lm-error" id="lm-f-error" hidden></div>
+    <menu>
+      <button value="cancel" class="lm-btn">取消</button>
+      <button value="ok" id="lm-f-ok" class="lm-btn lm-btn-primary">创建</button>
+    </menu>
+  </form>
+</dialog>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/lanmatrix/fields.js') }}"></script>
+{% endblock %}

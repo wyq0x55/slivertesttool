@@ -1,0 +1,1 @@
+"""Flask blueprints (pages + API)."""
