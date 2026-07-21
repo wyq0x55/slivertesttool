@@ -11,6 +11,7 @@ Module map
 * ``pg_ystore``     - ``BaseYStore`` subclass persisting Y updates to PostgreSQL.
 * ``doc_model``     - Y.Doc <-> DB row mapping (sheet arrays, bootstrap, snapshot).
 * ``materializer``  - debounced ``Doc.observe`` hook -> ``items_service.materialize_sheet``.
+* ``presence``      - cross-process single-writer boundary (lm_collab_presence heartbeat).
 * ``server``        - ``WebsocketServer`` + ``ASGIServer(on_connect=auth)`` wiring.
 
 Everything here imports ``pycrdt`` / ``pycrdt-websocket`` lazily so the Flask

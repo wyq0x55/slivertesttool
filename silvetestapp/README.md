@@ -73,6 +73,11 @@ Huey worker (run_worker.py) ◀────consume──────────
 Browser ◀── SSE stream (task_events) ── Flask
 ```
 
+An **optional** third process (`run_collab.py`) adds real-time multi-user
+editing to the LAN Test Matrix over WebSocket/CRDT; see *Real-time
+collaboration* under **Run**. It is non-breaking — without it the editor uses
+classic REST + polling.
+
 **Pre-warmed pool.** On start-up the worker builds a `SilverInstancePool` of
 `LICENSE_LIMIT` live Silver instances (each opened on the default registered
 model, holding one license). Per test the worker *borrows* an idle instance,
@@ -132,6 +137,98 @@ python run_worker.py     # one or more workers
 ```
 
 Set `START_WORKER=0 python run.py` to start the web server only.
+
+### Real-time collaboration (optional third process)
+
+The LAN Test Matrix editor can run a **Yjs/CRDT real-time collaboration** layer
+so several people edit the same matrix live (see
+`docs/yjs-collab-design.md` / `docs/yjs-collab-checklist.md`). It is **fully
+optional and non-breaking**: with the collab process (or its frontend bundle)
+absent, the editor stays in classic REST + polling mode.
+
+Waitress is a synchronous WSGI server and **cannot** perform the WebSocket
+upgrade, so collaboration runs as its **own ASGI process** (`run_collab.py`,
+uvicorn + `pycrdt-websocket`). It reuses the same app factory, database and
+`SECRET_KEY`, so it verifies web-minted access tokens and materializes CRDT
+changes back into `TestItemRow` through the existing service layer.
+
+```
+                      ┌───────────────────────── PostgreSQL (one DB) ─────────────────────────┐
+Browser ─HTTP/SSE─▶ Flask (run_web.py, waitress/WSGI) ──REST/SSE──────────────────────────────┤
+        └─WebSocket─▶ Collab (run_collab.py, uvicorn/ASGI) ──materialize / lm_collab_doc───────┤
+                      Huey worker (run_worker.py) ──task_events─────────────────────────────────┘
+```
+
+Run the three processes side by side (all share the one PostgreSQL DB):
+
+```bash
+python run_web.py        # 1) web/API/SSE (waitress, default :8080)
+python run_worker.py     # 2) task worker(s)
+python run_collab.py     # 3) collaboration ASGI server (uvicorn, default :1234)
+```
+
+Install the collab-only dependencies (`pycrdt`, `pycrdt-websocket`, `uvicorn`,
+`websockets`, …) on the collab host — they are pinned in `requirements.txt` and
+**only this process needs them**. For a fully offline install, vendor their
+wheels the same way as the base install (see *Install (offline)* above).
+
+> ⚠️ **Always run the collab server with a single worker (`workers=1`).**
+> Rooms (`Y.Doc`s) live in process memory; multiple OS workers would each hold a
+> divergent copy of the document. `run_collab.py` hard-codes `workers=1`.
+> Horizontal scale-out needs a Redis pub/sub relay and is out of scope.
+
+**Reverse proxy.** Terminate TLS at your proxy and route the WebSocket path to
+port 1234 with the `Upgrade`/`Connection` headers passed through. Example nginx:
+
+```nginx
+# WebSocket -> collab ASGI process (rooms are ws://host:1234/project:{id})
+location /collab/ {
+    proxy_pass         http://127.0.0.1:1234/;
+    proxy_http_version 1.1;
+    proxy_set_header   Upgrade    $http_upgrade;   # required for the WS upgrade
+    proxy_set_header   Connection "upgrade";       # required for the WS upgrade
+    proxy_set_header   Host       $host;
+    proxy_read_timeout 3600s;                       # long-lived socket
+}
+
+# Everything else -> Flask/waitress web process
+location / {
+    proxy_pass       http://127.0.0.1:8080;
+    proxy_set_header Host $host;
+}
+```
+
+Then point the frontend at the proxied socket by setting **`COLLAB_WS_URL`**
+(e.g. `wss://your-host/collab`) in the web process's environment; when unset the
+frontend derives the socket URL from `window.location`.
+
+**Single-writer boundary.** While a project has live collaborators the CRDT
+materializer is its **only** authoritative DB writer. The collab server
+heartbeats live-room presence into `lm_collab_presence`, and the web process
+reads it to decide whether a project is "collaborative". Setting
+**`COLLAB_REST_GUARD=1`** makes the web app reject direct REST row mutations on a
+collaborative project (HTTP `409 COLLAB_ACTIVE`) so REST and CRDT never fight
+over `row_order`/`version`. It is **off by default** (opt-in, backwards
+compatible) and **fails open**: if the collab process crashes, its presence row
+goes stale within `COLLAB_PRESENCE_TTL_SECONDS` and REST writes resume
+automatically — the editor degrades gracefully to classic REST.
+
+Collab-related environment variables (all optional):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `COLLAB_HOST` / `COLLAB_PORT` | `0.0.0.0` / `1234` | Bind address of `run_collab.py`. |
+| `COLLAB_WS_URL` | *(derive from page)* | Explicit WS base handed to the browser (e.g. `wss://host/collab`). |
+| `COLLAB_REST_GUARD` | `0` | Reject REST row writes on collaborative projects (single-writer boundary). |
+| `COLLAB_PRESENCE_HEARTBEAT_SECONDS` | `10` | How often the collab server refreshes presence. |
+| `COLLAB_PRESENCE_TTL_SECONDS` | `30` | How long a presence row stays "active" without a refresh. |
+| `COLLAB_ROOM_IDLE_TTL_SECONDS` | `900` | Evict an idle (client-less) room after this long (`0` disables). |
+| `COLLAB_ROOM_SWEEP_SECONDS` | `60` | Idle-room sweep interval. |
+
+> **Frontend build.** The collaboration client bundle
+> (`app/static/vendor/collab/collab.umd.js`) must be built on a networked
+> machine with `cd frontend && npm install && npm run build` (the sandbox has no
+> npm). If the bundle is absent the editor stays in classic mode.
 
 Configuration is via environment variables (optionally a `.env` file); see
 `.env.example`. Key settings: `RUNNER_BACKEND` (`mock` for demo, `silver` for

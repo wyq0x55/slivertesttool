@@ -486,3 +486,30 @@ class CollabDoc(db.Model):
     doc_metadata = db.Column(db.LargeBinary, nullable=True)
     ts = db.Column(db.Float, nullable=False, default=0.0)
     created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
+
+
+# --------------------------------------------------------------------------- #
+# Cross-process collaboration presence heartbeat (design doc §1.6 / §12.3).
+#
+# The collab server (run_collab) owns exactly one row per project and refreshes
+# ``connections`` + ``updated_at`` on a heartbeat while a room has live clients;
+# it drops ``connections`` to 0 when the room is evicted. The web process (which
+# cannot see the collab server's in-memory rooms) reads this table to decide
+# whether a project is in "collaborative mode" — i.e. whether the CRDT
+# materializer is the single authoritative writer and direct REST row mutations
+# must step aside (see ``app/collab/presence.py`` and the REST guard).
+#
+# A row is only treated as "active" when ``connections > 0`` AND ``updated_at``
+# is fresher than COLLAB_PRESENCE_TTL_SECONDS, so a crashed collab server
+# naturally lets the project fall back to classic REST writes.
+# --------------------------------------------------------------------------- #
+class CollabPresence(db.Model):
+    __tablename__ = "lm_collab_presence"
+
+    project_id = db.Column(
+        db.Integer, db.ForeignKey("lm_projects.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    connections = db.Column(db.Integer, nullable=False, default=0)
+    updated_at = db.Column(db.DateTime, nullable=False,
+                           default=_utcnow, onupdate=_utcnow)

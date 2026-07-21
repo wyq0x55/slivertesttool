@@ -6,6 +6,7 @@ from .lanmatrix import (
     AuditLog,
     CellComment,
     CollabDoc,
+    CollabPresence,
     DataJob,
     FieldDefinition,
     LMUser,
@@ -33,4 +34,5 @@ __all__ = [
     "AuditLog",
     "DataJob",
     "CollabDoc",
+    "CollabPresence",
 ]

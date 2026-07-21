@@ -71,6 +71,11 @@ class CollabWebsocketServer(WebsocketServer):
         cfg = flask_app.config
         self._idle_ttl = float(cfg.get("COLLAB_ROOM_IDLE_TTL_SECONDS", 900) or 0)
         self._sweep_interval = float(cfg.get("COLLAB_ROOM_SWEEP_SECONDS", 60) or 60)
+        # Presence heartbeat: publish live-room connection counts to
+        # lm_collab_presence so the web process knows which projects are
+        # collaborative (single-writer boundary; design doc §1.6 / §12.3).
+        self._heartbeat_interval = float(
+            cfg.get("COLLAB_PRESENCE_HEARTBEAT_SECONDS", 10) or 10)
 
     async def get_room(self, name: str) -> YRoom:
         room = self._rooms.get(name)
@@ -130,6 +135,12 @@ class CollabWebsocketServer(WebsocketServer):
             self._task_group.start_soon(self._sweep_loop)
             _log.info("collab idle sweeper on: ttl=%ss interval=%ss",
                       self._idle_ttl, self._sweep_interval)
+        # Publish presence heartbeats so the web app can enforce the
+        # single-writer boundary while rooms are live.
+        if self._heartbeat_interval > 0 and self._task_group is not None:
+            self._task_group.start_soon(self._heartbeat_loop)
+            _log.info("collab presence heartbeat on: interval=%ss",
+                      self._heartbeat_interval)
         return self
 
     async def __aexit__(self, exc_type, exc_value, exc_tb):
@@ -140,9 +151,45 @@ class CollabWebsocketServer(WebsocketServer):
             except Exception:  # pragma: no cover - best effort on teardown
                 _log.exception("materializer detach failed on shutdown: %s", name)
         self._materializers.clear()
+        # Best-effort: mark every project as having no live collaborators so the
+        # web app stops treating them as collaborative the moment we shut down.
+        try:
+            pids = [int(n.split(":", 1)[1]) for n in self._rooms.keys()]
+            if pids:
+                await anyio.to_thread.run_sync(self._clear_presence_sync, pids)
+        except Exception:  # pragma: no cover - teardown best effort
+            _log.exception("collab presence clear-on-shutdown failed")
         self._rooms.clear()
         self._last_active.clear()
         return await super().__aexit__(exc_type, exc_value, exc_tb)
+
+    # ------------------------------------------------------------------ #
+    # Presence heartbeat (single-writer boundary signal for the web app)
+    # ------------------------------------------------------------------ #
+    async def _heartbeat_loop(self) -> None:
+        while True:
+            await anyio.sleep(self._heartbeat_interval)
+            try:
+                counts = {
+                    int(name.split(":", 1)[1]): len(getattr(room, "clients", ()) or ())
+                    for name, room in self._rooms.items()
+                }
+                if counts:
+                    await anyio.to_thread.run_sync(self._heartbeat_sync, counts)
+            except Exception:  # pragma: no cover - heartbeat must never die
+                _log.exception("collab presence heartbeat iteration failed")
+
+    def _heartbeat_sync(self, counts: dict) -> None:
+        from . import presence
+        with self._app.app_context():
+            for pid, n in counts.items():
+                presence.mark_presence(pid, n)
+
+    def _clear_presence_sync(self, pids: list) -> None:
+        from . import presence
+        with self._app.app_context():
+            for pid in pids:
+                presence.clear_presence(pid)
 
     async def _sweep_loop(self) -> None:
         """Periodically evict rooms that have been client-less past the TTL."""
@@ -192,6 +239,13 @@ class CollabWebsocketServer(WebsocketServer):
                 await room.stop()
             except Exception:  # pragma: no cover
                 _log.exception("room stop failed: %s", name)
+        # Room is gone: tell the web app this project is no longer collaborative
+        # so REST writes resume immediately (don't wait for the presence TTL).
+        try:
+            pid = int(name.split(":", 1)[1])
+            await anyio.to_thread.run_sync(self._clear_presence_sync, [pid])
+        except Exception:  # pragma: no cover
+            _log.exception("collab presence clear-on-evict failed: %s", name)
         _log.info("evicted idle collab room: %s", name)
 
 

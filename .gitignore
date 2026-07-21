@@ -11,6 +11,8 @@ out-tsc
 # dependencies
 node_modules
 .venv
+.env
+__pycache__
 # IDEs and editors
 /.idea
 .project

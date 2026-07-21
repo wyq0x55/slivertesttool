@@ -38,10 +38,12 @@ def main() -> None:
 
     flask_app = create_app(Config)
 
-    # Additively create the collaboration table if a migration hasn't yet; this
-    # never drops or alters existing tables.
+    # Additively create the collaboration tables if a migration hasn't yet; this
+    # never drops or alters existing tables. ``CollabDoc`` stores the durable
+    # CRDT update log; ``CollabPresence`` is the single-writer boundary heartbeat
+    # the web process reads to know a project is collaborative (design §1.6).
     with flask_app.app_context():
-        from app.models import CollabDoc  # noqa: F401
+        from app.models import CollabDoc, CollabPresence  # noqa: F401
         db.create_all()
 
     asgi_app = build_asgi_app(flask_app)

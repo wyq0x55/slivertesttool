@@ -35,6 +35,32 @@ from ._base import (
 bp = Blueprint("lanmatrix_projects", __name__, url_prefix="/api/v1")
 register_common(bp)
 
+
+def _collab_write_blocked(project_id) -> "Response | None":
+    """Enforce the single-writer boundary (design doc §1.6 / §12.3).
+
+    When ``COLLAB_REST_GUARD`` is enabled and the project is currently
+    collaborative (a live CRDT room is heartbeating presence), the materializer
+    is the single authoritative writer, so a direct REST row mutation would race
+    it. Return a 409 response to reject such a write; return ``None`` to allow it.
+
+    Default config disables the guard, so this is a no-op unless opted in. It
+    also fails open: any presence-lookup error allows the write (never blocks
+    editing because bookkeeping hiccuped).
+    """
+    if not current_app.config.get("COLLAB_REST_GUARD", False):
+        return None
+    try:
+        from ...collab import presence
+        if presence.is_collab_active(int(project_id)):
+            return err(
+                "COLLAB_ACTIVE",
+                "该项目正在实时协同编辑，请在协同视图中修改（此改动已由协同层接管）。",
+                status=409)
+    except Exception:  # noqa: BLE001 - never block editing on a guard failure
+        current_app.logger.debug("collab write-guard check failed", exc_info=True)
+    return None
+
 @bp.get("/projects")
 @login_required
 def list_projects():
@@ -161,6 +187,9 @@ def create_item(project_id):
     project, _ = _project_and_role(project_id, "item.create")
     if not project.is_editable:
         return err("PROJECT_LOCKED", "项目当前不可编辑", status=409)
+    blocked = _collab_write_blocked(project_id)
+    if blocked is not None:
+        return blocked
     body = request.get_json(silent=True) or {}
     values = body.get("values", body)
     if not isinstance(values, dict):
@@ -184,6 +213,9 @@ def patch_item(project_id, item_id):
     project, _ = _project_and_role(project_id, "item.edit")
     if not project.is_editable:
         return err("PROJECT_LOCKED", "项目当前不可编辑", status=409)
+    blocked = _collab_write_blocked(project_id)
+    if blocked is not None:
+        return blocked
     item = service.get_item(project_id, item_id)
     body = request.get_json(silent=True) or {}
     if "version" not in body:
@@ -196,6 +228,9 @@ def patch_item(project_id, item_id):
 @login_required
 def delete_item(project_id, item_id):
     project, _ = _project_and_role(project_id, "item.delete")
+    blocked = _collab_write_blocked(project_id)
+    if blocked is not None:
+        return blocked
     item = service.get_item(project_id, item_id)
     service.soft_delete_item(g.user, project, item)
     return ok({"deleted": True})
@@ -204,6 +239,9 @@ def delete_item(project_id, item_id):
 @login_required
 def duplicate_item(project_id, item_id):
     project, _ = _project_and_role(project_id, "item.create")
+    blocked = _collab_write_blocked(project_id)
+    if blocked is not None:
+        return blocked
     item = service.get_item(project_id, item_id)
     dup = service.duplicate_item(g.user, project, item)
     return ok({"item": dup.to_dict()}, status=201)
@@ -212,6 +250,9 @@ def duplicate_item(project_id, item_id):
 @login_required
 def restore_item(project_id, item_id):
     project, _ = _project_and_role(project_id, "item.edit")
+    blocked = _collab_write_blocked(project_id)
+    if blocked is not None:
+        return blocked
     item = service.restore_item(g.user, project, item_id)
     return ok({"item": item.to_dict()})
 
@@ -231,6 +272,9 @@ def _row_ids(body) -> list:
 @login_required
 def bulk_delete_items(project_id):
     project, _ = _project_and_role(project_id, "item.delete")
+    blocked = _collab_write_blocked(project_id)
+    if blocked is not None:
+        return blocked
     body = request.get_json(silent=True) or {}
     deleted = service.bulk_soft_delete(g.user, project, _row_ids(body))
     return ok({"deleted": deleted})
@@ -241,6 +285,9 @@ def bulk_duplicate_items(project_id):
     project, _ = _project_and_role(project_id, "item.create")
     if not project.is_editable:
         return err("PROJECT_LOCKED", "项目当前不可编辑", status=409)
+    blocked = _collab_write_blocked(project_id)
+    if blocked is not None:
+        return blocked
     body = request.get_json(silent=True) or {}
     created = service.bulk_duplicate(g.user, project, _row_ids(body))
     return ok({"items": [it.to_dict() for it in created],
@@ -252,6 +299,11 @@ def move_items(project_id):
     project, _ = _project_and_role(project_id, "item.edit")
     if not project.is_editable:
         return err("PROJECT_LOCKED", "项目当前不可编辑", status=409)
+    # move_items rewrites the whole sheet's row_order; under collaboration the
+    # Y.Array index is authoritative, so this path must never run (design §12.3).
+    blocked = _collab_write_blocked(project_id)
+    if blocked is not None:
+        return blocked
     body = request.get_json(silent=True) or {}
     direction = body.get("direction", "up")
     n = service.move_items(g.user, project, _row_ids(body), direction)
@@ -274,6 +326,9 @@ def batch_update(project_id):
     project, _ = _project_and_role(project_id, "item.batch")
     if not project.is_editable:
         return err("PROJECT_LOCKED", "项目当前不可编辑", status=409)
+    blocked = _collab_write_blocked(project_id)
+    if blocked is not None:
+        return blocked
     body = request.get_json(silent=True) or {}
     scope = body.get("scope", {})
     if scope.get("type") == "all":
@@ -286,6 +341,9 @@ def batch_update(project_id):
 @login_required
 def batch_undo(project_id):
     project, _ = _project_and_role(project_id, "item.batch")
+    blocked = _collab_write_blocked(project_id)
+    if blocked is not None:
+        return blocked
     body = request.get_json(silent=True) or {}
     result = service.batch_undo(g.user, project, body["batch_id"])
     return ok(result)

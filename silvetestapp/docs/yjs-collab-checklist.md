@@ -47,7 +47,7 @@
 - [x] Doc 持久化后端 `app/collab/pg_ystore.py`（`BaseYStore` 子类，读/写 `lm_collab_doc`，`merge_updates` 压缩）；新增模型 `CollabDoc` + `db.create_all()` 自动建表。
 - [x] 首次进房水合：`PgYStore.read()` 回放；空则 `doc_model.bootstrap_doc` 从 DB 播种并写回 store。
 - [ ] **▶ 你来跑冒烟**：`pip install pycrdt pycrdt-websocket uvicorn`（见 `requirements-collab.txt`）→ `python run_collab.py` → 两个浏览器/`wscat` 连 `ws://host:1234/project:1?token=…` 同步一个 `Y.Map`。
-- [ ] 部署文档：三进程并列（`run_web.py` / `run_worker.py` / `run_collab.py`）；反代透传 `Upgrade`/`Connection` 头到 1234 端口。
+- [x] 部署文档：三进程并列（`run_web.py` / `run_worker.py` / `run_collab.py`）；反代透传 `Upgrade`/`Connection` 头到 1234 端口。已写入 `README.md`「Run → Real-time collaboration」：三进程启动、单 worker 约束、nginx `Upgrade`/`Connection` 透传示例、`COLLAB_WS_URL`/`COLLAB_REST_GUARD` 等环境变量表、单一写者边界与优雅降级说明；`run_collab.py` 亦补建 `CollabPresence` 表。
 
 > ⚠️ **VERIFY-ONCE（已在 `server.py`/`pg_ystore.py` 顶部标注）**：① `ASGIServer(on_connect)` 回调元数（用 `*args` 容错）；② `WebsocketServer.get_room(name)` 是每连接派发入口、`start_room(room)` 挂预建房间；③ room 名 == `scope['path']` 去掉前导 `/`。均为已确认的公有类/方法上的**调用契约**假设，装库后一次性核对即可。
 
@@ -100,11 +100,14 @@
 - [ ] 协同进程不可达 / token 失败 → 前端回退到**现状逐行 PATCH + version 冲突刷新**路径（保留旧代码路径，用 feature flag / 连接失败自动切换）。
 - [ ] Univer 旧 bundle（缺多 sheet API）时仍走 FallbackGrid（既有逻辑，不动）。
 
-### 1.6 单一写者边界（最需纪律，见设计文档 §12.3 第 1/2 点）
-- [ ] project 进入协同态时，明确 DB 的**唯一写者是物化路径**；顺序与内容权威在 Y.Doc，`row_order` 沦为物化产物。
-- [ ] 协同态下的 REST 写路径（含 Excel 导入、后台脚本）**要么走同一 Y.Doc**（导入→Y.Array 批量事务，Phase 2），**要么被短暂拒绝/引导**，不得绕过 CRDT 直接写库。
-- [ ] 确保协同态下**无任何非物化路径调用 `move_items`**（它会全表规整 `row_order`，与 CRDT 顺序打架）。
-- [ ] 定义“协同态”判定与切换（如房间有活跃连接 = 协同态；无连接 → 恢复常规乐观锁 REST）。
+### 1.6 单一写者边界（最需纪律，见设计文档 §12.3 第 1/2 点） — ✅ 代码已就绪（默认关闭，opt-in；本沙箱只 `py_compile`）
+- [x] 定义“协同态”判定与跨进程信号：新增 `lm_collab_presence` 表（`project_id` PK / `connections` / `updated_at`，`CollabPresence` 模型，`db.create_all` 自动建表）。协同进程 `run_collab` 按心跳（`COLLAB_PRESENCE_HEARTBEAT_SECONDS`，默认 10s）写入活跃房间连接数，房间被驱逐 / 进程退出时置 0；web 进程读该表判定“协同态”= `connections>0` 且 `updated_at` 新鲜（`COLLAB_PRESENCE_TTL_SECONDS`，默认 30s）。实现见 `app/collab/presence.py` + `server.py::_heartbeat_loop/_clear_presence_sync`。
+- [x] project 进入协同态时，DB 的**唯一写者是物化路径**：web 侧 REST 行写入在协同态下被拒绝/引导。新增路由守卫 `_collab_write_blocked`（`projects_items.py`），套在 `create/patch/delete/duplicate/restore/bulk-delete/bulk-duplicate/move/batch-update/batch-undo` 上，命中时返 `409 COLLAB_ACTIVE` + 中文引导语。
+- [x] 确保协同态下**无任何非物化路径调用 `move_items`**：`move_items` 路由已挂守卫，协同态直接 409（它会全表规整 `row_order`，与 CRDT 顺序打架）。物化路径不经路由、直接调 `items_service`，不受守卫影响。
+- [x] **优雅降级自洽**：协同进程崩溃 → 心跳停 → presence 转陈旧 → 守卫自动放行 → 恢复常规乐观锁 REST（与 §1.5 一致）。守卫 fail-open：presence 查询异常也放行，绝不因记账故障阻断编辑。
+- [x] **feature-flag 可回退**：`COLLAB_REST_GUARD`（默认 `False`）关闭整个守卫，行为与改造前完全一致；导入路径（`import_*`）**不挂守卫**，沿用“写库→前端 `resyncSheetFromDb` 折回 Y.Doc”的既有 Phase-1 流程。
+- [x] 纯逻辑单测 `tests/test_collab_presence.py`（6 例，DB-free，测 `is_fresh` 新鲜度判定；沙箱无 flask 无法 import，逻辑已离线等价验证通过）。
+- [ ] **▶ 你来跑**：装 flask 环境 `pytest tests/test_collab_presence.py`；装 pycrdt/PG 后端到端验证——开协同→另一 REST 客户端 `COLLAB_REST_GUARD=1` 时被 409、杀协同进程 30s 后恢复放行。
 
 **Phase 1 验收**：
 - [ ] 两人同时改不同单元格 → 实时互显、无覆盖。

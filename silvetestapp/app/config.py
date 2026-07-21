@@ -254,6 +254,25 @@ class Config:
     COLLAB_ROOM_SWEEP_SECONDS = _as_int(
         os.environ.get("COLLAB_ROOM_SWEEP_SECONDS"), 60
     )
+    # --- Single-writer boundary (design doc §1.6 / §12.3) ---
+    # The collab server heartbeats live-room presence into lm_collab_presence;
+    # the web process reads it to know a project is in "collaborative mode".
+    # How often (seconds) the collab server refreshes the presence heartbeat.
+    COLLAB_PRESENCE_HEARTBEAT_SECONDS = _as_int(
+        os.environ.get("COLLAB_PRESENCE_HEARTBEAT_SECONDS"), 10
+    )
+    # A presence row counts as "active" only while it is fresher than this (and
+    # has connections > 0). Keep it a small multiple of the heartbeat so a
+    # crashed collab server lets projects fall back to classic REST quickly.
+    COLLAB_PRESENCE_TTL_SECONDS = _as_int(
+        os.environ.get("COLLAB_PRESENCE_TTL_SECONDS"), 30
+    )
+    # When True, direct REST row mutations (create/patch/delete/move/bulk) on a
+    # project that is currently collaborative are rejected with 409 COLLAB_ACTIVE
+    # so the CRDT materializer stays the single authoritative writer. Default
+    # False: the guard is opt-in and fully backwards compatible; collaborative
+    # clients already route their edits through the Y.Doc, not REST.
+    COLLAB_REST_GUARD = _as_bool(os.environ.get("COLLAB_REST_GUARD"), False)
 
     # --- SSE ---
     # How often the SSE endpoint polls task_events for new rows (seconds).

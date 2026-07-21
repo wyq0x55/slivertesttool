@@ -74,7 +74,7 @@
   }
   let page = 1;                 // 1-based index into categoryPages (one page per テスト区分)
   const FETCH_CHUNK = 500;      // server-side page size used when fetching all rows
-  const quick = "";
+  let quick = "";
   let categoryPages = [];       // [{ key, label, items }] — one entry per テスト区分
   let total = 0;                // total row count across all categories
 
@@ -108,7 +108,16 @@
     if (document.querySelector("dialog[open]")) return true;
     const host = document.getElementById("lm-grid-host");
     const ae = document.activeElement;
-    if (host && ae && ae !== host && host.contains(ae)) return true; // editing in grid
+    // Only a genuine text-entry element (the Univer cell editor: an input,
+    // textarea or contenteditable) means the user is actively typing and a
+    // remote apply would clobber their keystrokes. A merely-focused grid control
+    // — e.g. the native column-filter funnel button, which keeps focus inside the
+    // host after the filter panel closes — must NOT freeze real-time sync (that
+    // left collab permanently deaf after any filtering, even once cleared).
+    if (host && ae && ae !== host && host.contains(ae)) {
+      const tag = (ae.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || ae.isContentEditable) return true;
+    }
     return false;
   }
 
@@ -762,6 +771,36 @@
     }
   });
 
+  // Compose the collaboration badge from BOTH the socket state and the live peer
+  // count, so a transient disconnect stays visible instead of being masked by a
+  // stale "在线 N 人" presence label. While offline the editor keeps writing to
+  // the local Y.Doc (offline editing) and y-websocket auto-reconnects; the label
+  // reassures the user that pending changes will sync once the link is restored.
+  // We never fall back to the REST path once collaboration has started.
+  let collabConn = "connecting";     // "connecting" | "connected" | "disconnected"
+  let collabPeers = 0;
+  let collabEverConnected = false;
+  function renderCollabStatus() {
+    const el = document.getElementById("lm-collab-status");
+    if (!el) return;
+    let text, cls;
+    if (collabConn === "connected") {
+      collabEverConnected = true;
+      text = collabPeers > 0 ? `实时协同 · 在线 ${collabPeers} 人` : "实时协同 · 已连接";
+      cls = "lm-collab-on";
+    } else if (!collabEverConnected) {
+      text = "实时协同 · 连接中…";
+      cls = "lm-collab-wait";
+    } else {
+      // Dropped after a good connection: stay on the Y.Doc (offline editing) and
+      // let y-websocket keep reconnecting. Make the outage unmistakable.
+      text = "实时协同 · 已断开，重连中…（离线编辑，恢复后自动同步）";
+      cls = "lm-collab-off";
+    }
+    el.textContent = text;
+    el.className = "lm-badge lm-collab-badge " + cls;
+    el.hidden = false;
+  }
   function setCollabStatus(text) {
     const el = document.getElementById("lm-collab-status");
     if (el) { el.textContent = text; el.hidden = false; }
@@ -807,18 +846,19 @@
           syncFromCollab(sheet);         // §1.3: incremental, edit-safe apply
         },
         onStatus: (status) => {
-          setCollabStatus(
-            status === "connected" ? "实时协同 · 已连接"
-              : status === "connecting" ? "实时协同 · 连接中…"
-              : "实时协同 · 已断开");
+          collabConn = status === "connected" ? "connected"
+            : status === "connecting" ? "connecting" : "disconnected";
+          renderCollabStatus();
         },
         onPresence: (users) => {
-          setCollabStatus(`实时协同 · 在线 ${users.length} 人`);
+          collabPeers = users.length;
+          renderCollabStatus();
         },
       });
       if (active) {
         collab = ctrl;
-        setCollabStatus("实时协同 · 已连接");
+        collabConn = "connected";
+        renderCollabStatus();
         toast("已连接实时协同，多人编辑将实时同步", true);
       }
     } catch (_e) { /* stay on REST */ }
