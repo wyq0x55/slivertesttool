@@ -13,7 +13,7 @@
  *   Public : setFields, setData, getSelectedIds, clearSelection, engine
  *            + multi-sheet: setSheetFields, setSheetData, patchSheetData,
  *              getActiveSheetKey, setActiveSheetKey
- *            + collaboration: setRowHighlights
+ *            + collaboration: setRowHighlights, isEditing
  *   Used by editor.js directly (compat): _setRowSelected, _syncSelectAll,
  *            _emitSelection
  *   Callbacks (from MountOpts): onSave, onSelectionChange, onComment, onSteps,
@@ -129,6 +129,7 @@ export class UniverGridAdapter {
   private syncTimer: any = null; // debounce for range/paste/fill persistence
   private syncing = false;       // guards overlapping flushes
   private lastStepsKey: string | null = null; // de-dupes step-dialog open per cell
+  private editing = false;       // true while the user has a cell editor open (SheetEditStarted→Ended)
 
   constructor(deps: UniverDeps, opts: MountOpts) {
     this.deps = deps;
@@ -336,6 +337,12 @@ export class UniverGridAdapter {
     } finally { this.applying = false; }
     ctx.hlRows = next;
   }
+
+  // True only while a real cell-editor session is open (a peer's remote apply
+  // would clobber the user's in-progress keystrokes). Unlike a DOM activeElement
+  // probe this does NOT fire for a merely-selected cell, so real-time sync keeps
+  // flowing the instant the user stops editing (design §1.3).
+  isEditing(): boolean { return this.editing; }
 
   // Mix a collaborator colour with white to a faint tint suitable as a row
   // background (the full colour would drown the cell text).
@@ -673,6 +680,16 @@ export class UniverGridAdapter {
       } catch (_e) { /* optional */ }
     }
     if (!bound) console.warn("[LMUniver] no change event could be bound; edits may not persist");
+
+    // Track the cell-editor open/close so the editor can tell "actively typing"
+    // apart from "merely focused" (design §1.3 real-time apply). Univer keeps a
+    // hidden input focused to capture keystrokes even when the user is only
+    // selecting, so a DOM activeElement check misfires and freezes remote sync;
+    // these events flip only on a real edit session.
+    try {
+      if (evs.SheetEditStarted) api.addEvent(evs.SheetEditStarted, () => { this.editing = true; });
+      if (evs.SheetEditEnded) api.addEvent(evs.SheetEditEnded, () => { this.editing = false; });
+    } catch (_e) { /* edit-state tracking is optional */ }
 
     // Native worksheet-tab switches: probe the various event names Univer builds
     // expose, and reconcile the active context on each.

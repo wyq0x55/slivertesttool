@@ -75,6 +75,17 @@
       });
     }
 
+    // True while the user is actively editing a cell (a contenteditable text
+    // cell or a select/date control has focus). Lets the editor freeze remote
+    // real-time applies only during a genuine edit — matching the Univer
+    // adapter's isEditing() so both engines gate sync the same, accurate way.
+    isEditing() {
+      const ae = document.activeElement;
+      if (!ae || !this.host.contains(ae)) return false;
+      if (ae.isContentEditable && ae.classList.contains("lm-cell")) return true;
+      return ae.classList.contains("lm-cell-control");
+    }
+
     // --- Selection -------------------------------------------------------- #
     getSelectedIds() {
       return this.items.map((i) => i.id).filter((id) => this.selected.has(id));

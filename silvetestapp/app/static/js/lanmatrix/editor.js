@@ -106,14 +106,21 @@
     if (savingCount > 0) return true;
     if (document.hidden) return true;
     if (document.querySelector("dialog[open]")) return true;
+    // Prefer the grid's OWN edit-state signal (Univer adapter: SheetEditStarted/
+    // Ended; fallback grid: focused editable cell/control). This is accurate —
+    // unlike a raw DOM activeElement probe, which misfires on Univer because it
+    // keeps a hidden input focused for keystroke capture even when the user is
+    // merely selecting a cell. That misfire used to freeze remote real-time sync
+    // the moment the user clicked the grid (visible symptom: cell edits from
+    // peers taking many seconds / appearing stuck, while awareness-driven row
+    // highlights stayed instant). With the precise signal, sync only pauses
+    // during a genuine edit and resumes the instant it ends.
+    if (typeof grid.isEditing === "function") return grid.isEditing();
+    // Legacy fallback (stale Univer build without edit events): DOM heuristic.
+    // A merely-focused grid control (e.g. the column-filter funnel button, which
+    // keeps focus inside the host after its panel closes) must NOT freeze sync.
     const host = document.getElementById("lm-grid-host");
     const ae = document.activeElement;
-    // Only a genuine text-entry element (the Univer cell editor: an input,
-    // textarea or contenteditable) means the user is actively typing and a
-    // remote apply would clobber their keystrokes. A merely-focused grid control
-    // — e.g. the native column-filter funnel button, which keeps focus inside the
-    // host after the filter panel closes — must NOT freeze real-time sync (that
-    // left collab permanently deaf after any filtering, even once cleared).
     if (host && ae && ae !== host && host.contains(ae)) {
       const tag = (ae.tagName || "").toLowerCase();
       if (tag === "input" || tag === "textarea" || ae.isContentEditable) return true;
