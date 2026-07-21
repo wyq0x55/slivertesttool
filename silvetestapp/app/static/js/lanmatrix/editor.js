@@ -229,7 +229,7 @@
     document.getElementById("lm-count").textContent = `共 ${total} 条`;
     if (currentSheet === "test") renderPager();
     else document.getElementById("lm-pager").innerHTML = "";
-    applyRowHighlights();          // repaint drops row styling → re-apply (§6.1)
+    applyCollabPresence();         // repaint drops overlay/highlight → re-apply (§6.1)
   }
 
   // Re-push the current sheet's rows to the grid after the engine settles, to
@@ -449,33 +449,61 @@
   // correctly even when peers are filtering/sorting. Falsy uuid clears it.
   function updateSelectionUI(ids) {
     if (!collabActive() || !collab.setLocalCursor) return;
+    let rowId = null;
+    let col = null;
+    if (grid && typeof grid.getActiveCell === "function") {
+      const ac = grid.getActiveCell();
+      if (ac) { rowId = ac.id; col = (ac.col == null ? null : ac.col); }
+    }
+    if (rowId == null && ids && ids.length) rowId = Number(ids[0]);
     let uuid = null;
-    const first = ids && ids.length ? Number(ids[0]) : null;
-    if (first != null) {
+    if (rowId != null) {
       const items = sheetItems[currentSheet] || [];
       for (const it of items) {
-        if (Number(it.id) === first) { uuid = it.uuid || null; break; }
+        if (Number(it.id) === Number(rowId)) { uuid = it.uuid || null; break; }
       }
     }
-    collab.setLocalCursor(currentSheet, uuid);
+    collab.setLocalCursor(currentSheet, uuid, col);
   }
 
-  // Translate remote cursors for the active sheet into a ``{ id: color }`` map
-  // (via uuid→id lookup in the current view) and hand it to the grid to paint
-  // per-row highlights. Called on every cursor change and after each render
-  // (a full repaint drops the row styling, so it must be re-applied).
-  function applyRowHighlights() {
-    if (!grid || typeof grid.setRowHighlights !== "function") return;
-    const map = {};
+  // Render remote collaborators' presence for the active sheet (design §6.1).
+  // Two mutually-exclusive modes, never both at once:
+  //   1. Precise remote-cursor overlay — a coloured box on each peer's exact
+  //      cell/row plus a name tag (grid.setRemoteCursors). Preferred.
+  //   2. Fallback row highlight — a faint tint on each peer's row
+  //      (grid.setRowHighlights) — used only when the overlay is unavailable or
+  //      declined (e.g. the Univer canvas engine, which can't place a DOM box).
+  // Called on every cursor change and after each render (a full repaint drops
+  // both the overlay and the row styling, so presence must be re-applied).
+  function applyCollabPresence() {
+    if (!grid) return;
     const cur = (remoteCursors && remoteCursors[currentSheet]) || {};
     const items = sheetItems[currentSheet] || [];
     const byUuid = {};
     items.forEach((it) => { if (it.uuid) byUuid[it.uuid] = it.id; });
+    const cursors = [];
     Object.keys(cur).forEach((uuid) => {
       const id = byUuid[uuid];
-      if (id !== undefined) map[id] = cur[uuid].color;
+      if (id === undefined) return;
+      const c = cur[uuid];
+      cursors.push({ id: id, uuid: uuid, col: (c.col == null ? null : c.col),
+        name: c.name, color: c.color });
     });
-    grid.setRowHighlights(map);
+    let overlaid = false;
+    if (typeof grid.setRemoteCursors === "function") {
+      try { overlaid = grid.setRemoteCursors(cursors) === true; }
+      catch (_e) { overlaid = false; }
+    }
+    // Keep the two modes exclusive: clear whichever one is not in use.
+    if (typeof grid.setRowHighlights === "function") {
+      if (overlaid) {
+        grid.setRowHighlights({});
+      } else {
+        const map = {};
+        cursors.forEach((c) => { map[c.id] = c.color; });
+        grid.setRowHighlights(map);
+      }
+    }
   }
 
   // --- Sheet switching (test / const / lib) ---
@@ -941,7 +969,7 @@
         },
         onCursors: (bySheet) => {
           remoteCursors = bySheet || {};
-          applyRowHighlights();
+          applyCollabPresence();
         },
       });
       if (active) {

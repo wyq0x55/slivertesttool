@@ -287,11 +287,12 @@
   // which row this user is on. The row is identified by its stable ``uuid``
   // (never an absolute row number) because peers may be filtering/sorting and
   // therefore see a different row order. Passing a falsy ``uuid`` clears it.
-  LMCollabController.prototype.setLocalCursor = function (sheet, uuid) {
+  LMCollabController.prototype.setLocalCursor = function (sheet, uuid, col) {
     if (!this.provider) return;
     try {
       this.provider.awareness.setLocalStateField(
-        "cursor", uuid ? { sheet: sheet, uuid: uuid } : null);
+        "cursor",
+        uuid ? { sheet: sheet, uuid: uuid, col: (col == null ? null : col) } : null);
     } catch (_e) { /* awareness optional */ }
   };
 
@@ -314,6 +315,7 @@
         name: u.name || "协作者",
         color: u.color || "#888",
         id: u.id,
+        col: (c.col == null ? null : c.col),
       };
     });
     this._cb.onCursors(bySheet);

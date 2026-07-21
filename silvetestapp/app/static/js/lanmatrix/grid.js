@@ -86,6 +86,85 @@
       return ae.classList.contains("lm-cell-control");
     }
 
+    // Current editing cell as ``{ id, col }`` (col = index into visible fields,
+    // or null when only a row is focused). Cached as ``_lastActive`` so it
+    // survives blur — the editor publishes it into awareness as the local cursor
+    // so peers can draw a precise remote-cursor overlay (design §6.1).
+    getActiveCell() {
+      const ae = document.activeElement;
+      if (!ae || !this.host.contains(ae)) return this._lastActive || null;
+      const tr = ae.closest && ae.closest("tr[data-id]");
+      if (!tr) return this._lastActive || null;
+      const id = Number(tr.dataset.id);
+      let col = null;
+      const td = ae.closest && ae.closest("td.lm-cell");
+      if (td && td.dataset.key) {
+        const fields = this._visibleFields();
+        const i = fields.findIndex((f) => f.field_key === td.dataset.key);
+        col = i >= 0 ? i : null;
+      }
+      this._lastActive = { id: id, col: col };
+      return this._lastActive;
+    }
+
+    // Draw remote collaborators' cursors/selections as an absolutely-positioned
+    // DOM overlay over the grid (design §6.1). ``cursors`` is a list of
+    // ``{ id, col, name, color }``. Returns true — the DOM overlay is always
+    // available here — so the editor uses this instead of the row-highlight
+    // fallback (the two never show at once). Univer (canvas) returns false and
+    // falls back to row highlights.
+    setRemoteCursors(cursors) {
+      this._remoteCursors = Array.isArray(cursors) ? cursors : [];
+      this._drawRemoteCursors();
+      return true;
+    }
+
+    _ensureOverlay() {
+      if (getComputedStyle(this.host).position === "static") {
+        this.host.style.position = "relative";
+      }
+      let ov = this.host.querySelector(":scope > .lm-collab-overlay");
+      if (!ov) {
+        ov = document.createElement("div");
+        ov.className = "lm-collab-overlay";
+        this.host.appendChild(ov);
+      }
+      return ov;
+    }
+
+    // Position a box over the target cell (or whole row when col is unknown)
+    // using content-relative offsets, so the overlay scrolls with the grid for
+    // free — no scroll handler needed. Re-run after every render (innerHTML wipes
+    // the layer). Rows filtered out of the current view are simply skipped.
+    _drawRemoteCursors() {
+      const list = this._remoteCursors || [];
+      const ov = this._ensureOverlay();
+      ov.innerHTML = "";
+      if (!list.length) return;
+      const fields = this._visibleFields();
+      list.forEach((c) => {
+        const tr = this.host.querySelector(`tbody tr[data-id="${c.id}"]`);
+        if (!tr) return;
+        let target = null;
+        if (c.col != null && fields[c.col]) {
+          target = tr.querySelector(`td.lm-cell[data-key="${fields[c.col].field_key}"]`);
+        }
+        const rect = target || tr;
+        const box = document.createElement("div");
+        box.className = "lm-collab-cursor" + (target ? "" : " lm-collab-cursor-row");
+        box.style.setProperty("--lm-collab-color", c.color || "#888");
+        box.style.left = rect.offsetLeft + "px";
+        box.style.top = rect.offsetTop + "px";
+        box.style.width = rect.offsetWidth + "px";
+        box.style.height = rect.offsetHeight + "px";
+        const tag = document.createElement("span");
+        tag.className = "lm-collab-cursor-tag";
+        tag.textContent = c.name || "协作者";
+        box.appendChild(tag);
+        ov.appendChild(box);
+      });
+    }
+
     // --- Selection -------------------------------------------------------- #
     getSelectedIds() {
       return this.items.map((i) => i.id).filter((id) => this.selected.has(id));
@@ -147,6 +226,7 @@
         </table>`;
       this._bind();
       this._syncSelectAll();
+      this._drawRemoteCursors();   // innerHTML wiped the overlay: repaint it (§6.1)
     }
 
     _rowHtml(it, fields) {
@@ -254,7 +334,10 @@
       }
       // Free-text cells (contenteditable).
       this.host.querySelectorAll('td.lm-cell[contenteditable]').forEach((td) => {
-        td.addEventListener("focus", () => { td.dataset.orig = td.textContent; });
+        td.addEventListener("focus", () => {
+          td.dataset.orig = td.textContent;
+          self._emitSelection();   // republish local cursor (focused cell → col) §6.1
+        });
         td.addEventListener("keydown", (e) => {
           if (e.key === "Enter") { e.preventDefault(); td.blur(); }
           if (e.key === "Escape") { td.textContent = td.dataset.orig; td.blur(); }
@@ -269,6 +352,7 @@
       });
       // Control cells (select / multi-select / date input): commit on change.
       this.host.querySelectorAll("td.lm-cell .lm-cell-control").forEach((ctl) => {
+        ctl.addEventListener("focus", () => self._emitSelection());  // republish cursor col §6.1
         ctl.addEventListener("change", () => {
           const td = ctl.closest("td");
           let value;

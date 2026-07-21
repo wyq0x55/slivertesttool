@@ -356,4 +356,31 @@ select.lm-cell-control[multiple] { min-height: 46px; }
   background-color: color-mix(in srgb, var(--lm-collab-color, #888) 10%, transparent);
 }
 
+/* Remote-cursor overlay (Phase 2, design §6.1): a coloured box drawn over each
+   peer's exact editing cell (or whole row when the column is unknown), with a
+   name tag. Positioned in content coordinates inside the grid host so it scrolls
+   with the table for free. pointer-events:none keeps it click-through. Only the
+   DOM (fallback) grid uses this; the Univer canvas engine falls back to the row
+   tint above. Never shown together with .lm-row-collab. */
+.lm-collab-overlay {
+  position: absolute; inset: 0; pointer-events: none; overflow: visible; z-index: 5;
+}
+.lm-collab-cursor {
+  position: absolute; pointer-events: none; box-sizing: border-box;
+  border: 2px solid var(--lm-collab-color, #888);
+  background: color-mix(in srgb, var(--lm-collab-color, #888) 8%, transparent);
+  border-radius: 2px;
+}
+.lm-collab-cursor-row {
+  background: color-mix(in srgb, var(--lm-collab-color, #888) 6%, transparent);
+  border-left-width: 4px; border-right: none; border-top: none; border-bottom: none;
+}
+.lm-collab-cursor-tag {
+  position: absolute; top: -16px; left: -2px; max-width: 140px;
+  padding: 1px 5px; border-radius: 3px 3px 3px 0;
+  background: var(--lm-collab-color, #888); color: #fff;
+  font-size: 10px; line-height: 14px; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; box-shadow: 0 1px 2px rgba(0, 0, 0, .25);
+}
+
 /* Editing-row highlight (Phase 2, design §6.1): rows a peers
