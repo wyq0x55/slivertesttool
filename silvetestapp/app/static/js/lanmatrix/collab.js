@@ -89,7 +89,10 @@
   function LMCollabController(opts) {
     this.pid = opts.pid;
     this.api = opts.api || global.LMApi;
+    // Sheet catalogue + CRDT key prefix come from the server config that
+    // editor.js fetched (GET /api/v1/config); the literals are only a fallback.
     this.sheets = opts.sheets || ["test", "const", "lib"];
+    this.rowPrefix = opts.rowPrefix || "rows:";
     this.doc = null;
     this.provider = null;
     this.arrays = {};
@@ -139,7 +142,7 @@
     this.doc = doc;
     const self = this;
     this.sheets.forEach(function (s) {
-      const arr = doc.getArray("rows:" + s);
+      const arr = doc.getArray(self.rowPrefix + s);
       self.arrays[s] = arr;
 
       // FIX: observeDeep 对本地和远端变更都会触发。原来的代码对每次变更

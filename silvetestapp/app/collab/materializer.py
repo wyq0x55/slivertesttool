@@ -82,6 +82,28 @@ class Materializer:
             self._timer.cancel()
             self._timer = None
 
+    async def flush_and_detach(self) -> None:
+        """Persist any debounced-but-unwritten changes, then stop observing.
+
+        Called when a room is evicted (idle) or the server shuts down: the CRDT
+        state is already durable in the ``YStore``, but a pending debounce timer
+        means the DB materialization has not caught up yet. We run one final
+        reconcile so no edits are lost, then detach so the ``Y.Doc`` can be torn
+        down without leaking this observer. Awaited on the event-loop thread.
+        """
+        had_pending = (self._timer is not None
+                       or self._dirty_again
+                       or self._flushing)
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        if had_pending and self._doc is not None:
+            try:
+                await self._flush()
+            except Exception:  # pragma: no cover - never crash teardown
+                _log.exception("final flush failed for project %s", self._pid)
+        self.detach()
+
     # ------------------------------------------------------------------ #
     def _on_txn(self, event: Any) -> None:
         if self._suppress > 0:

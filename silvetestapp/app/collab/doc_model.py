@@ -30,7 +30,8 @@ _SEED_SKIP = {"row_order", "updated_at"}
 
 
 def sheet_key(sheet: str) -> str:
-    return f"rows:{sheet}"
+    from ..services.lanmatrix import fields as fld
+    return fld.sheet_row_key(sheet)
 
 
 def sheets() -> list[str]:

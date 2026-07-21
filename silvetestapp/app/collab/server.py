@@ -26,6 +26,7 @@ Contracts VERIFIED against the installed pycrdt-websocket 0.16.4 source:
 from __future__ import annotations
 
 import logging
+import time
 from urllib.parse import parse_qs
 
 import anyio
@@ -56,17 +57,27 @@ class CollabWebsocketServer(WebsocketServer):
     def __init__(self, flask_app, **kw) -> None:
         # Keep rooms alive so their Materializer keeps flushing while at least
         # one project session may reconnect; PgYStore holds the durable state.
+        # Unbounded growth is avoided by the idle sweeper below (see
+        # ``_sweep_loop``): a room with no connected client is evicted after
+        # ``COLLAB_ROOM_IDLE_TTL_SECONDS`` and rehydrated from PgYStore on the
+        # next connection.
         kw.setdefault("auto_clean_rooms", False)
         super().__init__(**kw)
         self._app = flask_app
         self._rooms: dict[str, YRoom] = {}
         self._materializers: dict[str, Materializer] = {}
+        # name -> monotonic timestamp of the last moment the room had a client.
+        self._last_active: dict[str, float] = {}
+        cfg = flask_app.config
+        self._idle_ttl = float(cfg.get("COLLAB_ROOM_IDLE_TTL_SECONDS", 900) or 0)
+        self._sweep_interval = float(cfg.get("COLLAB_ROOM_SWEEP_SECONDS", 60) or 60)
 
     async def get_room(self, name: str) -> YRoom:
         room = self._rooms.get(name)
         if room is None:
             room = await self._create_room(name)
             self._rooms[name] = room
+        self._last_active[name] = time.monotonic()
         return room
 
     async def _create_room(self, name: str) -> YRoom:
@@ -105,6 +116,81 @@ class CollabWebsocketServer(WebsocketServer):
         with self._app.app_context():
             n = doc_model.bootstrap_doc(ydoc, pid)
         _log.info("bootstrapped project %s from DB: %s rows", pid, n)
+
+    # ------------------------------------------------------------------ #
+    # Lifecycle: start the idle sweeper with the server, detach on stop.
+    # ------------------------------------------------------------------ #
+    async def __aenter__(self):
+        await super().__aenter__()
+        # Run the idle-eviction sweeper inside the server's task group so it is
+        # cancelled automatically when the server stops.
+        if self._idle_ttl > 0 and self._task_group is not None:
+            self._task_group.start_soon(self._sweep_loop)
+            _log.info("collab idle sweeper on: ttl=%ss interval=%ss",
+                      self._idle_ttl, self._sweep_interval)
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, exc_tb):
+        # Detach every Materializer so no Y.Doc observer leaks past shutdown.
+        for name, mat in list(self._materializers.items()):
+            try:
+                mat.detach()
+            except Exception:  # pragma: no cover - best effort on teardown
+                _log.exception("materializer detach failed on shutdown: %s", name)
+        self._materializers.clear()
+        self._rooms.clear()
+        self._last_active.clear()
+        return await super().__aexit__(exc_type, exc_value, exc_tb)
+
+    async def _sweep_loop(self) -> None:
+        """Periodically evict rooms that have been client-less past the TTL."""
+        while True:
+            await anyio.sleep(self._sweep_interval)
+            try:
+                await self._evict_idle_rooms()
+            except Exception:  # pragma: no cover - sweeper must never die
+                _log.exception("collab idle sweep iteration failed")
+
+    async def _evict_idle_rooms(self) -> None:
+        now = time.monotonic()
+        for name in list(self._rooms.keys()):
+            room = self._rooms.get(name)
+            if room is None:
+                continue
+            if room.clients:
+                # Still in use: reset the idle clock.
+                self._last_active[name] = now
+                continue
+            last = self._last_active.get(name, now)
+            if now - last >= self._idle_ttl:
+                await self._evict_room(name)
+
+    async def _evict_room(self, name: str) -> None:
+        """Tear down one idle room: final materialize, detach, stop, forget.
+
+        The durable CRDT state lives in :class:`PgYStore`, so a re-connection
+        after eviction rebuilds the room via :meth:`_create_room`.
+        """
+        room = self._rooms.pop(name, None)
+        # A client may have connected in the tiny window before this coroutine
+        # ran; if so, keep the room and refresh its idle clock.
+        if room is not None and room.clients:
+            self._rooms[name] = room
+            self._last_active[name] = time.monotonic()
+            return
+        mat = self._materializers.pop(name, None)
+        self._last_active.pop(name, None)
+        if mat is not None:
+            try:
+                await mat.flush_and_detach()
+            except Exception:  # pragma: no cover
+                _log.exception("materializer flush/detach failed: %s", name)
+        if room is not None:
+            try:
+                await room.stop()
+            except Exception:  # pragma: no cover
+                _log.exception("room stop failed: %s", name)
+        _log.info("evicted idle collab room: %s", name)
 
 
 def build_asgi_app(flask_app):

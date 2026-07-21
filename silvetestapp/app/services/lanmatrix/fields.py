@@ -59,6 +59,46 @@ SHEETS: tuple[str, ...] = ("test", "const", "lib")
 DEFAULT_SHEET = "test"
 SHEET_STEPS_FIELD: dict[str, str] = {"test": "steps", "lib": "lib_stb"}
 
+# Display labels for the editor sheet tabs. Kept here so the whole sheet
+# catalogue (keys, default, steps field, labels) has one source of truth that
+# the ``/api/v1/config`` endpoint serves to the browser — the frontend no longer
+# defines its own parallel ``SHEET_SPECS``.
+SHEET_LABELS: dict[str, str] = {"test": "测试用例", "const": "常量", "lib": "函数库"}
+
+# Naming conventions shared by the CRDT layer and the browser. ``ROW_ARRAY_PREFIX``
+# builds the per-sheet ``Y.Array`` key (``rows:{sheet}``); ``ROOM_PREFIX`` builds
+# the collaboration room name (``project:{id}``). Both are echoed by
+# ``/api/v1/config`` so neither the CRDT doc model nor the frontend hard-codes
+# them independently.
+ROW_ARRAY_PREFIX = "rows:"
+ROOM_PREFIX = "project:"
+
+
+def sheet_row_key(sheet: str) -> str:
+    """CRDT ``Y.Array`` key that holds ``sheet``'s rows (``rows:{sheet}``)."""
+    return f"{ROW_ARRAY_PREFIX}{sheet}"
+
+
+def room_name(project_id: int) -> str:
+    """Collaboration room name for ``project_id`` (``project:{id}``)."""
+    return f"{ROOM_PREFIX}{project_id}"
+
+
+def matrix_config() -> dict[str, Any]:
+    """Canonical editor/collab protocol config consumed by the frontend.
+
+    Single source of truth for the sheet catalogue and CRDT/room naming, served
+    verbatim by ``GET /api/v1/config`` so ``editor.js`` / ``collab.js`` never
+    define a parallel schema.
+    """
+    return {
+        "sheets": [{"key": k, "name": SHEET_LABELS.get(k, k)} for k in SHEETS],
+        "default_sheet": DEFAULT_SHEET,
+        "steps_fields": dict(SHEET_STEPS_FIELD),
+        "row_array_prefix": ROW_ARRAY_PREFIX,
+        "room_prefix": ROOM_PREFIX,
+    }
+
 MULTILINE_TYPES = frozenset({"multiline"})
 SELECT_TYPES = frozenset({"single_select"})
 MULTI_TYPES = frozenset({"multi_select"})

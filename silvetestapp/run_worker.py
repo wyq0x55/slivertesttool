@@ -22,16 +22,15 @@ import atexit
 import logging
 import threading
 
-from app import create_app
 from app.config import Config
 
-# Build the app once so tables exist and the license settings are seeded, and so
-# every task shares this configuration/database.
-create_app()
-
 # Importing the tasks module registers ``run_task`` with the shared huey instance.
-from app.jobqueue import tasks  # noqa: E402,F401
-from app.jobqueue.huey_app import huey  # noqa: E402
+# The single worker-side Flask app is built lazily and cached inside ``tasks``
+# (via ``tasks._get_app()``); ``main()`` materialises it exactly once so tables
+# exist and the license settings are seeded. Building it here as well would
+# construct a second, throwaway app (double Flask initialisation), so we don't.
+from app.jobqueue import tasks  # noqa: F401
+from app.jobqueue.huey_app import huey
 
 logger = logging.getLogger("silvetestapp.worker")
 

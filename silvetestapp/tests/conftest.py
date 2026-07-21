@@ -43,7 +43,6 @@ def app_ctx(monkeypatch):
     monkeypatch.setenv("REPORT_DIR", str(root / "reports"))
     monkeypatch.setenv("WORKSPACE_DIR", str(root / "ws"))
     monkeypatch.setenv("DATABASE_URL", test_db_url)
-    monkeypatch.setenv("ADMIN_TOKEN", "secret")
     monkeypatch.setenv("LICENSE_LIMIT", "2")
     # The legacy API tests exercise the original endpoints directly; keep the
     # unified-login gate off for them (it is covered separately).

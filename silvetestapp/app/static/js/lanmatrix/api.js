@@ -105,6 +105,11 @@
     // server. Returns { token, room, ws_url, expires_in }. Requires item.edit.
     getCollabToken(id) { return request("POST", `/projects/${id}/collab-token`, {}); },
 
+    // Canonical editor/collab protocol config (sheet catalogue, default sheet,
+    // per-sheet steps fields, CRDT/room naming). Single source of truth served
+    // by the backend so the frontend never re-declares the schema.
+    getConfig() { return request("GET", "/config"); },
+
     batchPreview(id, payload) { return request("POST", `/projects/${id}/items/batch-preview`, { body: payload }); },
     batchUpdate(id, payload) { return request("POST", `/projects/${id}/items/batch-update`, { body: payload }); },
     batchUndo(id, batchId) { return request("POST", `/projects/${id}/items/batch-undo`, { body: { batch_id: batchId } }); },

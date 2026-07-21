@@ -162,8 +162,11 @@ class Config:
     PORT = _as_int(os.environ.get("PORT"), 8080)
 
     # --- Admin ---
-    # Token guarding the admin page / admin API. Empty disables admin access.
-    ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "change-me-admin-token")
+    # Administration is authorised solely by the LAN Test Matrix system-admin
+    # session (RBAC); the former shared ``ADMIN_TOKEN`` has been removed because
+    # its default value allowed any logged-in user to escalate to admin. Grant a
+    # user "System Administrator" (see LM_ADMIN_* below) to authorise the admin
+    # console and the ``/api/admin/*`` + ``/api/v1/admin/*`` endpoints.
 
     # --- LAN Test Matrix (online editor) ------------------------------------
     # The formerly self-contained ``lanmatrix`` project is now expanded into the
@@ -239,6 +242,18 @@ class Config:
     # Explicit WebSocket base for the collab server (e.g. "wss://host:1234").
     # When empty the frontend derives it from window.location.
     COLLAB_WS_URL = os.environ.get("COLLAB_WS_URL", "").strip()
+    # Room lifecycle: the collab server keeps one in-memory room (Y.Doc +
+    # Materializer) per open project. To bound memory on a long-running server,
+    # a background sweeper evicts rooms that have had no connected client for
+    # COLLAB_ROOM_IDLE_TTL_SECONDS (their state stays durable in PgYStore and is
+    # rehydrated on reconnect). Set the TTL to 0 to disable eviction.
+    COLLAB_ROOM_IDLE_TTL_SECONDS = _as_int(
+        os.environ.get("COLLAB_ROOM_IDLE_TTL_SECONDS"), 900
+    )
+    # How often (seconds) the sweeper scans rooms for idle eviction.
+    COLLAB_ROOM_SWEEP_SECONDS = _as_int(
+        os.environ.get("COLLAB_ROOM_SWEEP_SECONDS"), 60
+    )
 
     # --- SSE ---
     # How often the SSE endpoint polls task_events for new rows (seconds).

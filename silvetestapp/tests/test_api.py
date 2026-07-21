@@ -3,7 +3,7 @@
 Task creation goes through the primary folder-upload endpoint
 (``POST /api/tasks/upload_tree``); the legacy single-``.zip`` endpoints were
 removed. A registered ``.sil`` model is a precondition of the folder flow, so
-each end-to-end test registers one first (admin-token gated).
+each end-to-end test registers one first (system-admin session gated).
 """
 
 from __future__ import annotations
@@ -14,14 +14,32 @@ import time
 JUDGE = "# coding: UTF-8\ndef run():\n    return True\n"
 
 
+def _login_admin(client):
+    """Authorise the test client as the seeded system administrator.
+
+    Admin actions are gated by the unified system-admin session (RBAC), so we
+    log in the bootstrap admin by putting its id in the session (the former
+    ``X-Admin-Token`` header path has been removed).
+    """
+    from app.models import LMUser
+
+    with client.application.app_context():
+        admin = LMUser.query.filter_by(is_system_admin=True).first()
+        assert admin is not None, "bootstrap system admin should be seeded"
+        admin_id = admin.id
+    with client.session_transaction() as sess:
+        sess["lm_user_id"] = admin_id
+    return admin_id
+
+
 def _register_model(client, tmp_path, name="PlantA"):
     """Register a real server-side ``.sil`` model (upload_tree precondition)."""
     model_file = tmp_path / f"{name}.sil"
     model_file.write_text("SIL MODEL\n", encoding="utf-8")
+    _login_admin(client)
     resp = client.post(
         "/api/admin/models",
         json={"name": name, "path": str(model_file)},
-        headers={"X-Admin-Token": "secret"},
     )
     assert resp.status_code == 200, resp.get_data(as_text=True)
     return name
@@ -96,9 +114,10 @@ def test_resubmit_after_completion_allowed(client, tmp_path):
 
 
 def test_admin_verify(client):
-    # Wrong / missing token is rejected; correct token unlocks.
+    # No system-admin session is rejected; a logged-in admin unlocks.
     assert client.post("/api/admin/verify", json={}).status_code == 401
-    ok = client.post("/api/admin/verify", headers={"X-Admin-Token": "secret"})
+    _login_admin(client)
+    ok = client.post("/api/admin/verify")
     assert ok.status_code == 200
     assert ok.get_json()["ok"] is True
 
@@ -107,13 +126,13 @@ def test_register_and_list_models(tmp_path, client):
     model_file = tmp_path / "plant.sil"
     model_file.write_text("SIL\n", encoding="utf-8")
 
-    # Registration requires the admin token.
+    # Registration requires a system-admin session.
     assert client.post("/api/admin/models",
                        json={"name": "PlantA", "path": str(model_file)}).status_code == 401
 
+    _login_admin(client)
     resp = client.post("/api/admin/models",
-                       json={"name": "PlantA", "path": str(model_file)},
-                       headers={"X-Admin-Token": "secret"})
+                       json={"name": "PlantA", "path": str(model_file)})
     assert resp.status_code == 200, resp.get_data(as_text=True)
 
     # Public model list exposes the registered name and existence flag.
@@ -122,8 +141,7 @@ def test_register_and_list_models(tmp_path, client):
 
     # A non-.sil path is rejected.
     bad = client.post("/api/admin/models",
-                      json={"name": "Bad", "path": "/tmp/not_a_model.txt"},
-                      headers={"X-Admin-Token": "secret"})
+                      json={"name": "Bad", "path": "/tmp/not_a_model.txt"})
     assert bad.status_code == 400
 
 
@@ -139,12 +157,12 @@ def test_download_batch_empty(client):
     assert resp.status_code == 404
 
 
-def test_admin_license_requires_token(client):
+def test_admin_license_requires_admin(client):
     assert client.post("/api/admin/license", json={"count": 8}).status_code == 401
+    _login_admin(client)
     ok = client.post(
         "/api/admin/license",
         json={"count": 8},
-        headers={"X-Admin-Token": "secret"},
     )
     assert ok.status_code == 200
     assert client.get("/api/licenses").get_json()["total"] == 8

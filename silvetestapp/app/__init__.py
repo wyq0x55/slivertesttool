@@ -57,7 +57,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
         license_service.init_defaults(config_object.LICENSE_LIMIT)
 
     from .routes.api_routes import api_bp
-    from .routes.lanmatrix_api import v1 as lanmatrix_api_bp
+    from .routes.lanmatrix import BLUEPRINTS as lanmatrix_api_blueprints
     from .routes.lanmatrix_pages import pages_bp as lanmatrix_pages_bp
     from .routes.page_routes import page_bp
 
@@ -65,8 +65,11 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     app.register_blueprint(api_bp)
     # LAN Test Matrix online-editing platform — merged into the platform's own
     # model / route / service layers (see app.models.lanmatrix,
-    # app.routes.lanmatrix_*, app.services.lanmatrix).
-    app.register_blueprint(lanmatrix_api_bp)
+    # app.routes.lanmatrix_*, app.services.lanmatrix). The former ``/api/v1``
+    # God module was split by business boundary into five blueprints
+    # (auth, projects_items, tasks, admin_db, admin_console).
+    for _lm_bp in lanmatrix_api_blueprints:
+        app.register_blueprint(_lm_bp)
     app.register_blueprint(lanmatrix_pages_bp)
 
     with app.app_context():
@@ -102,11 +105,11 @@ def _install_auth_gate(app: Flask) -> None:
         "static",
         "lanmatrix_pages.login",
         "lanmatrix_pages.register",
-        "lanmatrix_api.login",
-        "lanmatrix_api.register",
-        "lanmatrix_api.logout",
-        "lanmatrix_api.me",
-        "lanmatrix_api.health",
+        "lanmatrix_auth.login",
+        "lanmatrix_auth.register",
+        "lanmatrix_auth.logout",
+        "lanmatrix_auth.me",
+        "lanmatrix_auth.health",
     }
 
     @app.before_request

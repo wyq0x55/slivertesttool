@@ -9,18 +9,37 @@
   let collab = null;            // LMCollabController instance when real-time collab is active
   const collabAvailable = root.dataset.collab === "1";  // server shipped the collab bundle + flag
   const collabActive = () => !!(collab && collab.isActive());
-  let currentSheet = "test";    // active editor sheet: "test" | "const" | "lib"
-  // The native Univer worksheet tabs, in order. ``key`` is the server-side sheet
-  // identifier; ``name`` is the tab label shown in Univer.
-  const SHEET_SPECS = [
+  // Editor sheet catalogue + protocol constants. The SINGLE source of truth is
+  // the server (GET /api/v1/config → app/services/lanmatrix/fields.py); init()
+  // fetches it and fills these in. The literals below are only a last-resort
+  // fallback used when that request fails, so the editor still renders — they
+  // are NOT a parallel schema definition.
+  let currentSheet = "test";    // active editor sheet (overwritten from config.default_sheet)
+  let SHEET_SPECS = [
     { key: "test", name: "测试用例" },
     { key: "const", name: "常量" },
     { key: "lib", name: "函数库" },
   ];
-  const SHEET_KEYS = SHEET_SPECS.map((s) => s.key);
-  // The field_key that carries the test-procedure (手順) JSON for each sheet.
-  // Sheets missing from this map have no steps editor.
-  const SHEET_STEPS = { test: "steps", lib: "lib_stb" };
+  let SHEET_KEYS = SHEET_SPECS.map((s) => s.key);
+  // field_key carrying the test-procedure (手順) JSON per sheet; sheets missing
+  // here have no steps editor.
+  let SHEET_STEPS = { test: "steps", lib: "lib_stb" };
+  // CRDT Y.Array key prefix (config.row_array_prefix), handed to the collab layer.
+  let ROW_ARRAY_PREFIX = "rows:";
+  // Pull the canonical protocol config from the server, overriding the fallback
+  // schema above. Any failure keeps the fallback so the editor stays usable.
+  async function loadConfig() {
+    try {
+      const cfg = await LMApi.getConfig();
+      if (cfg && Array.isArray(cfg.sheets) && cfg.sheets.length) {
+        SHEET_SPECS = cfg.sheets.map((s) => ({ key: s.key, name: s.name }));
+        SHEET_KEYS = SHEET_SPECS.map((s) => s.key);
+        if (cfg.steps_fields) SHEET_STEPS = cfg.steps_fields;
+        if (cfg.default_sheet) currentSheet = cfg.default_sheet;
+        if (cfg.row_array_prefix) ROW_ARRAY_PREFIX = cfg.row_array_prefix;
+      }
+    } catch (_e) { /* keep fallback schema */ }
+  }
   // Cache of each sheet's field list (used to drive per-sheet logic when running
   // the native-multi-sheet Univer engine).
   const sheetFields = {};
@@ -779,7 +798,9 @@
     if (!collabAvailable) return;
     if (!window.LMCollabController || !window.LMCollab) return;
     try {
-      const ctrl = window.LMCollabController.create({ pid, api: LMApi, sheets: SHEET_KEYS });
+      const ctrl = window.LMCollabController.create({
+        pid, api: LMApi, sheets: SHEET_KEYS, rowPrefix: ROW_ARRAY_PREFIX,
+      });
       const active = await ctrl.start({
         onChange: (sheet) => {
           if (!ctrl.isActive()) return;  // ignore events fired during initial sync
@@ -805,6 +826,7 @@
 
   async function init() {
     await window.LMReady;
+    await loadConfig();
     grid = LMGrid.create({
       host: document.getElementById("lm-grid-host"),
       fields,

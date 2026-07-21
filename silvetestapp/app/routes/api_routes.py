@@ -14,7 +14,7 @@ Endpoints (all JSON unless noted):
     GET    /api/tasks/download_batch   download several reports as one zip
     GET    /api/licenses               license/concurrency status
     GET    /api/models                 registered .sil models (names, for pickers)
-    POST   /api/admin/verify           check the admin token
+    POST   /api/admin/verify           check the current system-admin session
     GET    /api/admin/models           registered .sil models incl. paths (admin)
     POST   /api/admin/models           register a server-side .sil path (admin)
     POST   /api/admin/models/bulk      replace the whole model list (admin)
@@ -40,6 +40,7 @@ from flask import (
     jsonify,
     request,
     send_file,
+    session,
     stream_with_context,
 )
 
@@ -73,15 +74,21 @@ def _enqueue(task: Task) -> None:
 
 
 def _require_admin() -> bool:
-    token = _cfg().ADMIN_TOKEN
-    if not token:
+    """Authorise admin actions via the unified system-admin session (RBAC).
+
+    The former ``ADMIN_TOKEN`` header/field path has been removed. Authority now
+    comes solely from the LAN Test Matrix session: only a logged-in account with
+    ``is_system_admin`` is allowed. This closes the privilege-escalation hole
+    where the shared (default) ``ADMIN_TOKEN`` let *any* logged-in user perform
+    admin actions, and matches the session RBAC enforced by ``/api/v1/admin/*``.
+    """
+    uid = session.get("lm_user_id")
+    if uid is None:
         return False
-    supplied = (
-        request.headers.get("X-Admin-Token")
-        or request.form.get("admin_token")
-        or (request.get_json(silent=True) or {}).get("admin_token")
-    )
-    return supplied == token
+    from ..services.lanmatrix import service
+
+    user = service.get_user(uid)
+    return bool(user and user.is_active and user.is_system_admin)
 
 
 def _task_or_404(task_key: str) -> Task | None:
@@ -454,12 +461,15 @@ def models():
 # --------------------------------------------------------------------------- #
 @api_bp.post("/admin/verify")
 def admin_verify():
-    """Validate the admin token so the UI can unlock the admin controls."""
-    if not _cfg().ADMIN_TOKEN:
-        return jsonify(ok=False, enabled=False,
-                       error="Admin access is disabled (empty ADMIN_TOKEN)."), 403
+    """Report whether the current session is an authorised system admin.
+
+    Authority is the unified system-admin session (no ``ADMIN_TOKEN``): the UI
+    unlocks admin controls only when the logged-in account is a system
+    administrator.
+    """
     if not _require_admin():
-        return jsonify(ok=False, enabled=True, error="Invalid admin token."), 401
+        return jsonify(ok=False, enabled=True,
+                       error="System administrator session required."), 401
     return jsonify(ok=True, enabled=True)
 
 
