@@ -16,11 +16,17 @@ pure ``Y`` object construction does not.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from pycrdt import Array, Doc, Map
 
 from ..models import TestItemRow
+
+# Top-level Y.Map key holding the authoritative row-validation errors. The
+# server is the single writer of this channel; clients only observe it to paint
+# offending cells red (design §12.2). Keyed by row ``uuid``.
+ERRORS_KEY = "row_errors"
 
 # Field keys we never seed into the Y.Map: server-only bookkeeping that clients
 # don't edit and that materialization recomputes. ``uuid`` and ``id`` ARE kept
@@ -80,12 +86,45 @@ def ensure_sheets(doc: Doc) -> None:
     """
     for sheet in sheets():
         doc.get(sheet_key(sheet), type=Array)
+    # Bind the shared error channel too, so clients can observe it from the
+    # first sync even before any validation error exists.
+    doc.get(ERRORS_KEY, type=Map)
 
 
 def snapshot_sheet(doc: Doc, sheet: str) -> list[dict[str, Any]]:
     """Return the sheet's rows as plain dicts, in visual (array) order."""
     arr = doc.get(sheet_key(sheet), type=Array)
     return [dict(row) for row in arr.to_py()]
+
+
+def write_row_errors(doc: Doc, errors_by_uuid: dict[str, Any]) -> int:
+    """Publish the authoritative per-row validation errors into the Y.Doc.
+
+    ``errors_by_uuid`` maps ``uuid -> {"cells": [...], "message": str}`` for the
+    rows that failed this reconcile. The whole channel is rebuilt as a snapshot
+    (the server is the single writer), so a row that was fixed since the last
+    flush has its entry removed automatically. Only genuinely changed entries are
+    touched, to avoid needless observer churn. Returns the number of rows
+    currently in error.
+
+    Each value is stored as a **JSON string** (a primitive), not a nested dict:
+    pycrdt would otherwise convert a nested dict into a nested ``Y.Map`` and the
+    yjs client would read a Y type instead of a plain object. A JSON string is
+    unambiguous across both runtimes; the client ``JSON.parse``s it.
+
+    MUST be called inside a ``doc.transaction()`` **and** the materializer's
+    ``suppressed()`` block so the write does not re-trigger a reconcile.
+    """
+    emap = doc.get(ERRORS_KEY, type=Map)
+    desired = {u: json.dumps(info, ensure_ascii=False, sort_keys=True)
+               for u, info in (errors_by_uuid or {}).items()}
+    for row_uuid in list(emap.keys()):
+        if row_uuid not in desired:
+            del emap[row_uuid]
+    for row_uuid, payload in desired.items():
+        if emap.get(row_uuid) != payload:
+            emap[row_uuid] = payload
+    return len(desired)
 
 
 def write_back_ids(doc: Doc, sheet: str,

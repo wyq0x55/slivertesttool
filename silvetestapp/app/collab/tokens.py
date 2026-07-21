@@ -19,10 +19,11 @@ Token 有效期说明：
     token 仅在 WebSocket 握手请求中传输，由 SECRET_KEY 签名验证，即使
     被截获也只能访问单个项目房间，且在一个工作日内过期。
 
-    如需更短的 token 有效期，请在 collab.js 里实现续签：
-      1. 在过期前 ~30 s 重新调用 POST /collab-token 获取新 token。
-      2. 用新 token 重连 WebsocketProvider。
-    续签逻辑完成前，不要将 DEFAULT_MAX_AGE 缩短到 3600 s 以下。
+    静默续签已在前端实现（collab.js `_scheduleTokenRenewal`/`_renewToken`）：
+    在过期前 ~45 s 自动重新调用 POST /collab-token 拿新 token，并写回
+    `provider.params.token`，使后续每次（重）连都携带有效 token。因此可以
+    安全地把 DEFAULT_MAX_AGE 调短（如 1 小时）——续签会在到期前接管；此处
+    仍保留 8 小时是为超长会话（隔夜标签页）留足冗余，减少续签频次。
 """
 
 from __future__ import annotations

@@ -147,12 +147,13 @@ class Materializer:
             # reconcile can attribute rows to the collaborator who touched them.
             row_uid = _awareness_mod.row_actors(
                 _awareness_mod.snapshot_states(self._awareness))
-            summary, idmaps = await anyio.to_thread.run_sync(
+            summary, idmaps, row_errors = await anyio.to_thread.run_sync(
                 self._materialize_sync, snapshot, row_uid)
             _log.info("materialized project %s: %s", self._pid, summary)
-            # Push the authoritative id/version back into the Y.Doc on the loop
-            # thread; suppressed so it does not re-trigger a reconcile.
-            self._apply_id_writeback(idmaps)
+            # Push the authoritative id/version and any per-row validation errors
+            # back into the Y.Doc on the loop thread; suppressed so it does not
+            # re-trigger a reconcile.
+            self._apply_id_writeback(idmaps, row_errors)
         except Exception:  # pragma: no cover - logged, never crashes the loop
             _log.exception("materialization failed for project %s", self._pid)
         finally:
@@ -182,27 +183,39 @@ class Materializer:
             actor = self._resolve_actor(project)
             actor_by_uuid = self._resolve_row_actors(row_uid)
             result: dict[str, dict[str, int]] = {}
+            row_errors: dict[str, Any] = {}
             for sheet, rows in snapshot.items():
-                result[sheet] = items_service.materialize_sheet(
+                summary = items_service.materialize_sheet(
                     actor, project, sheet, rows, commit=False,
                     actor_by_uuid=actor_by_uuid)
+                result[sheet] = summary
+                for row_uuid, info in (summary.get("errors") or {}).items():
+                    row_errors[row_uuid] = {**info, "sheet": sheet}
             db.session.commit()
             idmaps = {sheet: items_service.sheet_uuid_index(self._pid, sheet)
                       for sheet in snapshot}
-            return result, idmaps
+            return result, idmaps, row_errors
 
-    def _apply_id_writeback(self, idmaps: dict[str, dict]) -> None:
-        """Write server id/version onto the Y.Maps (loop thread, suppressed)."""
-        if not idmaps or self._doc is None:
+    def _apply_id_writeback(self, idmaps: dict[str, dict],
+                            row_errors: Optional[dict[str, Any]] = None) -> None:
+        """Write server id/version and row errors onto the Y.Doc.
+
+        Runs on the loop thread inside a single suppressed transaction so neither
+        the id write-back nor the error-channel snapshot re-triggers a reconcile.
+        """
+        if self._doc is None:
             return
         total = 0
         try:
             with self.suppressed():
                 with self._doc.transaction(origin="materialize-writeback"):
-                    for sheet, id_map in idmaps.items():
+                    for sheet, id_map in (idmaps or {}).items():
                         if id_map:
                             total += doc_model.write_back_ids(
                                 self._doc, sheet, id_map)
+                    # Always publish the authoritative error snapshot (even when
+                    # empty) so fixed rows get their red mark cleared.
+                    doc_model.write_row_errors(self._doc, row_errors or {})
         except Exception:  # pragma: no cover - never crash the loop
             _log.exception("id write-back failed for project %s", self._pid)
             return

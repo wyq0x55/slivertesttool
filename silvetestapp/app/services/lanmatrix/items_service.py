@@ -6,7 +6,10 @@ optimistic locking + audit, and multi-row (Excel-style) operations.
 from __future__ import annotations
 
 import datetime as _dt
+import logging
 from typing import Any, Optional
+
+_log = logging.getLogger(__name__)
 
 from ...extensions import db
 from ...models import LMUser, Project, TestItemRow
@@ -466,7 +469,17 @@ def materialize_sheet(user: LMUser, project: Project, sheet: str,
 
     ``rows`` is exactly what ``Y.Array.to_py()`` yields for the sheet, in visual
     order. Every element must carry its ``uuid`` (malformed rows are skipped).
-    Returns a ``{created, updated, removed, total}`` summary.
+    Returns a ``{created, updated, removed, failed, total, errors}`` summary
+    where ``errors`` maps ``uuid -> {"cells": [field_key, ...], "message": str}``
+    for rows that could not be persisted.
+
+    Per-row isolation (design §12.2): a single bad row must never block the rest
+    of the sheet. Each row is validated (non-blocking / draft mode, so a
+    half-typed live edit is not flagged) and then written inside its own
+    SAVEPOINT. A blocking validation error keeps the last good DB value for that
+    row; a database-level failure rolls back only that row's savepoint. Either
+    way the offending ``uuid`` is reported back through ``errors`` and the loop
+    continues, so healthy rows still materialize.
 
     ``actor_by_uuid`` optionally attributes individual rows to the collaborator
     who was editing them (derived from Awareness, design §7.1 step 4): a row's
@@ -477,25 +490,58 @@ def materialize_sheet(user: LMUser, project: Project, sheet: str,
     from . import fields as fld
     row_sheet = sheet if sheet in fld.SHEETS else fld.DEFAULT_SHEET
     by_uuid = actor_by_uuid or {}
+    # Validate only fields that belong to this sheet, so a required cell on
+    # another tab never flags a const/lib row and vice-versa.
+    specs = [s for s in field_specs(project.id)
+             if getattr(s, "sheet", fld.DEFAULT_SHEET) == row_sheet]
     existing: dict[str, TestItemRow] = {
         r.uuid: r for r in TestItemRow.query.filter_by(
             project_id=project.id, sheet=row_sheet).all()}
     seen: set[str] = set()
-    created = updated = 0
+    created = updated = failed = 0
+    errors: dict[str, dict[str, Any]] = {}
     for index, state in enumerate(rows, start=1):
         row_uuid = (state.get("uuid") or "").strip()
         if not row_uuid:
             continue
         seen.add(row_uuid)
+        # Non-blocking validation: live collaboration means rows are constantly
+        # mid-edit, so required-but-blank is tolerated (enforce_required=False);
+        # only hard errors (bad number/date/enum) mark the cell.
+        _, verrs = validation.validate_record(
+            specs, state, enforce_required=False)
+        blocking = [e for e in verrs if e.severity == "blocking"]
+        if blocking:
+            errors[row_uuid] = {
+                "cells": [e.field for e in blocking],
+                "message": "；".join(e.message for e in blocking)}
+            failed += 1
+            continue
         row_actor = by_uuid.get(row_uuid) or user
         item = existing.get(row_uuid)
-        if item is None:
-            materialize_create(row_actor, project, state, sheet=row_sheet,
-                               row_order=index, commit=False)
+        try:
+            with db.session.begin_nested():
+                if item is None:
+                    materialize_create(row_actor, project, state,
+                                       sheet=row_sheet, row_order=index,
+                                       commit=False)
+                    is_create = True
+                else:
+                    item.row_order = index
+                    materialize_update(row_actor, project, item, state,
+                                       commit=False)
+                    is_create = False
+        except Exception as exc:  # noqa: BLE001 - one row must not poison others
+            errors[row_uuid] = {
+                "cells": [],
+                "message": f"物化失败：{exc.__class__.__name__}"}
+            failed += 1
+            _log.warning("materialize row %s (sheet=%s) failed: %s",
+                         row_uuid, row_sheet, exc)
+            continue
+        if is_create:
             created += 1
         else:
-            item.row_order = index
-            materialize_update(row_actor, project, item, state, commit=False)
             updated += 1
     now = _utcnow()
     removed = 0
@@ -509,8 +555,8 @@ def materialize_sheet(user: LMUser, project: Project, sheet: str,
             removed += 1
     if commit:
         db.session.commit()
-    return {"created": created, "updated": updated,
-            "removed": removed, "total": len(rows)}
+    return {"created": created, "updated": updated, "removed": removed,
+            "failed": failed, "total": len(rows), "errors": errors}
 
 
 def sheet_uuid_index(project_id: int, sheet: str) -> dict[str, tuple[int, int]]:

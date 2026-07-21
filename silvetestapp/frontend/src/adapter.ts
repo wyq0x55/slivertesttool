@@ -13,7 +13,8 @@
  *   Public : setFields, setData, getSelectedIds, clearSelection, engine
  *            + multi-sheet: setSheetFields, setSheetData, patchSheetData,
  *              getActiveSheetKey, setActiveSheetKey
- *            + collaboration: setRowHighlights, isEditing
+ *            + collaboration: setRowHighlights, setRemoteCursors, setCellErrors,
+ *                             getActiveCell, isEditing
  *   Used by editor.js directly (compat): _setRowSelected, _syncSelectAll,
  *            _emitSelection
  *   Callbacks (from MountOpts): onSave, onSelectionChange, onComment, onSteps,
@@ -104,6 +105,9 @@ interface SheetCtx {
   // Row indices currently painted with a collaborator highlight, so the next
   // setRowHighlights call knows which rows to clear (design §6.1).
   hlRows?: Set<number>;
+  // "row,col" keys currently painted as server-rejected cells, so the next
+  // setCellErrors call knows which cells to clear (design §12.2).
+  errCells?: Set<string>;
 }
 
 const HEADER_ROWS = 1; // row 0 is the header; data starts at row 1
@@ -130,6 +134,7 @@ export class UniverGridAdapter {
   private syncing = false;       // guards overlapping flushes
   private lastStepsKey: string | null = null; // de-dupes step-dialog open per cell
   private editing = false;       // true while the user has a cell editor open (SheetEditStarted→Ended)
+  private activeCell: { id: number; col: number } | null = null; // last single-cell selection (local cursor source)
 
   constructor(deps: UniverDeps, opts: MountOpts) {
     this.deps = deps;
@@ -343,6 +348,72 @@ export class UniverGridAdapter {
   // probe this does NOT fire for a merely-selected cell, so real-time sync keeps
   // flowing the instant the user stops editing (design §1.3).
   isEditing(): boolean { return this.editing; }
+
+  // The active cell as ``{ id, col }`` (col = visible-column index) or null.
+  // The editor publishes it into awareness as this user's cursor so peers can
+  // draw a precise remote overlay (design §6.1).
+  getActiveCell(): { id: number; col: number } | null { return this.activeCell; }
+
+  // Precise remote-cursor overlay for the Univer engine. Univer is canvas-
+  // rendered and the community facade exposes no stable cell-pixel-rect API
+  // across versions, so an accurate overlay cannot be drawn here — return false
+  // so the editor falls back to the row-highlight presence (setRowHighlights),
+  // which IS reliable through the facade. Peers running the fallback grid still
+  // see this user's precise cursor because getActiveCell publishes the column.
+  setRemoteCursors(_cursors: any[]): boolean { return false; }
+
+  // Mark cells the server rejected during materialization (design §12.2). ``map``
+  // is ``{ rowId: { cells: [field_key...], message } }``; an empty ``cells`` list
+  // flags the whole visible row. Reachable through the facade (setBackgroundColor
+  // + a cell note carrying the message), so Univer users get the red cell too.
+  // Re-applied after every render; clears cells no longer in error.
+  setCellErrors(map: Record<number, { cells: string[]; message: string }>): void {
+    const ctx = this.active;
+    if (!ctx || !ctx.fSheet) return;
+    const vis = this._visibleFields(ctx);
+    if (!vis.length) return;
+    const colOf: Record<string, number> = {};
+    vis.forEach((f, i) => { colOf[f.field_key] = i; });
+    const m = map || {};
+    const prev = ctx.errCells || new Set<string>();
+    const next = new Set<string>();
+    const rowByUuidId: Record<number, number> = {};
+    ctx.items.forEach((it, idx) => { rowByUuidId[it.id as number] = idx; });
+    this.applying = true;
+    try {
+      Object.keys(m).forEach((idStr) => {
+        const idx = rowByUuidId[Number(idStr)];
+        if (idx === undefined) return;
+        const err = m[Number(idStr)] || { cells: [], message: "" };
+        const cols = (err.cells && err.cells.length)
+          ? err.cells.map((k) => colOf[k]).filter((c) => c !== undefined)
+          : vis.map((_f, i) => i);
+        cols.forEach((c) => {
+          next.add(idx + "," + c);
+          try {
+            const rng = ctx.fSheet.getRange(HEADER_ROWS + idx, c, 1, 1);
+            rng.setBackgroundColor("#fff4f4");
+            if (typeof rng.setNote === "function" && err.message) {
+              try { rng.setNote(err.message); } catch (_e) { /* note optional */ }
+            }
+          } catch (_e) { /* best-effort per cell */ }
+        });
+      });
+      prev.forEach((key) => {
+        if (next.has(key)) return;
+        const [r, c] = key.split(",").map(Number);
+        if (r >= ctx.items.length) return;
+        try {
+          const rng = ctx.fSheet.getRange(HEADER_ROWS + r, c, 1, 1);
+          rng.setBackgroundColor(null);
+          if (typeof rng.setNote === "function") {
+            try { rng.setNote(""); } catch (_e) { /* note optional */ }
+          }
+        } catch (_e) { /* best-effort per cell */ }
+      });
+    } finally { this.applying = false; }
+    ctx.errCells = next;
+  }
 
   // Mix a collaborator colour with white to a faint tint suitable as a row
   // background (the full colour would drown the cell text).
@@ -863,6 +934,14 @@ export class UniverGridAdapter {
       }
       if (s === e && sc != null && sc === ec) single = { row: Number(s), col: Number(sc) };
     });
+    // Record the active cell so the editor can publish it as the local cursor
+    // (design §6.1); col is the visible-column index, matching FallbackGrid.
+    if (single) {
+      const it = this._rowToItem(ctx, (single as { row: number; col: number }).row);
+      this.activeCell = it ? { id: it.id as number, col: (single as { row: number; col: number }).col } : null;
+    } else {
+      this.activeCell = null;
+    }
     this._emitSelection();
     this._maybeOpenSteps(single);
   }

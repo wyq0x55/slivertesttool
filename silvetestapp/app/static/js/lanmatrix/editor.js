@@ -230,6 +230,7 @@
     if (currentSheet === "test") renderPager();
     else document.getElementById("lm-pager").innerHTML = "";
     applyCollabPresence();         // repaint drops overlay/highlight → re-apply (§6.1)
+    applyCellErrors();             // repaint drops cell error marks → re-apply (§12.2)
   }
 
   // Re-push the current sheet's rows to the grid after the engine settles, to
@@ -504,6 +505,28 @@
         grid.setRowHighlights(map);
       }
     }
+  }
+
+  // Paint cells the server rejected during materialization red (design §12.2).
+  // The materializer publishes an authoritative uuid->{cells,message} snapshot on
+  // the shared Y.Map, so a row that gets fixed clears itself. We translate uuid
+  // to the current row id for the active sheet and hand the grid a
+  // { rowId: { cells:[field_key], message } } map; a full repaint drops the marks
+  // so this is re-applied after every render.
+  function applyCellErrors() {
+    if (!grid || typeof grid.setCellErrors !== "function") return;
+    const items = sheetItems[currentSheet] || [];
+    const idByUuid = {};
+    items.forEach((it) => { if (it.uuid) idByUuid[it.uuid] = it.id; });
+    const map = {};
+    Object.keys(remoteRowErrors || {}).forEach((uuid) => {
+      const err = remoteRowErrors[uuid];
+      if (err && err.sheet && err.sheet !== currentSheet) return;
+      const id = idByUuid[uuid];
+      if (id === undefined) return;
+      map[id] = { cells: (err.cells || []).slice(), message: err.message || "" };
+    });
+    try { grid.setCellErrors(map); } catch (_e) { /* best-effort */ }
   }
 
   // --- Sheet switching (test / const / lib) ---
@@ -849,6 +872,7 @@
   let collabEverConnected = false;
   let collabMembers = [];            // last online-member roster (design §6.1)
   let remoteCursors = {};            // { sheet: { uuid: {name,color,id} } } (§6.1)
+  let remoteRowErrors = {};          // { uuid: {cells:[field_key], message, sheet} } (§12.2)
   function renderCollabStatus() {
     const el = document.getElementById("lm-collab-status");
     if (!el) return;
@@ -970,6 +994,10 @@
         onCursors: (bySheet) => {
           remoteCursors = bySheet || {};
           applyCollabPresence();
+        },
+        onRowErrors: (byUuid) => {
+          remoteRowErrors = byUuid || {};
+          applyCellErrors();
         },
       });
       if (active) {

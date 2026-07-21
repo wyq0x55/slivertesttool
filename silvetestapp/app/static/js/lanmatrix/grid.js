@@ -75,6 +75,40 @@
       });
     }
 
+    // Mark cells the server rejected during materialization (design §12.2).
+    // ``map`` is ``{ rowId: { cells: [field_key...], message } }``; when ``cells``
+    // is empty the whole row is flagged. All other cells are cleared. Uses a
+    // dedicated class so it never collides with the transient save-time
+    // ``lm-cell-error`` mark. Re-applied after every render.
+    setCellErrors(map) {
+      this._cellErrors = map || {};
+      this._drawCellErrors();
+    }
+
+    _drawCellErrors() {
+      const map = this._cellErrors || {};
+      this.host.querySelectorAll("td.lm-cell.lm-cell-collab-error").forEach((td) => {
+        td.classList.remove("lm-cell-collab-error");
+        td.removeAttribute("data-collab-error");
+      });
+      Object.keys(map).forEach((id) => {
+        const tr = this.host.querySelector(`tbody tr[data-id="${id}"]`);
+        if (!tr) return;
+        const err = map[id] || {};
+        const cells = err.cells || [];
+        const msg = err.message || "服务器校验未通过";
+        const targets = cells.length
+          ? cells.map((k) => tr.querySelector(`td.lm-cell[data-key="${k}"]`))
+          : Array.from(tr.querySelectorAll("td.lm-cell"));
+        targets.forEach((td) => {
+          if (!td) return;
+          td.classList.add("lm-cell-collab-error");
+          td.setAttribute("data-collab-error", msg);
+          td.title = msg;
+        });
+      });
+    }
+
     // True while the user is actively editing a cell (a contenteditable text
     // cell or a select/date control has focus). Lets the editor freeze remote
     // real-time applies only during a genuine edit — matching the Univer
@@ -227,6 +261,7 @@
       this._bind();
       this._syncSelectAll();
       this._drawRemoteCursors();   // innerHTML wiped the overlay: repaint it (§6.1)
+      this._drawCellErrors();      // innerHTML wiped cell marks: repaint them (§12.2)
     }
 
     _rowHtml(it, fields) {

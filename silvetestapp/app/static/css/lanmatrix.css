@@ -383,4 +383,13 @@ select.lm-cell-control[multiple] { min-height: 46px; }
   text-overflow: ellipsis; box-shadow: 0 1px 2px rgba(0, 0, 0, .25);
 }
 
-/* Editing-row highlight (Phase 2, design §6.1): rows a peers
+/* Server-rejected cell mark (Phase 2, design §12.2): a cell whose value failed
+   materialization validation is outlined red with a hover tooltip carrying the
+   server message. Distinct from the transient .lm-cell-error used during a local
+   save so the two never clear each other. */
+.lm-cell-collab-error {
+  background: #fff4f4;
+  box-shadow: inset 0 0 0 2px #e74c3c;
+  cursor: help;
+}
+

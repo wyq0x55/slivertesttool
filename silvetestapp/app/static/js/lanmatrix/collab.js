@@ -30,6 +30,15 @@
   // FIX: 只对远端变更做防抖渲染。本地编辑已经在 Univer 里显示了（用户
   // 刚打的字），80 ms 对远端更新足够流畅，又不会淹没渲染队列。
   const REMOTE_CHANGE_DEBOUNCE_MS = 80;
+  // Silent token renewal (design: Phase 2「token 到期前静默续签」). The room token
+  // is short-lived (server default ~120s) and is only checked at connect time, so
+  // an already-open socket survives past expiry — but any auto-reconnect after a
+  // network blip would present a stale token and be rejected. We refresh the
+  // token this far (ms) BEFORE it expires and write it back into the provider's
+  // ``params`` so every future (re)connect carries a valid one.
+  const TOKEN_RENEW_SKEW_MS = 45000;   // renew this long before expiry
+  const TOKEN_RENEW_MIN_MS = 20000;    // never schedule sooner than this
+  const TOKEN_RENEW_RETRY_MS = 15000;  // retry cadence after a failed refresh
 
   function genUuid() {
     try {
@@ -99,8 +108,12 @@
     this._active = false;
     this._subs = [];
     this._changeTimers = {};
-    this._cb = {};       // { onChange, onStatus, onPresence }
+    this._cb = {};       // { onChange, onStatus, onPresence, onCursors, onRowErrors }
     this._synced = false;
+    this._tok = null;        // last room token (refreshed silently before expiry)
+    this._tokenTimer = null; // silent-renewal timer handle
+    this._errMap = null;     // shared "row_errors" Y.Map (server-written)
+    this._errHandler = null; // its observer handle
   }
 
   LMCollabController.prototype.isActive = function () { return this._active; };
@@ -161,6 +174,16 @@
       self._subs.push({ arr: arr, handler: handler });
     });
 
+    // Shared validation-error channel: the server materializer publishes an
+    // authoritative `{ uuid: {cells, message, sheet} }` snapshot here after each
+    // reconcile (design §12.2). We only observe it to paint offending cells red;
+    // clients never write to it.
+    const errMap = doc.getMap("row_errors");
+    this._errMap = errMap;
+    const errHandler = function () { self._emitRowErrors(); };
+    errMap.observe(errHandler);
+    this._errHandler = errHandler;
+
     const base = resolveWsBase(tok.ws_url);
     const provider = new LMC.WebsocketProvider(base, tok.room, doc, {
       connect: true,
@@ -202,20 +225,90 @@
     if (!synced) { this._teardown(); return false; }
     this._synced = true;
     this._active = true;
+    this._tok = tok;
+    this._scheduleTokenRenewal(tok.expires_in);
     this._emitPresence();
+    this._emitRowErrors();
     return true;
+  };
+
+  // Read the shared error channel and hand a plain snapshot to the editor so it
+  // can mark cells. Values are JSON strings the server wrote (a primitive, to
+  // avoid pycrdt turning a nested dict into a Y.Map); we parse each back into
+  // { cells: [field_key...], message, sheet }.
+  LMCollabController.prototype._emitRowErrors = function () {
+    if (!this._cb.onRowErrors || !this._errMap) return;
+    const out = {};
+    try {
+      this._errMap.forEach(function (raw, uuid) {
+        let info = raw;
+        if (typeof raw === "string") {
+          try { info = JSON.parse(raw); } catch (_e) { return; }
+        }
+        if (!info) return;
+        out[uuid] = {
+          cells: Array.isArray(info.cells) ? info.cells.slice() : [],
+          message: info.message || "",
+          sheet: info.sheet || "",
+        };
+      });
+    } catch (_e) { return; }
+    this._cb.onRowErrors(out);
+  };
+
+  // Schedule a silent token refresh before the current token expires, so any
+  // future reconnect carries a valid token (see the constants above). ``expiresIn``
+  // is in seconds (server-provided); falls back to 120s when absent.
+  LMCollabController.prototype._scheduleTokenRenewal = function (expiresIn) {
+    if (this._tokenTimer) { clearTimeout(this._tokenTimer); this._tokenTimer = null; }
+    const ttlMs = (Number(expiresIn) > 0 ? Number(expiresIn) : 120) * 1000;
+    const delay = Math.max(TOKEN_RENEW_MIN_MS, ttlMs - TOKEN_RENEW_SKEW_MS);
+    const self = this;
+    this._tokenTimer = setTimeout(function () { self._renewToken(); }, delay);
+  };
+
+  LMCollabController.prototype._renewToken = function () {
+    const self = this;
+    if (!this._active || !this.provider) return;
+    let p;
+    try { p = this.api.getCollabToken(this.pid); }
+    catch (_e) { this._scheduleTokenRenewal(TOKEN_RENEW_RETRY_MS / 1000); return; }
+    Promise.resolve(p).then(function (tok) {
+      if (!self._active || !self.provider) return;
+      if (!tok || !tok.token) { self._scheduleTokenRenewal(TOKEN_RENEW_RETRY_MS / 1000); return; }
+      self._tok = tok;
+      // y-websocket rebuilds the connection URL from ``provider.params`` on every
+      // (re)connect, so mutating the token here makes the next reconnect use it.
+      try {
+        if (!self.provider.params) self.provider.params = {};
+        self.provider.params.token = tok.token;
+      } catch (_e) { /* provider shape differs: best-effort */ }
+      self._scheduleTokenRenewal(tok.expires_in);
+    }).catch(function () {
+      // Session gone / network down: keep the old token, retry soon. The open
+      // socket (if any) is unaffected; this only matters for a later reconnect.
+      self._scheduleTokenRenewal(TOKEN_RENEW_RETRY_MS / 1000);
+    });
   };
 
   LMCollabController.prototype.stop = function () { this._teardown(); };
 
   LMCollabController.prototype._teardown = function () {
     this._active = false;
+    if (this._tokenTimer) { clearTimeout(this._tokenTimer); this._tokenTimer = null; }
     try {
       (this._subs || []).forEach(function (s) {
         try { s.arr.unobserveDeep(s.handler); } catch (_e) {}
       });
     } catch (_e) {}
     this._subs = [];
+    try {
+      if (this._errMap && this._errHandler) {
+        this._errMap.unobserve(this._errHandler);
+      }
+    } catch (_e) {}
+    this._errMap = null;
+    this._errHandler = null;
     if (this.provider) {
       try {
         if (this._awarenessHandler) {
