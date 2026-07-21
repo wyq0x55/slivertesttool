@@ -222,6 +222,7 @@
     document.getElementById("lm-count").textContent = `共 ${total} 条`;
     if (currentSheet === "test") renderPager();
     else document.getElementById("lm-pager").innerHTML = "";
+    applyRowHighlights();          // repaint drops row styling → re-apply (§6.1)
   }
 
   // Re-push the current sheet's rows to the grid after the engine settles, to
@@ -435,9 +436,40 @@
     } catch (ex) { toast(ex.message, false); }
   }
 
-  // Row operations are handled directly inside the Univer grid (or the
-  // fallback grid's context menu); no separate toolbar buttons are shown.
-  function updateSelectionUI() {}
+  // Selection changed: publish the local editing cursor into awareness so peers
+  // can highlight the row this user is on (Phase 2, design §6.1). The row is
+  // located by its stable ``uuid`` — never an absolute row number — so it maps
+  // correctly even when peers are filtering/sorting. Falsy uuid clears it.
+  function updateSelectionUI(ids) {
+    if (!collabActive() || !collab.setLocalCursor) return;
+    let uuid = null;
+    const first = ids && ids.length ? Number(ids[0]) : null;
+    if (first != null) {
+      const items = sheetItems[currentSheet] || [];
+      for (const it of items) {
+        if (Number(it.id) === first) { uuid = it.uuid || null; break; }
+      }
+    }
+    collab.setLocalCursor(currentSheet, uuid);
+  }
+
+  // Translate remote cursors for the active sheet into a ``{ id: color }`` map
+  // (via uuid→id lookup in the current view) and hand it to the grid to paint
+  // per-row highlights. Called on every cursor change and after each render
+  // (a full repaint drops the row styling, so it must be re-applied).
+  function applyRowHighlights() {
+    if (!grid || typeof grid.setRowHighlights !== "function") return;
+    const map = {};
+    const cur = (remoteCursors && remoteCursors[currentSheet]) || {};
+    const items = sheetItems[currentSheet] || [];
+    const byUuid = {};
+    items.forEach((it) => { if (it.uuid) byUuid[it.uuid] = it.id; });
+    Object.keys(cur).forEach((uuid) => {
+      const id = byUuid[uuid];
+      if (id !== undefined) map[id] = cur[uuid].color;
+    });
+    grid.setRowHighlights(map);
+  }
 
   // --- Sheet switching (test / const / lib) ---
   // With the rebuilt Univer bundle each sheet is a real worksheet tab and
@@ -780,6 +812,8 @@
   let collabConn = "connecting";     // "connecting" | "connected" | "disconnected"
   let collabPeers = 0;
   let collabEverConnected = false;
+  let collabMembers = [];            // last online-member roster (design §6.1)
+  let remoteCursors = {};            // { sheet: { uuid: {name,color,id} } } (§6.1)
   function renderCollabStatus() {
     const el = document.getElementById("lm-collab-status");
     if (!el) return;
@@ -804,6 +838,45 @@
   function setCollabStatus(text) {
     const el = document.getElementById("lm-collab-status");
     if (el) { el.textContent = text; el.hidden = false; }
+  }
+
+  // Online-member list (Phase 2, design §6.1). Pure awareness read: draw one
+  // colour-coded avatar chip per collaborator (deduped by user.id upstream),
+  // newest presence reflected live. The local user is flagged with「（我）」and a
+  // ring; a peer with multiple open tabs shows a small connection count. The
+  // chip initials come from the user's display name. Hidden entirely when no one
+  // (not even self) is present, e.g. before the socket has synced.
+  function avatarInitials(name) {
+    const s = String(name || "").trim();
+    if (!s) return "?";
+    // CJK: first glyph reads well; latin: up to two leading word initials.
+    if (/[\u4e00-\u9fa5]/.test(s[0])) return s.slice(0, 1);
+    const parts = s.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+    return s.slice(0, 2).toUpperCase();
+  }
+  function renderMembers(users) {
+    const box = document.getElementById("lm-collab-members");
+    if (!box) return;
+    const list = users || [];
+    if (!list.length || collabConn !== "connected") { box.hidden = true; box.innerHTML = ""; return; }
+    box.innerHTML = "";
+    list.forEach((u) => {
+      const chip = document.createElement("span");
+      chip.className = "lm-collab-avatar" + (u.self ? " lm-collab-avatar-self" : "");
+      chip.style.background = u.color || "#888";
+      chip.textContent = avatarInitials(u.name);
+      const who = u.self ? `${u.name}（我）` : u.name;
+      chip.title = u.conns > 1 ? `${who} · ${u.conns} 个连接` : who;
+      if (u.conns > 1) {
+        const b = document.createElement("i");
+        b.className = "lm-collab-avatar-badge";
+        b.textContent = u.conns > 9 ? "9+" : String(u.conns);
+        chip.appendChild(b);
+      }
+      box.appendChild(chip);
+    });
+    box.hidden = false;
   }
 
   // Apply a remote Y.Doc change to the active sheet (design §1.3). If the user is
@@ -849,10 +922,19 @@
           collabConn = status === "connected" ? "connected"
             : status === "connecting" ? "connecting" : "disconnected";
           renderCollabStatus();
+          // Hide the roster while offline (its awareness is stale); it repopulates
+          // from the next presence event once the socket resyncs.
+          renderMembers(collabMembers);
         },
         onPresence: (users) => {
+          collabMembers = users;
           collabPeers = users.length;
           renderCollabStatus();
+          renderMembers(users);
+        },
+        onCursors: (bySheet) => {
+          remoteCursors = bySheet || {};
+          applyRowHighlights();
         },
       });
       if (active) {

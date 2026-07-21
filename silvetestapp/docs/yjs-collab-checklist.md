@@ -120,7 +120,10 @@
 
 ## Phase 2 — 体验增强
 
-- [ ] awareness：正在编辑的行高亮、远端光标/选区、在线成员列表。
+- [ ] awareness（三项，按难度拆分）：
+  - [x] **在线成员列表**：纯 awareness 读取（设计 §6.1）。客户端已把 `user:{id,name,color}` 写入 awareness（`collab.js`，颜色按 `user_id` 稳定取自 8 色板，同人各端同色）；`_emitPresence` 按 `user.id` 去重、累计每人连接数、标记本端 `self`、本端置顶排序。`editor.js::renderMembers` 在工具栏渲染彩色头像 chip（CJK 取首字 / 拉丁取双首字母），本端加蓝环 +「（我）」，多标签页显示连接数角标；掉线时随状态徽标一并隐藏，重连后由下个 presence 事件自动重填。样式见 `lanmatrix.css`（`.lm-collab-avatar*`），模板容器 `#lm-collab-members`。纯前端、免构建（`.js`/`.css`/模板直接生效）。
+  - [x] **正在编辑的行高亮**（awareness cursor/selection → 本端视图行高亮，设计 §6.1）。客户端选区变化时 `editor.js::updateSelectionUI` 取首个选中行 → 查 `uuid` → `collab.js::setLocalCursor` 写 awareness `cursor:{sheet,uuid}`（**用行 uuid 定位而非绝对行号**，故筛选/排序视图下也对齐）；`_emitCursors` 读各端 remote `cursor`（排除本端 `clientID`）汇为 `{sheet:{uuid:{name,color,id}}}` 经 `onCursors` 回调传出。`editor.js::applyRowHighlights` 按当前视图 `uuid→id` 换算成 `{id:color}` 交给网格：FallbackGrid `setRowHighlights` 给 `<tr>` 加左色条 + 淡底（免构建，`grid.js`/`lanmatrix.css` 直接生效）；Univer 原生网格因 canvas 渲染无 DOM overlay，`adapter.ts::setRowHighlights` 经 facade `setBackgroundColor(_tint(color))` 涂淡底、维护 `hlRows` 增量撤销、全量重绘时清残留（**需 `npm run build`**）。每次渲染后 `renderView` 重应用（重绘会丢样式）。
+  - [ ] 远端光标/选区自绘 overlay（uuid→当前视图行列换算，复用 adapter 定位逻辑）。
 - [ ] Excel 导入走 `Y.Array` 批量事务（一次大 transact，避免逐行抖动）。
 - [ ] 断线重连、token 到期前静默续签、离线编辑缓冲后重放。
 - [ ] 大矩阵（数千行）性能压测：首次 sync 时延、内存、Univer 虚拟化在 CRDT 投影下仍生效。

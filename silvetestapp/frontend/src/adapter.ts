@@ -13,6 +13,7 @@
  *   Public : setFields, setData, getSelectedIds, clearSelection, engine
  *            + multi-sheet: setSheetFields, setSheetData, patchSheetData,
  *              getActiveSheetKey, setActiveSheetKey
+ *            + collaboration: setRowHighlights
  *   Used by editor.js directly (compat): _setRowSelected, _syncSelectAll,
  *            _emitSelection
  *   Callbacks (from MountOpts): onSave, onSelectionChange, onComment, onSteps,
@@ -100,6 +101,9 @@ interface SheetCtx {
   // incremental patch path (patchSheetData) can detect a column change and fall
   // back to a full re-render.
   visSig?: string;
+  // Row indices currently painted with a collaborator highlight, so the next
+  // setRowHighlights call knows which rows to clear (design §6.1).
+  hlRows?: Set<number>;
 }
 
 const HEADER_ROWS = 1; // row 0 is the header; data starts at row 1
@@ -297,6 +301,55 @@ export class UniverGridAdapter {
     if (ctx === this.active) { this._applyFreeze(ctx); this._emitSelection(); }
   }
 
+  // Paint per-row collaborator highlights on the active worksheet (Phase 2,
+  // design §6.1). ``map`` is ``{ id: colorHex }``: rows whose item id is present
+  // get a faint tint of that collaborator's colour, all previously-tinted rows
+  // are cleared. Univer is canvas-rendered, so unlike the fallback grid there is
+  // no DOM overlay — the tint is written through the facade. Runs under
+  // ``applying`` so these style writes never loop back as saves.
+  setRowHighlights(map: Record<number, string>): void {
+    const ctx = this.active;
+    if (!ctx || !ctx.fSheet) return;
+    const vis = this._visibleFields(ctx);
+    if (!vis.length) return;
+    const m = map || {};
+    const prev = ctx.hlRows || new Set<number>();
+    const next = new Set<number>();
+    this.applying = true;
+    try {
+      ctx.items.forEach((it, idx) => {
+        const color = m[it.id as number];
+        if (!color) return;
+        next.add(idx);
+        try {
+          ctx.fSheet.getRange(HEADER_ROWS + idx, 0, 1, vis.length)
+            .setBackgroundColor(this._tint(color));
+        } catch (_e) { /* best-effort per row */ }
+      });
+      prev.forEach((idx) => {
+        if (next.has(idx) || idx >= ctx.items.length) return;
+        try {
+          ctx.fSheet.getRange(HEADER_ROWS + idx, 0, 1, vis.length)
+            .setBackgroundColor(null);
+        } catch (_e) { /* best-effort per row */ }
+      });
+    } finally { this.applying = false; }
+    ctx.hlRows = next;
+  }
+
+  // Mix a collaborator colour with white to a faint tint suitable as a row
+  // background (the full colour would drown the cell text).
+  private _tint(hex: string): string {
+    try {
+      let h = String(hex).replace("#", "");
+      if (h.length === 3) h = h.split("").map((c) => c + c).join("");
+      const n = parseInt(h, 16);
+      const mix = (c: number) => Math.round(c + (255 - c) * 0.85);
+      const to2 = (c: number) => mix(c).toString(16).padStart(2, "0");
+      return "#" + to2((n >> 16) & 255) + to2((n >> 8) & 255) + to2(n & 255);
+    } catch (_e) { return "#eef1f8"; }
+  }
+
   // Incremental remote apply (real-time collaboration, design §1.3). When the
   // incoming rows have the SAME id sequence AND the SAME visible columns as what
   // is already rendered, write ONLY the cells whose value changed — leaving
@@ -479,7 +532,13 @@ export class UniverGridAdapter {
     try {
       const clearRows = Math.max(ctx.items.length + 50, 50);
       try {
-        ctx.fSheet.getRange(HEADER_ROWS, 0, clearRows, Math.max(vis.length, 1)).clearContent();
+        const clearRange = ctx.fSheet.getRange(HEADER_ROWS, 0, clearRows, Math.max(vis.length, 1));
+        clearRange.clearContent();
+        // clearContent keeps cell formatting, so any collaborator row tint from a
+        // previous render would linger on now-stale rows. Wipe the data-region
+        // background too; live cursors are re-applied afterwards by the editor.
+        try { clearRange.setBackgroundColor && clearRange.setBackgroundColor(null); } catch (_e) { /* optional */ }
+        ctx.hlRows = new Set();
       } catch (_e) { /* older facade: skip clear */ }
 
       if (ctx.items.length && vis.length) {

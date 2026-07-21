@@ -69,20 +69,22 @@ def bootstrap_doc(doc: Doc, project_id: int) -> int:
 
 def ensure_sheets(doc: Doc) -> None:
     """Make sure every sheet array exists (empty is fine) so observers/clients
-    can bind to a stable set of top-level keys even before any row is added."""
-    with doc.transaction(origin="bootstrap"):
-        for sheet in sheets():
-            key = sheet_key(sheet)
-            if key not in doc:
-                doc[key] = Array()
+    can bind to a stable set of top-level keys even before any row is added.
+
+    Uses the typed ``doc.get(key, type=Array)`` accessor rather than a
+    ``key not in doc`` guard: on a room hydrated from persisted updates the root
+    already exists at the CRDT level (so ``key in doc`` is true) but has never
+    been bound to a Python ``Array`` handle, leaving ``doc[key]`` returning
+    ``None``. ``get`` both creates a missing root AND binds an existing one, so
+    every later ``snapshot_sheet`` sees a real typed array.
+    """
+    for sheet in sheets():
+        doc.get(sheet_key(sheet), type=Array)
 
 
 def snapshot_sheet(doc: Doc, sheet: str) -> list[dict[str, Any]]:
     """Return the sheet's rows as plain dicts, in visual (array) order."""
-    key = sheet_key(sheet)
-    if key not in doc:
-        return []
-    arr = doc[key]
+    arr = doc.get(sheet_key(sheet), type=Array)
     return [dict(row) for row in arr.to_py()]
 
 
@@ -99,10 +101,7 @@ def write_back_ids(doc: Doc, sheet: str,
     MUST be called inside a ``doc.transaction()`` **and** the materializer's
     ``suppressed()`` block so the write does not re-trigger a reconcile.
     """
-    key = sheet_key(sheet)
-    if key not in doc:
-        return 0
-    arr = doc[key]
+    arr = doc.get(sheet_key(sheet), type=Array)
     rows = arr.to_py()  # plain dicts, cheap to scan for uuid + index
     changed = 0
     for index, row in enumerate(rows):

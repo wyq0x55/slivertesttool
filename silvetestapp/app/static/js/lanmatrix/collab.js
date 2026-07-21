@@ -173,12 +173,13 @@
       const me = (global.LM && global.LM.user) || {};
       const name = me.display_name || me.username || "协作者";
       const uid = me.id || 0;
+      this._selfUid = uid;
       provider.awareness.setLocalStateField("user", {
         name: name,
         id: uid,
         color: PALETTE[Math.abs(uid) % PALETTE.length],
       });
-      const aw = function () { self._emitPresence(); };
+      const aw = function () { self._emitPresence(); self._emitCursors(); };
       provider.awareness.on("change", aw);
       this._awarenessHandler = aw;
     } catch (_e) { /* presence is best-effort */ }
@@ -250,12 +251,72 @@
     }, REMOTE_CHANGE_DEBOUNCE_MS);
   };
 
+  // Emit the live online-member list (design §6.1). Awareness carries one state
+  // per open connection, so a user with two tabs appears twice — dedupe by
+  // ``user.id`` and keep a per-user connection count. ``self`` flags the local
+  // user so the UI can label "（我）". The local user is sorted first, then the
+  // rest by name, so the list order is stable as peers come and go.
   LMCollabController.prototype._emitPresence = function () {
     if (!this._cb.onPresence || !this.provider) return;
     const states = this.provider.awareness.getStates();
-    const users = [];
-    states.forEach(function (st) { if (st && st.user) users.push(st.user); });
+    const byId = {};
+    const self = this;
+    states.forEach(function (st) {
+      const u = st && st.user;
+      if (!u) return;
+      const id = (u.id === null || u.id === undefined) ? ("anon:" + Math.random())
+        : Number(u.id);
+      if (byId[id]) { byId[id].conns += 1; return; }
+      byId[id] = {
+        id: id,
+        name: u.name || "协作者",
+        color: u.color || "#888",
+        self: self._selfUid != null && Number(u.id) === Number(self._selfUid),
+        conns: 1,
+      };
+    });
+    const users = Object.keys(byId).map(function (k) { return byId[k]; });
+    users.sort(function (a, b) {
+      if (a.self !== b.self) return a.self ? -1 : 1;
+      return String(a.name).localeCompare(String(b.name));
+    });
     this._cb.onPresence(users);
+  };
+
+  // Publish the local user's editing cursor into awareness so peers can see
+  // which row this user is on. The row is identified by its stable ``uuid``
+  // (never an absolute row number) because peers may be filtering/sorting and
+  // therefore see a different row order. Passing a falsy ``uuid`` clears it.
+  LMCollabController.prototype.setLocalCursor = function (sheet, uuid) {
+    if (!this.provider) return;
+    try {
+      this.provider.awareness.setLocalStateField(
+        "cursor", uuid ? { sheet: sheet, uuid: uuid } : null);
+    } catch (_e) { /* awareness optional */ }
+  };
+
+  // Collect remote editing cursors and hand them to the UI as a per-sheet map
+  // ``{ sheet: { uuid: { name, color, id } } }`` (the local user is excluded).
+  // The editor turns this into row highlights in whatever grid is mounted.
+  LMCollabController.prototype._emitCursors = function () {
+    if (!this._cb.onCursors || !this.provider) return;
+    const states = this.provider.awareness.getStates();
+    let selfId = null;
+    try { selfId = this.provider.awareness.clientID; } catch (_e) { /* noop */ }
+    const bySheet = {};
+    states.forEach(function (st, clientId) {
+      if (selfId != null && clientId === selfId) return;
+      const c = st && st.cursor;
+      const u = st && st.user;
+      if (!c || !c.uuid || !c.sheet || !u) return;
+      if (!bySheet[c.sheet]) bySheet[c.sheet] = {};
+      bySheet[c.sheet][c.uuid] = {
+        name: u.name || "协作者",
+        color: u.color || "#888",
+        id: u.id,
+      };
+    });
+    this._cb.onCursors(bySheet);
   };
 
   // ---- row identity helpers -------------------------------------------- //

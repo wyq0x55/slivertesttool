@@ -325,3 +325,35 @@ select.lm-cell-control[multiple] { min-height: 46px; }
   animation: lm-collab-pulse 1.4s ease-in-out infinite;
 }
 @keyframes lm-collab-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+
+/* Online-member list (Phase 2, design §6.1): colour-coded avatar chips in the
+   editor toolbar, one per live collaborator. Pure awareness read — no layout
+   cost when nobody is present (the container stays hidden). */
+.lm-collab-members { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; vertical-align: middle; }
+.lm-collab-avatar {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 50%; color: #fff;
+  font-size: 11px; font-weight: 600; line-height: 1; user-select: none;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .8);
+}
+.lm-collab-avatar-self { box-shadow: 0 0 0 2px #2f6bd8; }
+.lm-collab-avatar-badge {
+  position: absolute; right: -3px; bottom: -3px; min-width: 13px; height: 13px;
+  padding: 0 2px; border-radius: 7px; background: #333; color: #fff;
+  font-size: 9px; font-style: normal; font-weight: 700; line-height: 13px;
+  text-align: center; box-shadow: 0 0 0 1px #fff;
+}
+
+/* Editing-row highlight (Phase 2, design §6.1): a row a peer's cursor sits on
+   gets a coloured left bar (their user colour) plus a faint tint in the fallback
+   grid. The per-row ``--lm-collab-color`` custom property is set by
+   setRowHighlights. The Univer native grid paints the equivalent tint via the
+   facade in adapter.ts. */
+.lm-row-collab > td:first-child {
+  box-shadow: inset 4px 0 0 var(--lm-collab-color, #888);
+}
+.lm-row-collab > td {
+  background-color: color-mix(in srgb, var(--lm-collab-color, #888) 10%, transparent);
+}
+
+/* Editing-row highlight (Phase 2, design §6.1): rows a peers
