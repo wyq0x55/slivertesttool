@@ -39,9 +39,13 @@ def list_items(project_id: int, *, page: int = 1, page_size: Optional[int] = Non
         q = q.filter(clause)
     if quick:
         like = f"%{quick}%"
+        # ``title``/``comment`` back the unified-protocol test_name/remark fields,
+        # so quick-search covers the Test-Matrix vocabulary after the data-layer
+        # unification (see ``TestItemRow._FIELD_ALIASES``).
         q = q.filter(db.or_(
             TestItemRow.case_id.ilike(like),
             TestItemRow.title.ilike(like),
+            TestItemRow.comment.ilike(like),
             TestItemRow.test_steps.ilike(like),
             TestItemRow.expected_result.ilike(like),
         ))

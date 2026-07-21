@@ -12,10 +12,14 @@ from sqlalchemy import and_, or_
 
 from ...models import TestItemRow
 
-# System columns that may be sorted / filtered directly.
+# System columns that may be sorted / filtered directly. The unified-protocol
+# aliases (test_name -> title, remark -> comment) are included so the editor can
+# sort/filter by its own vocabulary now that those values live in first-class
+# columns (see ``TestItemRow._FIELD_ALIASES``).
 SORTABLE = frozenset({
     "case_id", "title", "module", "result", "priority", "workflow_status",
     "row_order", "updated_at", "created_at", "version",
+    *TestItemRow._FIELD_ALIASES,
 })
 
 FILTER_OPS = frozenset({
@@ -35,6 +39,11 @@ _COLUMN = {
     "created_at": TestItemRow.created_at,
     "version": TestItemRow.version,
 }
+# Unified-protocol aliases resolve to their backing first-class column.
+_COLUMN.update({
+    alias: getattr(TestItemRow, col)
+    for alias, col in TestItemRow._FIELD_ALIASES.items()
+})
 
 
 class QueryError(ValueError):

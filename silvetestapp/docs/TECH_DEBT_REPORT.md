@@ -1,7 +1,8 @@
 # Technical Debt & Dead-Code Report — silvetestapp v2.13.0
 
 Status: **Step 1 executed** (Category A removed & verified). Categories B/C/D are
-identification-only and were **not** modified.
+identification-only and were **not** modified, except where a later dated update
+below records follow-up work (see *Field-key unification* and the resolved D1).
 
 Guiding constraints (unchanged): keep deployment, database, public API and
 frontend behaviour identical. Do not refactor for its own sake. No DDD, no
@@ -79,10 +80,10 @@ removed. B3 (redirect stubs) is intentionally kept one more release.
 
 | Item | Why it stays |
 |------|--------------|
-| `_migrate_schema()` / `_migrate_user_fk_ondelete()` | `app/__init__.py:127,173` — idempotent `ALTER TABLE` run on every boot; the only upgrade path for older databases. |
+| `_migrate_schema()` / `_migrate_user_fk_ondelete()` / `_migrate_testitem_field_keys()` | `app/__init__.py` — idempotent migrations run on every boot; the only upgrade path for older databases. The last one is a data migration (see *Field-key unification* below), not a DDL `ALTER TABLE`. |
 | Two Excel codecs: `lanmatrix/matrix_excel.py` + `lanmatrix/testmatrix_bridge.py` **vs** `lanmatrix/excel_io.py` + `excel_service.py` | **Not duplicates.** Former = byte-compatible Japanese VHILS `..._SYS.xlsx` import/export (`lanmatrix_api.py:574,601`). Latter = generic per-project field template import/export. Different formats, both live. |
 | `models/task.py:39-55` legacy submitter/path columns; `models/setting.py:24` single-model column | Old data rows still depend on these nullable columns for display/traceability. |
-| `fields.py` `SYSTEM_FIELDS` (comment: "no longer seeded as visible fields") | Still LIVE: `SYSTEM_FIELD_KEYS` (`fields.py:144,147,152`) drives first-class column routing (case_id/title/result → real `test_items` columns). |
+| `fields.py` field catalogue (`TEST_FIELDS` / `TEST_FIELD_KEYS`, formerly `SYSTEM_FIELDS` / `SYSTEM_FIELD_KEYS`) | Still LIVE. First-class column routing is now driven by `models/lanmatrix.py` `TestItemRow._SYSTEM_COLUMN` + `_FIELD_ALIASES` (case_id/result → real columns; `test_name` → `title`, `remark` → `comment`). `fields.py` no longer owns the routing table. See *Field-key unification* below. |
 | `frontend/src/adapter.ts` "kept for compatibility" methods; `_maybeOpenSteps` no-op (`adapter.ts:607,613`) | `editor.js` calls these method names as a contract; the no-op is deliberate (steps are first-class Univer tables now). |
 
 ---
@@ -109,11 +110,53 @@ deliberately-deferred items are in **`docs/STRUCTURAL_UNIFICATION.md`**. Summary
 
 ---
 
+## Field-key unification — data layer (2026-07-21, DONE; DB tests pending PostgreSQL run)
+
+Follow-up to the front/back-end protocol unification (P1b). The editor now speaks
+one "identity" field vocabulary, but two of its keys had **not** been propagated
+to the data model, so their values were being stranded in the `custom_values`
+JSONB bag instead of their backing columns — which made quick-search / sort /
+filter silently miss them for Test-Matrix projects.
+
+Fixed so `test_name` → `title` and `remark` → `comment` route to first-class
+columns again:
+
+- `app/models/lanmatrix.py` — added `TestItemRow._FIELD_ALIASES =
+  {"test_name": "title", "remark": "comment"}`, merged into `_SYSTEM_COLUMN`;
+  `to_dict()` emits both the alias and the legacy key. The overlay order makes
+  rolling upgrades and the pre-migration state correct without a migration.
+- `app/services/lanmatrix/queries.py` — `SORTABLE` whitelist and the `_COLUMN`
+  map now include `test_name` / `remark`, restoring sort/filter (still
+  whitelist-guarded against injection).
+- `app/services/lanmatrix/items_service.py` — quick-search OR now also scans the
+  `comment` column (covering `remark`; `test_name` is covered via `title`).
+- `app/__init__.py` — new idempotent boot data migration
+  `_migrate_testitem_field_keys()`: lifts any legacy `test_name` / `remark`
+  values out of `custom_values` into their columns and drops the keys.
+  PostgreSQL uses a `jsonb_exists_any` pre-filter (near-zero steady-state scan);
+  other dialects fall back to a full scan. Only fills an empty column — never
+  clobbers an explicit edit — so re-runs are no-ops.
+
+**Scope note:** only `test_name` / `remark` alias onto columns. `steps` stays in
+JSONB (structured JSON consumed by `parse_steps`), and `test_id` stays in JSONB
+(the Test-Matrix display id, distinct from the internal auto-generated `case_id`
+unique column).
+
+**Verification:** `py_compile` all app+tests; pure-module suite 63 passed /
+3 skipped; 78 `/api/v1` routes unchanged; `tools/check_names.py` exit 0; a full
+SQLite-backed end-to-end run of write→column, `to_dict`, `get_field`, sort/filter
+whitelist, SQL search, legacy migration and idempotency all pass. **New
+integration tests `tests/test_lanmatrix_identity_columns.py` require the
+PostgreSQL test DB** (`pytest tests/test_lanmatrix_identity_columns.py`) — the
+`jsonb_exists_any` branch and JSONB semantics can only be confirmed on PG.
+
+---
+
 ## Category D — Unknown risk (needs owner confirmation)
 
 | Item | What to confirm |
 |------|-----------------|
-| `vendor/bootstrap.min.css` referenced by `lanmatrix/base_lm.html:7` but **file absent** | One 404 per page load, gracefully swallowed by `onerror="this.remove()"`. Not a bug. Decide: drop the `<link>` or vendor the file. |
+| ~~`vendor/bootstrap.min.css` referenced by `lanmatrix/base_lm.html:7` but **file absent**~~ **(D1 — RESOLVED)** | Bootstrap D1 404 has been resolved; the reference no longer produces a missing-asset request on page load. |
 | Univer vendor bundle version mismatch | `frontend/package.json` pins `@univerjs/* 0.6.10`; committed `vendor/univer/univer.full.umd.js` is an old build. Target is **0.21.5** — a separate breaking migration (see below). |
 | Category B external callers | Are there LAN scripts/pipelines POSTing the legacy endpoints? If none → move B1/B2 into A. |
 | `TM_TO_LM` / `LM_TO_TM` identity maps (`testmatrix_bridge.py:41`) | Now `{k: k}`. Could be simplified away, but they form the bridge's symmetric interface. Low value — confirm before touching. |
@@ -139,5 +182,8 @@ so a UI regression is easy to localise, separate from the dead-code cleanup.
    `docs/STRUCTURAL_UNIFICATION.md`). Run `pytest` in a real env to confirm.
 4. Optional follow-up pass: split `routes/lanmatrix_api.py` by resource group
    (test-backed).
-5. Separate PR: Univer 0.6.10 → 0.21.5 frontend migration.
-6. Keep all of Category C. Address D1/D4 opportunistically.
+5. **Field-key unification** — data-layer propagation of the identity protocol
+   (DONE here, see the dated section above). Run
+   `pytest tests/test_lanmatrix_identity_columns.py` against PostgreSQL to confirm.
+6. Separate PR: Univer 0.6.10 → 0.21.5 frontend migration.
+7. Keep all of Category C. D1 resolved; address remaining D items opportunistically.

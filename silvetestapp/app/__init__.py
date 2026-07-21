@@ -200,6 +200,76 @@ def _migrate_schema() -> None:
                 "schema migration: could not index %s.sheet: %s", table, exc)
 
     _migrate_user_fk_ondelete(inspector)
+    _migrate_testitem_field_keys(existing_tables)
+
+
+def _migrate_testitem_field_keys(existing_tables) -> None:
+    """One-time data migration for the unified ("identity") field protocol.
+
+    The Test-Matrix editor now speaks a single field vocabulary (``test_name``,
+    ``remark``, …). Two of those keys alias onto existing first-class columns
+    (``test_name`` -> ``title``, ``remark`` -> ``comment``; see
+    ``TestItemRow._FIELD_ALIASES``). Rows written before the unification stored
+    those values in the ``custom_values`` JSONB bag instead, which left the
+    backing columns empty and therefore invisible to quick-search / sort /
+    filter. This migration lifts any such legacy value into its column and drops
+    the key from the JSONB bag.
+
+    Idempotent: it only touches rows that still carry a legacy alias key, and it
+    never overwrites a column that already holds a value, so repeated boots and a
+    rolling upgrade (old + new workers side by side) are both safe.
+    """
+    if "lm_test_items" not in existing_tables:
+        return
+
+    from sqlalchemy import text
+
+    from .models import TestItemRow
+
+    aliases = TestItemRow._FIELD_ALIASES
+    keys = list(aliases)
+    log = logging.getLogger(__name__)
+
+    try:
+        query = TestItemRow.query
+        if db.engine.dialect.name == "postgresql":
+            # Select only rows that still carry a legacy alias key in the JSONB
+            # bag, so steady-state boots scan (almost) nothing.
+            query = query.filter(
+                text("jsonb_exists_any(custom_values, :alias_keys)")
+                .bindparams(alias_keys=keys))
+        else:
+            query = query.filter(TestItemRow.custom_values.isnot(None))
+        rows = query.all()
+    except Exception as exc:  # noqa: BLE001 - never block startup
+        db.session.rollback()
+        log.warning("field-key migration: row scan failed: %s", exc)
+        return
+
+    changed = 0
+    for row in rows:
+        cv = dict(row.custom_values or {})
+        touched = False
+        for key, col in aliases.items():
+            if key not in cv:
+                continue
+            val = cv.pop(key)
+            # Only fill an empty column; never clobber an explicit column edit.
+            if not (getattr(row, col) or "").strip():
+                setattr(row, col, "" if val is None else val)
+            touched = True
+        if touched:
+            row.custom_values = cv
+            changed += 1
+
+    if not changed:
+        return
+    try:
+        db.session.commit()
+        log.info("field-key migration: unified %d legacy row(s)", changed)
+    except Exception as exc:  # noqa: BLE001
+        db.session.rollback()
+        log.warning("field-key migration: commit failed: %s", exc)
 
 
 def _migrate_user_fk_ondelete(inspector) -> None:

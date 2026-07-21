@@ -264,12 +264,24 @@ class TestItemRow(db.Model):
     updated_at = db.Column(db.DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
     deleted_at = db.Column(db.DateTime, nullable=True, index=True)
 
+    # New unified ("identity") protocol field keys that alias onto an existing
+    # first-class column, so the Test-Matrix editor vocabulary is stored in real
+    # columns (searchable / sortable / indexed) instead of the ``custom_values``
+    # JSONB bag. Kept as a named map so query helpers and the boot-time data
+    # migration (``_migrate_testitem_field_keys``) share one source of truth.
+    _FIELD_ALIASES = {
+        "test_name": "title",
+        "remark": "comment",
+    }
+
     _SYSTEM_COLUMN = {
         "case_id": "case_id", "title": "title", "module": "module",
         "precondition": "precondition", "test_steps": "test_steps",
         "expected_result": "expected_result", "actual_result": "actual_result",
         "result": "result", "priority": "priority", "owner": "owner_id",
         "tags": "tags", "comment": "comment", "workflow_status": "workflow_status",
+        # Unified-protocol aliases (test_name -> title, remark -> comment).
+        **_FIELD_ALIASES,
     }
 
     # NOT NULL string columns: a cleared/blank value must become "" (never NULL),
@@ -319,6 +331,13 @@ class TestItemRow(db.Model):
             "updated_at": _iso(self.updated_at),
             "updated_by": self.updated_by,
         }
+        # Surface the unified-protocol aliases (test_name/remark) that the editor
+        # reads, sourced from their first-class columns. ``custom_values`` is
+        # overlaid afterwards, so a row not yet touched by the boot migration
+        # (value still in JSONB under the new key) keeps rendering correctly
+        # during a rolling upgrade.
+        for alias, col in self._FIELD_ALIASES.items():
+            data[alias] = getattr(self, col)
         data.update(self.custom_values or {})
         return data
 
