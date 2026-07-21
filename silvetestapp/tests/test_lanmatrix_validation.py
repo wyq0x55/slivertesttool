@@ -116,16 +116,20 @@ class RecordValidationTest(unittest.TestCase):
 class TemplateFieldsTest(unittest.TestCase):
     def test_template_fields_present_and_valid(self):
         flds = lm.fields
-        keys = {f["field_key"] for f in flds.TEMPLATE_FIELDS}
-        # Test-Matrix based columns are seeded on every project.
+        # The default ("test") sheet catalogue is seeded on every project; under
+        # the unified identity protocol these are the canonical Test-Matrix
+        # columns (no separate system-field namespace).
+        keys = {f["field_key"] for f in flds.TEST_FIELDS}
+        self.assertEqual(keys, set(flds.TEST_FIELD_KEYS))
         for expected in ("category", "test_no", "purpose", "steps",
                          "traceability_id", "upper_req_id"):
             self.assertIn(expected, keys)
-        # Every template field uses a supported data type.
-        for f in flds.TEMPLATE_FIELDS:
+        # Every field uses a supported data type.
+        for f in flds.TEST_FIELDS:
             self.assertIn(f["data_type"], flds.DATA_TYPES)
-        # Template fields must not collide with system field keys.
-        self.assertFalse(keys & flds.SYSTEM_FIELD_KEYS)
+        # Field keys are unique within the sheet catalogue.
+        catalogue_keys = [f["field_key"] for f in flds.TEST_FIELDS]
+        self.assertEqual(len(catalogue_keys), len(set(catalogue_keys)))
 
 
 class TestMatrixBridgeTest(unittest.TestCase):
@@ -143,8 +147,9 @@ class TestMatrixBridgeTest(unittest.TestCase):
         v = self.tb.map_item(tm)
         self.assertEqual(v["category"], 3)
         self.assertEqual(v["test_no"], 12)
-        self.assertEqual(v["title"], "起動確認")       # test_name -> title
-        self.assertEqual(v["comment"], "備考Y")         # remark -> comment
+        # Identity protocol: column keys are shared, no title/comment remap.
+        self.assertEqual(v["test_name"], "起動確認")
+        self.assertEqual(v["remark"], "備考Y")
         self.assertEqual(v["priority"], "High")         # 高 -> High
         self.assertEqual(v["result"], "Pass")           # OK -> Pass
         self.assertNotIn("steps", v)                     # empty steps omitted
@@ -179,8 +184,10 @@ class TestMatrixBridgeTest(unittest.TestCase):
 
     def test_roundtrip_priority_result(self):
         # lanmatrix row -> Test-Matrix item translates enums back to Japanese.
-        row = {"priority": "High", "result": "Pass", "title": "T",
-               "comment": "note"}
+        # Under the identity protocol the row carries the shared column keys
+        # (test_name / remark), not the legacy title / comment.
+        row = {"priority": "High", "result": "Pass", "test_name": "T",
+               "remark": "note"}
         tm = self.tb.lm_to_tm(row)
         self.assertEqual(tm["priority"], "高")
         self.assertEqual(tm["result"], "OK")

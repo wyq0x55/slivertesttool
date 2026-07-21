@@ -17,7 +17,24 @@ restart, which matches how the rest of the platform treats its configuration.
 
 from __future__ import annotations
 
-from ...config import Config
+try:
+    # Normal case: imported as ``app.services.lanmatrix.settings`` inside the
+    # full Flask application package.
+    from ...config import Config
+except ImportError:
+    # Pure-module test harness (``tests/lm_helpers.py``) loads this module under
+    # a synthetic top-level package, so the package-relative ``...config`` walks
+    # beyond it. ``app.config`` is dependency-free (stdlib only), so load it
+    # directly by file path without triggering ``app/__init__`` (which would
+    # pull in Flask / SQLAlchemy and defeat the point of the pure harness).
+    import importlib.util as _ilu
+    import pathlib as _pathlib
+
+    _config_path = _pathlib.Path(__file__).resolve().parents[2] / "config.py"
+    _spec = _ilu.spec_from_file_location("_lm_pure_config", _config_path)
+    _config_mod = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_config_mod)
+    Config = _config_mod.Config
 
 # --- Account lockout ------------------------------------------------------- #
 LOCK_THRESHOLD: int = Config.LM_LOCK_THRESHOLD

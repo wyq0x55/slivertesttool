@@ -34,7 +34,23 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 
 # Config is a pure, Flask-independent settings class (values from ``.env``), so
 # importing it here keeps this module free of Flask/SQLAlchemy dependencies.
-from ...config import Config as _Config
+try:
+    # Normal case: imported inside the full ``app`` package.
+    from ...config import Config as _Config
+except ImportError:
+    # Isolated loaders (the pure-module test harness in ``tests/lm_helpers.py``
+    # and ``tests/test_matrix_excel.py``) load this file under a synthetic /
+    # parentless package, so the package-relative ``...config`` cannot resolve.
+    # ``app.config`` is stdlib-only, so load it directly by file path without
+    # importing ``app/__init__`` (which would pull in Flask / SQLAlchemy).
+    import importlib.util as _ilu
+    import pathlib as _pathlib
+
+    _config_path = _pathlib.Path(__file__).resolve().parents[2] / "config.py"
+    _spec = _ilu.spec_from_file_location("_lm_pure_config", _config_path)
+    _config_mod = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_config_mod)
+    _Config = _config_mod.Config
 
 # --------------------------------------------------------------------------- #
 # Schema (single source of truth, shared by import + export)

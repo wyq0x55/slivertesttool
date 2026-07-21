@@ -54,16 +54,30 @@ class CoercionTest(unittest.TestCase):
             fld.coerce_value("nope", "x")
 
 
-class SystemFieldTest(unittest.TestCase):
-    def test_required_keys_present(self):
-        keys = {f["field_key"] for f in fld.SYSTEM_FIELDS}
-        for k in ("case_id", "title", "test_steps", "expected_result", "result", "version"):
+class SheetCatalogueTest(unittest.TestCase):
+    """The unified identity protocol exposes one field catalogue per sheet
+    (``test`` / ``const`` / ``lib``) instead of a separate system-field set."""
+
+    def test_sheets_declared(self):
+        self.assertEqual(set(fld.SHEETS), {"test", "const", "lib"})
+        self.assertIn(fld.DEFAULT_SHEET, fld.SHEETS)
+
+    def test_required_test_keys_present(self):
+        keys = {f["field_key"] for f in fld.TEST_FIELDS}
+        self.assertEqual(keys, set(fld.TEST_FIELD_KEYS))
+        for k in ("test_id", "test_name", "steps", "result",
+                  "category", "test_no"):
             self.assertIn(k, keys)
 
-    def test_readonly_bookkeeping(self):
-        vt = fld.system_field("version")
-        self.assertTrue(vt["is_readonly"])
-        self.assertNotIn("version", fld.EDITABLE_SYSTEM_KEYS)
+    def test_every_field_has_supported_type(self):
+        for sheet_fields in (fld.TEST_FIELDS, fld.CONST_FIELDS, fld.LIB_FIELDS):
+            for f in sheet_fields:
+                self.assertIn(f["data_type"], fld.DATA_TYPES)
+                self.assertIn(f["sheet"], fld.SHEETS)
+
+    def test_steps_field_is_multiline_or_steps(self):
+        steps = next(f for f in fld.TEST_FIELDS if f["field_key"] == "steps")
+        self.assertIn(steps["data_type"], fld.MULTILINE_TYPES | {"steps"})
 
 
 if __name__ == "__main__":
