@@ -449,7 +449,8 @@ def materialize_update(user: LMUser, project: Project, item: TestItemRow,
 
 def materialize_sheet(user: LMUser, project: Project, sheet: str,
                       rows: list[dict[str, Any]], *,
-                      commit: bool = True) -> dict[str, int]:
+                      commit: bool = True,
+                      actor_by_uuid: Optional[dict[str, LMUser]] = None) -> dict[str, int]:
     """Reconcile one sheet against a Y.Array snapshot (list of row-state dicts).
 
     Ordering rules (single writer, whole reconcile is one transaction):
@@ -462,9 +463,16 @@ def materialize_sheet(user: LMUser, project: Project, sheet: str,
     ``rows`` is exactly what ``Y.Array.to_py()`` yields for the sheet, in visual
     order. Every element must carry its ``uuid`` (malformed rows are skipped).
     Returns a ``{created, updated, removed, total}`` summary.
+
+    ``actor_by_uuid`` optionally attributes individual rows to the collaborator
+    who was editing them (derived from Awareness, design §7.1 step 4): a row's
+    create/update is credited to ``actor_by_uuid[uuid]`` when present, otherwise
+    to the batch ``user``. Soft-deletions always use the batch ``user`` (nobody's
+    cursor sits on a row that has just disappeared).
     """
     from . import fields as fld
     row_sheet = sheet if sheet in fld.SHEETS else fld.DEFAULT_SHEET
+    by_uuid = actor_by_uuid or {}
     existing: dict[str, TestItemRow] = {
         r.uuid: r for r in TestItemRow.query.filter_by(
             project_id=project.id, sheet=row_sheet).all()}
@@ -475,14 +483,15 @@ def materialize_sheet(user: LMUser, project: Project, sheet: str,
         if not row_uuid:
             continue
         seen.add(row_uuid)
+        row_actor = by_uuid.get(row_uuid) or user
         item = existing.get(row_uuid)
         if item is None:
-            materialize_create(user, project, state, sheet=row_sheet,
+            materialize_create(row_actor, project, state, sheet=row_sheet,
                                row_order=index, commit=False)
             created += 1
         else:
             item.row_order = index
-            materialize_update(user, project, item, state, commit=False)
+            materialize_update(row_actor, project, item, state, commit=False)
             updated += 1
     now = _utcnow()
     removed = 0

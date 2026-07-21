@@ -70,14 +70,15 @@
   - [x] 以 `uuid` 为键 upsert `TestItemRow`（`project_id`+`sheet`+`uuid`）。
   - [x] `row_order` = 该行在 `Y.Array` 中的下标。
   - [x] CRDT 中不存在、DB 中存在的行 → 软删除（`deleted_at`）；重现的 uuid 复活。
-  - [ ] 新行落库后，把生成的 `id`/`version` 写回对应 `Y.Map`（**待做**：目前物化只写 DB，未回写 Y.Map；需在 materializer flush 后按 uuid 回填 id/version，放进 `origin='materialize'` 事务）。
+  - [x] 新行落库后，把生成的 `id`/`version` 写回对应 `Y.Map`。已实现：`_materialize_sync` 提交后用 `items_service.sheet_uuid_index` 取 `uuid→(id,version)`，回到事件循环线程经 `Materializer._apply_id_writeback` → `doc_model.write_back_ids` 写回，包在 `suppressed()` + `origin='materialize-writeback'` 事务里，避免回环。
   - [x] `custom_values`/`tags` 走 `set_field` 清洗（NOT NULL 不写 NULL）。
 - [x] 一次对账 = **一个事务**：per-sheet `materialize_sheet(commit=False)` + 末尾统一 `db.session.commit()`。
 - [x] 更新用 §0.0 的 `materialize_update`（自愈、不抛 `VersionConflict`）；协同期以 CRDT 为权威。
 - [ ] 物化用**独立 scoped session / 限连接数**：当前用 `anyio.to_thread` + Flask app_context 复用 `db.session`（每线程独立）；上线前评估连接池上限（见设计文档 §12.3 第 3 点）。
 - [x] 单飞 flush + 脏标记重跑（flush 期间新变更会在结束后补跑一次），异常只记日志不崩事件循环。
 - [ ] 物化用**独立 scoped session**（不与 web 请求共享）；**限制连接数**避免打爆 PG（现 waitress threads≥16 + worker 16 同库）。失败不影响 CRDT，仅记日志 + 重试。见设计文档 §12.3 第 3 点。
-- [ ] **审计**：`updated_by` 取该批次 awareness 参与者中最后写该行者（拿不到则记系统用户）。
+- [x] **审计**：`updated_by` 取该批次 awareness 参与者中正在编辑该行者（拿不到则回退批次 actor / 系统用户）。已实现：新增纯函数模块 `app/collab/awareness.py`（`snapshot_states` 防御式读取 room Awareness、`row_actors` 由各端 `cursor/selection.uuid` → `user.id` 建 `uuid→uid` 映射，同行按 client_id 稳定取最高者）。`server.py` 进房时 `mat.attach(ydoc, awareness=room.awareness)`；`Materializer._flush` 快照 awareness → `_resolve_row_actors` 查活跃 `LMUser` → 作为 `actor_by_uuid` 传入 `items_service.materialize_sheet`（新增可选参数，逐行归属 create/update；软删仍用批次 actor）。完全向后兼容：无 awareness/无 pycrdt 时退化为单一 actor，行为不变。纯逻辑单测 `tests/test_collab_awareness.py`（15 例，DB-free）。
+  - [ ] **▶ 你来跑**：装 pycrdt/PG 环境后端到端核对 awareness 字段形状（`snapshot_states` 已对 `states` 属性 / `get_states()` 两种 API 容错，异常即回退）。
 
 ### 1.3 前端 adapter.ts 改造（CRDT 驱动）
 - [ ] 数据源：`ctx.items` 缓存改为“从 `Y.Array` 投影”；初始化时 `provider.on('sync')` 后首绘。

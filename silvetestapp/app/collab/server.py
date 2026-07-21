@@ -105,9 +105,11 @@ class CollabWebsocketServer(WebsocketServer):
         room = YRoom(ydoc=ydoc, ystore=ystore)
         await self.start_room(room)
 
-        # 3) Attach debounced materialization (Y.Doc -> TestItemRow).
+        # 3) Attach debounced materialization (Y.Doc -> TestItemRow). The room's
+        # Awareness (if the pycrdt-websocket build exposes one) lets the
+        # materializer credit each row to the collaborator editing it.
         mat = Materializer(pid, self._app)
-        mat.attach(ydoc)
+        mat.attach(ydoc, awareness=getattr(room, "awareness", None))
         self._materializers[name] = mat
         _log.info("collab room ready: %s (hydrated=%s)", name, loaded)
         return room

@@ -30,6 +30,7 @@ from typing import Any, Optional
 
 import anyio
 
+from . import awareness as _awareness_mod
 from . import doc_model
 
 _log = logging.getLogger("collab.materializer")
@@ -44,6 +45,9 @@ class Materializer:
         self._actor_user_id = actor_user_id
         self._debounce = debounce
         self._doc = None
+        # Live Awareness object for this room (best-effort per-row audit
+        # attribution); ``None`` keeps the single batch-actor behavior.
+        self._awareness = None
         self._sub = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._timer: Optional[asyncio.TimerHandle] = None
@@ -53,9 +57,15 @@ class Materializer:
         # 进入 +1，退出 -1；只有计数归零才重新响应 Y.Doc 事务。
         self._suppress: int = 0
 
-    def attach(self, doc) -> None:
-        """Start observing ``doc``. Call from within the running event loop."""
+    def attach(self, doc, awareness=None) -> None:
+        """Start observing ``doc``. Call from within the running event loop.
+
+        ``awareness`` (the room's live Awareness object, optional) enables
+        per-row audit attribution: on each flush we snapshot it to credit rows
+        to the collaborator editing them, falling back to the batch actor.
+        """
         self._doc = doc
+        self._awareness = awareness
         self._loop = asyncio.get_running_loop()
         self._sub = doc.observe(self._on_txn)
 
@@ -133,8 +143,12 @@ class Materializer:
             # plain dicts to a worker thread for the DB reconcile.
             snapshot = {sheet: doc_model.snapshot_sheet(self._doc, sheet)
                         for sheet in doc_model.sheets()}
+            # Best-effort: map row uuid -> editing user id from Awareness so the
+            # reconcile can attribute rows to the collaborator who touched them.
+            row_uid = _awareness_mod.row_actors(
+                _awareness_mod.snapshot_states(self._awareness))
             summary, idmaps = await anyio.to_thread.run_sync(
-                self._materialize_sync, snapshot)
+                self._materialize_sync, snapshot, row_uid)
             _log.info("materialized project %s: %s", self._pid, summary)
             # Push the authoritative id/version back into the Y.Doc on the loop
             # thread; suppressed so it does not re-trigger a reconcile.
@@ -147,11 +161,16 @@ class Materializer:
                 self._dirty_again = False
                 self._schedule()
 
-    def _materialize_sync(self, snapshot: dict[str, list[dict]]):
+    def _materialize_sync(self, snapshot: dict[str, list[dict]],
+                          row_uid: Optional[dict[str, int]] = None):
         """Reconcile every sheet, then read back the authoritative id/version.
 
         Returns ``(summary, idmaps)`` where ``idmaps`` maps
         ``sheet -> {uuid: (id, version)}`` for the freshly committed rows.
+
+        ``row_uid`` (row uuid -> user id, from Awareness) is resolved to actual
+        users once and passed as ``actor_by_uuid`` so each row is credited to
+        its editor; rows without an entry keep the batch actor.
         """
         from ..extensions import db
         from ..models import Project
@@ -161,10 +180,12 @@ class Materializer:
             if project is None:
                 return {}, {}
             actor = self._resolve_actor(project)
+            actor_by_uuid = self._resolve_row_actors(row_uid)
             result: dict[str, dict[str, int]] = {}
             for sheet, rows in snapshot.items():
                 result[sheet] = items_service.materialize_sheet(
-                    actor, project, sheet, rows, commit=False)
+                    actor, project, sheet, rows, commit=False,
+                    actor_by_uuid=actor_by_uuid)
             db.session.commit()
             idmaps = {sheet: items_service.sheet_uuid_index(self._pid, sheet)
                       for sheet in snapshot}
@@ -197,3 +218,26 @@ class Materializer:
             # Last resort: any system admin, so audit rows always have an actor.
             actor = LMUser.query.filter_by(is_system_admin=True).first()
         return actor
+
+    def _resolve_row_actors(self, row_uid):
+        """Resolve ``{uuid: user_id}`` (from Awareness) to ``{uuid: LMUser}``.
+
+        Loads each referenced user once. Inactive/unknown ids are dropped so the
+        row falls back to the batch actor. Runs inside the reconcile's app
+        context (called from :meth:`_materialize_sync`).
+        """
+        if not row_uid:
+            return {}
+        from ..models import LMUser
+        wanted = {int(u) for u in row_uid.values() if u is not None}
+        if not wanted:
+            return {}
+        users = {u.id: u for u in
+                 LMUser.query.filter(LMUser.id.in_(wanted)).all()
+                 if u.is_active}
+        out = {}
+        for row_uuid, uid in row_uid.items():
+            user = users.get(int(uid)) if uid is not None else None
+            if user is not None:
+                out[row_uuid] = user
+        return out
