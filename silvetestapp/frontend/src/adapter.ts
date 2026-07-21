@@ -13,7 +13,7 @@
  *   Public : setFields, setData, getSelectedIds, clearSelection, engine
  *            + multi-sheet: setSheetFields, setSheetData, patchSheetData,
  *              getActiveSheetKey, setActiveSheetKey
- *            + collaboration: setRowHighlights, setRemoteCursors, setCellErrors,
+ *            + collaboration: setRemoteCursors, setCellErrors,
  *                             getActiveCell, isEditing
  *   Used by editor.js directly (compat): _setRowSelected, _syncSelectAll,
  *            _emitSelection
@@ -102,12 +102,12 @@ interface SheetCtx {
   // incremental patch path (patchSheetData) can detect a column change and fall
   // back to a full re-render.
   visSig?: string;
-  // Row indices currently painted with a collaborator highlight, so the next
-  // setRowHighlights call knows which rows to clear (design §6.1).
-  hlRows?: Set<number>;
   // "row,col" keys currently painted as server-rejected cells, so the next
   // setCellErrors call knows which cells to clear (design §12.2).
   errCells?: Set<string>;
+  // "row,col" keys currently tinted as a remote peer's cursor cell, so the next
+  // setRemoteCursors call knows which cells to clear (design §6.1).
+  curCells?: Set<string>;
 }
 
 const HEADER_ROWS = 1; // row 0 is the header; data starts at row 1
@@ -307,42 +307,6 @@ export class UniverGridAdapter {
     if (ctx === this.active) { this._applyFreeze(ctx); this._emitSelection(); }
   }
 
-  // Paint per-row collaborator highlights on the active worksheet (Phase 2,
-  // design §6.1). ``map`` is ``{ id: colorHex }``: rows whose item id is present
-  // get a faint tint of that collaborator's colour, all previously-tinted rows
-  // are cleared. Univer is canvas-rendered, so unlike the fallback grid there is
-  // no DOM overlay — the tint is written through the facade. Runs under
-  // ``applying`` so these style writes never loop back as saves.
-  setRowHighlights(map: Record<number, string>): void {
-    const ctx = this.active;
-    if (!ctx || !ctx.fSheet) return;
-    const vis = this._visibleFields(ctx);
-    if (!vis.length) return;
-    const m = map || {};
-    const prev = ctx.hlRows || new Set<number>();
-    const next = new Set<number>();
-    this.applying = true;
-    try {
-      ctx.items.forEach((it, idx) => {
-        const color = m[it.id as number];
-        if (!color) return;
-        next.add(idx);
-        try {
-          ctx.fSheet.getRange(HEADER_ROWS + idx, 0, 1, vis.length)
-            .setBackgroundColor(this._tint(color));
-        } catch (_e) { /* best-effort per row */ }
-      });
-      prev.forEach((idx) => {
-        if (next.has(idx) || idx >= ctx.items.length) return;
-        try {
-          ctx.fSheet.getRange(HEADER_ROWS + idx, 0, 1, vis.length)
-            .setBackgroundColor(null);
-        } catch (_e) { /* best-effort per row */ }
-      });
-    } finally { this.applying = false; }
-    ctx.hlRows = next;
-  }
-
   // True only while a real cell-editor session is open (a peer's remote apply
   // would clobber the user's in-progress keystrokes). Unlike a DOM activeElement
   // probe this does NOT fire for a merely-selected cell, so real-time sync keeps
@@ -354,13 +318,66 @@ export class UniverGridAdapter {
   // draw a precise remote overlay (design §6.1).
   getActiveCell(): { id: number; col: number } | null { return this.activeCell; }
 
-  // Precise remote-cursor overlay for the Univer engine. Univer is canvas-
-  // rendered and the community facade exposes no stable cell-pixel-rect API
-  // across versions, so an accurate overlay cannot be drawn here — return false
-  // so the editor falls back to the row-highlight presence (setRowHighlights),
-  // which IS reliable through the facade. Peers running the fallback grid still
-  // see this user's precise cursor because getActiveCell publishes the column.
-  setRemoteCursors(_cursors: any[]): boolean { return false; }
+  // Remote cursors for the Univer engine (design §6.1). Univer is canvas-
+  // rendered so a floating DOM box can't be reliably positioned, but the facade
+  // CAN tint an exact cell — so each peer's current cell (id + visible column,
+  // published via getActiveCell) is marked with a faint tint of that peer's
+  // colour. This is a precise per-cell marker (not the old whole-row highlight,
+  // which stayed permanently lit and was removed). An error mark on the same
+  // cell wins: cursor drawing skips cells currently flagged by setCellErrors,
+  // and clearing a cursor never wipes an error background. Returns true so the
+  // editor treats presence as handled here.
+  setRemoteCursors(cursors: Array<{ id: number; col: number | null; color?: string }>): boolean {
+    const ctx = this.active;
+    if (!ctx || !ctx.fSheet) return true;
+    const vis = this._visibleFields(ctx);
+    if (!vis.length) return true;
+    const list = Array.isArray(cursors) ? cursors : [];
+    const rowByUuidId: Record<number, number> = {};
+    ctx.items.forEach((it, idx) => { rowByUuidId[it.id as number] = idx; });
+    const errCells = ctx.errCells || new Set<string>();
+    const prev = ctx.curCells || new Set<string>();
+    const next = new Set<string>();
+    this.applying = true;
+    try {
+      list.forEach((c) => {
+        const idx = rowByUuidId[c.id];
+        if (idx === undefined) return;
+        const col = (c.col == null ? 0 : c.col);
+        if (col < 0 || col >= vis.length) return;
+        const key = idx + "," + col;
+        if (errCells.has(key)) return;  // an error mark on this cell takes priority
+        next.add(key);
+        try {
+          ctx.fSheet.getRange(HEADER_ROWS + idx, col, 1, 1)
+            .setBackgroundColor(this._tint(c.color || "#888"));
+        } catch (_e) { /* best-effort per cell */ }
+      });
+      prev.forEach((key) => {
+        if (next.has(key) || errCells.has(key)) return;  // keep error backgrounds
+        const [r, c] = key.split(",").map(Number);
+        if (r >= ctx.items.length) return;
+        try {
+          ctx.fSheet.getRange(HEADER_ROWS + r, c, 1, 1).setBackgroundColor(null);
+        } catch (_e) { /* best-effort per cell */ }
+      });
+    } finally { this.applying = false; }
+    ctx.curCells = next;
+    return true;
+  }
+
+  // Mix a collaborator colour with white to a faint tint suitable as a cell
+  // background (the full colour would drown the cell text).
+  private _tint(hex: string): string {
+    try {
+      let h = String(hex).replace("#", "");
+      if (h.length === 3) h = h.split("").map((c) => c + c).join("");
+      const n = parseInt(h, 16);
+      const mix = (c: number) => Math.round(c + (255 - c) * 0.7);
+      const to2 = (c: number) => mix(c).toString(16).padStart(2, "0");
+      return "#" + to2((n >> 16) & 255) + to2((n >> 8) & 255) + to2(n & 255);
+    } catch (_e) { return "#dfe6f5"; }
+  }
 
   // Mark cells the server rejected during materialization (design §12.2). ``map``
   // is ``{ rowId: { cells: [field_key...], message } }``; an empty ``cells`` list
@@ -413,19 +430,6 @@ export class UniverGridAdapter {
       });
     } finally { this.applying = false; }
     ctx.errCells = next;
-  }
-
-  // Mix a collaborator colour with white to a faint tint suitable as a row
-  // background (the full colour would drown the cell text).
-  private _tint(hex: string): string {
-    try {
-      let h = String(hex).replace("#", "");
-      if (h.length === 3) h = h.split("").map((c) => c + c).join("");
-      const n = parseInt(h, 16);
-      const mix = (c: number) => Math.round(c + (255 - c) * 0.85);
-      const to2 = (c: number) => mix(c).toString(16).padStart(2, "0");
-      return "#" + to2((n >> 16) & 255) + to2((n >> 8) & 255) + to2(n & 255);
-    } catch (_e) { return "#eef1f8"; }
   }
 
   // Incremental remote apply (real-time collaboration, design §1.3). When the
@@ -612,11 +616,13 @@ export class UniverGridAdapter {
       try {
         const clearRange = ctx.fSheet.getRange(HEADER_ROWS, 0, clearRows, Math.max(vis.length, 1));
         clearRange.clearContent();
-        // clearContent keeps cell formatting, so any collaborator row tint from a
-        // previous render would linger on now-stale rows. Wipe the data-region
-        // background too; live cursors are re-applied afterwards by the editor.
+        // clearContent keeps cell formatting, so any collaborator cell-error mark
+        // from a previous render would linger on now-stale rows. Wipe the
+        // data-region background too; error marks are re-applied afterwards by the
+        // editor (applyCellErrors).
         try { clearRange.setBackgroundColor && clearRange.setBackgroundColor(null); } catch (_e) { /* optional */ }
-        ctx.hlRows = new Set();
+        ctx.errCells = new Set();
+        ctx.curCells = new Set();
       } catch (_e) { /* older facade: skip clear */ }
 
       if (ctx.items.length && vis.length) {

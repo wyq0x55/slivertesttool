@@ -57,24 +57,6 @@
       this._emitSelection();
     }
 
-    // Paint per-row collaborator highlights (Phase 2, design §6.1). ``map`` is
-    // ``{ id: colorHex }``; rows in it get a coloured left bar + tint, all other
-    // rows are cleared. Re-applied after every render (render() rebuilds the DOM).
-    setRowHighlights(map) {
-      this._rowHighlights = map || {};
-      const m = this._rowHighlights;
-      this.host.querySelectorAll("tbody tr[data-id]").forEach((tr) => {
-        const color = m[Number(tr.dataset.id)];
-        if (color) {
-          tr.classList.add("lm-row-collab");
-          tr.style.setProperty("--lm-collab-color", color);
-        } else {
-          tr.classList.remove("lm-row-collab");
-          tr.style.removeProperty("--lm-collab-color");
-        }
-      });
-    }
-
     // Mark cells the server rejected during materialization (design §12.2).
     // ``map`` is ``{ rowId: { cells: [field_key...], message } }``; when ``cells``
     // is empty the whole row is flagged. All other cells are cleared. Uses a
@@ -144,9 +126,9 @@
     // Draw remote collaborators' cursors/selections as an absolutely-positioned
     // DOM overlay over the grid (design §6.1). ``cursors`` is a list of
     // ``{ id, col, name, color }``. Returns true — the DOM overlay is always
-    // available here — so the editor uses this instead of the row-highlight
-    // fallback (the two never show at once). Univer (canvas) returns false and
-    // falls back to row highlights.
+    // available in this (fallback) grid. The Univer canvas engine returns false
+    // and simply shows no presence marker (the row-highlight fallback was
+    // removed because it stayed permanently lit).
     setRemoteCursors(cursors) {
       this._remoteCursors = Array.isArray(cursors) ? cursors : [];
       this._drawRemoteCursors();

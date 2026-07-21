@@ -391,7 +391,7 @@
 
   // Collect remote editing cursors and hand them to the UI as a per-sheet map
   // ``{ sheet: { uuid: { name, color, id } } }`` (the local user is excluded).
-  // The editor turns this into row highlights in whatever grid is mounted.
+  // The editor turns this into the remote-cursor overlay for the mounted grid.
   LMCollabController.prototype._emitCursors = function () {
     if (!this._cb.onCursors || !this.provider) return;
     const states = this.provider.awareness.getStates();

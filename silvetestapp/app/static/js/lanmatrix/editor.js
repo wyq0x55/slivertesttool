@@ -467,17 +467,16 @@
     collab.setLocalCursor(currentSheet, uuid, col);
   }
 
-  // Render remote collaborators' presence for the active sheet (design §6.1).
-  // Two mutually-exclusive modes, never both at once:
-  //   1. Precise remote-cursor overlay — a coloured box on each peer's exact
-  //      cell/row plus a name tag (grid.setRemoteCursors). Preferred.
-  //   2. Fallback row highlight — a faint tint on each peer's row
-  //      (grid.setRowHighlights) — used only when the overlay is unavailable or
-  //      declined (e.g. the Univer canvas engine, which can't place a DOM box).
-  // Called on every cursor change and after each render (a full repaint drops
-  // both the overlay and the row styling, so presence must be re-applied).
+  // Render remote collaborators' presence for the active sheet (design §6.1):
+  // a precise per-cell cursor marker via grid.setRemoteCursors — the fallback
+  // grid draws a coloured DOM box + name tag; the Univer engine tints the exact
+  // cell in the peer's colour through the facade. The old whole-row highlight
+  // was removed (it stayed permanently lit and was distracting). Called on every
+  // cursor change and after each render (a full repaint drops the marks, so
+  // presence must be re-applied).
   function applyCollabPresence() {
     if (!grid) return;
+    if (typeof grid.setRemoteCursors !== "function") return;
     const cur = (remoteCursors && remoteCursors[currentSheet]) || {};
     const items = sheetItems[currentSheet] || [];
     const byUuid = {};
@@ -490,21 +489,7 @@
       cursors.push({ id: id, uuid: uuid, col: (c.col == null ? null : c.col),
         name: c.name, color: c.color });
     });
-    let overlaid = false;
-    if (typeof grid.setRemoteCursors === "function") {
-      try { overlaid = grid.setRemoteCursors(cursors) === true; }
-      catch (_e) { overlaid = false; }
-    }
-    // Keep the two modes exclusive: clear whichever one is not in use.
-    if (typeof grid.setRowHighlights === "function") {
-      if (overlaid) {
-        grid.setRowHighlights({});
-      } else {
-        const map = {};
-        cursors.forEach((c) => { map[c.id] = c.color; });
-        grid.setRowHighlights(map);
-      }
-    }
+    try { grid.setRemoteCursors(cursors); } catch (_e) { /* best-effort */ }
   }
 
   // Paint cells the server rejected during materialization red (design §12.2).

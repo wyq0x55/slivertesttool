@@ -344,24 +344,12 @@ select.lm-cell-control[multiple] { min-height: 46px; }
   text-align: center; box-shadow: 0 0 0 1px #fff;
 }
 
-/* Editing-row highlight (Phase 2, design §6.1): a row a peer's cursor sits on
-   gets a coloured left bar (their user colour) plus a faint tint in the fallback
-   grid. The per-row ``--lm-collab-color`` custom property is set by
-   setRowHighlights. The Univer native grid paints the equivalent tint via the
-   facade in adapter.ts. */
-.lm-row-collab > td:first-child {
-  box-shadow: inset 4px 0 0 var(--lm-collab-color, #888);
-}
-.lm-row-collab > td {
-  background-color: color-mix(in srgb, var(--lm-collab-color, #888) 10%, transparent);
-}
-
 /* Remote-cursor overlay (Phase 2, design §6.1): a coloured box drawn over each
    peer's exact editing cell (or whole row when the column is unknown), with a
    name tag. Positioned in content coordinates inside the grid host so it scrolls
    with the table for free. pointer-events:none keeps it click-through. Only the
-   DOM (fallback) grid uses this; the Univer canvas engine falls back to the row
-   tint above. Never shown together with .lm-row-collab. */
+   DOM (fallback) grid uses this; the Univer canvas engine shows no presence
+   marker (the old row-highlight fallback was removed). */
 .lm-collab-overlay {
   position: absolute; inset: 0; pointer-events: none; overflow: visible; z-index: 5;
 }
