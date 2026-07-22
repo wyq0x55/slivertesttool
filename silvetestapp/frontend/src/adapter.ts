@@ -46,7 +46,7 @@ import { CellTooltip } from "./cell_tooltip";
 // ---------------------------------------------------------------------------
 
 /** True when a value must be stored as rich text (string with an embedded LF). */
-function isMultiline(v: any): boolean {
+export function isMultiline(v: any): boolean {
   return typeof v === "string" && v.indexOf("\n") !== -1;
 }
 
@@ -56,7 +56,7 @@ function isMultiline(v: any): boolean {
  * `paragraphs` carries one entry per "\r" so the document tree — and the cell
  * editor — parse correctly.
  */
-function buildRichTextDoc(text: string): any {
+export function buildRichTextDoc(text: string): any {
   const lines = String(text).split("\n");
   const dataStream = lines.join("\r") + "\r\n";
   const paragraphs: Array<{ startIndex: number }> = [];
@@ -79,8 +79,17 @@ function buildRichTextDoc(text: string): any {
 }
 
 /** Normalize any CR/CRLF newline convention to a bare LF. */
-function normalizeNewlines(s: string): string {
+export function normalizeNewlines(s: string): string {
   return s.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+/**
+ * Wrap a display value for writing to Univer: a multi-line string becomes rich
+ * text (ICellData.p) so the cell editor can load it; everything else stays a
+ * plain primitive. Shared by the main grid and the step-detail view.
+ */
+export function toCellData(display: any): any {
+  return isMultiline(display) ? { p: buildRichTextDoc(display) } : display;
 }
 
 /**
@@ -89,7 +98,7 @@ function normalizeNewlines(s: string): string {
  * primitive CellValue. Univer's rich text always carries a trailing paragraph
  * break, so a single trailing newline is stripped to match the stored value.
  */
-function cellReadToText(cell: any): any {
+export function cellReadToText(cell: any): any {
   if (cell != null && typeof cell.toPlainText === "function") {
     let s = normalizeNewlines(String(cell.toPlainText()));
     s = s.replace(/\n$/, "");
@@ -869,7 +878,7 @@ export class UniverGridAdapter {
   // primitive. setValues()/setValue() both accept ICellData, so this can be used
   // inline in a value matrix or for a single cell.
   private _toCellData(display: any): any {
-    return isMultiline(display) ? { p: buildRichTextDoc(display) } : display;
+    return toCellData(display);
   }
 
   private _applyValidations(ctx: SheetCtx): void {

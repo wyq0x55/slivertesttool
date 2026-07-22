@@ -90,12 +90,12 @@
       // context. We supply our own backdrop and hide it whenever the dialog closes.
       this.dialog.addEventListener("close", () => {
         this._hideBackdrop();
-        // Tear the Univer workbook down on close so the next item opens a fresh
-        // one. The view is a singleton per dialog; reusing one workbook across
-        // items makes Univer keep the first item's sheet/table geometry, so a
-        // later item with a different signal count renders against the previous
-        // item's structure ("all details share one sheet"). See open().
-        this._destroyView();
+        // The Univer workbook is now REUSED across items instead of being torn
+        // down and recreated on every open (creating a fresh Univer instance is
+        // expensive and sometimes failed to display). setDoc() fully resets the
+        // sheet + table geometry, so switching to an item with a different signal
+        // count is correct without a rebuild. The view is kept mounted (hidden
+        // with the dialog) and re-shown on the next open(). See open().
       });
       // Non-modal dialogs don't auto-close on Esc; wire it ourselves.
       this.dialog.addEventListener("keydown", (e) => {
@@ -250,11 +250,19 @@
       // mounts with a non-zero size, then render.
       this._showBackdrop();
       this.dialog.show();
-      // Always mount a fresh Univer workbook for this item so it never inherits
-      // the previous item's sheets/tables (see _destroyView).
-      this._destroyView();
+      // Reuse the mounted Univer workbook across items (mounted once, lazily).
+      // setDoc() (called by render()) resets the sheet + table geometry, so the
+      // reused view renders this item correctly without a costly re-create.
       this._ensureView();
       this.render();
+      // The dialog is display:none while closed, so a reused Univer canvas may
+      // have been laid out against a zero-size host. Nudge a relayout once the
+      // re-shown dialog has non-zero size so the grid paints on reopen.
+      if (this.view && typeof this.view.resize === "function") {
+        requestAnimationFrame(() => {
+          try { this.view.resize(); } catch (e) { /* best-effort */ }
+        });
+      }
     }
 
     _addStep() {

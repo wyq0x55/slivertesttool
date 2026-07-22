@@ -25,6 +25,8 @@
  */
 
 import type { UniverDeps } from "./adapter";
+import { toCellData, cellReadToText } from "./adapter";
+import { CellTooltip } from "./cell_tooltip";
 
 export interface StepDoc {
   input_signals: any[];
@@ -48,12 +50,14 @@ export class UniverStepsView {
 
   private deps: UniverDeps;
   private host: HTMLElement;
+  private univer: any = null;   // Univer instance (for the tooltip projector)
   private univerAPI: any = null;
   private fWorkbook: any = null;
   private ni = 0; // current input-signal count (defines step column geometry)
   private ne = 0; // current expected-signal count
-  private hasTable = false; // whether the table preset is available
-  private tabledSheets = new Set<string>(); // sheets already promoted to a table
+  private hasValidation = false; // whether the data-validation preset is available
+  private cellTooltip: CellTooltip | null = null; // truncated-cell full-text bubble
+  private _rowHeightPx = 0; // captured uniform row height (default 24px)
 
   constructor(deps: UniverDeps, host: HTMLElement) {
     this.deps = deps;
@@ -63,20 +67,46 @@ export class UniverStepsView {
   init(): void {
     const { createUniver, defaultTheme, LocaleType, mergeLocales,
             UniverSheetsCorePreset, UniverPresetSheetsCoreZhCN,
+            UniverSheetsDataValidationPreset, UniverPresetSheetsDataValidationZhCN,
+            UniverSheetsFilterPreset, UniverPresetSheetsFilterZhCN,
+            UniverSheetsFindReplacePreset, UniverPresetSheetsFindReplaceZhCN,
+            UniverSheetsSortPreset, UniverPresetSheetsSortZhCN,
+            UniverSheetsConditionalFormattingPreset, UniverPresetSheetsConditionalFormattingZhCN,
             UniverSheetsTablePreset, UniverPresetSheetsTableZhCN,
             UniverSheetsCrosshairHighlightPlugin, SheetsCrosshairHighlightZhCN } = this.deps;
     if (!this.host.style.height) this.host.style.height = "60vh";
     this.host.classList.add("lm-univer-steps-host");
 
-    // All locales Simplified Chinese (zh-CN). The table preset renders the
-    // 入力値 / 期待値 / 手順 regions as first-class Univer tables — the detailed
-    // steps are shown as tables here instead of a separate pop-up dialog.
+    // Feature parity with the main matrix: register the SAME preset set so the
+    // step-detail view also gets data validation, conditional formatting, filter,
+    // sort and find/replace — not just the core grid + table. All locales are
+    // Simplified Chinese (zh-CN).
     const presets: any[] = [UniverSheetsCorePreset({ container: this.host })];
     const locales: any[] = [UniverPresetSheetsCoreZhCN];
+    if (typeof UniverSheetsDataValidationPreset === "function") {
+      presets.push(UniverSheetsDataValidationPreset());
+      if (UniverPresetSheetsDataValidationZhCN) locales.push(UniverPresetSheetsDataValidationZhCN);
+      this.hasValidation = true;
+    }
+    if (typeof UniverSheetsFilterPreset === "function") {
+      presets.push(UniverSheetsFilterPreset());
+      if (UniverPresetSheetsFilterZhCN) locales.push(UniverPresetSheetsFilterZhCN);
+    }
+    if (typeof UniverSheetsFindReplacePreset === "function") {
+      presets.push(UniverSheetsFindReplacePreset());
+      if (UniverPresetSheetsFindReplaceZhCN) locales.push(UniverPresetSheetsFindReplaceZhCN);
+    }
+    if (typeof UniverSheetsSortPreset === "function") {
+      presets.push(UniverSheetsSortPreset());
+      if (UniverPresetSheetsSortZhCN) locales.push(UniverPresetSheetsSortZhCN);
+    }
+    if (typeof UniverSheetsConditionalFormattingPreset === "function") {
+      presets.push(UniverSheetsConditionalFormattingPreset());
+      if (UniverPresetSheetsConditionalFormattingZhCN) locales.push(UniverPresetSheetsConditionalFormattingZhCN);
+    }
     if (typeof UniverSheetsTablePreset === "function") {
       presets.push(UniverSheetsTablePreset());
       if (UniverPresetSheetsTableZhCN) locales.push(UniverPresetSheetsTableZhCN);
-      this.hasTable = true;
     }
     if (SheetsCrosshairHighlightZhCN) locales.push(SheetsCrosshairHighlightZhCN);
 
@@ -86,6 +116,7 @@ export class UniverStepsView {
       theme: defaultTheme,
       presets,
     });
+    this.univer = univer;
     this.univerAPI = univerAPI;
 
     // Crosshair highlight (active row/column) — same plugin as the main grid.
@@ -102,35 +133,71 @@ export class UniverStepsView {
       }
     } catch (_e) { /* facade absent → highlight stays off */ }
 
+    // Mount the truncated-cell full-text bubble once the sheet canvas has
+    // rendered (same feature the main grid has). Best-effort: if the lifecycle
+    // event or hover service is missing, the bubble simply never shows.
+    try {
+      const ev = univerAPI.Event;
+      if (ev && ev.LifeCycleChanged && typeof univerAPI.addEvent === "function") {
+        univerAPI.addEvent(ev.LifeCycleChanged, (p: any) => {
+          const stage = p && p.stage;
+          const rendered = univerAPI.Enum && univerAPI.Enum.LifecycleStages
+            ? univerAPI.Enum.LifecycleStages.Rendered : undefined;
+          if (rendered === undefined || stage === rendered) this._ensureCellTooltip();
+        });
+      }
+    } catch (_e) { /* tooltip is best-effort */ }
+
     this.fWorkbook = univerAPI.createWorkbook({ name: "Steps" });
   }
 
-  // Promote a written data region (header row + rows) to a first-class Univer
-  // table so the step detail reads as a real table (banded rows, header
-  // filter/sort) rather than a plain range. Best-effort and idempotent per
-  // sheet: probes the range- and worksheet-level table factories the running
-  // Univer build exposes and quietly no-ops if the table preset is absent.
-  private _applyTable(sheet: any, name: string, rows: number, cols: number): void {
-    if (!sheet || !this.hasTable || rows < 2 || cols < 1) return;
-    if (this.tabledSheets.has(name)) return; // already a table; range auto-tracks edits
+  // Lazily create the truncated-cell full-text bubble (needs the Univer canvas +
+  // hover service). Mirrors the main grid's _ensureCellTooltip: the DI
+  // identifiers are injected because a UMD bundle exposes none on a global.
+  private _ensureCellTooltip(): void {
+    if (this.cellTooltip || !this.univer) return;
     try {
-      const range = sheet.getRange(0, 0, rows, cols);
-      if (range && typeof range.createTable === "function") {
-        range.createTable();
-        this.tabledSheets.add(name);
-        return;
+      this.cellTooltip = new CellTooltip(this.host, {
+        getUniver: () => this.univer,
+        getUnitId: () => {
+          try { return this.fWorkbook?.getId?.() || this.fWorkbook?.id || null; }
+          catch (_e) { return null; }
+        },
+        getFSheet: () => {
+          try { return this.fWorkbook ? this.fWorkbook.getActiveSheet() : null; }
+          catch (_e) { return null; }
+        },
+        identifiers: {
+          IRenderManagerService: this.deps.IRenderManagerService,
+          SheetSkeletonManagerService: this.deps.SheetSkeletonManagerService,
+          HoverManagerService: this.deps.HoverManagerService,
+        },
+      });
+      this.cellTooltip.init();
+    } catch (_e) { this.cellTooltip = null; }
+  }
+
+  // Style a written region like a table WITHOUT using a Univer "table" object:
+  // bold header, light header background, and freeze the header row. This is all
+  // synchronous cell/worksheet formatting (unlike createTable/removeTable, which
+  // are async and — because a table's baked-in range + filter state survive a
+  // rewrite — were the root cause of the step detail not refreshing when the
+  // reused view switched to another item). Filter/sort are still available from
+  // the toolbar via their presets.
+  private _styleHeader(sheet: any, cols: number): void {
+    if (!sheet || cols < 1) return;
+    try {
+      const hdr = sheet.getRange(0, 0, 1, cols);
+      try { hdr.setFontWeight && hdr.setFontWeight("bold"); } catch (_e) { /* optional */ }
+      try { hdr.setBackgroundColor && hdr.setBackgroundColor("#eef1f8"); } catch (_e) { /* optional */ }
+    } catch (_e) { /* best-effort */ }
+    try {
+      if (typeof sheet.setFreeze === "function") {
+        sheet.setFreeze({ xSplit: 0, ySplit: 1, startRow: 1, startColumn: 0 });
+      } else if (typeof sheet.setFrozenRows === "function") {
+        sheet.setFrozenRows(1);
       }
-      const a1 = range && typeof range.getA1Notation === "function" ? range.getA1Notation() : null;
-      if (a1 && typeof sheet.addTable === "function") {
-        sheet.addTable(name, a1);
-        this.tabledSheets.add(name);
-        return;
-      }
-      if (a1 && typeof sheet.insertTable === "function") {
-        sheet.insertTable(name, a1);
-        this.tabledSheets.add(name);
-      }
-    } catch (_e) { /* table styling is best-effort */ }
+    } catch (_e) { /* freeze is best-effort */ }
   }
 
   // --------------------------------------------------------------- worksheets -
@@ -160,24 +227,94 @@ export class UniverStepsView {
     if (!sheet || !matrix.length) return;
     const rows = matrix.length;
     const cols = Math.max(...matrix.map((r) => r.length), 1);
+    const wide = Math.max(cols + 4, 40);
+    // Grow the (possibly reused) sheet so neither the clear band nor the write
+    // exceeds its bounds. When the view is reused and the next item has more
+    // signal columns than the sheet was created with, getRange() throws
+    // "Range is out of bounds" and the whole write aborts — leaving the view
+    // showing the previous item. Widen synchronously first.
+    this._ensureSize(sheet, SCAN_ROWS, wide);
     // Clear a generously wide band so a narrower doc never leaves the previous
     // (wider) doc's trailing columns behind when the view is reused.
-    try { sheet.getRange(0, 0, SCAN_ROWS, Math.max(cols + 4, 40)).clearContent(); } catch (_e) { /* best-effort */ }
-    try { sheet.getRange(0, 0, rows, cols).setValues(matrix); } catch (e) {
+    try { sheet.getRange(0, 0, SCAN_ROWS, wide).clearContent(); } catch (_e) { /* best-effort */ }
+    // Multi-line values must be written as rich text (cell.p) or the cell editor
+    // opens blank on a value with an embedded newline — same conversion the main
+    // grid uses (toCellData). setValues accepts ICellData[][], so this inlines.
+    const cellMatrix = matrix.map((r) => r.map((v) => toCellData(v)));
+    try { sheet.getRange(0, 0, rows, cols).setValues(cellMatrix); } catch (e) {
       console.warn("[LMUniverSteps] write failed:", e);
     }
     try { sheet.getRange(0, 0, 1, cols).setFontWeight("bold"); } catch (_e) { /* optional */ }
+    // Keep uniform row height: rich-text cells otherwise auto-grow their row.
+    this._lockRowHeights(sheet, rows);
+  }
+
+  // Ensure the sheet is at least `rows` x `cols` big, growing a reused sheet
+  // synchronously via setRowCount / setColumnCount (both run through
+  // syncExecuteCommand) so subsequent getRange() calls never go out of bounds.
+  private _ensureSize(sheet: any, rows: number, cols: number): void {
+    if (!sheet) return;
+    try {
+      const maxC = sheet.getMaxColumns && sheet.getMaxColumns();
+      if (typeof maxC === "number" && cols > maxC &&
+          typeof sheet.setColumnCount === "function") {
+        sheet.setColumnCount(cols);
+      }
+    } catch (_e) { /* best-effort */ }
+    try {
+      const maxR = sheet.getMaxRows && sheet.getMaxRows();
+      if (typeof maxR === "number" && rows > maxR &&
+          typeof sheet.setRowCount === "function") {
+        sheet.setRowCount(rows);
+      }
+    } catch (_e) { /* best-effort */ }
+  }
+
+  // Force every used row to a single fixed height and disable per-row
+  // auto-height, so multi-line rich-text cells never stretch their row. Forcing
+  // the height via SetRowHeightCommand also flips each row's `ia` (isAutoHeight)
+  // flag to FALSE, permanently excluding it from auto-height recalculation.
+  private _lockRowHeights(sheet: any, rows: number): void {
+    if (!sheet || typeof sheet.setRowHeightsForced !== "function") return;
+    if (this._rowHeightPx <= 0) {
+      let h = 24;
+      try {
+        const v = sheet.getRowHeight && sheet.getRowHeight(0);
+        if (typeof v === "number" && v > 0) h = v;
+      } catch (_e) { /* fall back to 24 */ }
+      this._rowHeightPx = h;
+    }
+    let n = Math.max(rows, 1) + 50;
+    try {
+      const max = sheet.getMaxRows && sheet.getMaxRows();
+      if (typeof max === "number" && max > 0) n = Math.min(n, max);
+    } catch (_e) { /* ignore */ }
+    try { sheet.setRowHeightsForced(0, n, this._rowHeightPx); }
+    catch (_e) { /* best-effort */ }
   }
 
   private _readMatrix(sheet: any): any[][] {
     if (!sheet) return [];
+    // Prefer a rich-text-aware read so a multi-line cell round-trips with its
+    // newlines intact (a plain getValues() flattens rich text and loses them).
+    const flatten = (vals: any[][]): any[][] =>
+      vals.map((row) => (row || []).map((c) => cellReadToText(c)));
     try {
       const dr = sheet.getDataRange();
+      if (dr && typeof dr.getValueAndRichTextValues === "function") {
+        const rv = dr.getValueAndRichTextValues();
+        if (rv) return flatten(rv);
+      }
       const vals = dr && typeof dr.getValues === "function" ? dr.getValues() : null;
       if (vals) return vals;
     } catch (_e) { /* fall through to fixed scan */ }
-    try { return sheet.getRange(0, 0, SCAN_ROWS, 40).getValues() || []; }
-    catch (_e) { return []; }
+    try {
+      const rng = sheet.getRange(0, 0, SCAN_ROWS, 40);
+      if (typeof rng.getValueAndRichTextValues === "function") {
+        return flatten(rng.getValueAndRichTextValues() || []);
+      }
+      return rng.getValues() || [];
+    } catch (_e) { return []; }
   }
 
   // ------------------------------------------------------------------ setDoc --
@@ -187,6 +324,12 @@ export class UniverStepsView {
     const steps = Array.isArray(doc.steps) ? doc.steps : [];
     this.ni = inSig.length;
     this.ne = exSig.length;
+    try {
+      if ((globalThis as any).LM_DEBUG_STEPS) {
+        // eslint-disable-next-line no-console
+        console.log("[steps] setDoc", { ni: this.ni, ne: this.ne, steps: steps.length });
+      }
+    } catch (_e) { /* noop */ }
 
     // 入力値 / 期待値 sheets: header + [name, path] rows.
     const inMatrix = [["名称", "路径"]].concat(
@@ -208,6 +351,13 @@ export class UniverStepsView {
       return row;
     }));
 
+    // The view is REUSED across items (not disposed/recreated per open — that was
+    // slow and sometimes failed to display). A Univer "table" object baked in by
+    // a previous item keeps its own range + filter state across a rewrite, which
+    // hid/misplaced the new item's rows (the "content not refreshing" bug). Drop
+    // every table so each item is rendered as plain, fully-rewritten ranges.
+    this._resetTables();
+
     const shIn = this._sheet(SHEET_IN, SCAN_ROWS, 4);
     const shEx = this._sheet(SHEET_EX, SCAN_ROWS, 4);
     const shStep = this._sheet(SHEET_STEP, SCAN_ROWS, header.length + 2);
@@ -215,10 +365,49 @@ export class UniverStepsView {
     this._write(shEx, exMatrix);
     this._write(shStep, stepMatrix);
 
-    // Render each region as a first-class Univer table (see _applyTable).
-    this._applyTable(shIn, SHEET_IN, inMatrix.length, 2);
-    this._applyTable(shEx, SHEET_EX, exMatrix.length, 2);
-    this._applyTable(shStep, SHEET_STEP, stepMatrix.length, header.length);
+    // Table-like styling without a Univer table object (synchronous; see
+    // _styleHeader): bold + shaded header, frozen header row.
+    this._styleHeader(shIn, 2);
+    this._styleHeader(shEx, 2);
+    this._styleHeader(shStep, header.length);
+
+    // Land on the 手順 sheet so a reused view never shows the previous item's
+    // active sheet.
+    try {
+      const st = this._named(SHEET_STEP);
+      if (st && typeof st.activate === "function") st.activate();
+    } catch (_e) { /* best-effort */ }
+  }
+
+  // Remove every table in the workbook. The step view no longer auto-creates
+  // tables (see _styleHeader), but a reused instance from before this change — or
+  // one where a user manually inserted a table — could still carry one whose
+  // stale range/filter hides the freshly written rows. Best-effort.
+  private _resetTables(): void {
+    if (!this.fWorkbook || typeof this.fWorkbook.getTableList !== "function") return;
+    try {
+      const list = this.fWorkbook.getTableList();
+      if (Array.isArray(list)) {
+        list.forEach((t: any) => {
+          const id = t && (t.id || t.tableId);
+          if (id && typeof this.fWorkbook.removeTable === "function") {
+            try { this.fWorkbook.removeTable(id); } catch (_e) { /* ignore */ }
+          }
+        });
+      }
+    } catch (_e) { /* best-effort */ }
+  }
+
+  // Nudge Univer to re-lay its canvas after the dialog container resizes
+  // (fullscreen toggle). steps_editor.js calls this if present.
+  resize(): void {
+    try {
+      if (this.univerAPI && typeof this.univerAPI.getActiveWorkbook === "function") {
+        // A no-op scroll/refresh is enough to force a relayout in most builds;
+        // fall back to a window resize event which Univer also listens to.
+      }
+    } catch (_e) { /* ignore */ }
+    try { window.dispatchEvent(new Event("resize")); } catch (_e) { /* ignore */ }
   }
 
   // ------------------------------------------------------------------ getDoc --
@@ -253,10 +442,12 @@ export class UniverStepsView {
     return { input_signals: inSig, expected_signals: exSig, steps };
   }
 
-  // Release the Univer instance backing this view. steps_editor.js calls this
-  // when the dialog closes / before opening another item, so each item gets a
-  // fresh workbook instead of inheriting the previous one's sheet geometry.
+  // Release the Univer instance backing this view. The view is now REUSED across
+  // items (setDoc fully resets geometry), so this is only called on a genuine
+  // teardown — not on every dialog close — but kept correct for that case.
   dispose(): void {
+    try { this.cellTooltip?.dispose?.(); } catch (_e) { /* best-effort */ }
+    this.cellTooltip = null;
     try {
       if (this.univerAPI && typeof this.univerAPI.dispose === "function") {
         this.univerAPI.dispose();
@@ -264,7 +455,8 @@ export class UniverStepsView {
     } catch (_e) { /* best-effort teardown */ }
     this.fWorkbook = null;
     this.univerAPI = null;
-    this.tabledSheets.clear();
+    this.univer = null;
+    this._rowHeightPx = 0;
   }
 
   private _readSignals(sheet: any): any[][] {
