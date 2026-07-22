@@ -5,8 +5,8 @@ WebSocket (design §6.1)::
 
     provider.awareness.setLocalState({
       user:      { id, name, color },
-      cursor:    { sheet: 'test', uuid, col },
-      selection: { sheet, uuid, c1, c2 },
+      selection: { sheet, anchor: { uuid, col }, rows: [uuid...], cols: [c1, c2] },
+      # legacy (older clients only): cursor: { sheet, uuid, col }
     })
 
 Awareness is ephemeral (never enters the CRDT, never persisted). We use it as a
@@ -38,9 +38,28 @@ def _coerce_uid(raw: Any) -> Optional[int]:
 
 
 def _row_uuid(node: Any) -> Optional[str]:
-    """Extract a non-empty ``uuid`` from a cursor/selection sub-state."""
+    """Extract a non-empty row ``uuid`` from a cursor/selection sub-state.
+
+    Supports both shapes:
+      * legacy cursor  ``{sheet, uuid, col}``
+      * new selection  ``{sheet, anchor:{uuid,col}, rows:[uuid...], cols:[a,b]}``
+
+    For the new shape the anchor (active) cell wins; lacking an anchor we fall
+    back to the first selected row so attribution still resolves to a real row.
+    """
     if not isinstance(node, dict):
         return None
+    # New selection shape: prefer the anchor cell.
+    anchor = node.get("anchor")
+    if isinstance(anchor, dict):
+        val = anchor.get("uuid")
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    # New selection shape: else the first selected row uuid.
+    rows = node.get("rows")
+    if isinstance(rows, list) and rows and isinstance(rows[0], str) and rows[0].strip():
+        return rows[0].strip()
+    # Legacy cursor/selection shape.
     val = node.get("uuid")
     if not isinstance(val, str):
         return None
@@ -81,7 +100,7 @@ def row_actors(states: dict[Any, dict]) -> dict[str, int]:
                           if isinstance(state.get("user"), dict) else None)
         if uid is None:
             continue
-        row_uuid = _row_uuid(state.get("cursor")) or _row_uuid(state.get("selection"))
+        row_uuid = _row_uuid(state.get("selection")) or _row_uuid(state.get("cursor"))
         if row_uuid is None:
             continue
         out[row_uuid] = uid

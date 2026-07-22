@@ -64,6 +64,18 @@ import SheetsCrosshairHighlightZhCN from "@univerjs/sheets-crosshair-highlight/l
 import "@univerjs/sheets-crosshair-highlight/lib/index.css";
 import "@univerjs/sheets-crosshair-highlight/facade";
 
+// DI identifiers for the collaborative remote-cursor overlay. Univer is
+// canvas-rendered, so to draw a peer's cursor as a border box we must project
+// sheet (row,col) -> pixels via the render manager + sheet skeleton. These
+// identifiers are NOT reachable from a UMD/IIFE bundle's global scope, so they
+// are imported here and injected into the adapter (see adapter._ensureOverlay).
+import { IRenderManagerService } from "@univerjs/engine-render";
+import { SheetSkeletonManagerService } from "@univerjs/sheets-ui";
+// Hover service that drives the truncated-cell full-text bubble (cell_tooltip.ts).
+// Same service Univer uses for data-validation / hyperlink cell popups; it emits
+// the hovered {unitId,row,col} with built-in debouncing and correct hit-testing.
+import { HoverManagerService } from "@univerjs/sheets-ui";
+
 import { UniverGridAdapter, MountOpts } from "./adapter";
 import { UniverStepsView, createStepsMount } from "./steps_adapter";
 
@@ -84,6 +96,10 @@ const deps = {
   UniverSheetsConditionalFormattingPreset, UniverPresetSheetsConditionalFormattingZhCN,
   UniverSheetsTablePreset, UniverPresetSheetsTableZhCN,
   UniverSheetsCrosshairHighlightPlugin, SheetsCrosshairHighlightZhCN,
+  // Remote-cursor overlay projection identifiers (see import note above).
+  IRenderManagerService, SheetSkeletonManagerService,
+  // Truncated-cell full-text bubble hover source (see cell_tooltip.ts).
+  HoverManagerService,
 };
 
 // Test Matrix editor grid.

@@ -13,14 +13,18 @@
  *   Public : setFields, setData, getSelectedIds, clearSelection, engine
  *            + multi-sheet: setSheetFields, setSheetData, patchSheetData,
  *              getActiveSheetKey, setActiveSheetKey
- *            + collaboration: setRemoteCursors, setCellErrors,
- *                             getActiveCell, isEditing
+ *            + collaboration: setRemoteSelections, setCellErrors,
+ *                             getActiveSelection, isEditing
  *   Used by editor.js directly (compat): _setRowSelected, _syncSelectAll,
  *            _emitSelection
  *   Callbacks (from MountOpts): onSave, onSelectionChange, onComment, onSteps,
  *            onDelete, onInsert, onBulkDelete, onBulkDuplicate, onMove,
  *            onSheetChange(key)
  */
+
+import { CollabOverlay } from "./collab_overlay";
+import type { OverlaySelection } from "./collab_overlay";
+import { CellTooltip } from "./cell_tooltip";
 
 export interface Field {
   field_key: string;
@@ -85,6 +89,15 @@ export interface UniverDeps {
   UniverPresetSheetsTableZhCN?: any;
   UniverSheetsCrosshairHighlightPlugin?: any;
   SheetsCrosshairHighlightZhCN?: any;
+  // Univer DI identifiers needed by the collaborative border overlay to project
+  // sheet (row,col) -> canvas pixels. An IIFE/UMD bundle does NOT expose these on
+  // any global, so they MUST be injected here (main.ts imports them from
+  // @univerjs/engine-render and @univerjs/sheets-ui). When omitted the overlay
+  // degrades to a no-op and no remote cursor is drawn.
+  IRenderManagerService?: any;
+  SheetSkeletonManagerService?: any;
+  // Hover service for the truncated-cell full-text bubble (see cell_tooltip.ts).
+  HoverManagerService?: any;
 }
 
 // Per-worksheet context: each native tab owns its field set, its rows and its
@@ -105,9 +118,6 @@ interface SheetCtx {
   // "row,col" keys currently painted as server-rejected cells, so the next
   // setCellErrors call knows which cells to clear (design §12.2).
   errCells?: Set<string>;
-  // "row,col" keys currently tinted as a remote peer's cursor cell, so the next
-  // setRemoteCursors call knows which cells to clear (design §6.1).
-  curCells?: Set<string>;
 }
 
 const HEADER_ROWS = 1; // row 0 is the header; data starts at row 1
@@ -124,6 +134,9 @@ export class UniverGridAdapter {
   private active!: SheetCtx;
 
   private univerAPI: any = null;
+  private univer: any = null;          // raw Univer instance (for __getInjector)
+  private overlay: CollabOverlay | null = null; // remote-selection border overlay
+  private cellTooltip: CellTooltip | null = null; // truncated-cell full-text bubble
   private fWorkbook: any = null;
   private hasValidation = false;
   private hasFilter = false;
@@ -134,7 +147,14 @@ export class UniverGridAdapter {
   private syncing = false;       // guards overlapping flushes
   private lastStepsKey: string | null = null; // de-dupes step-dialog open per cell
   private editing = false;       // true while the user has a cell editor open (SheetEditStarted→Ended)
-  private activeCell: { id: number; col: number } | null = null; // last single-cell selection (local cursor source)
+  private activeCell: { id: number; col: number } | null = null; // last single-cell selection (anchor source)
+  // Full local selection published into awareness so peers can draw a border
+  // overlay (design §6.1): anchor cell + selected row ids + visible column span.
+  private activeSelection: {
+    anchor: { id: number; col: number } | null;
+    rowIds: number[];
+    cols: [number, number] | null;
+  } | null = null;
 
   constructor(deps: UniverDeps, opts: MountOpts) {
     this.deps = deps;
@@ -197,6 +217,7 @@ export class UniverGridAdapter {
       theme: defaultTheme,
       presets,
     });
+    this.univer = univer;
     this.univerAPI = univerAPI;
 
     if (univer && UniverSheetsCrosshairHighlightPlugin) {
@@ -235,6 +256,8 @@ export class UniverGridAdapter {
             ? univerAPI.Enum.LifecycleStages.Rendered : undefined;
           if (rendered === undefined || stage === rendered) {
             this._applyFreeze(this.active);
+            this._ensureOverlay();
+            this._ensureCellTooltip();
           }
         });
       }
@@ -313,70 +336,105 @@ export class UniverGridAdapter {
   // flowing the instant the user stops editing (design §1.3).
   isEditing(): boolean { return this.editing; }
 
-  // The active cell as ``{ id, col }`` (col = visible-column index) or null.
-  // The editor publishes it into awareness as this user's cursor so peers can
-  // draw a precise remote overlay (design §6.1).
-  getActiveCell(): { id: number; col: number } | null { return this.activeCell; }
-
-  // Remote cursors for the Univer engine (design §6.1). Univer is canvas-
-  // rendered so a floating DOM box can't be reliably positioned, but the facade
-  // CAN tint an exact cell — so each peer's current cell (id + visible column,
-  // published via getActiveCell) is marked with a faint tint of that peer's
-  // colour. This is a precise per-cell marker (not the old whole-row highlight,
-  // which stayed permanently lit and was removed). An error mark on the same
-  // cell wins: cursor drawing skips cells currently flagged by setCellErrors,
-  // and clearing a cursor never wipes an error background. Returns true so the
-  // editor treats presence as handled here.
-  setRemoteCursors(cursors: Array<{ id: number; col: number | null; color?: string }>): boolean {
-    const ctx = this.active;
-    if (!ctx || !ctx.fSheet) return true;
-    const vis = this._visibleFields(ctx);
-    if (!vis.length) return true;
-    const list = Array.isArray(cursors) ? cursors : [];
-    const rowByUuidId: Record<number, number> = {};
-    ctx.items.forEach((it, idx) => { rowByUuidId[it.id as number] = idx; });
-    const errCells = ctx.errCells || new Set<string>();
-    const prev = ctx.curCells || new Set<string>();
-    const next = new Set<string>();
-    this.applying = true;
-    try {
-      list.forEach((c) => {
-        const idx = rowByUuidId[c.id];
-        if (idx === undefined) return;
-        const col = (c.col == null ? 0 : c.col);
-        if (col < 0 || col >= vis.length) return;
-        const key = idx + "," + col;
-        if (errCells.has(key)) return;  // an error mark on this cell takes priority
-        next.add(key);
-        try {
-          ctx.fSheet.getRange(HEADER_ROWS + idx, col, 1, 1)
-            .setBackgroundColor(this._tint(c.color || "#888"));
-        } catch (_e) { /* best-effort per cell */ }
-      });
-      prev.forEach((key) => {
-        if (next.has(key) || errCells.has(key)) return;  // keep error backgrounds
-        const [r, c] = key.split(",").map(Number);
-        if (r >= ctx.items.length) return;
-        try {
-          ctx.fSheet.getRange(HEADER_ROWS + r, c, 1, 1).setBackgroundColor(null);
-        } catch (_e) { /* best-effort per cell */ }
-      });
-    } finally { this.applying = false; }
-    ctx.curCells = next;
-    return true;
+  // The full local selection (design §6.1): the anchor (active) cell plus the
+  // set of selected row ids and the visible column span. The editor maps the ids
+  // to row uuids and publishes it into awareness so peers can draw a border
+  // overlay that is correct regardless of each peer's own sort/filter view.
+  getActiveSelection(): {
+    anchor: { id: number; col: number } | null;
+    rowIds: number[];
+    cols: [number, number] | null;
+  } | null {
+    return this.activeSelection;
   }
 
-  // Mix a collaborator colour with white to a faint tint suitable as a cell
-  // background (the full colour would drown the cell text).
-  private _tint(hex: string): string {
+  // Lazily create the transparent border-overlay layer once the first sheet has
+  // rendered (needs the Univer canvas + skeleton to exist).
+  private _ensureOverlay(): void {
+    if (this.overlay || !this.univer) return;
     try {
-      let h = String(hex).replace("#", "");
-      if (h.length === 3) h = h.split("").map((c) => c + c).join("");
-      const n = parseInt(h, 16);
-      const mix = (c: number) => Math.round(c + (255 - c) * 0.7);
-      const to2 = (c: number) => mix(c).toString(16).padStart(2, "0");
-      return "#" + to2((n >> 16) & 255) + to2((n >> 8) & 255) + to2(n & 255);
-    } catch (_e) { return "#dfe6f5"; }
+      this.overlay = new CollabOverlay(this.host, {
+        getUniver: () => this.univer,
+        getUnitId: () => {
+          try { return this.fWorkbook?.getId?.() || this.fWorkbook?.id || null; }
+          catch (_e) { return null; }
+        },
+        // Inject the DI identifiers explicitly: a UMD/IIFE bundle never exposes
+        // them on a global, so the overlay's name-based probe cannot find them.
+        // Without these the projector fails to resolve the skeleton service and
+        // the overlay silently draws nothing (the latent "no cursor" bug).
+        identifiers: {
+          IRenderManagerService: this.deps.IRenderManagerService,
+          SheetSkeletonManagerService: this.deps.SheetSkeletonManagerService,
+        },
+      });
+    } catch (_e) { this.overlay = null; }
+  }
+
+  // Lazily create the truncated-cell full-text bubble once the sheet has rendered
+  // (needs the Univer canvas + hover service). Mirrors _ensureOverlay: the DI
+  // identifiers are injected because a UMD bundle exposes none on a global.
+  private _ensureCellTooltip(): void {
+    if (this.cellTooltip || !this.univer) return;
+    try {
+      this.cellTooltip = new CellTooltip(this.host, {
+        getUniver: () => this.univer,
+        getUnitId: () => {
+          try { return this.fWorkbook?.getId?.() || this.fWorkbook?.id || null; }
+          catch (_e) { return null; }
+        },
+        getFSheet: () => (this.active ? this.active.fSheet : null),
+        isSuppressed: () => this.editing,
+        identifiers: {
+          IRenderManagerService: this.deps.IRenderManagerService,
+          SheetSkeletonManagerService: this.deps.SheetSkeletonManagerService,
+          HoverManagerService: this.deps.HoverManagerService,
+        },
+      });
+      this.cellTooltip.init();
+    } catch (_e) { this.cellTooltip = null; }
+  }
+
+  // Remote peers' selections for the Univer engine (design §6.1). Univer is
+  // canvas-rendered, so instead of mutating cell styles we draw each peer's
+  // selection as a COLOURED BORDER on a transparent overlay above the canvas
+  // (zero document pollution). Each peer's broadcast row uuids are mapped to the
+  // rows that actually exist in THIS client's view (a peer's row missing here is
+  // silently skipped), so differing sort/filter views never mis-place a box.
+  // Returns true so the editor treats presence as handled here.
+  setRemoteSelections(peers: Array<{
+    key: string; name: string; color?: string;
+    anchor?: { id: number; col: number } | null;
+    rowIds: number[]; cols?: [number, number] | null;
+  }>): boolean {
+    const ctx = this.active;
+    this._ensureOverlay();
+    if (!ctx || !this.overlay) return true;
+    const vis = this._visibleFields(ctx);
+    const rowByUuidId: Record<number, number> = {};
+    ctx.items.forEach((it, idx) => { rowByUuidId[it.id as number] = idx; });
+
+    const out: OverlaySelection[] = [];
+    (peers || []).forEach((p) => {
+      const c0 = p.cols ? Math.max(0, p.cols[0]) : 0;
+      const c1 = p.cols ? Math.min(vis.length - 1, p.cols[1]) : vis.length - 1;
+      const cells: Array<{ row: number; col: number }> = [];
+      (p.rowIds || []).forEach((id) => {
+        const idx = rowByUuidId[id];
+        if (idx === undefined) return;               // row not in my view -> skip
+        for (let col = c0; col <= c1; col++) cells.push({ row: HEADER_ROWS + idx, col });
+      });
+      let anchor: { row: number; col: number } | null = null;
+      if (p.anchor) {
+        const idx = rowByUuidId[p.anchor.id];
+        if (idx !== undefined && p.anchor.col >= 0 && p.anchor.col < vis.length) {
+          anchor = { row: HEADER_ROWS + idx, col: p.anchor.col };
+        }
+      }
+      out.push({ key: p.key, name: p.name, color: p.color || "#888", anchor, cells });
+    });
+    this.overlay.setSelections(out);
+    return true;
   }
 
   // Mark cells the server rejected during materialization (design §12.2). ``map``
@@ -622,7 +680,6 @@ export class UniverGridAdapter {
         // editor (applyCellErrors).
         try { clearRange.setBackgroundColor && clearRange.setBackgroundColor(null); } catch (_e) { /* optional */ }
         ctx.errCells = new Set();
-        ctx.curCells = new Set();
       } catch (_e) { /* older facade: skip clear */ }
 
       if (ctx.items.length && vis.length) {
@@ -648,6 +705,8 @@ export class UniverGridAdapter {
     } finally {
       this.applying = false;
     }
+    // Rows moved: reproject any remote-selection borders onto the new layout.
+    if (this.overlay && ctx === this.active) this.overlay.refresh();
   }
 
   private _applyFilter(ctx: SheetCtx, colCount: number): void {
@@ -751,6 +810,21 @@ export class UniverGridAdapter {
             this._scheduleSync();
           } else if (/set-?worksheet-?active|active-?sheet|activate-?sheet/i.test(id)) {
             this._onActiveSheetMaybeChanged();
+          }
+          // Reproject the remote-cursor overlay whenever the grid GEOMETRY
+          // changes: column width / row height (incl. their mutations + delta
+          // form), scroll and zoom. The overlay reads cell coords from the LIVE
+          // skeleton on every paint, so it never hardcodes sizes — it only needs
+          // a repaint trigger. This makes a peer resizing a column (synced in via
+          // a command with no local pointer event) update instantly instead of
+          // waiting on the 250ms poll. Matches Univer 0.25.1 command ids:
+          //   sheet.command/mutation.set-worksheet-col-width
+          //   sheet.command/mutation.set-worksheet-row-height, delta-row-height
+          //   sheet.operation.set-scroll, scroll-to-cell/range, scroll-view
+          //   sheet.command/operation.set-zoom-ratio, change-zoom-ratio
+          if (this.overlay &&
+              /col-?width|row-?height|scroll|zoom/i.test(id)) {
+            this.overlay.refresh();
           }
         });
         bound++;
@@ -928,6 +1002,9 @@ export class UniverGridAdapter {
                           (p && p.range ? [p.range] : []);
     ctx.selected.clear();
     let single: { row: number; col: number } | null = null;
+    const rowIds: number[] = [];
+    let minCol = Infinity;
+    let maxCol = -Infinity;
     ranges.forEach((r) => {
       const s = r.startRow ?? r.row;
       const e = r.endRow ?? s;
@@ -936,11 +1013,12 @@ export class UniverGridAdapter {
       if (s == null) return;
       for (let row = Math.max(s, HEADER_ROWS); row <= e; row++) {
         const it = this._rowToItem(ctx, row);
-        if (it) ctx.selected.add(it.id);
+        if (it) { ctx.selected.add(it.id); rowIds.push(it.id as number); }
       }
+      if (sc != null) { minCol = Math.min(minCol, Number(sc)); maxCol = Math.max(maxCol, Number(ec ?? sc)); }
       if (s === e && sc != null && sc === ec) single = { row: Number(s), col: Number(sc) };
     });
-    // Record the active cell so the editor can publish it as the local cursor
+    // Record the active cell so the editor can publish it as the anchor
     // (design §6.1); col is the visible-column index, matching FallbackGrid.
     if (single) {
       const it = this._rowToItem(ctx, (single as { row: number; col: number }).row);
@@ -948,6 +1026,13 @@ export class UniverGridAdapter {
     } else {
       this.activeCell = null;
     }
+    // Record the full selection so the editor can publish a border overlay for
+    // peers: anchor + selected row ids + visible column span (design §6.1).
+    this.activeSelection = {
+      anchor: this.activeCell,
+      rowIds,
+      cols: minCol <= maxCol ? [minCol, maxCol] : null,
+    };
     this._emitSelection();
     this._maybeOpenSteps(single);
   }

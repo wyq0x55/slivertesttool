@@ -81,7 +81,90 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     def _inject_globals() -> dict:
         return {"app_version": __version__}
 
+    _install_static_compression(app)
+
     return app
+
+
+def _install_static_compression(app: Flask) -> None:
+    """Gzip large static JS/CSS on the fly and mark vendor bundles immutable.
+
+    The Univer bundle (``univer.full.umd.js``) is ~11 MB uncompressed, which makes
+    the first editor load painfully slow over a LAN. Waitress/Flask ship static
+    files verbatim with no ``Content-Encoding`` and no useful cache lifetime, so
+    every client re-downloads all 11 MB on every visit.
+
+    This hook fixes both cheaply and offline (stdlib ``gzip`` only, no extra
+    dependency):
+
+    * Compresses text-like ``/static`` assets (js/css/json/svg/map) when the
+      client advertises ``Accept-Encoding: gzip`` — ~11 MB drops to ~2.7 MB.
+    * Caches the compressed bytes in-process keyed by path + original length, so
+      only the *first* request per asset pays the CPU cost; the length key means a
+      rebuilt bundle is transparently recompressed.
+    * Tags ``/static/vendor/`` assets ``immutable`` with a one-year max-age so
+      repeat visits skip the download entirely.
+    """
+    import gzip as _gzip
+
+    from flask import request
+
+    cache: dict[str, tuple[int, bytes]] = {}
+    # Below this size gzip's framing overhead isn't worth the CPU round-trip.
+    min_size = 2048
+
+    @app.after_request
+    def _compress_and_cache(resp):  # noqa: ANN001, ANN202
+        try:
+            path = request.path or ""
+            if not path.startswith("/static/"):
+                return resp
+            if not path.endswith((".js", ".css", ".json", ".svg", ".map")):
+                return resp
+
+            # Long-lived immutable caching for versioned vendor bundles: they only
+            # change when the file is replaced (new length -> new URL content), so
+            # a year is safe and makes repeat loads instant.
+            if "/vendor/" in path:
+                resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+
+            if resp.status_code != 200:
+                return resp
+
+            accept = request.headers.get("Accept-Encoding", "")
+            if "gzip" not in accept.lower():
+                return resp
+            if resp.headers.get("Content-Encoding"):
+                return resp
+
+            # Fast path: for a static file Flask has already set Content-Length to
+            # the file size, so a cache hit needs neither reading nor recompressing
+            # the (up to 11 MB) body. The length doubles as a cheap change key —
+            # a rebuilt bundle has a different size and is transparently redone.
+            clen = resp.content_length
+            hit = cache.get(path)
+            if clen is not None and hit is not None and hit[0] == clen:
+                gz = hit[1]
+            else:
+                # Materialise the (possibly file-streamed) body to compress it.
+                resp.direct_passthrough = False
+                data = resp.get_data()
+                if len(data) < min_size:
+                    return resp
+                gz = _gzip.compress(data, compresslevel=6)
+                cache[path] = (len(data), gz)
+
+            resp.set_data(gz)
+            resp.headers["Content-Encoding"] = "gzip"
+            resp.headers["Content-Length"] = str(len(gz))
+            vary = resp.headers.get("Vary")
+            if not vary:
+                resp.headers["Vary"] = "Accept-Encoding"
+            elif "accept-encoding" not in vary.lower():
+                resp.headers["Vary"] = vary + ", Accept-Encoding"
+        except Exception:  # noqa: BLE001 - never break a response over compression
+            return resp
+        return resp
 
 
 def _install_auth_gate(app: Flask) -> None:

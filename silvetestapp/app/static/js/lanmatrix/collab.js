@@ -202,7 +202,7 @@
         id: uid,
         color: PALETTE[Math.abs(uid) % PALETTE.length],
       });
-      const aw = function () { self._emitPresence(); self._emitCursors(); };
+      const aw = function () { self._emitPresence(); self._emitSelections(); };
       provider.awareness.on("change", aw);
       this._awarenessHandler = aw;
     } catch (_e) { /* presence is best-effort */ }
@@ -376,40 +376,47 @@
     this._cb.onPresence(users);
   };
 
-  // Publish the local user's editing cursor into awareness so peers can see
-  // which row this user is on. The row is identified by its stable ``uuid``
-  // (never an absolute row number) because peers may be filtering/sorting and
-  // therefore see a different row order. Passing a falsy ``uuid`` clears it.
-  LMCollabController.prototype.setLocalCursor = function (sheet, uuid, col) {
+  // Publish the local user's SELECTION into awareness so peers can draw a border
+  // overlay (design §6.1). Rows are identified by their stable ``uuid`` (never an
+  // absolute row number) because peers may sort/filter and see a different order:
+  //   anchor : { uuid, col } | null   -- the active cell (thick box + name tag)
+  //   rows   : [ uuid... ]            -- selected rows (view-independent set)
+  //   cols   : [ minCol, maxCol ] | null
+  // A falsy anchor with an empty rows set clears the state.
+  LMCollabController.prototype.setLocalSelection = function (sheet, anchor, rows, cols) {
     if (!this.provider) return;
     try {
+      var has = (anchor && anchor.uuid) || (rows && rows.length);
       this.provider.awareness.setLocalStateField(
-        "cursor",
-        uuid ? { sheet: sheet, uuid: uuid, col: (col == null ? null : col) } : null);
+        "selection",
+        has ? { sheet: sheet, anchor: anchor || null, rows: rows || [], cols: cols || null } : null);
     } catch (_e) { /* awareness optional */ }
   };
 
-  // Collect remote editing cursors and hand them to the UI as a per-sheet map
-  // ``{ sheet: { uuid: { name, color, id } } }`` (the local user is excluded).
-  // The editor turns this into the remote-cursor overlay for the mounted grid.
-  LMCollabController.prototype._emitCursors = function () {
+  // Collect remote selections and hand them to the UI as a per-sheet map
+  // ``{ sheet: [ { key, name, color, anchor, rows, cols } ] }`` (local user
+  // excluded). The editor maps the uuids to ids and draws each peer's overlay.
+  LMCollabController.prototype._emitSelections = function () {
     if (!this._cb.onCursors || !this.provider) return;
-    const states = this.provider.awareness.getStates();
-    let selfId = null;
+    var states = this.provider.awareness.getStates();
+    var selfId = null;
     try { selfId = this.provider.awareness.clientID; } catch (_e) { /* noop */ }
-    const bySheet = {};
+    var bySheet = {};
     states.forEach(function (st, clientId) {
       if (selfId != null && clientId === selfId) return;
-      const c = st && st.cursor;
-      const u = st && st.user;
-      if (!c || !c.uuid || !c.sheet || !u) return;
-      if (!bySheet[c.sheet]) bySheet[c.sheet] = {};
-      bySheet[c.sheet][c.uuid] = {
+      var u = st && st.user;
+      var s = st && st.selection;
+      if (!u || !s || !s.sheet) return;
+      if (!((s.anchor && s.anchor.uuid) || (s.rows && s.rows.length))) return;
+      if (!bySheet[s.sheet]) bySheet[s.sheet] = [];
+      bySheet[s.sheet].push({
+        key: String(u.id != null ? u.id : clientId),
         name: u.name || "协作者",
         color: u.color || "#888",
-        id: u.id,
-        col: (c.col == null ? null : c.col),
-      };
+        anchor: s.anchor || null,
+        rows: s.rows || [],
+        cols: s.cols || null,
+      });
     });
     this._cb.onCursors(bySheet);
   };

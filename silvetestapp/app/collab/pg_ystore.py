@@ -104,10 +104,12 @@ class PgYStore(BaseYStore):
                 .order_by(CollabDoc.seq.asc()).all())
         if len(rows) < 2:
             return
-        # FIX: merge_updates 接受 list[bytes]，不是 *args。
-        # 原来 merge_updates(*[...]) 把列表展开成位置参数，pycrdt 期望单个 list
-        # 参数，≥2 个元素时会 TypeError 崩溃。
-        merged = merge_updates([bytes(r.update) for r in rows])
+        # pycrdt's ``merge_updates(*updates: bytes)`` is variadic: it forwards the
+        # positional tuple straight to the native ``_merge_updates``. Passing a
+        # single list makes the Rust side try to read that list as one update,
+        # panicking with "'bytes' object cannot be interpreted as an integer"
+        # (src/update.rs) once there are >=2 rows to compact. Spread the updates.
+        merged = merge_updates(*[bytes(r.update) for r in rows])
         latest_ts = rows[-1].ts
         for r in rows:
             db.session.delete(r)

@@ -344,12 +344,13 @@ select.lm-cell-control[multiple] { min-height: 46px; }
   text-align: center; box-shadow: 0 0 0 1px #fff;
 }
 
-/* Remote-cursor overlay (Phase 2, design §6.1): a coloured box drawn over each
-   peer's exact editing cell (or whole row when the column is unknown), with a
-   name tag. Positioned in content coordinates inside the grid host so it scrolls
-   with the table for free. pointer-events:none keeps it click-through. Only the
-   DOM (fallback) grid uses this; the Univer canvas engine shows no presence
-   marker (the old row-highlight fallback was removed). */
+/* Remote-selection overlay (Phase 2, design §6.1): each peer's selection is
+   drawn as a coloured BORDER — a thin frame around every selected cell plus a
+   thick anchor box with a name tag — over a transparent, click-through layer
+   (pointer-events:none). The document model is never mutated. The DOM (fallback)
+   grid positions these boxes over the table; the Univer canvas engine draws an
+   equivalent border layer above the canvas via the CollabOverlay module. Both
+   scroll with their content, so no scroll handler is needed here. */
 .lm-collab-overlay {
   position: absolute; inset: 0; pointer-events: none; overflow: visible; z-index: 5;
 }
@@ -362,6 +363,14 @@ select.lm-cell-control[multiple] { min-height: 46px; }
 .lm-collab-cursor-row {
   background: color-mix(in srgb, var(--lm-collab-color, #888) 6%, transparent);
   border-left-width: 4px; border-right: none; border-top: none; border-bottom: none;
+}
+/* A remote peer's selection cell: a thin coloured border (no fill) so many
+   selected rows read as one framed range without drowning the cell text. */
+.lm-collab-sel {
+  position: absolute; pointer-events: none; box-sizing: border-box;
+  border: 1.5px solid var(--lm-collab-color, #888);
+  background: color-mix(in srgb, var(--lm-collab-color, #888) 5%, transparent);
+  border-radius: 1px;
 }
 .lm-collab-cursor-tag {
   position: absolute; top: -16px; left: -2px; max-width: 140px;

@@ -123,15 +123,30 @@
       return this._lastActive;
     }
 
-    // Draw remote collaborators' cursors/selections as an absolutely-positioned
-    // DOM overlay over the grid (design §6.1). ``cursors`` is a list of
-    // ``{ id, col, name, color }``. Returns true — the DOM overlay is always
-    // available in this (fallback) grid. The Univer canvas engine returns false
-    // and simply shows no presence marker (the row-highlight fallback was
-    // removed because it stayed permanently lit).
-    setRemoteCursors(cursors) {
-      this._remoteCursors = Array.isArray(cursors) ? cursors : [];
-      this._drawRemoteCursors();
+    // The full local selection (design §6.1): the anchor (active) cell plus the
+    // set of selected row ids and the visible column span. The editor maps ids to
+    // row uuids and publishes it into awareness so peers can draw a border
+    // overlay correct under any sort/filter view.
+    getActiveSelection() {
+      const ac = this.getActiveCell();
+      const rowIds = this.getSelectedIds();
+      if (ac && ac.id != null && rowIds.indexOf(ac.id) === -1) rowIds.push(ac.id);
+      const anchor = (ac && ac.id != null && ac.col != null)
+        ? { id: ac.id, col: ac.col } : null;
+      const cols = anchor ? [anchor.col, anchor.col] : null;
+      return { anchor: anchor, rowIds: rowIds, cols: cols };
+    }
+
+    // Draw remote collaborators' SELECTIONS as an absolutely-positioned DOM
+    // overlay over the grid (design §6.1). ``peers`` is a list of
+    // ``{ key, name, color, anchor:{id,col}|null, rowIds:[id...], cols:[min,max]|null }``.
+    // Each peer's rows are located by id in THIS view; rows filtered out here are
+    // skipped, so a differing sort/filter never mis-places a box. Selection cells
+    // get a thin coloured border; the anchor cell gets a thick border + name tag.
+    // Returns true — the DOM overlay is always available in this (fallback) grid.
+    setRemoteSelections(peers) {
+      this._remoteSelections = Array.isArray(peers) ? peers : [];
+      this._drawRemoteSelections();
       return true;
     }
 
@@ -148,36 +163,62 @@
       return ov;
     }
 
-    // Position a box over the target cell (or whole row when col is unknown)
-    // using content-relative offsets, so the overlay scrolls with the grid for
-    // free — no scroll handler needed. Re-run after every render (innerHTML wipes
-    // the layer). Rows filtered out of the current view are simply skipped.
-    _drawRemoteCursors() {
-      const list = this._remoteCursors || [];
+    // Position selection + anchor boxes using content-relative offsets, so the
+    // overlay scrolls with the grid for free — no scroll handler needed. Re-run
+    // after every render (innerHTML wipes the layer). Rows filtered out of the
+    // current view are simply skipped.
+    _drawRemoteSelections() {
+      const peers = this._remoteSelections || [];
       const ov = this._ensureOverlay();
       ov.innerHTML = "";
-      if (!list.length) return;
+      if (!peers.length) return;
       const fields = this._visibleFields();
-      list.forEach((c) => {
-        const tr = this.host.querySelector(`tbody tr[data-id="${c.id}"]`);
-        if (!tr) return;
-        let target = null;
-        if (c.col != null && fields[c.col]) {
-          target = tr.querySelector(`td.lm-cell[data-key="${fields[c.col].field_key}"]`);
+      const cellAt = (tr, col) => (col != null && fields[col])
+        ? tr.querySelector(`td.lm-cell[data-key="${fields[col].field_key}"]`) : null;
+      peers.forEach((p) => {
+        const color = p.color || "#888";
+        // 1) Selection rectangles: one box per selected row across the col span.
+        const c0 = p.cols ? Math.max(0, p.cols[0]) : 0;
+        const c1 = p.cols ? Math.min(fields.length - 1, p.cols[1]) : fields.length - 1;
+        (p.rowIds || []).forEach((id) => {
+          const tr = this.host.querySelector(`tbody tr[data-id="${id}"]`);
+          if (!tr) return;                          // row not in my view -> skip
+          const startCell = cellAt(tr, c0);
+          const endCell = cellAt(tr, c1);
+          const box = document.createElement("div");
+          box.className = "lm-collab-sel";
+          box.style.setProperty("--lm-collab-color", color);
+          if (startCell && endCell) {
+            box.style.left = startCell.offsetLeft + "px";
+            box.style.top = startCell.offsetTop + "px";
+            box.style.width = (endCell.offsetLeft + endCell.offsetWidth - startCell.offsetLeft) + "px";
+            box.style.height = startCell.offsetHeight + "px";
+          } else {
+            box.style.left = tr.offsetLeft + "px";
+            box.style.top = tr.offsetTop + "px";
+            box.style.width = tr.offsetWidth + "px";
+            box.style.height = tr.offsetHeight + "px";
+          }
+          ov.appendChild(box);
+        });
+        // 2) Anchor box (thicker) + name tag.
+        if (p.anchor && p.anchor.id != null) {
+          const tr = this.host.querySelector(`tbody tr[data-id="${p.anchor.id}"]`);
+          if (!tr) return;
+          const target = cellAt(tr, p.anchor.col) || tr;
+          const box = document.createElement("div");
+          box.className = "lm-collab-cursor";
+          box.style.setProperty("--lm-collab-color", color);
+          box.style.left = target.offsetLeft + "px";
+          box.style.top = target.offsetTop + "px";
+          box.style.width = target.offsetWidth + "px";
+          box.style.height = target.offsetHeight + "px";
+          const tag = document.createElement("span");
+          tag.className = "lm-collab-cursor-tag";
+          tag.textContent = p.name || "协作者";
+          box.appendChild(tag);
+          ov.appendChild(box);
         }
-        const rect = target || tr;
-        const box = document.createElement("div");
-        box.className = "lm-collab-cursor" + (target ? "" : " lm-collab-cursor-row");
-        box.style.setProperty("--lm-collab-color", c.color || "#888");
-        box.style.left = rect.offsetLeft + "px";
-        box.style.top = rect.offsetTop + "px";
-        box.style.width = rect.offsetWidth + "px";
-        box.style.height = rect.offsetHeight + "px";
-        const tag = document.createElement("span");
-        tag.className = "lm-collab-cursor-tag";
-        tag.textContent = c.name || "协作者";
-        box.appendChild(tag);
-        ov.appendChild(box);
       });
     }
 
@@ -242,7 +283,7 @@
         </table>`;
       this._bind();
       this._syncSelectAll();
-      this._drawRemoteCursors();   // innerHTML wiped the overlay: repaint it (§6.1)
+      this._drawRemoteSelections();   // innerHTML wiped the overlay: repaint it (§6.1)
       this._drawCellErrors();      // innerHTML wiped cell marks: repaint them (§12.2)
     }
 

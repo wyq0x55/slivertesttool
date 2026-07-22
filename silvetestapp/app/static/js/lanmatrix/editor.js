@@ -449,47 +449,82 @@
   // located by its stable ``uuid`` — never an absolute row number — so it maps
   // correctly even when peers are filtering/sorting. Falsy uuid clears it.
   function updateSelectionUI(ids) {
-    if (!collabActive() || !collab.setLocalCursor) return;
-    let rowId = null;
-    let col = null;
-    if (grid && typeof grid.getActiveCell === "function") {
-      const ac = grid.getActiveCell();
-      if (ac) { rowId = ac.id; col = (ac.col == null ? null : ac.col); }
+    if (!collabActive() || !collab.setLocalSelection) return;
+    const items = sheetItems[currentSheet] || [];
+    const uuidOf = {};
+    items.forEach((it) => { if (it.uuid) uuidOf[Number(it.id)] = it.uuid; });
+
+    let sel = null;
+    if (grid && typeof grid.getActiveSelection === "function") {
+      sel = grid.getActiveSelection();
     }
-    if (rowId == null && ids && ids.length) rowId = Number(ids[0]);
-    let uuid = null;
-    if (rowId != null) {
-      const items = sheetItems[currentSheet] || [];
-      for (const it of items) {
-        if (Number(it.id) === Number(rowId)) { uuid = it.uuid || null; break; }
-      }
+    // Fallback: a bare id list with no active-cell info.
+    if (!sel) {
+      const rowIds = (ids || []).map(Number);
+      sel = { anchor: null, rowIds: rowIds, cols: null };
     }
-    collab.setLocalCursor(currentSheet, uuid, col);
+    // Map selected row ids -> stable uuids (rows without a uuid are dropped).
+    const rowsUuid = [];
+    (sel.rowIds || []).forEach((id) => {
+      const u = uuidOf[Number(id)];
+      if (u) rowsUuid.push(u);
+    });
+    // Map the anchor id -> uuid so peers can place the active-cell box + label.
+    let anchor = null;
+    if (sel.anchor && sel.anchor.id != null) {
+      const u = uuidOf[Number(sel.anchor.id)];
+      if (u) anchor = { uuid: u, col: (sel.anchor.col == null ? 0 : sel.anchor.col) };
+    }
+    collab.setLocalSelection(currentSheet, anchor, rowsUuid, sel.cols || null);
   }
 
-  // Render remote collaborators' presence for the active sheet (design §6.1):
-  // a precise per-cell cursor marker via grid.setRemoteCursors — the fallback
-  // grid draws a coloured DOM box + name tag; the Univer engine tints the exact
-  // cell in the peer's colour through the facade. The old whole-row highlight
-  // was removed (it stayed permanently lit and was distracting). Called on every
-  // cursor change and after each render (a full repaint drops the marks, so
-  // presence must be re-applied).
+  // Render remote collaborators' SELECTIONS for the active sheet (design §6.1):
+  // each peer's selection is drawn as a coloured BORDER (anchor cell + selected
+  // rows) with a Figma-style name tag. Both grids draw a zero-mutation overlay:
+  // the fallback grid positions DOM boxes over the table; the Univer engine draws
+  // a transparent border layer above the canvas (no cell-style pollution). Peer
+  // row uuids are mapped to the ids that exist in THIS view, so a differing
+  // sort/filter never mis-places a box. Called on every selection change and
+  // after each render (a full repaint drops the overlay, so it must be re-applied).
   function applyCollabPresence() {
     if (!grid) return;
-    if (typeof grid.setRemoteCursors !== "function") return;
-    const cur = (remoteCursors && remoteCursors[currentSheet]) || {};
+    if (typeof grid.setRemoteSelections !== "function") {
+      // A grid without the selection-overlay API is almost always a STALE Univer
+      // bundle built before the border-overlay work. The source is correct but
+      // app/static/vendor/univer/univer.full.umd.js must be rebuilt
+      // (cd frontend && npm run build). Warn once so this never wastes debugging.
+      if (!applyCollabPresence._warned) {
+        applyCollabPresence._warned = true;
+        try {
+          console.warn("[lanmatrix] Remote selections disabled: the active grid " +
+            "has no setRemoteSelections(). Rebuild the Univer bundle " +
+            "(cd frontend && npm run build) so the overlay adapter is included.");
+        } catch (_e) { /* noop */ }
+      }
+      return;
+    }
+    const list = (remoteSelections && remoteSelections[currentSheet]) || [];
     const items = sheetItems[currentSheet] || [];
-    const byUuid = {};
-    items.forEach((it) => { if (it.uuid) byUuid[it.uuid] = it.id; });
-    const cursors = [];
-    Object.keys(cur).forEach((uuid) => {
-      const id = byUuid[uuid];
-      if (id === undefined) return;
-      const c = cur[uuid];
-      cursors.push({ id: id, uuid: uuid, col: (c.col == null ? null : c.col),
-        name: c.name, color: c.color });
+    const idByUuid = {};
+    items.forEach((it) => { if (it.uuid) idByUuid[it.uuid] = it.id; });
+    const peers = [];
+    list.forEach((p) => {
+      // Map this peer's row uuids -> ids present in my view (others dropped).
+      const rowIds = [];
+      (p.rows || []).forEach((u) => {
+        const id = idByUuid[u];
+        if (id !== undefined) rowIds.push(id);
+      });
+      let anchor = null;
+      if (p.anchor && p.anchor.uuid) {
+        const id = idByUuid[p.anchor.uuid];
+        if (id !== undefined) anchor = { id: id, col: (p.anchor.col == null ? 0 : p.anchor.col) };
+      }
+      if (!rowIds.length && !anchor) return;   // nothing of this peer is visible
+      peers.push({ key: p.key, name: p.name, color: p.color,
+        anchor: anchor, rowIds: rowIds, cols: p.cols || null });
     });
-    try { grid.setRemoteCursors(cursors); } catch (_e) { /* best-effort */ }
+    try { grid.setRemoteSelections(peers); } catch (_e) { /* best-effort */ }
   }
 
   // Paint cells the server rejected during materialization red (design §12.2).
@@ -856,7 +891,7 @@
   let collabPeers = 0;
   let collabEverConnected = false;
   let collabMembers = [];            // last online-member roster (design §6.1)
-  let remoteCursors = {};            // { sheet: { uuid: {name,color,id} } } (§6.1)
+  let remoteSelections = {};         // { sheet: [ {key,name,color,anchor,rows,cols} ] } (§6.1)
   let remoteRowErrors = {};          // { uuid: {cells:[field_key], message, sheet} } (§12.2)
   function renderCollabStatus() {
     const el = document.getElementById("lm-collab-status");
@@ -977,7 +1012,7 @@
           renderMembers(users);
         },
         onCursors: (bySheet) => {
-          remoteCursors = bySheet || {};
+          remoteSelections = bySheet || {};
           applyCollabPresence();
         },
         onRowErrors: (byUuid) => {
