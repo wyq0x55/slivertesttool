@@ -81,6 +81,13 @@
       this.view = null;
       this.engine = "builtin";
       this.backdrop = null;
+      // Lib/Const reference search panel (lazily populated on open()).
+      this.refPanel = null;
+      this.refEl = dialog.querySelector("#lm-steps-ref");
+      this.refToggleBtn = dialog.querySelector("#lm-steps-ref-toggle");
+      this.loadRef = null;
+      this._refLoaded = false;
+      this._initRefPanel();
       this._wire();
       // The dialog is opened NON-modally (see open()). A native modal <dialog>
       // lives in the top layer, but Univer renders its cell editor / overlays in
@@ -115,6 +122,51 @@
 
     _hideBackdrop() {
       if (this.backdrop && this.backdrop.isConnected) this.backdrop.remove();
+    }
+
+    // ---- Lib/Const reference panel ------------------------------------- //
+
+    _initRefPanel() {
+      if (!this.refEl || !window.LMStepsRefPanel) return;
+      try { this.refPanel = new window.LMStepsRefPanel(this.refEl); } catch (_e) { this.refPanel = null; }
+      if (this.refToggleBtn) {
+        this.refToggleBtn.addEventListener("click", () => this._toggleRef());
+      }
+    }
+
+    _toggleRef() {
+      if (!this.refEl || !this.refPanel) return;
+      const show = this.refEl.hidden;
+      this.refEl.hidden = !show;
+      if (this.refToggleBtn) this.refToggleBtn.classList.toggle("is-on", show);
+      // The Univer canvas shares the flex row with the panel; nudge a relayout
+      // so it reflows to the width freed/taken by the panel.
+      if (this.view && typeof this.view.resize === "function") {
+        requestAnimationFrame(() => { try { this.view.resize(); } catch (_e) { /* noop */ } });
+      }
+      if (show) {
+        this._loadRefData();
+        this.refPanel.focusSearch();
+      }
+    }
+
+    // Pull the current project's Lib/Const rows via the host-provided callback
+    // and hand them to BOTH the search panel (feature A) and the Univer view
+    // (feature C: サブルーチン hover definitions). Cached per open() so repeated
+    // toggles are free; reset on each open() so lib/const edits are reflected.
+    _loadRefData() {
+      if (!this.loadRef || this._refLoaded) return;
+      this._refLoaded = true;
+      Promise.resolve()
+        .then(() => this.loadRef())
+        .then((data) => {
+          data = data || {};
+          if (this.refPanel) this.refPanel.setData(data);
+          if (this.view && typeof this.view.setRefData === "function") {
+            try { this.view.setRefData(data); } catch (_e) { /* best-effort */ }
+          }
+        })
+        .catch(() => { this._refLoaded = false; });
     }
 
     // Lazily mount the Univer steps view into the dialog body. Falls back to the
@@ -230,6 +282,10 @@
       this.onSave = (opts && opts.onSave) || null;
       this.onEnqueue = (opts && opts.onEnqueue) || null;
       this.getStatus = (opts && opts.getStatus) || null;
+      this.loadRef = (opts && opts.loadRef) || null;
+      // Re-fetch lib/const on each open so edits elsewhere are reflected; if the
+      // panel is already visible, refresh it now, otherwise it loads on toggle.
+      this._refLoaded = false;
       this.testId = (opts && opts.testId != null) ? String(opts.testId).trim() : "";
       this.fieldKey = (opts && opts.fieldKey) || "steps";
       this.doc = parseDoc(item[this.fieldKey]);
@@ -263,6 +319,10 @@
           try { this.view.resize(); } catch (e) { /* best-effort */ }
         });
       }
+      // Load lib/const references for this open: feeds the サブルーチン hover
+      // definitions (feature C) even when the search panel is never opened, and
+      // refreshes the panel too if it happens to be visible.
+      this._loadRefData();
     }
 
     _addStep() {

@@ -147,9 +147,41 @@ select.lm-cell-control[multiple] { min-height: 46px; }
   justify-content: space-between; gap: 12px; margin-bottom: 8px; }
 .lm-steps-drawer-head h3 { margin: 0; font-size: 15px; }
 #lm-steps-task-status { margin-left: 8px; vertical-align: middle; }
-.lm-steps-drawer-body { flex: 1; overflow: auto; width: 100%; }
+.lm-steps-drawer-main { flex: 1; display: flex; min-height: 0; gap: 10px;
+  overflow: hidden; }
+.lm-steps-drawer-body { flex: 1; min-width: 0; overflow: auto; }
 .lm-steps-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35);
   z-index: 1000; }
+
+/* Lib/Const reference search panel (docked right of the steps grid). */
+#lm-steps-ref-toggle.is-on { background: #dfe8ff; border-color: #9db6ff; }
+.lm-ref-panel { flex: 0 0 300px; display: flex; flex-direction: column;
+  min-height: 0; border: 1px solid #cdd6e4; border-radius: 8px;
+  background: #f7f9fc; overflow: hidden; }
+.lm-ref-panel[hidden] { display: none; }
+.lm-ref-head { padding: 8px; border-bottom: 1px solid #dde4f0; }
+.lm-ref-tabs { display: flex; gap: 6px; margin-bottom: 6px; }
+.lm-ref-tab { flex: 1; padding: 5px 8px; border: 1px solid #c6d0e0;
+  border-radius: 6px; background: #fff; cursor: pointer; font: inherit;
+  font-size: 12px; }
+.lm-ref-tab.is-on { background: #2f6fe4; color: #fff; border-color: #2f6fe4; }
+.lm-ref-search { width: 100%; box-sizing: border-box; font-size: 13px; }
+.lm-ref-count { margin-top: 4px; font-size: 11px; text-align: right; }
+.lm-ref-list { flex: 1; overflow: auto; padding: 6px; }
+.lm-ref-item { padding: 6px 8px; margin-bottom: 5px; border: 1px solid #dde4f0;
+  border-radius: 6px; background: #fff; cursor: pointer; transition: background .12s; }
+.lm-ref-item:hover { background: #eef3ff; border-color: #b9caf3; }
+.lm-ref-item.is-copied { background: #e3f6e8; border-color: #86d29b; }
+.lm-ref-item.is-copyfail { background: #fdeaea; border-color: #e6a3a3; }
+.lm-ref-title { display: flex; justify-content: space-between; align-items: center;
+  gap: 8px; font-weight: 600; font-size: 13px; word-break: break-all; }
+.lm-ref-copy { flex: 0 0 auto; font-weight: 400; font-size: 11px; color: #2f6fe4; }
+.lm-ref-sub { font-size: 12px; color: #445; margin-top: 2px; word-break: break-all; }
+.lm-ref-note { font-size: 11px; color: #778; margin-top: 2px;
+  white-space: pre-wrap; word-break: break-word; }
+.lm-ref-empty { padding: 16px 8px; text-align: center; font-size: 12px; }
+.lm-ref-hint { padding: 6px 8px; border-top: 1px solid #dde4f0; font-size: 11px;
+  text-align: center; }
 #lm-steps-body { width: 100%; }
 .lm-univer-steps-host { width: 100%; height: 100%; min-height: 320px; }
 .lm-steps-tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }

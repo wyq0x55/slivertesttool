@@ -58,6 +58,9 @@ export class UniverStepsView {
   private hasValidation = false; // whether the data-validation preset is available
   private cellTooltip: CellTooltip | null = null; // truncated-cell full-text bubble
   private _rowHeightPx = 0; // captured uniform row height (default 24px)
+  // Lib reference map (lib_func lowercased -> definition) for the サブルーチン
+  // hover tooltip (feature C). Populated by setRefData() from the host.
+  private _libMap: Map<string, { func: string; name: string; arg: string; note: string }> | null = null;
 
   constructor(deps: UniverDeps, host: HTMLElement) {
     this.deps = deps;
@@ -167,6 +170,7 @@ export class UniverStepsView {
           try { return this.fWorkbook ? this.fWorkbook.getActiveSheet() : null; }
           catch (_e) { return null; }
         },
+        lookupRef: (row: number, col: number) => this._lookupLib(row, col),
         identifiers: {
           IRenderManagerService: this.deps.IRenderManagerService,
           SheetSkeletonManagerService: this.deps.SheetSkeletonManagerService,
@@ -175,6 +179,56 @@ export class UniverStepsView {
       });
       this.cellTooltip.init();
     } catch (_e) { this.cellTooltip = null; }
+  }
+
+  // Feature C: receive the current project's Lib rows so hovering a サブルーチン
+  // cell whose text matches a lib_func reveals that function's definition. Called
+  // by steps_editor.js after it loads the reference data. const is ignored here
+  // (lib is always used in the サブルーチン column per the workflow).
+  setRefData(data: any): void {
+    const lib = (data && data.lib) || [];
+    const m = new Map<string, { func: string; name: string; arg: string; note: string }>();
+    for (const row of lib) {
+      const func = s(row && row.lib_func).trim();
+      if (!func) continue;
+      m.set(func.toLowerCase(), {
+        func,
+        name: s(row && row.lib_name).trim(),
+        arg: s(row && row.lib_arg).trim(),
+        note: s(row && row.lib_note).trim(),
+      });
+    }
+    this._libMap = m;
+  }
+
+  // Return a formatted Lib definition when (row,col) is a サブルーチン cell on the
+  // 手順 sheet whose text matches a known lib_func; else null (tooltip then falls
+  // back to its normal truncated-text behaviour).
+  private _lookupLib(row: number, col: number): string | null {
+    if (!this._libMap || !this._libMap.size) return null;
+    if (row < 1) return null; // header row
+    if (col !== STEP_LEFT.indexOf("サブルーチン")) return null;
+    try {
+      const active = this.fWorkbook && this.fWorkbook.getActiveSheet
+        ? this.fWorkbook.getActiveSheet() : null;
+      if (!active) return null;
+      const name = typeof active.getSheetName === "function" ? active.getSheetName() : null;
+      if (name !== SHEET_STEP) return null;
+      const rng = active.getRange(row, col);
+      let raw = rng && rng.getValue ? rng.getValue() : "";
+      raw = s(raw).trim();
+      if (!raw) return null;
+      // Tolerate an author-typed call suffix, e.g. "SetSignal(a, b)".
+      const paren = raw.indexOf("(");
+      const key = (paren > 0 ? raw.slice(0, paren) : raw).trim().toLowerCase();
+      const def = this._libMap.get(key) || this._libMap.get(raw.toLowerCase());
+      if (!def) return null;
+      const lines: string[] = [def.func];
+      if (def.name) lines.push("名称: " + def.name);
+      if (def.arg) lines.push("引数: " + def.arg);
+      if (def.note) lines.push(def.note);
+      return lines.join("\n");
+    } catch (_e) { return null; }
   }
 
   // Style a written region like a table WITHOUT using a Univer "table" object:

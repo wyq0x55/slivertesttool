@@ -35,6 +35,14 @@ export interface CellTooltipDeps {
   /** When true, suppress the bubble (e.g. while a cell editor is open). */
   isSuppressed?: () => boolean;
   /**
+   * Optional reference lookup. Given a hovered cell, return a definition string
+   * to show as the bubble (e.g. a Lib function's args + note when hovering a
+   * サブルーチン cell), or null to fall back to the normal truncated-text bubble.
+   * Takes priority over truncation so a matched reference is always revealed,
+   * even when the cell text is not clipped.
+   */
+  lookupRef?: (row: number, col: number) => string | null;
+  /**
    * DI identifiers injected from main.ts (a UMD/IIFE bundle never exposes these
    * on a global): the render manager + skeleton for projection, and the hover
    * service for hover detection.
@@ -148,8 +156,16 @@ export class CellTooltip {
     this.curKey = key;
     this.hide();
 
-    const text = this.truncatedText(loc.row, loc.col);
-    if (text == null) return; // fits, empty, wrapped, or unreadable -> no bubble
+    // Reference lookup takes priority: if the hovered cell matches a known
+    // reference (e.g. a Lib function in the サブルーチン column) show its
+    // definition regardless of truncation. Otherwise fall back to the
+    // truncated-text bubble.
+    let text: string | null = null;
+    if (this.deps.lookupRef) {
+      try { text = this.deps.lookupRef(loc.row, loc.col); } catch (_e) { text = null; }
+    }
+    if (text == null) text = this.truncatedText(loc.row, loc.col);
+    if (text == null) return; // no reference, and fits/empty/wrapped/unreadable
 
     // Classic tooltip feel: only pop after the pointer rests briefly.
     this.showTimer = window.setTimeout(() => {

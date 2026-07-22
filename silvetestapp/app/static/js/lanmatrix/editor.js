@@ -1080,6 +1080,15 @@
         LMStepsEditor.open(item, {
           fieldKey: stepsKey,
           testId,
+          // Lib/Const reference lookup: sourced from the CURRENT project's shared
+          // Y.Doc when collab is live, else the DB. Missing sheets resolve to [].
+          loadRef: async () => {
+            const grab = async (sheet) => {
+              try { return await fetchAllItems(sheet); } catch (_e) { return []; }
+            };
+            const [lib, cst] = await Promise.all([grab("lib"), grab("const")]);
+            return { lib, const: cst };
+          },
           onSave: async (json) => {
             const changes = {}; changes[stepsKey] = json;
             let merged;
