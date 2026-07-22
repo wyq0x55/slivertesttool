@@ -134,6 +134,8 @@
       return request("POST", `/projects/${id}/testmatrix/import`, { body: fd });
     },
     testMatrixExportUrl(id) { return `${BASE}/projects/${id}/testmatrix/export`; },
+    libFuncExportUrl(id) { return `${BASE}/projects/${id}/libfunc/export`; },
+    constExportUrl(id) { return `${BASE}/projects/${id}/const/export`; },
     importLibFunc(id, file, mode) {
       const fd = new FormData();
       fd.append("file", file);

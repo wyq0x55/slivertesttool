@@ -211,8 +211,8 @@ select.lm-cell-control[multiple] { min-height: 46px; }
 .lm-st-table thead th { position: sticky; top: 0; background: #f5f7fa; z-index: 1; }
 .lm-st-table .lm-input { min-width: 120px; }
 .lm-st-table .lm-st-no { width: 70px; min-width: 60px; }
-.lm-st-sig-in { background: #eef6ff; }
-.lm-st-sig-ex { background: #eefaf0; }
+.lm-st-sig-in { background: #cfe3fb; }
+.lm-st-sig-ex { background: #fce0c4; }
 
 /* Field-config order column (move up/down) */
 .lm-order { white-space: nowrap; text-align: center; width: 68px; }

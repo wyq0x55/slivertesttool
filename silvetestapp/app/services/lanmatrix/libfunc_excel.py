@@ -39,7 +39,7 @@ from __future__ import annotations
 
 from typing import Any, BinaryIO, Optional, Union
 
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 from . import matrix_excel as _mx
 
@@ -265,3 +265,154 @@ def _strip_leading_colon(text: str) -> str:
 
 def _cell_str(val: Any) -> str:
     return "" if val is None else str(val).strip()
+
+
+# --------------------------------------------------------------------------- #
+# Export (Lib items -> block-structured .xlsx). Geometry mirrors the parser so an
+# exported file re-imports losslessly, and matches the Test-Matrix detail layout.
+# --------------------------------------------------------------------------- #
+_INIT_SHEET_TITLE = "初期化"
+_MAIN_SHEET_TITLE = "Func"
+# (block metadata label, field key) in the order they appear under a block header.
+_EXPORT_META: list[tuple[str, str]] = [
+    ("目的", "lib_value"),
+    ("引数", "lib_arg"),
+    ("仮引数", "lib_para"),
+    ("備考", "lib_note"),
+]
+_EXPORT_BLANK_BETWEEN = 2
+_LIB_WIDTHS = {"A": 5, "B": 22, "C": 30, "D": 40, "E": 30, "F": 16}
+
+
+def build_workbook(matrix: dict[str, Any]) -> Workbook:
+    """Rebuild a Lib(Func) ``.xlsx`` from editor items.
+
+    ``matrix`` is ``{"items": [ {isinit, lib_func, lib_name, lib_value, lib_arg,
+    lib_para, lib_note, lib_stb}, ... ]}`` where ``lib_stb`` is the step document
+    (dict) or its JSON string. Two worksheets are always emitted — an
+    initialization sheet (title contains ``初期化``) and a main ``Func`` sheet — so
+    ``isinit`` round-trips through the parser's title-based classification.
+    """
+    items = [it for it in (matrix.get("items") or []) if not _is_blank_lib(it)]
+    init_items = [it for it in items if _truthy(it.get("isinit"))]
+    main_items = [it for it in items if not _truthy(it.get("isinit"))]
+
+    wb = Workbook()
+    init_ws = wb.active
+    init_ws.title = _INIT_SHEET_TITLE
+    _write_lib_sheet(init_ws, init_items)
+    main_ws = wb.create_sheet(title=_MAIN_SHEET_TITLE)
+    _write_lib_sheet(main_ws, main_items)
+    return wb
+
+
+def _is_blank_lib(item: dict) -> bool:
+    if not isinstance(item, dict):
+        return True
+    return not (item.get("lib_func") or item.get("lib_name"))
+
+
+def _truthy(val: Any) -> bool:
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return bool(val)
+    return str(val or "").strip().lower() in ("1", "true", "yes", "y", "是", "init")
+
+
+def _steps_doc(raw: Any) -> dict[str, Any]:
+    import json
+    if isinstance(raw, dict):
+        doc = raw
+    elif isinstance(raw, str) and raw.strip():
+        try:
+            doc = json.loads(raw)
+        except (ValueError, TypeError):
+            doc = {}
+    else:
+        doc = {}
+    if not isinstance(doc, dict):
+        doc = {}
+    return {
+        "input_signals": doc.get("input_signals") or [],
+        "expected_signals": doc.get("expected_signals") or [],
+        "steps": doc.get("steps") or [],
+    }
+
+
+def _write_lib_sheet(ws, items: list[dict]) -> None:
+    for letter, width in _LIB_WIDTHS.items():
+        ws.column_dimensions[letter].width = width
+    ws.freeze_panes = "E1"
+    row = 1
+    for i, it in enumerate(items):
+        row = _write_lib_block(ws, row, i + 1, it)
+        row += _EXPORT_BLANK_BETWEEN
+
+
+def _write_lib_block(ws, header_row: int, no: int, item: dict) -> int:
+    hr = header_row
+    ws.cell(hr, 1).value = no
+    ws.cell(hr, _COL_NO).value = _cell_str(item.get("lib_func")) or None  # B
+    ws.cell(hr, _COL_TITLE).value = _cell_str(item.get("lib_name")) or None  # D
+
+    r = hr + 1
+    for label, key in _EXPORT_META:
+        ws.cell(r, _COL_NO).value = label
+        val = item.get(key)
+        ws.cell(r, _COL_META_VAL).value = (
+            f": {val}" if val not in (None, "") else None
+        )
+        r += 1
+
+    r += 1  # blank row before the step table
+
+    doc = _steps_doc(item.get("lib_stb"))
+    in_sig = doc["input_signals"]
+    exp_sig = doc["expected_signals"]
+    step_rows = doc["steps"]
+    n_in = len(in_sig)
+    n_exp = len(exp_sig)
+    timing_col = _mx.COL_SIGNAL_START + n_in + n_exp
+
+    sh = r
+    ws.cell(sh, _mx.COL_STEP_NO).value = "手順番号"
+    ws.cell(sh, _mx.COL_STEP_PURPOSE).value = "手順目的"
+    ws.cell(sh, _mx.COL_STEP_OP).value = "操作手順"
+    ws.cell(sh, _mx.COL_STEP_SUB).value = "サブルーチン"
+    ws.cell(sh, _mx.COL_STEP_ARG).value = "引数"
+    for i in range(n_in):
+        ws.cell(sh, _mx.COL_SIGNAL_START + i).value = "入力値"
+    for i in range(n_exp):
+        ws.cell(sh, _mx.COL_SIGNAL_START + n_in + i).value = "期待値"
+    ws.cell(sh, timing_col).value = "確認タイミング"
+
+    s1, s2 = sh + 1, sh + 2
+    for i, sig in enumerate(in_sig):
+        name, path = (sig + ["", ""])[:2]
+        ws.cell(s1, _mx.COL_SIGNAL_START + i).value = name or None
+        ws.cell(s2, _mx.COL_SIGNAL_START + i).value = path or None
+    for i, sig in enumerate(exp_sig):
+        name, path = (sig + ["", ""])[:2]
+        ws.cell(s1, _mx.COL_SIGNAL_START + n_in + i).value = name or None
+        ws.cell(s2, _mx.COL_SIGNAL_START + n_in + i).value = path or None
+
+    last = s2
+    for k, st in enumerate(step_rows):
+        rr = sh + 3 + k
+        last = rr
+        ws.cell(rr, _mx.COL_STEP_NO).value = st.get("no")
+        ws.cell(rr, _mx.COL_STEP_PURPOSE).value = st.get("purpose")
+        ws.cell(rr, _mx.COL_STEP_OP).value = st.get("operation")
+        ws.cell(rr, _mx.COL_STEP_SUB).value = st.get("subroutine")
+        ws.cell(rr, _mx.COL_STEP_ARG).value = st.get("args")
+        inputs = st.get("inputs") or []
+        expecteds = st.get("expecteds") or []
+        for i in range(n_in):
+            ws.cell(rr, _mx.COL_SIGNAL_START + i).value = (
+                inputs[i] if i < len(inputs) else None)
+        for i in range(n_exp):
+            ws.cell(rr, _mx.COL_SIGNAL_START + n_in + i).value = (
+                expecteds[i] if i < len(expecteds) else None)
+        ws.cell(rr, timing_col).value = st.get("timing")
+    return last

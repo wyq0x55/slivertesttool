@@ -563,7 +563,7 @@ def build_workbook(matrix: dict[str, Any]) -> Workbook:
     """
     id_prefix = matrix.get("id_prefix") or DEFAULT_ID_PREFIX
     summary_title = matrix.get("summary_sheet") or DEFAULT_SUMMARY_SHEET
-    items = matrix.get("items") or []
+    items = [it for it in (matrix.get("items") or []) if not _is_blank_item(it)]
 
     wb = Workbook()
     summary_ws = wb.active
@@ -584,6 +584,36 @@ def build_workbook(matrix: dict[str, Any]) -> Workbook:
         _write_detail_sheet(ws, by_cat[cat])
 
     return wb
+
+
+# Summary keys that are computed in-workbook (formulas) and therefore carry no
+# author-supplied content — they must not keep an otherwise-blank row alive.
+_BLANK_IGNORE_KEYS = CALCULATED_KEYS | {"category_name"}
+
+
+def _is_blank_item(item: dict) -> bool:
+    """True when a row carries no author content and would export as a hollow
+    ``ID;;...-000000`` summary line.
+
+    Editor / collab sessions routinely leave empty placeholder rows behind; those
+    must not be written to the exported summary sheet. A row counts as blank when
+    every author-supplied summary column is empty *and* it has no procedure steps.
+    """
+    if not isinstance(item, dict):
+        return True
+    steps = (item.get("steps") or {})
+    if isinstance(steps, dict) and (
+        steps.get("steps") or steps.get("input_signals")
+        or steps.get("expected_signals")
+    ):
+        return False
+    for key, _jp in SUMMARY_COLUMNS:
+        if key in _BLANK_IGNORE_KEYS:
+            continue
+        val = item.get(key)
+        if val is not None and str(val).strip() != "":
+            return False
+    return True
 
 
 def _write_summary_sheet(ws, items: list[dict], id_prefix: str) -> None:

@@ -680,9 +680,14 @@
     err.hidden = true;
     const format = exportFormatSel ? exportFormatSel.value : "generic";
     try {
-      if (format === "test_matrix") {
+      if (format === "test_matrix" || format === "libfunc" || format === "const") {
+        const urlFor = {
+          test_matrix: LMApi.testMatrixExportUrl,
+          libfunc: LMApi.libFuncExportUrl,
+          const: LMApi.constExportUrl,
+        }[format];
         const a = document.createElement("a");
-        a.href = LMApi.testMatrixExportUrl(pid);
+        a.href = urlFor(pid);
         a.click();
       } else {
         const blob = await LMApi.exportProject(pid, {});
@@ -1080,6 +1085,14 @@
         LMStepsEditor.open(item, {
           fieldKey: stepsKey,
           testId,
+          // Live steps sub-structure CRDT binding (item 3): lets the drawer
+          // observe remote edits and diff-write locally so concurrent step edits
+          // merge instead of clobbering the whole JSON blob. Null in REST mode.
+          live: (collabActive() && collab && typeof collab.getStepsMap === "function") ? {
+            getMap: () => collab.getStepsMap(currentSheet, item, stepsKey),
+            commit: (doc) => collab.commitSteps(currentSheet, item, stepsKey, doc),
+            toDoc: (v) => collab.stepsDocFrom(v),
+          } : null,
           // Lib/Const reference lookup: sourced from the CURRENT project's shared
           // Y.Doc when collab is live, else the DB. Missing sheets resolve to [].
           loadRef: async () => {

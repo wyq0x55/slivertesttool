@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import Any, BinaryIO, Optional, Union
 
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 from . import matrix_excel as _mx
 
@@ -78,6 +78,64 @@ def parse_workbook(source: Union[str, BinaryIO],
                 continue
             items.append({key: row.get(key, "") for key in _ALL_KEYS})
     return {"items": items, "sheets": sheets}
+
+
+# --------------------------------------------------------------------------- #
+# Export (Const items -> flat .xlsx). The header labels below are chosen from the
+# recognised aliases so an exported file re-imports losslessly.
+# --------------------------------------------------------------------------- #
+_EXPORT_COLUMNS: list[tuple[str, str]] = [
+    ("const_name", "識別子名"),
+    ("const_jname", "和名"),
+    ("const_value", "値"),
+    ("const_class1", "分類1"),
+    ("const_class2", "分類2"),
+    ("const_dataname", "データ名称"),
+    ("const_note", "備考"),
+]
+_EXPORT_WIDTHS = [34, 28, 18, 14, 14, 24, 40]
+_CONST_SHEET_TITLE = "Const"
+
+
+def build_workbook(matrix: dict[str, Any]) -> Workbook:
+    """Rebuild a Const ``.xlsx`` (flat table) from editor items.
+
+    ``matrix`` is ``{"items": [ {const_name, const_jname, ...}, ... ]}``. Only the
+    "No." index column is synthetic; every recognised field maps to a header the
+    importer understands, so the round trip is lossless.
+    """
+    from openpyxl.utils import get_column_letter
+
+    items = matrix.get("items") or []
+    wb = Workbook()
+    ws = wb.active
+    ws.title = matrix.get("sheet_title") or _CONST_SHEET_TITLE
+
+    ws.append(["No."] + [jp for _key, jp in _EXPORT_COLUMNS])
+    keys = [key for key, _jp in _EXPORT_COLUMNS]
+    n = 0
+    for it in items:
+        if _is_blank_const(it):
+            continue
+        n += 1
+        ws.append([n] + [_out(it.get(k)) for k in keys])
+
+    ws.column_dimensions["A"].width = 6
+    for i, width in enumerate(_EXPORT_WIDTHS):
+        ws.column_dimensions[get_column_letter(i + 2)].width = width
+    ws.freeze_panes = "A2"
+    return wb
+
+
+def _is_blank_const(item: dict) -> bool:
+    if not isinstance(item, dict):
+        return True
+    return not (item.get("const_name") or item.get("const_jname")
+                or item.get("const_value"))
+
+
+def _out(val: Any) -> Any:
+    return None if val in (None, "") else val
 
 
 def _find_header(ws) -> Optional[tuple[int, dict[str, int]]]:

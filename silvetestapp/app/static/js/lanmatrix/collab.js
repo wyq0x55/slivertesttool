@@ -95,6 +95,132 @@
   const PALETTE = ["#2f80ed", "#eb5757", "#27ae60", "#f2994a", "#9b51e0",
                    "#00b8d9", "#e91e63", "#795548"];
 
+  // ------------------------------------------------------------------ //
+  // Steps sub-structure CRDT (item 3).
+  //
+  // The step-detail field ("steps" on the test sheet, "lib_stb" on lib) used to
+  // be an opaque JSON *string* value on the row Y.Map — so any edit rewrote the
+  // whole blob (last-writer-wins) and peers couldn't merge concurrent step edits.
+  // We upgrade it to a nested CRDT: a Y.Map holding { input_signals,
+  // expected_signals } (plain arrays; whole-value replace, rarely concurrent) and
+  // a Y.Array of step Y.Maps (per-step, per-field granular merge).
+  //
+  // CRUCIAL boundary: everything OUTSIDE the live Y.Doc still sees the SAME JSON
+  // string. getItems() re-serialises the nested Y back to a string, and the
+  // server's snapshot_sheet stringifies it before the DB — so the execution-JSON
+  // exporter and the Excel import/export keep working unchanged. A kill-switch
+  // (window.LM_STEPS_CRDT === false) falls back to the legacy string blob.
+  const STEP_FIELDS = { steps: 1, lib_stb: 1 };
+  const STEP_SCALARS = ["no", "purpose", "operation", "subroutine", "args", "timing"];
+
+  function stepsCrdtEnabled() { return global.LM_STEPS_CRDT !== false; }
+
+  function normStepDoc(d) {
+    d = d || {};
+    return {
+      input_signals: Array.isArray(d.input_signals) ? d.input_signals : [],
+      expected_signals: Array.isArray(d.expected_signals) ? d.expected_signals : [],
+      steps: Array.isArray(d.steps) ? d.steps : [],
+    };
+  }
+
+  // Coerce ANY stored representation (JSON string | plain object | Y.Map) into a
+  // plain StepDoc. Tolerant on purpose so a half-migrated room never throws.
+  function stepsPlainFrom(v) {
+    if (v == null || v === "") return normStepDoc(null);
+    if (typeof v === "string") {
+      try { return normStepDoc(JSON.parse(v)); } catch (_e) { return normStepDoc(null); }
+    }
+    if (typeof v === "object") {
+      if (typeof v.toJSON === "function" && typeof v.get === "function") {
+        try { return normStepDoc(v.toJSON()); } catch (_e) { return normStepDoc(null); }
+      }
+      return normStepDoc(v);
+    }
+    return normStepDoc(null);
+  }
+
+  function stepsStringFrom(v) {
+    try { return JSON.stringify(stepsPlainFrom(v)); } catch (_e) { return ""; }
+  }
+
+  function isYMap(v) {
+    return v && typeof v.get === "function" && typeof v.set === "function" &&
+      typeof v.toJSON === "function";
+  }
+
+  function buildStepY(Y, s) {
+    s = s || {};
+    const sm = new Y.Map();
+    STEP_SCALARS.forEach(function (k) { sm.set(k, s[k] == null ? null : s[k]); });
+    sm.set("inputs", Array.isArray(s.inputs) ? s.inputs.slice() : []);
+    sm.set("expecteds", Array.isArray(s.expecteds) ? s.expecteds.slice() : []);
+    return sm;
+  }
+
+  function buildStepsY(Y, docPlain) {
+    const d = normStepDoc(docPlain);
+    const map = new Y.Map();
+    map.set("input_signals", d.input_signals);
+    map.set("expected_signals", d.expected_signals);
+    const arr = new Y.Array();
+    const cells = d.steps.map(function (s) { return buildStepY(Y, s); });
+    if (cells.length) arr.push(cells);
+    map.set("steps", arr);
+    return map;
+  }
+
+  // Ensure rowMap[key] is a nested steps Y.Map, upgrading a legacy string/object
+  // in place. MUST run inside a doc.transact().
+  function ensureStepsMap(Y, rowMap, key) {
+    const cur = rowMap.get(key);
+    if (isYMap(cur) && typeof rowMap.get(key).get === "function") {
+      // Already nested (has a "steps" child) — treat as upgraded.
+      if (typeof cur.get === "function") return cur;
+    }
+    const map = buildStepsY(Y, stepsPlainFrom(cur));
+    rowMap.set(key, map);
+    return map;
+  }
+
+  function _sameJson(a, b) {
+    try { return JSON.stringify(a) === JSON.stringify(b); } catch (_e) { return false; }
+  }
+
+  // Minimal diff-write of a plain StepDoc onto a nested steps Y.Map, so unchanged
+  // fields don't churn and concurrent edits on OTHER fields survive the merge.
+  // MUST run inside a doc.transact().
+  function applyDocToStepsMap(Y, sm, docPlain) {
+    const d = normStepDoc(docPlain);
+    if (!_sameJson(sm.get("input_signals"), d.input_signals)) {
+      sm.set("input_signals", d.input_signals);
+    }
+    if (!_sameJson(sm.get("expected_signals"), d.expected_signals)) {
+      sm.set("expected_signals", d.expected_signals);
+    }
+    let arr = sm.get("steps");
+    if (!arr || typeof arr.push !== "function") { arr = new Y.Array(); sm.set("steps", arr); }
+    while (arr.length > d.steps.length) arr.delete(arr.length - 1, 1);
+    for (let i = 0; i < d.steps.length; i++) {
+      const src = d.steps[i] || {};
+      let stepMap = i < arr.length ? arr.get(i) : null;
+      if (!isYMap(stepMap)) {
+        stepMap = buildStepY(Y, src);
+        if (i < arr.length) { arr.delete(i, 1); arr.insert(i, [stepMap]); }
+        else arr.push([stepMap]);
+        continue;
+      }
+      STEP_SCALARS.forEach(function (k) {
+        const nv = src[k] == null ? null : src[k];
+        if (stepMap.get(k) !== nv) stepMap.set(k, nv);
+      });
+      const ins = Array.isArray(src.inputs) ? src.inputs : [];
+      const exs = Array.isArray(src.expecteds) ? src.expecteds : [];
+      if (!_sameJson(stepMap.get("inputs"), ins)) stepMap.set("inputs", ins);
+      if (!_sameJson(stepMap.get("expecteds"), exs)) stepMap.set("expecteds", exs);
+    }
+  }
+
   function LMCollabController(opts) {
     this.pid = opts.pid;
     this.api = opts.api || global.LMApi;
@@ -437,6 +563,15 @@
 
   LMCollabController.prototype._mapToItem = function (m, index) {
     const o = m.toJSON();
+    // Re-serialise any nested steps sub-structure (item 3) back to the JSON
+    // string every consumer expects. m.toJSON() turned the nested Y.Map into a
+    // plain object; downstream (steps_editor, REST payloads, materialize) treats
+    // this field as an opaque string, so keep that contract here.
+    Object.keys(STEP_FIELDS).forEach(function (k) {
+      if (o[k] != null && typeof o[k] === "object") {
+        try { o[k] = JSON.stringify(o[k]); } catch (_e) { /* leave as-is */ }
+      }
+    });
     o.row_order = index + 1;
     if (o.id === null || o.id === undefined) o.id = tempIdFromUuid(o.uuid);
     else o.id = Number(o.id);
@@ -490,6 +625,16 @@
         Object.keys(it).forEach(function (k) {
           if (SKIP_ON_COPY[k]) return;
           const nv = it[k];
+          if (stepsCrdtEnabled() && STEP_FIELDS[k]) {
+            // Excel import lands the canonical steps JSON string in the DB; fold
+            // it into the nested CRDT (diff-write) so an import merges with any
+            // live per-field edits instead of replacing the whole sub-structure.
+            const cur = m.get(k);
+            if (isYMap(cur) && _sameJson(stepsPlainFrom(cur), stepsPlainFrom(nv))) return;
+            const sm = ensureStepsMap(Y, m, k);
+            applyDocToStepsMap(Y, sm, stepsPlainFrom(nv));
+            return;
+          }
           let cur = m.get(k);
           if (typeof nv !== "object" && cur === nv) return;
           m.set(k, nv);
@@ -516,10 +661,65 @@
     const idx = this._indexOf(arr, item);
     if (idx < 0) throw new Error("该行已被他人删除");
     const m = arr.get(idx);
+    const Y = this._Y();
     this.doc.transact(function () {
-      Object.keys(changes || {}).forEach(function (k) { m.set(k, changes[k]); });
+      Object.keys(changes || {}).forEach(function (k) {
+        if (Y && stepsCrdtEnabled() && STEP_FIELDS[k]) {
+          // Route a whole-blob steps write through the nested CRDT so it merges
+          // with concurrent per-field edits instead of clobbering them.
+          const sm = ensureStepsMap(Y, m, k);
+          applyDocToStepsMap(Y, sm, stepsPlainFrom(changes[k]));
+        } else {
+          m.set(k, changes[k]);
+        }
+      });
     });
     return this._mapToItem(m, idx);
+  };
+
+  // ---- steps sub-structure binding (item 3) ---------------------------- //
+
+  // Return the live nested steps Y.Map for a row (creating/upgrading it), so the
+  // step-detail editor can observe remote edits and write granularly. Returns
+  // null when collab or the CRDT upgrade is unavailable (caller falls back to the
+  // string field).
+  LMCollabController.prototype.getStepsMap = function (sheet, item, key) {
+    if (!stepsCrdtEnabled()) return null;
+    const arr = this.arrays[sheet];
+    const Y = this._Y();
+    if (!arr || !Y) return null;
+    const idx = this._indexOf(arr, item);
+    if (idx < 0) return null;
+    const m = arr.get(idx);
+    let sm = null;
+    this.doc.transact(function () { sm = ensureStepsMap(Y, m, key); });
+    return sm;
+  };
+
+  // Commit a full StepDoc into a row's nested steps CRDT with a minimal diff so
+  // concurrent per-field edits survive. Returns the materialised item (steps
+  // surfaced as a string, as everywhere else).
+  LMCollabController.prototype.commitSteps = function (sheet, item, key, docPlain) {
+    const arr = this.arrays[sheet];
+    const Y = this._Y();
+    if (!arr || !Y) throw new Error("协同未就绪");
+    const idx = this._indexOf(arr, item);
+    if (idx < 0) throw new Error("该行已被他人删除");
+    const m = arr.get(idx);
+    this.doc.transact(function () {
+      if (stepsCrdtEnabled() && STEP_FIELDS[key]) {
+        const sm = ensureStepsMap(Y, m, key);
+        applyDocToStepsMap(Y, sm, normStepDoc(docPlain));
+      } else {
+        m.set(key, JSON.stringify(normStepDoc(docPlain)));
+      }
+    });
+    return this._mapToItem(m, idx);
+  };
+
+  // Read a nested steps Y.Map (or any stored representation) as a plain StepDoc.
+  LMCollabController.prototype.stepsDocFrom = function (mapOrVal) {
+    return stepsPlainFrom(mapOrVal);
   };
 
   LMCollabController.prototype.insertRow = function (sheet, opts) {

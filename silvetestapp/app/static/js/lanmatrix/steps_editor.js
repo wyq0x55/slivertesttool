@@ -87,6 +87,17 @@
       this.refToggleBtn = dialog.querySelector("#lm-steps-ref-toggle");
       this.loadRef = null;
       this._refLoaded = false;
+      // Live steps sub-structure binding (item 3). ``live`` is a small adapter
+      // supplied by the host (editor.js) that maps to the row's nested steps
+      // Y.Map when collaboration is active; null in the REST path.
+      this.live = null;
+      this._stepsMap = null;
+      this._stepsObserver = null;
+      this._suppressRemote = false;  // set while WE write, so our own edit doesn't echo
+      this._applyingRemote = false;  // set while re-rendering a remote change
+      this._remotePending = false;   // a remote change arrived while the user was busy
+      this._flushTimer = null;
+      this._liveHostHandler = null;
       this._initRefPanel();
       this._wire();
       // The dialog is opened NON-modally (see open()). A native modal <dialog>
@@ -97,6 +108,9 @@
       // context. We supply our own backdrop and hide it whenever the dialog closes.
       this.dialog.addEventListener("close", () => {
         this._hideBackdrop();
+        // Flush a last pending live edit, then detach the steps CRDT observer.
+        this._commitLive();
+        this._unbindLive();
         // The Univer workbook is now REUSED across items instead of being torn
         // down and recreated on every open (creating a fresh Univer instance is
         // expensive and sometimes failed to display). setDoc() fully resets the
@@ -211,8 +225,80 @@
       }
     }
 
+    // Commit any in-progress cell edit before we read the model. Univer keeps an
+    // in-cell editor value out of the sheet model until the editor blurs, so
+    // getDoc()/_pull() would otherwise drop the last, uncommitted edit — which is
+    // what made "编辑后直接保存" lose the just-typed value ("不能保存"). Blurring the
+    // focused editor element flushes it; we yield a frame so Univer's commit
+    // mutation lands in the model before _pull() reads it.
+    async _flushEdit() {
+      try {
+        const ae = document.activeElement;
+        if (ae && typeof ae.blur === "function" && this.host && this.host.contains(ae)) {
+          ae.blur();
+          await new Promise((r) => setTimeout(r, 60));
+        }
+      } catch (e) { /* best effort */ }
+    }
+
+    // Drive Ctrl+C / Cmd+C for the steps drawer ourselves. Two coexisting Univer
+    // roots (main grid + this drawer) each register a global keydown
+    // ShortcutService, so Univer's own copy is ambiguous across roots and fails in
+    // the drawer. We intercept at the window CAPTURE phase (runs before any
+    // document-level Univer listener), and only when the drawer is open AND focus
+    // is inside its host, so the main grid keeps working normally. We build TSV
+    // from the current selection and write it to the clipboard directly (with an
+    // execCommand fallback that works over plain-http LAN), then stop the event so
+    // Univer never sees this Ctrl+C.
+    _installCopyGuard() {
+      if (this._copyGuard) return;
+      const self = this;
+      this._copyGuard = (e) => {
+        const mod = e.ctrlKey || e.metaKey;
+        const key = (e.key || "").toLowerCase();
+        if (!mod || key !== "c" || e.shiftKey || e.altKey) return;
+        if (!self.dialog || !self.dialog.open) return;
+        const ae = document.activeElement;
+        if (!self.host || !(self.host.contains(ae) || ae === self.host)) return;
+        if (!self.view || typeof self.view.getSelectionTSV !== "function") return;
+        let tsv;
+        try { tsv = self.view.getSelectionTSV(); } catch (_e) { tsv = null; }
+        if (tsv == null) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        self._writeClipboard(tsv);
+      };
+      window.addEventListener("keydown", this._copyGuard, true);
+    }
+
+    _writeClipboard(text) {
+      try {
+        if (navigator.clipboard && window.isSecureContext && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).catch(() => this._legacyCopy(text));
+          return;
+        }
+      } catch (_e) { /* fall through */ }
+      this._legacyCopy(text);
+    }
+
+    _legacyCopy(text) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.top = "-1000px";
+        ta.style.opacity = "0";
+        (this.dialog || document.body).appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        ta.remove();
+      } catch (_e) { /* best effort */ }
+    }
+
     _wire() {
       const self = this;
+      this._installCopyGuard();
       this.dialog.querySelector("#lm-steps-save")
         .addEventListener("click", (e) => { e.preventDefault(); self._save(); });
       const fs = this.dialog.querySelector("#lm-steps-fullscreen");
@@ -278,7 +364,10 @@
     }
 
     open(item, opts) {
+      // Detach any binding from a previously opened item before switching.
+      this._unbindLive();
       this.item = item;
+      this.live = (opts && opts.live) || null;
       this.onSave = (opts && opts.onSave) || null;
       this.onEnqueue = (opts && opts.onEnqueue) || null;
       this.getStatus = (opts && opts.getStatus) || null;
@@ -323,6 +412,9 @@
       // definitions (feature C) even when the search panel is never opened, and
       // refreshes the panel too if it happens to be visible.
       this._loadRefData();
+      // Bind the step-detail editor to the row's nested steps CRDT so concurrent
+      // edits merge and remote changes appear live (item 3). No-op in REST mode.
+      this._bindLive();
     }
 
     _addStep() {
@@ -347,6 +439,13 @@
     }
 
     render() {
+      this._rerenderFromDoc();
+      // A structural/content change the user just made — propagate it to peers
+      // (debounced). Skip when WE are re-rendering an incoming remote change.
+      if (this.live && !this._applyingRemote) this._scheduleLiveFlush();
+    }
+
+    _rerenderFromDoc() {
       // Univer view owns the dialog body: hand it the doc and stop (never wipe
       // its canvas with innerHTML).
       if (this.view) { this.view.setDoc(this.doc); return; }
@@ -355,6 +454,102 @@
         this._signalsTable("expected") +
         this._stepsTable();
       this._bind();
+    }
+
+    // ---- live steps CRDT binding (item 3) ------------------------------ //
+
+    _bindLive() {
+      if (!this.live || typeof this.live.getMap !== "function") return;
+      let map = null;
+      try { map = this.live.getMap(); } catch (_e) { map = null; }
+      if (!map || typeof map.observeDeep !== "function") return;
+      this._stepsMap = map;
+      this._stepsObserver = () => this._onRemoteSteps();
+      try { map.observeDeep(this._stepsObserver); } catch (_e) { this._stepsObserver = null; }
+      // Debounced flush of local edits into the CRDT: Univer's cell editor and
+      // the built-in inputs both live inside the host, so their input/keyup and
+      // the toolbar clicks bubble here; focusout is the reliable commit point for
+      // a Univer cell edit (its value only lands in the model on blur).
+      const self = this;
+      this._liveHostHandler = (e) => {
+        if (e && e.type === "focusout") { self._commitLive(); self._applyPendingRemote(); }
+        else self._scheduleLiveFlush();
+      };
+      ["input", "keyup", "change", "click", "focusout"].forEach((t) => {
+        this.host.addEventListener(t, this._liveHostHandler, true);
+      });
+    }
+
+    _unbindLive() {
+      if (this._flushTimer) { clearTimeout(this._flushTimer); this._flushTimer = null; }
+      if (this._stepsMap && this._stepsObserver) {
+        try { this._stepsMap.unobserveDeep(this._stepsObserver); } catch (_e) { /* noop */ }
+      }
+      if (this._liveHostHandler && this.host) {
+        ["input", "keyup", "change", "click", "focusout"].forEach((t) => {
+          try { this.host.removeEventListener(t, this._liveHostHandler, true); } catch (_e) { /* noop */ }
+        });
+      }
+      this._stepsMap = null;
+      this._stepsObserver = null;
+      this._liveHostHandler = null;
+      this._remotePending = false;
+    }
+
+    _scheduleLiveFlush() {
+      if (!this.live) return;
+      if (this._flushTimer) clearTimeout(this._flushTimer);
+      this._flushTimer = setTimeout(() => { this._flushTimer = null; this._commitLive(); }, 600);
+    }
+
+    // Pull the current doc out of the editor and diff-write it into the CRDT.
+    _commitLive() {
+      if (!this.live || typeof this.live.commit !== "function") return;
+      if (this._applyingRemote) return;
+      this._pull();
+      let doc;
+      try { doc = this._serialize(); } catch (_e) { return; }
+      this._suppressRemote = true;
+      try { this.live.commit(doc); } catch (_e) { /* row may be gone; ignore */ }
+      // Release the echo-guard after the observer for our own write has fired.
+      setTimeout(() => { this._suppressRemote = false; }, 0);
+    }
+
+    // A peer changed this row's steps. Re-render unless the guard is set (our own
+    // write) or the user is mid-edit (then defer until they blur/flush).
+    _onRemoteSteps() {
+      if (this._suppressRemote || this._applyingRemote) return;
+      if (this._isBusy()) { this._remotePending = true; return; }
+      this._applyRemoteNow();
+    }
+
+    _applyPendingRemote() {
+      if (this._remotePending && !this._isBusy()) this._applyRemoteNow();
+    }
+
+    _applyRemoteNow() {
+      if (!this._stepsMap || !this.live) return;
+      let plain;
+      try { plain = this.live.toDoc(this._stepsMap); } catch (_e) { return; }
+      this._applyingRemote = true;
+      try {
+        this.doc = parseDoc(JSON.stringify(plain));
+        this._syncStepArity();
+        this._rerenderFromDoc();
+      } finally {
+        this._applyingRemote = false;
+        this._remotePending = false;
+      }
+    }
+
+    // True while the user has an editable focused inside the drawer (a Univer
+    // cell editor or a built-in input) — re-rendering then would clobber typing.
+    _isBusy() {
+      const ae = document.activeElement;
+      if (!ae || !this.host) return false;
+      if (!(this.host.contains(ae) || ae === this.host)) return false;
+      const tag = (ae.tagName || "").toLowerCase();
+      return tag === "input" || tag === "textarea" || ae.isContentEditable === true;
     }
 
     _signalsTable(kind) {
@@ -384,8 +579,8 @@
       const head =
         `<th class="lm-st-no">手順番号</th><th>手順目的</th><th>操作手順</th>` +
         `<th>サブルーチン</th><th>引数</th>` +
-        inNames.map((n) => `<th class="lm-st-sig-in">入力: ${esc(n)}</th>`).join("") +
-        exNames.map((n) => `<th class="lm-st-sig-ex">期待: ${esc(n)}</th>`).join("") +
+        inNames.map((n) => `<th class="lm-st-sig-in" title="入力信号">${esc(n)}</th>`).join("") +
+        exNames.map((n) => `<th class="lm-st-sig-ex" title="期待信号">${esc(n)}</th>`).join("") +
         `<th>確認タイミング</th><th></th>`;
       const rows = this.doc.steps.map((s, i) => {
         const inCells = s.inputs.map((v, j) =>
@@ -501,6 +696,7 @@
 
     async _save() {
       this.errEl.hidden = true;
+      await this._flushEdit();
       this._pull();
       const doc = this._serialize();
       const json = JSON.stringify(doc, null, 2);

@@ -201,6 +201,31 @@ export class UniverStepsView {
     this._libMap = m;
   }
 
+  // Serialise the current selection to TSV so the host can drive Ctrl+C itself.
+  // Two coexisting Univer roots (main grid + this drawer) both register a global
+  // keydown ShortcutService, so Univer's own Ctrl+C is ambiguous across roots and
+  // unreliable in the drawer. The host intercepts Ctrl+C and copies this string
+  // instead. Cells containing tab/newline/quote are Excel-quoted so multi-line
+  // step text round-trips into Excel and back. Returns null when nothing usable.
+  getSelectionTSV(): string | null {
+    try {
+      const wb = this.fWorkbook;
+      if (!wb) return null;
+      const rng = typeof wb.getActiveRange === "function" ? wb.getActiveRange() : null;
+      if (!rng || typeof rng.getValues !== "function") return null;
+      const vals = rng.getValues();
+      if (!vals || !vals.length) return null;
+      const quote = (raw: any): string => {
+        const t = s(raw);
+        if (/[\t\n\r"]/.test(t)) return '"' + t.replace(/"/g, '""') + '"';
+        return t;
+      };
+      return vals.map((r: any[]) => (r || []).map(quote).join("\t")).join("\n");
+    } catch (_e) {
+      return null;
+    }
+  }
+
   // Return a formatted Lib definition when (row,col) is a サブルーチン cell on the
   // 手順 sheet whose text matches a known lib_func; else null (tooltip then falls
   // back to its normal truncated-text behaviour).
@@ -252,6 +277,28 @@ export class UniverStepsView {
         sheet.setFrozenRows(1);
       }
     } catch (_e) { /* freeze is best-effort */ }
+  }
+
+  // Colour-code the 入力 (input) and 期待 (expected) signal columns so their type
+  // is obvious from the header colour alone — no "入力:"/"期待:" text prefix, which
+  // wasted horizontal space. Header cells get a strong tint; the data cells a
+  // faint one. Runs after _styleHeader (which paints the whole header row a
+  // neutral colour), so these per-column colours win for the signal columns while
+  // the left/right meta columns keep the neutral header colour.
+  private _colorSignalColumns(sheet: any, ni: number, ne: number, dataRows: number): void {
+    if (!sheet) return;
+    const left = STEP_LEFT.length; // first signal column index
+    const IN_HDR = "#cfe3fb", IN_BODY = "#eef6ff";   // blue  = 入力
+    const EX_HDR = "#fce0c4", EX_BODY = "#fff6ec";    // amber = 期待
+    const paint = (startCol: number, count: number, hdr: string, body: string) => {
+      if (count <= 0) return;
+      try { sheet.getRange(0, startCol, 1, count).setBackgroundColor(hdr); } catch (_e) { /* optional */ }
+      if (dataRows > 0) {
+        try { sheet.getRange(1, startCol, dataRows, count).setBackgroundColor(body); } catch (_e) { /* optional */ }
+      }
+    };
+    paint(left, ni, IN_HDR, IN_BODY);
+    paint(left + ni, ne, EX_HDR, EX_BODY);
   }
 
   // --------------------------------------------------------------- worksheets -
@@ -391,9 +438,11 @@ export class UniverStepsView {
     const exMatrix = [["名称", "路径"]].concat(
       exSig.map((sig: any) => [s(sig && sig[0]), s(sig && sig[1])]));
 
-    // 手順 sheet: dynamic signal columns labelled by signal name.
-    const inHead = inSig.map((sig: any, i: number) => `入力: ${s(sig && sig[0]) || "入力" + (i + 1)}`);
-    const exHead = exSig.map((sig: any, i: number) => `期待: ${s(sig && sig[0]) || "期待" + (i + 1)}`);
+    // 手順 sheet: dynamic signal columns labelled by signal name ONLY — the
+    // 入力 / 期待 distinction is shown by header COLOR (see _colorSignalColumns),
+    // not by a text prefix, so the columns stay narrow.
+    const inHead = inSig.map((sig: any, i: number) => s(sig && sig[0]) || "入力" + (i + 1));
+    const exHead = exSig.map((sig: any, i: number) => s(sig && sig[0]) || "期待" + (i + 1));
     const header = STEP_LEFT.concat(inHead, exHead, STEP_RIGHT);
     const stepMatrix = [header].concat(steps.map((st: any) => {
       const inputs = Array.isArray(st.inputs) ? st.inputs : [];
@@ -424,6 +473,8 @@ export class UniverStepsView {
     this._styleHeader(shIn, 2);
     this._styleHeader(shEx, 2);
     this._styleHeader(shStep, header.length);
+    // Distinguish 入力 vs 期待 signal columns by colour instead of a text prefix.
+    this._colorSignalColumns(shStep, this.ni, this.ne, steps.length);
 
     // Land on the 手順 sheet so a reused view never shows the previous item's
     // active sheet.

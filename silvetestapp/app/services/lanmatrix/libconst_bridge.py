@@ -125,6 +125,46 @@ def import_const(user, project, source, *, mode: str = "upsert",
 
 
 # --------------------------------------------------------------------------- #
+# Export (editor rows -> workbook bytes)
+# --------------------------------------------------------------------------- #
+def _export_rows(project, sheet: str) -> list[dict[str, Any]]:
+    from ...models import TestItemRow
+
+    rows = TestItemRow.query.filter_by(
+        project_id=project.id, sheet=sheet, deleted_at=None
+    ).order_by(TestItemRow.row_order).all()
+    return [r.to_dict() for r in rows]
+
+
+def export_libfunc(project):
+    """Rebuild a Lib(Func) ``.xlsx`` from the project's ``lib`` sheet rows."""
+    import io
+
+    from . import libfunc_excel
+
+    items = _export_rows(project, "lib")
+    wb = libfunc_excel.build_workbook({"items": items})
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+def export_const(project):
+    """Rebuild a Const ``.xlsx`` from the project's ``const`` sheet rows."""
+    import io
+
+    from . import const_excel
+
+    items = _export_rows(project, "const")
+    wb = const_excel.build_workbook({"items": items})
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+# --------------------------------------------------------------------------- #
 # Shared import loop
 # --------------------------------------------------------------------------- #
 def _run_import(user, project, items: list[dict[str, Any]], *, mode: str,

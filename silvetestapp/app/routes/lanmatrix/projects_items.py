@@ -496,6 +496,32 @@ def export_test_matrix(project_id):
                      download_name=f"{project.code}_test_matrix_{ts}.xlsx",
                      mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+@bp.get("/projects/<int:project_id>/libfunc/export")
+@login_required
+def export_libfunc(project_id):
+    """Export the project's Lib(Func) rows as a block-structured .xlsx."""
+    from ...services.lanmatrix import libconst_bridge
+
+    project, _ = _project_and_role(project_id, "export.run")
+    buf = libconst_bridge.export_libfunc(project)
+    ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    return send_file(buf, as_attachment=True,
+                     download_name=f"{project.code}_libfunc_{ts}.xlsx",
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+@bp.get("/projects/<int:project_id>/const/export")
+@login_required
+def export_const(project_id):
+    """Export the project's Const rows as a flat-table .xlsx."""
+    from ...services.lanmatrix import libconst_bridge
+
+    project, _ = _project_and_role(project_id, "export.run")
+    buf = libconst_bridge.export_const(project)
+    ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    return send_file(buf, as_attachment=True,
+                     download_name=f"{project.code}_const_{ts}.xlsx",
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
 @bp.post("/projects/<int:project_id>/exports")
 @login_required
 def create_export(project_id):

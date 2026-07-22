@@ -91,10 +91,34 @@ def ensure_sheets(doc: Doc) -> None:
     doc.get(ERRORS_KEY, type=Map)
 
 
+def _steps_field(sheet: str) -> str | None:
+    from ..services.lanmatrix import fields as fld
+    return fld.SHEET_STEPS_FIELD.get(sheet)
+
+
 def snapshot_sheet(doc: Doc, sheet: str) -> list[dict[str, Any]]:
-    """Return the sheet's rows as plain dicts, in visual (array) order."""
+    """Return the sheet's rows as plain dicts, in visual (array) order.
+
+    The step-detail field ("steps"/"lib_stb") may be a nested CRDT sub-structure
+    (item 3): clients upgrade the legacy JSON *string* into a nested ``Y.Map`` for
+    granular collaborative editing. ``to_py()`` returns that as a nested Python
+    dict, but the whole downstream pipeline — materialize -> DB ``steps`` column
+    -> execution-JSON export -> Excel import/export — treats this field as an
+    opaque JSON string. So we re-serialise a nested value back to a string here,
+    keeping that contract intact and the server ignorant of the sub-structure.
+    """
     arr = doc.get(sheet_key(sheet), type=Array)
-    return [dict(row) for row in arr.to_py()]
+    rows = [dict(row) for row in arr.to_py()]
+    field = _steps_field(sheet)
+    if field:
+        for row in rows:
+            val = row.get(field)
+            if isinstance(val, (dict, list)):
+                try:
+                    row[field] = json.dumps(val, ensure_ascii=False)
+                except (TypeError, ValueError):
+                    pass
+    return rows
 
 
 def write_row_errors(doc: Doc, errors_by_uuid: dict[str, Any]) -> int:
