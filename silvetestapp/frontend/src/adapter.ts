@@ -26,6 +26,78 @@ import { CollabOverlay } from "./collab_overlay";
 import type { OverlaySelection } from "./collab_overlay";
 import { CellTooltip } from "./cell_tooltip";
 
+// ---------------------------------------------------------------------------
+// Multi-line cell support.
+//
+// A plain-string cell value that contains a newline is INVALID for Univer: its
+// getCellDocumentModel builds a single-paragraph document whose dataStream still
+// holds the raw "\n", so the internal break is never registered as a paragraph.
+// Rendering tolerates it (shows the first line) but the cell EDITOR chokes on the
+// orphan character and opens blank — the "double-click shows nothing" bug. Univer
+// requires multi-line text to be RICH TEXT (cell.p / IDocumentData) where every
+// line break is a "\r" (DataStreamTreeTokenType.PARAGRAPH) with a matching entry
+// in `paragraphs`, terminated by "\r\n" ("\n" = SECTION_BREAK).
+//
+// We therefore store any value containing "\n" as rich text (plain text only — no
+// multi-segment styling, per requirements) and keep single-line values as plain
+// strings (fast path, unchanged). Row height stays uniform: rich text does NOT
+// enable wrap, so the cell still renders at one line height (the full text is
+// revealed by the hover bubble).
+// ---------------------------------------------------------------------------
+
+/** True when a value must be stored as rich text (string with an embedded LF). */
+function isMultiline(v: any): boolean {
+  return typeof v === "string" && v.indexOf("\n") !== -1;
+}
+
+/**
+ * Build a minimal, VALID Univer IDocumentData for a multi-line plain string.
+ * Lines are joined with "\r" (paragraph breaks) and the stream ends with "\r\n";
+ * `paragraphs` carries one entry per "\r" so the document tree — and the cell
+ * editor — parse correctly.
+ */
+function buildRichTextDoc(text: string): any {
+  const lines = String(text).split("\n");
+  const dataStream = lines.join("\r") + "\r\n";
+  const paragraphs: Array<{ startIndex: number }> = [];
+  let idx = 0;
+  for (let i = 0; i < lines.length; i++) {
+    idx += lines[i].length;        // index of the "\r" that terminates this line
+    paragraphs.push({ startIndex: idx });
+    idx += 1;                      // step past the "\r"
+  }
+  return {
+    id: "d",
+    body: {
+      dataStream,
+      textRuns: [{ st: 0, ed: Math.max(0, dataStream.length - 1), ts: {} }],
+      paragraphs,
+      sectionBreaks: [{ startIndex: dataStream.length - 1 }],
+    },
+    documentStyle: {},
+  };
+}
+
+/** Normalize any CR/CRLF newline convention to a bare LF. */
+function normalizeNewlines(s: string): string {
+  return s.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+/**
+ * Flatten a cell read from `getValueAndRichTextValues()` to plain text: a
+ * RichTextValue (multi-line cell) exposes `toPlainText()`; everything else is a
+ * primitive CellValue. Univer's rich text always carries a trailing paragraph
+ * break, so a single trailing newline is stripped to match the stored value.
+ */
+function cellReadToText(cell: any): any {
+  if (cell != null && typeof cell.toPlainText === "function") {
+    let s = normalizeNewlines(String(cell.toPlainText()));
+    s = s.replace(/\n$/, "");
+    return s;
+  }
+  return cell;
+}
+
 export interface Field {
   field_key: string;
   display_name: string;
@@ -409,6 +481,13 @@ export class UniverGridAdapter {
   }>): boolean {
     const ctx = this.active;
     this._ensureOverlay();
+    try {
+      if ((globalThis as any).LM_DEBUG_CURSOR) {
+        // eslint-disable-next-line no-console
+        console.log("[adapter] setRemoteSelections in:", (peers || []).length,
+          "ctx:", !!ctx, "overlay:", !!this.overlay, peers);
+      }
+    } catch (_e) { /* noop */ }
     if (!ctx || !this.overlay) return true;
     const vis = this._visibleFields(ctx);
     const rowByUuidId: Record<number, number> = {};
@@ -529,7 +608,7 @@ export class UniverGridAdapter {
           if (String(nv) === String(ov)) continue;
           try {
             ctx.fSheet.getRange(HEADER_ROWS + r, c, 1, 1)
-              .setValue(this._displayValue(b[f.field_key], f));
+              .setValue(this._toCellData(this._displayValue(b[f.field_key], f)));
           } catch (_e) { /* a single-cell failure must not abort the batch */ }
         }
       }
@@ -684,7 +763,7 @@ export class UniverGridAdapter {
 
       if (ctx.items.length && vis.length) {
         const matrix = ctx.items.map((it) =>
-          vis.map((f) => this._displayValue(it[f.field_key], f)));
+          vis.map((f) => this._toCellData(this._displayValue(it[f.field_key], f))));
         ctx.fSheet.getRange(HEADER_ROWS, 0, matrix.length, vis.length).setValues(matrix);
       }
       vis.forEach((f, col) => {
@@ -749,6 +828,14 @@ export class UniverGridAdapter {
     if (raw === true) return "是";
     if (raw === false) return "否";
     return raw;
+  }
+
+  // Wrap a display value for writing to Univer: multi-line strings become rich
+  // text (cell.p) so the editor can load them; everything else stays a plain
+  // primitive. setValues()/setValue() both accept ICellData, so this can be used
+  // inline in a value matrix or for a single cell.
+  private _toCellData(display: any): any {
+    return isMultiline(display) ? { p: buildRichTextDoc(display) } : display;
   }
 
   private _applyValidations(ctx: SheetCtx): void {
@@ -899,9 +986,19 @@ export class UniverGridAdapter {
     if (!ctx.fSheet || !vis.length || !ctx.items.length) return;
     if (!this.opts.onSave) return;
 
+    // Read with rich-text awareness: a multi-line cell (stored as cell.p) comes
+    // back as a RichTextValue, not a primitive. cellReadToText() flattens it to
+    // plain text with normalized "\n" so the diff below sees the SAME string that
+    // is cached — otherwise merely clicking a newline cell (which Univer promotes
+    // to rich text) would read back a value that differs from the cache and be
+    // mistaken for an edit, silently rewriting the cell and dropping the newline.
     let values: any[][];
     try {
-      values = ctx.fSheet.getRange(HEADER_ROWS, 0, ctx.items.length, vis.length).getValues() || [];
+      const range = ctx.fSheet.getRange(HEADER_ROWS, 0, ctx.items.length, vis.length);
+      const raw = (range.getValueAndRichTextValues
+        ? range.getValueAndRichTextValues()
+        : range.getValues()) || [];
+      values = raw.map((row: any[]) => (row || []).map((cell) => cellReadToText(cell)));
     } catch (_e) { return; }
 
     type Group = { item: Item; changes: Record<string, any>; cells: { row: number; col: number; field: Field }[] };
@@ -990,7 +1087,7 @@ export class UniverGridAdapter {
   private _revertCell(ctx: SheetCtx, row: number, col: number, display: any): void {
     if (!ctx.fSheet) return;
     this.applying = true;
-    try { ctx.fSheet.getRange(row, col, 1, 1).setValue(display); }
+    try { ctx.fSheet.getRange(row, col, 1, 1).setValue(this._toCellData(display)); }
     catch (_e) { /* ignore */ }
     finally { this.applying = false; }
   }

@@ -83,6 +83,21 @@ const LAYER_CLASS = "lm-collab-overlay";
 const ANCHOR_BORDER_PX = 2;
 const RANGE_BORDER_PX = 1.5;
 
+/**
+ * Guarded diagnostics. Set `window.LM_DEBUG_CURSOR = true` in devtools, then
+ * change a selection on another client: the log pinpoints exactly which stage of
+ * the pipeline drops the remote cursor (projector resolution vs. box geometry vs.
+ * an empty selection set). Silent unless the flag is on.
+ */
+function dbg(...args: any[]): void {
+  try {
+    if ((globalThis as any).LM_DEBUG_CURSOR) {
+      // eslint-disable-next-line no-console
+      console.log("[collab-overlay]", ...args);
+    }
+  } catch (_e) { /* never let logging break paint */ }
+}
+
 export class CollabOverlay {
   private deps: CollabOverlayDeps;
   private host: HTMLElement;
@@ -128,6 +143,7 @@ export class CollabOverlay {
   /** Replace the current set of remote selections and repaint. */
   setSelections(list: OverlaySelection[]): void {
     this.selections = Array.isArray(list) ? list : [];
+    dbg("setSelections:", this.selections.length, this.selections);
     this.scheduleRefresh();
   }
 
@@ -159,46 +175,36 @@ export class CollabOverlay {
     // full rebuild per frame is cheaper and simpler than diffing DOM nodes.
     this.layer.replaceChildren();
 
+    // The layer ALWAYS covers the whole host and boxes are positioned in HOST
+    // coordinates. Earlier builds repositioned the layer to the data-viewport
+    // rect and drew boxes RELATIVE to that origin; when the viewport rect came
+    // back in the wrong units (or momentarily zero) the layer was moved/sized
+    // off the grid and overflow:hidden ate every cursor — the "no cursor at all"
+    // regression. Covering the host and drawing in absolute host px removes that
+    // whole failure mode: a projected box is placed exactly where the cell is.
+    Object.assign(this.layer.style, {
+      left: "0px", top: "0px", right: "0px", bottom: "0px",
+      width: "auto", height: "auto", inset: "0px", overflow: "hidden",
+    } as CSSStyleDeclaration);
+
     const proj = this.getProjector();
-    if (!proj) return; // skeleton not ready yet; a later refresh will retry
+    if (!proj) { dbg("paint: no projector (skeleton/render not ready)"); return; }
 
-    // Clip the overlay to the data viewport when we know it: the layer is
-    // sized/positioned to the main viewport rect with overflow:hidden, so any
-    // cursor scrolled up/left under the frozen headers — or past a viewport edge —
-    // is clipped instead of floating over the headers or outside the grid. Box
-    // coordinates are then made RELATIVE to the clip origin. When the viewport
-    // rect is unknown (clip === null) we fall back to covering the whole host and
-    // draw without clipping so cursors always show.
+    // Cheap, FAIL-OPEN header clip: only hide a cursor whose centre scrolled up
+    // or left of the data area (i.e. under the frozen headers). We deliberately
+    // do NOT test the right/bottom edges — if the viewport rect were ever in the
+    // wrong units that would wrongly hide valid cursors, and showing a cursor a
+    // little past the edge is far better than showing none.
     const clip = proj.clip;
-    if (clip) {
-      Object.assign(this.layer.style, {
-        left: `${Math.round(clip.left)}px`,
-        top: `${Math.round(clip.top)}px`,
-        width: `${Math.max(0, Math.round(clip.width))}px`,
-        height: `${Math.max(0, Math.round(clip.height))}px`,
-        right: "auto",
-        bottom: "auto",
-        inset: "auto",
-      } as CSSStyleDeclaration);
-    } else {
-      Object.assign(this.layer.style, {
-        left: "0px",
-        top: "0px",
-        right: "0px",
-        bottom: "0px",
-        width: "auto",
-        height: "auto",
-      } as CSSStyleDeclaration);
-    }
-    const ox = clip ? clip.left : 0;
-    const oy = clip ? clip.top : 0;
-    const rel = (r: Rect): Rect => ({
-      left: r.left - ox,
-      top: r.top - oy,
-      width: r.width,
-      height: r.height,
-    });
+    const visible = (r: Rect): boolean => {
+      if (!clip) return true;
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      return cx >= clip.left - 1 && cy >= clip.top - 1;
+    };
 
+    let drawn = 0;
+    let firstRect: Rect | null = null;
     for (const sel of this.selections) {
       // 1) Selection outline: draw ONE box around the whole selection (its
       //    bounding range) instead of a box per row. For a rectangular range —
@@ -209,22 +215,34 @@ export class CollabOverlay {
         const a = proj.rectAt(span.minRow, span.minCol);
         const b = proj.rectAt(span.maxRow, span.maxCol);
         if (a && b) {
-          const rect = rel(boundingRect(a, b));
-          this.layer.appendChild(
-            borderBox(rect, sel.color, RANGE_BORDER_PX, 0.85),
-          );
+          const rect = boundingRect(a, b);
+          firstRect = firstRect || rect;
+          if (visible(rect)) {
+            this.layer.appendChild(borderBox(rect, sel.color, RANGE_BORDER_PX, 0.85));
+            drawn++;
+          }
         }
       }
       // 2) Anchor box (thicker) + name label.
       if (sel.anchor) {
         const c = proj.rectAt(sel.anchor.row, sel.anchor.col);
         if (c) {
-          const box = rel(boundingRect(c, c));
-          this.layer.appendChild(borderBox(box, sel.color, ANCHOR_BORDER_PX, 1));
-          this.layer.appendChild(nameLabel(box, sel.name, sel.color));
+          firstRect = firstRect || c;
+          if (visible(c)) {
+            this.layer.appendChild(borderBox(c, sel.color, ANCHOR_BORDER_PX, 1));
+            this.layer.appendChild(nameLabel(c, sel.name, sel.color));
+            drawn++;
+          }
         }
       }
     }
+    dbg("paint:", {
+      selections: this.selections.length,
+      drawn,
+      firstRect,
+      clip,
+      hostSize: { w: this.host.clientWidth, h: this.host.clientHeight },
+    });
   }
 
   // ---- Univer service access (defensive) --------------------------------- //
@@ -272,7 +290,10 @@ export class CollabOverlay {
   } | null {
     const injector = this.getInjector();
     const unitId = this.deps.getUnitId && this.deps.getUnitId();
-    if (!injector || !unitId) return null;
+    if (!injector || !unitId) {
+      dbg("projector: missing", { injector: !!injector, unitId });
+      return null;
+    }
 
     const ids = this.deps.identifiers || {};
     const rms = this.resolve(injector, ids.IRenderManagerService, [
@@ -281,7 +302,10 @@ export class CollabOverlay {
     const render = rms && typeof rms.getRenderById === "function"
       ? rms.getRenderById(unitId)
       : null;
-    if (!render) return null;
+    if (!render) {
+      dbg("projector: no render", { rms: !!rms, hasGetRenderById: !!(rms && rms.getRenderById), unitId });
+      return null;
+    }
 
     // The skeleton manager is registered per-render; try render.with() first
     // (0.25.1 IRender exposes a scoped injector), then the root injector.
@@ -300,10 +324,13 @@ export class CollabOverlay {
     // header?) -> ICellWithCoord {startX,startY,endX,endY}. header defaults to
     // true, so the returned coords already include the header offset, matching
     // the scene coordinate space the transform below expects.
-    if (!skeleton || typeof skeleton.getCellWithCoordByIndex !== "function") return null;
+    if (!skeleton || typeof skeleton.getCellWithCoordByIndex !== "function") {
+      dbg("projector: no skeleton", { skm: !!skm, skeleton: !!skeleton });
+      return null;
+    }
 
     const scene = render.scene;
-    if (!scene) return null;
+    if (!scene) { dbg("projector: no scene"); return null; }
     const viewport = pickMainViewport(scene);
 
     // Scene->canvas affine matrix [a,b,c,d,e,f]: screenX = a*x + c*y + e;

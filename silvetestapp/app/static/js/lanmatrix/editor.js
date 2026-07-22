@@ -524,6 +524,12 @@
       peers.push({ key: p.key, name: p.name, color: p.color,
         anchor: anchor, rowIds: rowIds, cols: p.cols || null });
     });
+    try {
+      if (window.LM_DEBUG_CURSOR) {
+        console.log("[editor] applyCollabPresence sheet:", currentSheet,
+          "list:", list.length, "peers:", peers.length, peers);
+      }
+    } catch (_e) { /* noop */ }
     try { grid.setRemoteSelections(peers); } catch (_e) { /* best-effort */ }
   }
 

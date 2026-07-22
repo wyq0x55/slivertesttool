@@ -418,6 +418,12 @@
         cols: s.cols || null,
       });
     });
+    try {
+      if (window.LM_DEBUG_CURSOR) {
+        console.log("[collab] _emitSelections states:", states.size,
+          "self:", selfId, "bySheet:", bySheet);
+      }
+    } catch (_e) { /* noop */ }
     this._cb.onCursors(bySheet);
   };
 

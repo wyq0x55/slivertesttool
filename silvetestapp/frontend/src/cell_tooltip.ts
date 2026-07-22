@@ -170,14 +170,30 @@ export class CellTooltip {
     try { range = fsheet.getRange(row, col); } catch (_e) { return null; }
     if (!range) return null;
 
+    // Read rich-text aware so a multi-line cell (stored as cell.p) yields its full
+    // text WITH newlines, not a flattened single line. getValue(true) returns a
+    // RichTextValue for such cells (has toPlainText()); otherwise a primitive.
     let text = "";
     try {
-      const dv = range.getDisplayValue ? range.getDisplayValue() : range.getValue();
-      text = dv == null ? "" : String(dv);
+      let dv: any = null;
+      if (range.getValue) { try { dv = range.getValue(true); } catch (_e2) { dv = null; } }
+      if (dv != null && typeof dv.toPlainText === "function") {
+        text = String(dv.toPlainText()).replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n$/, "");
+      } else {
+        const plain = range.getDisplayValue ? range.getDisplayValue() : range.getValue();
+        text = plain == null ? "" : String(plain);
+      }
     } catch (_e) { return null; }
     if (!text) return null;
 
-    // Skip wrapped cells (out of scope): those grow the row instead of clipping.
+    // Multi-line cell: with uniform row height (no wrap) only the first line is
+    // visible in the grid, so the full text is always "clipped" — show the bubble
+    // with every line (the bubble is pre-wrap). This is the primary reveal path
+    // for newline cells now that they are stored as rich text.
+    if (text.indexOf("\n") !== -1) return text;
+
+    // Skip genuinely wrapped cells (out of scope): those grow the row instead of
+    // clipping. We never enable wrap ourselves, so this is normally a no-op.
     try { if (range.getWrap && range.getWrap()) return null; } catch (_e) { /* treat as no-wrap */ }
 
     // Build a measuring font matching Univer's getFontStyleString: "<it> <bl>
