@@ -149,7 +149,11 @@ select.lm-cell-control[multiple] { min-height: 46px; }
 #lm-steps-task-status { margin-left: 8px; vertical-align: middle; }
 .lm-steps-drawer-main { flex: 1; display: flex; min-height: 0; gap: 10px;
   overflow: hidden; }
-.lm-steps-drawer-body { flex: 1; min-width: 0; overflow: auto; }
+.lm-steps-drawer-body { flex: 1; min-width: 0; min-height: 0; overflow: auto; }
+/* The Univer steps view sets an inline height:60vh on its host. As a flex-row
+   child that height is the cross axis and overflowed the drawer, clipping
+   Univer's bottom (sheet-tab) bar. Fill the row's height instead. */
+.lm-steps-drawer-main > .lm-univer-steps-host { height: 100% !important; }
 .lm-steps-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35);
   z-index: 1000; }
 
