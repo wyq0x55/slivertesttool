@@ -206,6 +206,12 @@ export class CollabOverlay {
     let drawn = 0;
     let firstRect: Rect | null = null;
     for (const sel of this.selections) {
+      // The name label attaches to the anchor cell when known, else to the
+      // selection's bounding box — so a MULTI-cell selection (whose peer has no
+      // single active cell, hence a null anchor) still shows the collaborator's
+      // name at the top-left of the range instead of nothing.
+      let labelRect: Rect | null = null;
+
       // 1) Selection outline: draw ONE box around the whole selection (its
       //    bounding range) instead of a box per row. For a rectangular range —
       //    the usual case — this is exactly the single large frame collaborators
@@ -217,23 +223,28 @@ export class CollabOverlay {
         if (a && b) {
           const rect = boundingRect(a, b);
           firstRect = firstRect || rect;
+          labelRect = rect;
           if (visible(rect)) {
             this.layer.appendChild(borderBox(rect, sel.color, RANGE_BORDER_PX, 0.85));
             drawn++;
           }
         }
       }
-      // 2) Anchor box (thicker) + name label.
+      // 2) Anchor box (thicker). Preferred position for the name label.
       if (sel.anchor) {
         const c = proj.rectAt(sel.anchor.row, sel.anchor.col);
         if (c) {
           firstRect = firstRect || c;
+          labelRect = c;
           if (visible(c)) {
             this.layer.appendChild(borderBox(c, sel.color, ANCHOR_BORDER_PX, 1));
-            this.layer.appendChild(nameLabel(c, sel.name, sel.color));
             drawn++;
           }
         }
+      }
+      // 3) ONE name label per selection, at the anchor if known else the span box.
+      if (labelRect && sel.name && visible(labelRect)) {
+        this.layer.appendChild(nameLabel(labelRect, sel.name, sel.color));
       }
     }
     dbg("paint:", {
@@ -503,8 +514,11 @@ function borderBox(r: Rect, color: string, borderPx: number, alpha: number): HTM
     position: "absolute",
     left: `${Math.round(r.left)}px`,
     top: `${Math.round(r.top)}px`,
-    width: `${Math.max(0, Math.round(r.width) - borderPx)}px`,
-    height: `${Math.max(0, Math.round(r.height) - borderPx)}px`,
+    // boxSizing:border-box draws the border INSIDE this footprint, so the box must
+    // be the FULL cell size for the border to sit on the cell edges. Subtracting
+    // borderPx (as before) pulled the right/bottom borders inward into the cell.
+    width: `${Math.max(0, Math.round(r.width))}px`,
+    height: `${Math.max(0, Math.round(r.height))}px`,
     border: `${borderPx}px solid ${color}`,
     boxSizing: "border-box",
     borderRadius: "1px",

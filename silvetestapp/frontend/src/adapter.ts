@@ -774,6 +774,13 @@ export class UniverGridAdapter {
             .setHorizontalAlignment("center");
         } catch (_e) { /* best-effort */ }
       });
+      // Multi-line rich-text cells make Univer auto-grow the row to fit every
+      // line. We want uniform, fixed row heights instead. Forcing the height via
+      // SetRowHeightCommand also flips each row's `ia` (isAutoHeight) flag to
+      // FALSE, which permanently excludes the row from auto-height recalculation
+      // (see engine-render calculateAutoHeightInRange). Re-applied on every full
+      // render so a reload never leaves a stretched row behind.
+      this._lockRowHeights(ctx);
       this._applyValidations(ctx);
       this._applyFilter(ctx, vis.length);
       // Record the columns this full render was drawn with, so a later
@@ -786,6 +793,33 @@ export class UniverGridAdapter {
     }
     // Rows moved: reproject any remote-selection borders onto the new layout.
     if (this.overlay && ctx === this.active) this.overlay.refresh();
+  }
+
+  // Univer default row height (workbook is created without an override → 24px).
+  private _rowHeightPx = 0;
+
+  // Force every used row to a single fixed height and disable per-row
+  // auto-height, so multi-line rich-text cells never stretch their row.
+  private _lockRowHeights(ctx: SheetCtx): void {
+    if (!ctx.fSheet || typeof ctx.fSheet.setRowHeightsForced !== "function") return;
+    if (this._rowHeightPx <= 0) {
+      let h = 24;
+      try {
+        const v = ctx.fSheet.getRowHeight && ctx.fSheet.getRowHeight(0);
+        if (typeof v === "number" && v > 0) h = v;
+      } catch (_e) { /* fall back to 24 */ }
+      this._rowHeightPx = h;
+    }
+    // Cover the header + data region plus the clear buffer so freshly added
+    // rows are locked too. Bounded by the sheet's max rows.
+    let rows = HEADER_ROWS + ctx.items.length + 50;
+    try {
+      const max = ctx.fSheet.getMaxRows && ctx.fSheet.getMaxRows();
+      if (typeof max === "number" && max > 0) rows = Math.min(rows, max);
+    } catch (_e) { /* ignore */ }
+    if (rows <= 0) return;
+    try { ctx.fSheet.setRowHeightsForced(0, rows, this._rowHeightPx); }
+    catch (_e) { /* best-effort: uniform row height not supported */ }
   }
 
   private _applyFilter(ctx: SheetCtx, colCount: number): void {
