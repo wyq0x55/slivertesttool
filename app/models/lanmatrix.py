@@ -223,6 +223,56 @@ class FieldDefinition(db.Model):
 
 
 # --------------------------------------------------------------------------- #
+# Per-project plant models
+#
+# Model management now lives **inside a project** (each project owns its own
+# ``.sil`` plant models) instead of a single global admin-registered list. A
+# model is either:
+#   * ``kind="path"``   -- a server-side absolute ``.sil`` path, opened in place;
+#   * ``kind="bundle"`` -- a ``host.dll`` + ``host.sbs`` pair uploaded through the
+#     web UI. The service materialises them into a per-project directory and
+#     generates an empty ``.sil`` that adds a single module
+#     ``<dll> -S <sbs>``; the dll and sbs sit next to the generated ``.sil`` so
+#     Silver resolves the relative names against the model's own directory.
+# --------------------------------------------------------------------------- #
+class ProjectModel(db.Model):
+    __tablename__ = "lm_project_models"
+    __table_args__ = (
+        db.UniqueConstraint("project_id", "name", name="uq_model_project_name"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(
+        db.Integer, db.ForeignKey("lm_projects.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    name = db.Column(db.String(120), nullable=False)
+    # path | bundle
+    kind = db.Column(db.String(16), nullable=False, default="path")
+    # Absolute path to the ``.sil`` Silver opens (the registered path, or the
+    # generated one inside ``bundle_dir``).
+    sil_path = db.Column(db.String(1024), nullable=False, default="")
+    # For ``bundle`` models: the server directory holding the generated ``.sil``
+    # together with the uploaded dll + sbs (removed when the model is deleted).
+    bundle_dir = db.Column(db.String(1024), nullable=True)
+    created_by = db.Column(db.Integer, db.ForeignKey("lm_users.id"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
+
+    def to_dict(self, *, include_path: bool = False) -> dict:
+        import os
+        entry = {
+            "id": self.id,
+            "name": self.name,
+            "kind": self.kind,
+            "exists": bool(self.sil_path) and os.path.isfile(self.sil_path),
+            "created_at": _iso(self.created_at),
+        }
+        if include_path:
+            entry["path"] = self.sil_path
+        return entry
+
+
+# --------------------------------------------------------------------------- #
 # Test items
 # --------------------------------------------------------------------------- #
 class TestItemRow(db.Model):

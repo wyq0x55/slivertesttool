@@ -167,6 +167,15 @@ def fields(project_id: int):
         "lanmatrix/fields.html", user=user.to_dict(), project_id=project_id)
 
 
+@pages_bp.get("/projects/<int:project_id>/models")
+def models_page(project_id: int):
+    user = _current_user()
+    if user is None:
+        return redirect(url_for("lanmatrix_pages.login"))
+    return render_template(
+        "lanmatrix/models.html", user=user.to_dict(), project_id=project_id)
+
+
 @pages_bp.get("/projects/<int:project_id>/audit")
 def audit_page(project_id: int):
     user = _current_user()
