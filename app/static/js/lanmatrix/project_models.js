@@ -1,6 +1,6 @@
 /* Per-project model management: list the project's .sil models, register a
- * server-side .sil path, or upload a dll + sbs pair (the server generates an
- * empty .sil whose only module line is "<dll> -S <sbs>"), and delete models.
+ * server-side .sil path, or upload a dll + sbs + pdb set (the server generates
+ * an empty .sil whose only module line is "<dll> -S <sbs>"), and delete models.
  * Management controls are shown only to users with model.manage (can_manage). */
 (function () {
   "use strict";
@@ -79,17 +79,19 @@
     const name = $("lm-bundle-name").value.trim();
     const dll = $("lm-bundle-dll").files[0];
     const sbs = $("lm-bundle-sbs").files[0];
-    if (!dll || !sbs) { showError("请同时选择 dll 与 sbs 文件"); return; }
+    const pdb = $("lm-bundle-pdb").files[0];
+    if (!dll || !sbs || !pdb) { showError("请同时选择 dll、sbs 与 pdb 文件"); return; }
     const fd = new FormData();
     if (name) { fd.append("name", name); }
     fd.append("dll", dll, dll.name);
     fd.append("sbs", sbs, sbs.name);
+    fd.append("pdb", pdb, pdb.name);
     const btn = $("lm-bundle-add");
     btn.disabled = true;
     try {
       const data = await LMApi.uploadProjectModel(pid, fd);
       $("lm-bundle-name").value = "";
-      $("lm-bundle-dll").value = ""; $("lm-bundle-sbs").value = "";
+      $("lm-bundle-dll").value = ""; $("lm-bundle-sbs").value = ""; $("lm-bundle-pdb").value = "";
       render(data.models || []);
       toast("已上传并生成 .sil", true);
     } catch (ex) {
