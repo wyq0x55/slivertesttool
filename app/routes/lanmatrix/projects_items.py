@@ -17,8 +17,8 @@ from flask import (
 from ...extensions import db
 from ...models import DataJob, FieldDefinition, LMUser, Project, Task, TaskStatus
 from ...services import (
-    event_service, license_service, model_service, report_service,
-    task_service, upload_service,
+    event_service, license_service, project_model_service,
+    report_service, task_service, upload_service,
 )
 from ...services.upload_service import UploadError
 from ...services.lanmatrix import (
@@ -161,6 +161,63 @@ def delete_field(project_id, field_id):
         return err("NOT_FOUND", "字段不存在", status=404)
     service.delete_field(g.user, project, fdef)
     return ok({"deleted": field_id})
+
+# --------------------------------------------------------------------------- #
+# Per-project plant models (.sil path registration + dll/sbs bundle upload)
+# --------------------------------------------------------------------------- #
+@bp.get("/projects/<int:project_id>/models")
+@login_required
+def list_project_models(project_id):
+    _, role = _project_and_role(project_id, "project.view")
+    can_manage = permissions.can("model.manage", role,
+                                 is_system_admin=g.user.is_system_admin)
+    return ok({"models": project_model_service.list_models(
+                   project_id, include_path=can_manage),
+               "can_manage": can_manage})
+
+@bp.post("/projects/<int:project_id>/models")
+@login_required
+def add_project_model(project_id):
+    _project_and_role(project_id, "model.manage")
+    body = request.get_json(silent=True) or {}
+    try:
+        entry = project_model_service.add_path_model(
+            project_id, body.get("name", ""), body.get("path", ""),
+            created_by=g.user.id)
+    except project_model_service.ModelError as exc:
+        return err("VALIDATION_ERROR", str(exc), status=400)
+    return ok({"model": entry,
+               "models": project_model_service.list_models(
+                   project_id, include_path=True)}, status=201)
+
+@bp.post("/projects/<int:project_id>/models/upload")
+@login_required
+def upload_project_model(project_id):
+    _project_and_role(project_id, "model.manage")
+    dll = request.files.get("dll")
+    sbs = request.files.get("sbs")
+    if dll is None or sbs is None:
+        return err("VALIDATION_ERROR", "请同时上传 dll 与 sbs 文件", status=400)
+    try:
+        entry = project_model_service.add_bundle_model(
+            project_id, request.form.get("name", ""), dll, sbs,
+            current_app.config_obj, created_by=g.user.id)
+    except project_model_service.ModelError as exc:
+        return err("VALIDATION_ERROR", str(exc), status=400)
+    return ok({"model": entry,
+               "models": project_model_service.list_models(
+                   project_id, include_path=True)}, status=201)
+
+@bp.delete("/projects/<int:project_id>/models")
+@login_required
+def remove_project_model(project_id):
+    _project_and_role(project_id, "model.manage")
+    body = request.get_json(silent=True) or {}
+    removed = project_model_service.remove_model(
+        project_id, (body.get("name") or "").strip())
+    return ok({"removed": removed,
+               "models": project_model_service.list_models(
+                   project_id, include_path=True)})
 
 @bp.get("/projects/<int:project_id>/items")
 @login_required
