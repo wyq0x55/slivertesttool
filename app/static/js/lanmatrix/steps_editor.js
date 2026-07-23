@@ -716,11 +716,21 @@
       const btn = this.dialog.querySelector("#lm-steps-save");
       btn.disabled = true;
       try {
-        if (this.onSave) await this.onSave(json, doc);
+        const savedSteps = this.onSave ? await this.onSave(json, doc) : null;
         // Keep the bottom drawer (Univer view) open after a successful save so
         // the user can keep editing — saving via the Save button OR Ctrl/Cmd+S
         // must NOT dismiss it. The host onSave already flashes a "步骤明细已保存"
         // toast for success feedback; Esc / the backdrop still close the drawer.
+        //
+        // Because the drawer no longer closes, its OWN Univer view must be
+        // repainted to reflect the authoritative saved value (the server/CRDT
+        // may normalise step numbering, defaults, arity). Re-seed the doc from
+        // the saved payload when the host returns it, else from the JSON we just
+        // serialised, then re-render — mirroring the remote-apply path
+        // (_applyRemoteNow) so no redundant live flush is triggered.
+        this.doc = parseDoc(savedSteps != null ? savedSteps : json);
+        this._syncStepArity();
+        this._rerenderFromDoc();
       } catch (ex) {
         this.errEl.textContent = (ex && ex.message) || "保存失败";
         this.errEl.hidden = false;
