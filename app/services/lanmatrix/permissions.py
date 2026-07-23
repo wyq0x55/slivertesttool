@@ -16,6 +16,7 @@ _MATRIX: dict[str, frozenset[str]] = {
     "project.freeze": frozenset({"project_admin"}),
     "project.members": frozenset({"project_admin"}),
     "field.manage": frozenset({"project_admin"}),
+    "model.manage": frozenset({"project_admin"}),
     "item.view": frozenset({"project_admin", "editor", "reviewer", "reader"}),
     "item.create": frozenset({"project_admin", "editor"}),
     "item.edit": frozenset({"project_admin", "editor"}),

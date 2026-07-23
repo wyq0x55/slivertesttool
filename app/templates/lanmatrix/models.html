@@ -1,0 +1,45 @@
+{% extends "lanmatrix/base_lm.html" %}
+{% block title %}模型管理{% endblock %}
+{% block content %}
+<div class="lm-page" data-project-id="{{ project_id }}">
+  <div class="lm-page-head">
+    <h1>模型管理</h1>
+    <div>
+      <a class="lm-btn" href="/lanmatrix/projects/{{ project_id }}">返回编辑</a>
+      <a class="lm-btn" href="/lanmatrix/projects/{{ project_id }}/tasks">上传任务</a>
+    </div>
+  </div>
+
+  <p class="lm-muted">每个项目维护自己的 Silver <code>.sil</code> 模型。可直接登记服务器上的
+    <code>.sil</code> 路径，或上传 <code>dll</code> + <code>sbs</code> 由平台生成一个仅含
+    <code>&lt;dll&gt; -S &lt;sbs&gt;</code> 模块的空 <code>.sil</code>（三者位于同一目录）。</p>
+
+  <div class="lm-card lm-model-forms" id="lm-model-forms" hidden>
+    <h3>添加模型（.sil 路径）</h3>
+    <div class="lm-inline">
+      <input id="lm-model-name" placeholder="名称（可留空，用文件名）">
+      <input id="lm-model-path" placeholder="服务器端 .sil 绝对路径" class="lm-grow">
+      <button class="lm-btn lm-btn-primary" id="lm-model-add">添加</button>
+    </div>
+
+    <h3>上传模型（dll + sbs）</h3>
+    <div class="lm-inline">
+      <input id="lm-bundle-name" placeholder="名称（可留空，用 dll 文件名）">
+      <label class="lm-file">dll <input type="file" id="lm-bundle-dll" accept=".dll"></label>
+      <label class="lm-file">sbs <input type="file" id="lm-bundle-sbs" accept=".sbs"></label>
+      <button class="lm-btn lm-btn-primary" id="lm-bundle-add">上传并生成 .sil</button>
+    </div>
+    <div class="lm-error" id="lm-model-error" hidden></div>
+  </div>
+
+  <table class="lm-table" id="lm-models-table">
+    <thead>
+      <tr><th>名称</th><th>类型</th><th>路径</th><th>状态</th><th></th></tr>
+    </thead>
+    <tbody id="lm-model-rows"><tr><td colspan="5" class="lm-muted">加载中…</td></tr></tbody>
+  </table>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/lanmatrix/project_models.js') }}"></script>
+{% endblock %}
