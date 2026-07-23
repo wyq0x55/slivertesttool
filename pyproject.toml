@@ -1,0 +1,47 @@
+[project]
+name = "silver-test-platform"
+version = "0.1.0"
+description = "Silver Test Platform - Flask-based test management with real-time collaboration"
+readme = "README.md"
+requires-python = ">=3.10"
+
+dependencies = [
+    # --- Web / core ---
+    "Flask>=3.0,<4.0",
+    "SQLAlchemy>=2.0,<3.0",
+    "Flask-SQLAlchemy>=3.1,<4.0",
+    "huey>=2.5,<3.0",
+    "pydantic>=2.0,<3.0",
+    "waitress>=3.0,<4.0",
+    "python-dotenv>=1.0,<2.0",
+    "openpyxl>=3.1,<4.0",
+    "itsdangerous>=2.1",
+    # --- PostgreSQL (required) ---
+    "psycopg2-binary>=2.9,<3.0",
+    "peewee>=3.17,<4.0",
+    # --- Real-time collaboration (pinned to vendored/verified wheels) ---
+    "pycrdt==0.14.1",
+    "pycrdt-websocket==0.16.4",
+    "pycrdt-store==0.1.5",
+    "sqlite-anyio==0.2.10",
+    "anyio==4.14.2",
+    "exceptiongroup==1.3.1",
+    "idna==3.18",
+    "typing_extensions==4.16.0",
+    # --- ASGI server + WebSocket protocol for run_collab.py ---
+    "uvicorn>=0.30",
+    "websockets>=12,<14",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0,<9.0",
+]
+
+[tool.uv]
+# Application project (flat run_*.py scripts + `app/` package imported directly),
+# not a distributable library — keep it non-packaged so `uv sync` won't try to build a wheel.
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
