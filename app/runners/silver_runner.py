@@ -171,6 +171,47 @@ class SilverRunner(SilverRunnerBase):
         """
         silver.open(str(sil_path))
 
+    def generate_sil(self, sil_path: Path, dll_name: str, sbs_name: str,
+                     index: int = 3) -> Path:
+        """Generate a fresh ``.sil`` holding a single ``<dll> -S <sbs>`` module.
+
+        Uses the real Silver API rather than hand-writing the file: an empty
+        configuration is created in memory (``LocalSilverNative(sil=None)``),
+        the module line is injected with ``add_module`` and the configuration
+        is persisted with ``save()``. The dll/sbs are referenced by bare
+        filename, so Silver resolves them against the saved ``.sil``'s own
+        directory (they are stored alongside it).
+        """
+        silver_home = os.environ.get("SILVER_HOME")
+        if not silver_home:
+            raise RunnerError("SILVER_HOME environment variable is not set.")
+
+        sil_path = Path(sil_path)
+        sil_path.parent.mkdir(parents=True, exist_ok=True)
+
+        LocalSilverNative, _Pyro4 = self._import_silver(silver_home)
+
+        sil_line = f"{dll_name} -S {sbs_name}"
+        logger.info("Generating .sil '%s' with module '%s'", sil_path, sil_line)
+        silver = LocalSilverNative(
+            sil=None,
+            timeout=1000,
+            stopped=True,
+            speedup=False,
+            gui=False,
+            silent=True,
+            backend="native",
+        )
+        try:
+            silver.add_module(index=index, sil_line=sil_line)
+            silver.save(str(sil_path))
+        finally:
+            self._safe_dispose(silver)
+
+        if not sil_path.is_file():
+            raise RunnerError(f"Silver did not write the model: {sil_path}")
+        return sil_path
+
     def run(self, ctx: RunContext) -> None:
         """Dedicated-instance path: launch, run, dispose."""
         console_log = ctx.console_log or (ctx.log_dir / "Console.log")
