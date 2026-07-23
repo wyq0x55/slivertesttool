@@ -172,6 +172,12 @@
     patchMember(id, mid, role) { return request("PATCH", `/projects/${id}/members/${mid}`, { body: { role } }); },
     removeMember(id, mid) { return request("DELETE", `/projects/${id}/members/${mid}`); },
 
+    // --- Per-project plant models ---------------------------------------- //
+    listProjectModels(id) { return request("GET", `/projects/${id}/models`); },
+    addProjectModel(id, name, path) { return request("POST", `/projects/${id}/models`, { body: { name, path } }); },
+    uploadProjectModel(id, formData) { return request("POST", `/projects/${id}/models/upload`, { body: formData }); },
+    removeProjectModel(id, name) { return request("DELETE", `/projects/${id}/models`, { body: { name } }); },
+
     // --- Project Upload Tasks (test execution) --------------------------- //
     listProjectTasks(id) { return request("GET", `/projects/${id}/tasks`); },
     uploadProjectTree(id, formData) { return request("POST", `/projects/${id}/tasks/upload-tree`, { body: formData }); },
