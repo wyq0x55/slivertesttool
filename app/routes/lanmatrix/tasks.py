@@ -17,8 +17,8 @@ from flask import (
 from ...extensions import db
 from ...models import DataJob, FieldDefinition, LMUser, Project, Task, TaskStatus
 from ...services import (
-    event_service, license_service, model_service, report_service,
-    task_service, upload_service,
+    event_service, license_service, project_model_service,
+    report_service, task_service, upload_service,
 )
 from ...services.upload_service import UploadError
 from ...services.lanmatrix import (
@@ -63,7 +63,7 @@ def list_project_tasks(project_id):
     status["queued_jobs"] = Task.query.filter_by(
         project_id=project_id, status=TaskStatus.QUEUED.value).count()
     return ok({"tasks": [t.to_dict() for t in tasks],
-               "models": model_service.list_models(),
+               "models": project_model_service.effective_models(project_id),
                "license": status,
                "role": role,
                "can_delete": permissions.can("task.delete", role,
@@ -82,16 +82,16 @@ def upload_project_tree(project_id):
 
     project, _ = _project_and_role(project_id, "task.upload")
     cfg = current_app.config_obj
-    if not model_service.has_models():
-        return err("NO_MODEL", "尚未注册 .sil 模型，请联系系统管理员在管理台添加", status=409)
+    if not project_model_service.effective_has(project_id):
+        return err("NO_MODEL", "该项目尚未添加 .sil 模型，请先在“模型管理”中添加", status=409)
 
     model_name = (request.form.get("model") or "").strip()
     if not model_name:
-        default = model_service.default_model()
+        default = project_model_service.effective_default(project_id)
         model_name = default["name"] if default else ""
-    model_path = model_service.get_model_path(model_name)
+    model_path = project_model_service.effective_path(project_id, model_name)
     if model_path is None:
-        return err("BAD_MODEL", "未知模型，请选择已注册的 .sil 模型", status=400)
+        return err("BAD_MODEL", "未知模型，请选择该项目已添加的 .sil 模型", status=400)
 
     if not request.files.getlist("files"):
         return err("VALIDATION_ERROR", "未收到文件，请选择测试用例文件夹", status=400)
@@ -168,8 +168,8 @@ def run_selected_tasks(project_id):
 
     project, _ = _project_and_role(project_id, "task.upload")
     cfg = current_app.config_obj
-    if not model_service.has_models():
-        return err("NO_MODEL", "尚未注册 .sil 模型，请联系系统管理员在管理台添加", status=409)
+    if not project_model_service.effective_has(project_id):
+        return err("NO_MODEL", "该项目尚未添加 .sil 模型，请先在“模型管理”中添加", status=409)
 
     body = request.get_json(silent=True) or {}
     raw_ids = body.get("test_ids") or []
@@ -179,11 +179,11 @@ def run_selected_tasks(project_id):
 
     model_name = (body.get("model") or "").strip()
     if not model_name:
-        default = model_service.default_model()
+        default = project_model_service.effective_default(project_id)
         model_name = default["name"] if default else ""
-    model_path = model_service.get_model_path(model_name)
+    model_path = project_model_service.effective_path(project_id, model_name)
     if model_path is None:
-        return err("BAD_MODEL", "未知模型，请选择已注册的 .sil 模型", status=400)
+        return err("BAD_MODEL", "未知模型，请选择该项目已添加的 .sil 模型", status=400)
     sil_ref = str(Path(model_path).resolve())
 
     def _rows(sheet):
