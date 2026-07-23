@@ -205,7 +205,8 @@ class SilverRunner(SilverRunnerBase):
             backend="native",
         )
         try:
-            silver.add_module(index=index, sil_line=sil_line)
+            moduleuuid = silver.add_module(index=index, sil_line=sil_line)
+            silver.set_module_property(moduleuuid,"remote_cluster","host32")
             silver.save(str(sil_path))
         finally:
             self._safe_dispose(silver)
