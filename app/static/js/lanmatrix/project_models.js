@@ -1,6 +1,6 @@
 /* Per-project model management: list the project's .sil models, register a
- * server-side .sil path, or upload a dll + sbs + pdb set (the server generates
- * an empty .sil whose only module line is "<dll> -S <sbs>"), and delete models.
+ * server-side .sil path, or upload a dll + sbs pair (the server generates an
+ * empty .sil whose only module line is "<dll> -S <sbs>"), and delete models.
  * Management controls are shown only to users with model.manage (can_manage). */
 (function () {
   "use strict";
