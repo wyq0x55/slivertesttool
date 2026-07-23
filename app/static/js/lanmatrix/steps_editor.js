@@ -262,7 +262,8 @@
         // global keydown ShortcutService, so an in-Univer Save is ambiguous and
         // the browser's "save page" default leaks through. Intercept at window
         // capture whenever the drawer is open (regardless of focus) and drive our
-        // own save. Works even while a cell editor holds focus.
+        // own save. Works even while a cell editor holds focus. Saving keeps the
+        // drawer open (see _save), so Ctrl+S is a non-dismissing quick-save.
         if (key === "s" && !e.shiftKey) {
           e.preventDefault();
           e.stopImmediatePropagation();
@@ -354,7 +355,7 @@
         await this.onEnqueue(this.testId);
         this._setStatus("queued");
       } catch (ex) {
-        this.errEl.textContent = (ex && ex.message) || "入队失败";
+        this.errEl.textContent = (ex && ex.message) || "入隊失敗";
         this.errEl.hidden = false;
       } finally {
         if (btn) btn.disabled = false;
@@ -716,7 +717,10 @@
       btn.disabled = true;
       try {
         if (this.onSave) await this.onSave(json, doc);
-        this.dialog.close();
+        // Keep the bottom drawer (Univer view) open after a successful save so
+        // the user can keep editing — saving via the Save button OR Ctrl/Cmd+S
+        // must NOT dismiss it. The host onSave already flashes a "步骤明细已保存"
+        // toast for success feedback; Esc / the backdrop still close the drawer.
       } catch (ex) {
         this.errEl.textContent = (ex && ex.message) || "保存失败";
         this.errEl.hidden = false;
