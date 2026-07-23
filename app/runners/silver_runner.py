@@ -171,16 +171,18 @@ class SilverRunner(SilverRunnerBase):
         """
         silver.open(str(sil_path))
 
-    def generate_sil(self, sil_path: Path, dll_name: str, sbs_name: str,
+    def generate_sil(self, sil_path: Path, dll_ref: str, sbs_ref: str,
                      index: int = 3) -> Path:
         """Generate a fresh ``.sil`` holding a single ``<dll> -S <sbs>`` module.
 
         Uses the real Silver API rather than hand-writing the file: an empty
         configuration is created in memory (``LocalSilverNative(sil=None)``),
         the module line is injected with ``add_module`` and the configuration
-        is persisted with ``save()``. The dll/sbs are referenced by bare
-        filename, so Silver resolves them against the saved ``.sil``'s own
-        directory (they are stored alongside it).
+        is persisted with ``save()``. ``dll_ref`` / ``sbs_ref`` are the exact
+        strings written into the module line: the caller passes the dll and sbs
+        paths *relative to the Silver working directory* (e.g.
+        ``instance/model/project_1/host/host.dll``) so Silver resolves them at
+        run time. The matching ``.pdb`` must sit next to the dll on disk.
         """
         silver_home = os.environ.get("SILVER_HOME")
         if not silver_home:
@@ -191,7 +193,7 @@ class SilverRunner(SilverRunnerBase):
 
         LocalSilverNative, _Pyro4 = self._import_silver(silver_home)
 
-        sil_line = f"{dll_name} -S {sbs_name}"
+        sil_line = f"{dll_ref} -S {sbs_ref}"
         logger.info("Generating .sil '%s' with module '%s'", sil_path, sil_line)
         silver = LocalSilverNative(
             sil=None,
