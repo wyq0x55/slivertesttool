@@ -631,27 +631,134 @@
     runSelectedBtn.hidden = currentSheet !== "test";
   }
   if (runSelectedBtn) {
-    runSelectedBtn.addEventListener("click", async () => {
-      const ids = (grid && grid.getSelectedIds) ? grid.getSelectedIds() : [];
-      if (!ids || !ids.length) {
-        toast("请先在测试用例表中选择要入队的行", false);
-        return;
-      }
-      const byId = {};
-      (sheetItems["test"] || []).forEach((it) => { byId[it.id] = it; });
-      const testIds = [];
-      const noId = [];
-      ids.forEach((rid) => {
-        const it = byId[rid];
-        const tid = it && (it.test_id != null ? String(it.test_id).trim() : "");
-        if (tid) { if (testIds.indexOf(tid) < 0) testIds.push(tid); }
-        else noId.push(rid);
+    runSelectedBtn.addEventListener("click", () => openQueueDialog());
+  }
+
+  // ---- 队列测试选择弹窗 ------------------------------------------------------
+  // Instead of enqueuing whatever rows happen to be selected in the grid, the
+  // "队列测试" button now opens a dialog that lists every test-sheet row carrying
+  // a ``test_id``. The user can filter by test_id (or description) and tick the
+  // exact cases to enqueue. This decouples enqueue selection from grid focus.
+  const queueDialog = document.getElementById("lm-queue-dialog");
+  const queueList = document.getElementById("lm-queue-list");
+  const queueFilter = document.getElementById("lm-queue-filter");
+  const queueCount = document.getElementById("lm-queue-count");
+  const queueError = document.getElementById("lm-queue-error");
+  const queueOk = document.getElementById("lm-queue-ok");
+  // Selected test_ids persist across filtering so narrowing the search never
+  // silently drops a previously ticked case.
+  let queueChecked = new Set();
+
+  // Build a short human-readable description for a test row from its first
+  // non-empty text fields (skipping test_id / steps JSON), so users recognise a
+  // case without memorising bare ids.
+  function queueRowDesc(item) {
+    const flds = sheetFields["test"] || fields || [];
+    const stepsKey = SHEET_STEPS.test;
+    const parts = [];
+    for (const f of flds) {
+      const k = f.field_key;
+      if (!k || k === "test_id" || k === stepsKey) continue;
+      const v = item[k];
+      if (v == null || v === "") continue;
+      const s = String(typeof v === "object" ? "" : v).trim();
+      if (!s) continue;
+      parts.push(s);
+      if (parts.length >= 2) break;
+    }
+    return parts.join(" · ");
+  }
+
+  // Every test-sheet row that owns a non-empty test_id, de-duplicated so a
+  // test_id shared by multiple rows only enqueues once.
+  function queueCandidates() {
+    const seen = new Set();
+    const out = [];
+    (sheetItems["test"] || []).forEach((it) => {
+      const tid = it && it.test_id != null ? String(it.test_id).trim() : "";
+      if (!tid || seen.has(tid)) return;
+      seen.add(tid);
+      out.push({ testId: tid, desc: queueRowDesc(it) });
+    });
+    out.sort((a, b) => a.testId.localeCompare(b.testId, undefined, { numeric: true }));
+    return out;
+  }
+
+  function renderQueueList() {
+    if (!queueList) return;
+    const q = (queueFilter && queueFilter.value ? queueFilter.value : "").trim().toLowerCase();
+    const all = queueCandidates();
+    const rows = q
+      ? all.filter((r) => r.testId.toLowerCase().includes(q) || r.desc.toLowerCase().includes(q))
+      : all;
+    if (!all.length) {
+      queueList.innerHTML = '<div class="lm-queue-empty">当前测试用例表没有带 test_id 的行，无法入队。</div>';
+    } else if (!rows.length) {
+      queueList.innerHTML = '<div class="lm-queue-empty">没有匹配的 test_id。</div>';
+    } else {
+      queueList.innerHTML = rows.map((r) => {
+        const on = queueChecked.has(r.testId) ? " checked" : "";
+        const desc = r.desc ? `<div class="lm-queue-desc">${esc(r.desc)}</div>` : "";
+        return `<label class="lm-queue-row">`
+          + `<input type="checkbox" value="${esc(r.testId)}"${on}>`
+          + `<span><span class="lm-queue-tid">${esc(r.testId)}</span>${desc}</span>`
+          + `</label>`;
+      }).join("");
+      queueList.querySelectorAll('input[type=checkbox]').forEach((cb) => {
+        cb.addEventListener("change", () => {
+          if (cb.checked) queueChecked.add(cb.value);
+          else queueChecked.delete(cb.value);
+          updateQueueCount();
+        });
       });
+    }
+    updateQueueCount();
+  }
+
+  function updateQueueCount() {
+    if (queueCount) queueCount.textContent = `已选 ${queueChecked.size} 项`;
+    if (queueOk) queueOk.disabled = queueChecked.size === 0;
+  }
+
+  function openQueueDialog() {
+    if (!queueDialog) { toast("入队弹窗未加载", false); return; }
+    queueChecked = new Set();
+    if (queueFilter) queueFilter.value = "";
+    if (queueError) queueError.hidden = true;
+    renderQueueList();
+    if (typeof queueDialog.showModal === "function") queueDialog.showModal();
+    else queueDialog.setAttribute("open", "");
+    if (queueFilter) setTimeout(() => queueFilter.focus(), 30);
+  }
+
+  if (queueFilter) queueFilter.addEventListener("input", renderQueueList);
+  const queueSelAll = document.getElementById("lm-queue-sel-all");
+  const queueSelNone = document.getElementById("lm-queue-sel-none");
+  if (queueSelAll) queueSelAll.addEventListener("click", () => {
+    // Select-all applies to the currently visible (filtered) rows only.
+    queueList.querySelectorAll('input[type=checkbox]').forEach((cb) => {
+      cb.checked = true; queueChecked.add(cb.value);
+    });
+    updateQueueCount();
+  });
+  if (queueSelNone) queueSelNone.addEventListener("click", () => {
+    queueList.querySelectorAll('input[type=checkbox]').forEach((cb) => {
+      cb.checked = false; queueChecked.delete(cb.value);
+    });
+    updateQueueCount();
+  });
+
+  if (queueOk) {
+    queueOk.addEventListener("click", async (e) => {
+      const testIds = Array.from(queueChecked);
       if (!testIds.length) {
-        toast("所选行缺少 test_id，无法入队", false);
+        e.preventDefault();
+        if (queueError) { queueError.textContent = "请至少选择一个 test_id。"; queueError.hidden = false; }
         return;
       }
-      runSelectedBtn.disabled = true;
+      e.preventDefault();
+      queueOk.disabled = true;
+      if (queueError) queueError.hidden = true;
       try {
         const model = (window.LMDefaultModel || "").trim();
         const payload = { test_ids: testIds };
@@ -663,12 +770,13 @@
         let msg = `已入队 ${created} 个测试`;
         if (missing.length) msg += `；缺失 ${missing.length}`;
         if (errors.length) msg += `；失败 ${errors.length}`;
-        if (noId.length) msg += `；${noId.length} 行无 test_id`;
         toast(msg, errors.length === 0 && missing.length === 0);
+        if (typeof queueDialog.close === "function") queueDialog.close();
+        else queueDialog.removeAttribute("open");
       } catch (ex) {
-        toast(ex.message || "入队失败", false);
+        if (queueError) { queueError.textContent = ex.message || "入队失败"; queueError.hidden = false; }
       } finally {
-        runSelectedBtn.disabled = false;
+        queueOk.disabled = false;
       }
     });
   }

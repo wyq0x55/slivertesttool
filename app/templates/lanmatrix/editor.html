@@ -14,7 +14,7 @@
     </div>
     <div class="lm-tb-right">
       <button class="lm-btn" id="lm-import">导入</button>
-      <button class="lm-btn" id="lm-export">导出</button>
+      <button class="lm-btn" id="lm-export">导出 Excel</button>
       <button class="lm-btn lm-btn-primary" id="lm-run-selected" hidden>队列测试</button>
       <a class="lm-btn" href="/lanmatrix/projects/{{ project_id }}/fields">字段配置</a>
       <a class="lm-btn" href="/lanmatrix/projects/{{ project_id }}/models">模型管理</a>
@@ -39,9 +39,27 @@
   <input type="file" id="lm-import-file" accept=".xlsx" hidden>
 </div>
 
+<dialog id="lm-queue-dialog" class="lm-dialog lm-dialog-wide">
+  <form method="dialog" class="lm-card">
+    <h3>队列测试 · 选择要入队的测试用例</h3>
+    <div class="lm-queue-toolbar">
+      <input type="search" id="lm-queue-filter" placeholder="按 test_id 或说明筛选…" autocomplete="off">
+      <button type="button" class="lm-btn lm-btn-sm" id="lm-queue-sel-all">全选</button>
+      <button type="button" class="lm-btn lm-btn-sm" id="lm-queue-sel-none">清空</button>
+      <span class="lm-muted" id="lm-queue-count"></span>
+    </div>
+    <div class="lm-queue-list" id="lm-queue-list"></div>
+    <div class="lm-error" id="lm-queue-error" hidden></div>
+    <menu>
+      <button value="cancel" class="lm-btn">取消</button>
+      <button value="ok" id="lm-queue-ok" class="lm-btn lm-btn-primary">加入测试队列</button>
+    </menu>
+  </form>
+</dialog>
+
 <dialog id="lm-export-dialog" class="lm-dialog">
   <form method="dialog" class="lm-card">
-    <h3>导出</h3>
+    <h3>导出 Excel</h3>
     <label>格式
       <select id="lm-export-format">
         <option value="generic">通用模板 (本平台格式)</option>
