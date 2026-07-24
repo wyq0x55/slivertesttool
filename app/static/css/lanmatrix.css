@@ -170,7 +170,20 @@ select.lm-cell-control[multiple] { min-height: 46px; }
   font-size: 12px; }
 .lm-ref-tab.is-on { background: #2f6fe4; color: #fff; border-color: #2f6fe4; }
 .lm-ref-search { width: 100%; box-sizing: border-box; font-size: 13px; }
-.lm-ref-count { margin-top: 4px; font-size: 11px; text-align: right; }
+.lm-ref-toolbar { display: flex; align-items: center; justify-content: space-between;
+  gap: 6px; margin-top: 4px; }
+.lm-ref-count { font-size: 11px; text-align: right; flex: 1; }
+.lm-ref-addbtn { flex: 0 0 auto; }
+.lm-ref-addbtn.is-on { background: #2f6fe4; color: #fff; border-color: #2f6fe4; }
+.lm-ref-add { display: flex; flex-direction: column; gap: 5px; margin-top: 6px;
+  padding: 8px; border: 1px solid #c6d0e0; border-radius: 4px; background: #f6f9ff; }
+.lm-ref-add[hidden] { display: none; }
+.lm-ref-addrow { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.lm-ref-addrow > span { flex: 0 0 56px; color: #445; }
+.lm-ref-addrow > input { flex: 1; box-sizing: border-box; font-size: 12px; }
+.lm-ref-adderr { font-size: 11px; }
+.lm-ref-adderr[hidden] { display: none; }
+.lm-ref-addactions { display: flex; gap: 6px; justify-content: flex-end; }
 .lm-ref-list { flex: 1; overflow: auto; padding: 6px; }
 .lm-ref-item { padding: 6px 8px; margin-bottom: 5px; border: 1px solid #dde4f0;
   border-radius: 6px; background: #fff; cursor: pointer; transition: background .12s; }

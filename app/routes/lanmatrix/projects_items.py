@@ -265,6 +265,44 @@ def create_item(project_id):
                                sheet=sheet)
     return ok({"item": item.to_dict()}, status=201)
 
+@bp.post("/projects/<int:project_id>/pool/<sheet>/entries")
+@login_required
+def add_pool_entry(project_id, sheet):
+    """Add one reference-pool row (``io`` / ``const``) from the step editor.
+
+    REST path only: when collaboration is live the client inserts through the
+    shared Y.Doc instead (this endpoint is then collab-blocked). Provisions the
+    pool's field set on demand and enforces its uniqueness contract server-side.
+    """
+    project, _ = _project_and_role(project_id, "item.create")
+    if not project.is_editable:
+        return err("PROJECT_LOCKED", "项目当前不可编辑", status=409)
+    blocked = _collab_write_blocked(project_id)
+    if blocked is not None:
+        return blocked
+    body = request.get_json(silent=True) or {}
+    values = body.get("values", {})
+    if not isinstance(values, dict):
+        values = {}
+    item = service.add_pool_entry(g.user, project, sheet, values)
+    return ok({"item": item.to_dict()}, status=201)
+
+@bp.post("/projects/<int:project_id>/pool/<sheet>/fields")
+@login_required
+def ensure_pool_fields(project_id, sheet):
+    """Provision a reference pool's field set (``io`` / ``const``) so its columns
+    render. Idempotent; used by the collaboration path, where rows are inserted
+    through the Y.Doc but the field definitions still live in the DB."""
+    project, _ = _project_and_role(project_id, "item.create")
+    if not project.is_editable:
+        return err("PROJECT_LOCKED", "项目当前不可编辑", status=409)
+    from ...services.lanmatrix import fields as fld, fields_service
+    specs = {"io": fld.IO_FIELDS, "const": fld.CONST_FIELDS}.get(sheet)
+    if specs is None:
+        return err("VALIDATION_ERROR", "不支持的参考池", status=400)
+    created = fields_service.ensure_fields(g.user, project, specs)
+    return ok({"created": created})
+
 @bp.patch("/projects/<int:project_id>/items/<int:item_id>")
 @login_required
 def patch_item(project_id, item_id):

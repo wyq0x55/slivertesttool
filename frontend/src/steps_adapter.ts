@@ -45,6 +45,21 @@ function s(v: any): string {
   return v == null ? "" : String(v);
 }
 
+// Signals are authored in a SINGLE cell as `名称(路径)` (path never contains
+// parentheses — see the io pool spec) but modelled as `[name, path]`. joinSig
+// renders the cell; splitSig parses it back.
+function joinSig(sig: any): string {
+  const name = s(sig && sig[0]);
+  const path = s(sig && sig[1]);
+  return path ? name + "(" + path + ")" : name;
+}
+function splitSig(token: any): [string, string] {
+  const t = s(token).trim();
+  const m = /^(.*?)\((.*)\)$/.exec(t);
+  if (m) return [m[1].trim(), m[2].trim()];
+  return [t, ""];
+}
+
 export class UniverStepsView {
   engine = "univer";
 
@@ -432,11 +447,11 @@ export class UniverStepsView {
       }
     } catch (_e) { /* noop */ }
 
-    // 入力値 / 期待値 sheets: header + [name, path] rows.
-    const inMatrix = [["名称", "路径"]].concat(
-      inSig.map((sig: any) => [s(sig && sig[0]), s(sig && sig[1])]));
-    const exMatrix = [["名称", "路径"]].concat(
-      exSig.map((sig: any) => [s(sig && sig[0]), s(sig && sig[1])]));
+    // 入力値 / 期待値 sheets: header + a SINGLE `名称(路径)` cell per signal.
+    const inMatrix = [["名称(路径)"]].concat(
+      inSig.map((sig: any) => [joinSig(sig)]));
+    const exMatrix = [["名称(路径)"]].concat(
+      exSig.map((sig: any) => [joinSig(sig)]));
 
     // 手順 sheet: dynamic signal columns labelled by signal name ONLY — the
     // 入力 / 期待 distinction is shown by header COLOR (see _colorSignalColumns),
@@ -461,8 +476,8 @@ export class UniverStepsView {
     // every table so each item is rendered as plain, fully-rewritten ranges.
     this._resetTables();
 
-    const shIn = this._sheet(SHEET_IN, SCAN_ROWS, 4);
-    const shEx = this._sheet(SHEET_EX, SCAN_ROWS, 4);
+    const shIn = this._sheet(SHEET_IN, SCAN_ROWS, 2);
+    const shEx = this._sheet(SHEET_EX, SCAN_ROWS, 2);
     const shStep = this._sheet(SHEET_STEP, SCAN_ROWS, header.length + 2);
     this._write(shIn, inMatrix);
     this._write(shEx, exMatrix);
@@ -470,8 +485,8 @@ export class UniverStepsView {
 
     // Table-like styling without a Univer table object (synchronous; see
     // _styleHeader): bold + shaded header, frozen header row.
-    this._styleHeader(shIn, 2);
-    this._styleHeader(shEx, 2);
+    this._styleHeader(shIn, 1);
+    this._styleHeader(shEx, 1);
     this._styleHeader(shStep, header.length);
     // Distinguish 入力 vs 期待 signal columns by colour instead of a text prefix.
     this._colorSignalColumns(shStep, this.ni, this.ne, steps.length);
@@ -569,8 +584,7 @@ export class UniverStepsView {
     const out: any[][] = [];
     for (let r = 1; r < rows.length; r++) {
       const row = rows[r] || [];
-      const name = s(row[0]);
-      const path = s(row[1]);
+      const [name, path] = splitSig(row[0]);
       if (!name && !path) continue; // drop blank rows
       out.push([name, path]);
     }

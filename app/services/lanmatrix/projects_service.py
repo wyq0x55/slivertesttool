@@ -88,6 +88,7 @@ def backfill_sheet_fields() -> int:
         "test": fld.TEST_FIELDS,
         "const": fld.CONST_FIELDS,
         "lib": fld.LIB_FIELDS,
+        "io": fld.IO_FIELDS,
     }
     created_total = 0
     projects = Project.query.filter(Project.deleted_at.is_(None)).all()

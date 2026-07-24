@@ -55,7 +55,7 @@ DATA_TYPES: tuple[str, ...] = (
 # constant / function-library tables. ``SHEET_STEPS_FIELD`` maps a sheet to the
 # field that carries its 手順 (test-procedure) JSON, so the step editor knows
 # which cell to edit per sheet.
-SHEETS: tuple[str, ...] = ("test", "const", "lib")
+SHEETS: tuple[str, ...] = ("test", "const", "lib", "io")
 DEFAULT_SHEET = "test"
 SHEET_STEPS_FIELD: dict[str, str] = {"test": "steps", "lib": "lib_stb"}
 
@@ -63,7 +63,9 @@ SHEET_STEPS_FIELD: dict[str, str] = {"test": "steps", "lib": "lib_stb"}
 # catalogue (keys, default, steps field, labels) has one source of truth that
 # the ``/api/v1/config`` endpoint serves to the browser — the frontend no longer
 # defines its own parallel ``SHEET_SPECS``.
-SHEET_LABELS: dict[str, str] = {"test": "测试用例", "const": "常量", "lib": "函数库"}
+SHEET_LABELS: dict[str, str] = {
+    "test": "测试用例", "const": "常量", "lib": "函数库", "io": "入出力",
+}
 
 # Naming conventions shared by the CRDT layer and the browser. ``ROW_ARRAY_PREFIX``
 # builds the per-sheet ``Y.Array`` key (``rows:{sheet}``); ``ROOM_PREFIX`` builds
@@ -193,6 +195,23 @@ CONST_FIELDS: list[dict[str, Any]] = [
     {"field_key": "const_note", "display_name": "备考 (const_note)", "data_type": "multiline", "sheet": "const"},
 ]
 CONST_FIELD_KEYS = frozenset(f["field_key"] for f in CONST_FIELDS)
+
+# --------------------------------------------------------------------------- #
+# Input/Output (入出力) signal pool fields
+# --------------------------------------------------------------------------- #
+# Project-level pool of reusable input/expected signals, shown on the ``io``
+# sheet (one row per signal). Stored in ``custom_values`` like every other
+# project field. A signal is referenced from a step as ``io_name(io_path)`` in a
+# SINGLE cell; the reference panel copies exactly that token. Both ``io_name``
+# and ``io_path`` are kept unique across the pool (enforced by the "add" flow in
+# the step editor) so a name or a path never resolves ambiguously.
+IO_FIELDS: list[dict[str, Any]] = [
+    {"field_key": "io_name", "display_name": "名称 (io_name)", "data_type": "text", "sheet": "io"},
+    {"field_key": "io_path", "display_name": "路径 (io_path)", "data_type": "text", "sheet": "io"},
+    {"field_key": "io_note", "display_name": "备考 (io_note)", "data_type": "multiline", "sheet": "io"},
+]
+IO_FIELD_KEYS = frozenset(f["field_key"] for f in IO_FIELDS)
+
 
 class CoercionError(ValueError):
     """Raised when a raw value cannot be coerced to its field data type."""

@@ -7,6 +7,11 @@
  * Copy formats (per spec):
  *   - lib   -> lib_func                     (goes into the サブルーチン column)
  *   - const -> const_jname(const_name)
+ *   - io    -> io_name(io_path)             (single 入力/期待 signal cell)
+ *
+ * The const / io tabs also expose an inline "+ 新增" form that adds a new entry
+ * to the project's pool through a host-supplied ``onAdd(kind, values)`` hook
+ * (uniqueness — io: name & path; const: identifier — is enforced by the host).
  *
  * The panel is data-source agnostic: the host hands it plain row objects whose
  * fields are already flattened (collab getItems() = Y.Map.toJSON(); REST
@@ -80,13 +85,43 @@
     };
   }
 
+  function ioEntry(row) {
+    const name = s(row.io_name).trim();
+    const path = s(row.io_path).trim();
+    if (!name && !path) return null;
+    const copy = path ? (name + "(" + path + ")") : name;
+    return {
+      copy: copy,
+      title: name || path,
+      sub: path,
+      note: s(row.io_note).trim(),
+      hay: (name + " " + path + " " + s(row.io_note)).toLowerCase(),
+    };
+  }
+
+  // Per-tab "+ 新增" form field spec (lib has no add form).
+  const ADD_FORMS = {
+    const: [
+      { key: "const_name", label: "识别子名", required: true },
+      { key: "const_jname", label: "和名" },
+      { key: "const_value", label: "值" },
+    ],
+    io: [
+      { key: "io_name", label: "名称", required: true },
+      { key: "io_path", label: "路径" },
+      { key: "io_note", label: "备考" },
+    ],
+  };
+
   // ---- panel ------------------------------------------------------------- //
 
   function LMStepsRefPanel(root) {
     this.root = root;
-    this.tab = "lib";        // "lib" | "const"
+    this.tab = "lib";        // "lib" | "const" | "io"
     this.query = "";
-    this.data = { lib: [], const: [] };  // arrays of entry objects
+    this.data = { lib: [], const: [], io: [] };  // arrays of entry objects
+    this.onAdd = null;       // host hook: (kind, values) => Promise
+    this.canAdd = true;      // whether the "+ 新增" affordance is shown
     this._build();
   }
 
@@ -97,9 +132,14 @@
       '  <div class="lm-ref-tabs">' +
       '    <button type="button" class="lm-ref-tab is-on" data-tab="lib">Lib 函数</button>' +
       '    <button type="button" class="lm-ref-tab" data-tab="const">Const 常量</button>' +
+      '    <button type="button" class="lm-ref-tab" data-tab="io">入出力</button>' +
       '  </div>' +
-      '  <input type="search" class="lm-ref-search lm-input" placeholder="搜索名称 / 引数 / 值 / 备注…">' +
-      '  <div class="lm-ref-count lm-muted"></div>' +
+      '  <input type="search" class="lm-ref-search lm-input" placeholder="搜索名称 / 路径 / 值 / 备注…">' +
+      '  <div class="lm-ref-toolbar">' +
+      '    <div class="lm-ref-count lm-muted"></div>' +
+      '    <button type="button" class="lm-ref-addbtn lm-btn lm-btn-sm" hidden>+ 新增</button>' +
+      '  </div>' +
+      '  <div class="lm-ref-add" hidden></div>' +
       '</div>' +
       '<div class="lm-ref-list" tabindex="0"></div>' +
       '<div class="lm-ref-hint lm-muted">点击条目复制，再粘贴到单元格</div>';
@@ -107,6 +147,8 @@
     this.searchEl = r.querySelector(".lm-ref-search");
     this.listEl = r.querySelector(".lm-ref-list");
     this.countEl = r.querySelector(".lm-ref-count");
+    this.addBtn = r.querySelector(".lm-ref-addbtn");
+    this.addForm = r.querySelector(".lm-ref-add");
     this.tabEls = Array.prototype.slice.call(r.querySelectorAll(".lm-ref-tab"));
 
     const self = this;
@@ -117,6 +159,21 @@
       self.query = self.searchEl.value.trim().toLowerCase();
       self._renderList();
     });
+    // Guard the "+ 新增" affordances: they're optional, so a missing node must
+    // never throw and take down the whole panel (which would silently disable
+    // the 参考 button). .lm-ref-add is a <div>, not a <form>: the panel's root
+    // (#lm-steps-ref) already lives inside the dialog's <form>, and HTML forbids
+    // nesting a <form> in a <form> — the parser silently drops the inner one, so
+    // querySelector would return null. We use a plain container and submit via
+    // the save button (see _showAdd) plus Enter-to-submit here.
+    if (this.addBtn) {
+      this.addBtn.addEventListener("click", function () { self._toggleAdd(); });
+    }
+    if (this.addForm) {
+      this.addForm.addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter") { ev.preventDefault(); self._submitAdd(); }
+      });
+    }
     // Delegate copy clicks (list is re-rendered on every keystroke).
     this.listEl.addEventListener("click", function (ev) {
       const el = ev.target.closest ? ev.target.closest(".lm-ref-item") : null;
@@ -127,23 +184,97 @@
   };
 
   LMStepsRefPanel.prototype._setTab = function (tab) {
-    if (tab !== "lib" && tab !== "const") return;
+    if (tab !== "lib" && tab !== "const" && tab !== "io") return;
     this.tab = tab;
     this.tabEls.forEach(function (b) {
       b.classList.toggle("is-on", b.getAttribute("data-tab") === tab);
     });
+    // "+ 新增" only applies to the managed pools (const / io) and only when the
+    // host wired an onAdd hook.
+    const canAdd = this.canAdd && typeof this.onAdd === "function" && !!ADD_FORMS[tab];
+    if (this.addBtn) this.addBtn.hidden = !canAdd;
+    this._hideAdd();
     this._renderList();
   };
 
-  // Accept raw rows: { lib: [...rows], const: [...rows] }. Rows are mapped to
-  // entries and null (missing key field) rows are dropped.
+  // ---- "+ 新增" inline form --------------------------------------------- //
+
+  LMStepsRefPanel.prototype._toggleAdd = function () {
+    if (!this.addForm) return;
+    if (this.addForm.hidden) this._showAdd(); else this._hideAdd();
+  };
+
+  LMStepsRefPanel.prototype._hideAdd = function () {
+    if (!this.addForm) return;
+    this.addForm.hidden = true;
+    this.addForm.innerHTML = "";
+    if (this.addBtn) this.addBtn.classList.remove("is-on");
+  };
+
+  LMStepsRefPanel.prototype._showAdd = function () {
+    if (!this.addForm) return;
+    const spec = ADD_FORMS[this.tab];
+    if (!spec) return;
+    const fields = spec.map(function (f) {
+      return '<label class="lm-ref-addrow"><span>' + esc(f.label) +
+        (f.required ? ' *' : '') + '</span>' +
+        '<input class="lm-input" data-key="' + f.key + '"' +
+        (f.required ? ' required' : '') + '></label>';
+    }).join("");
+    this.addForm.innerHTML = fields +
+      '<div class="lm-ref-adderr lm-err" hidden></div>' +
+      '<div class="lm-ref-addactions">' +
+      '  <button type="button" class="lm-btn lm-btn-sm lm-btn-primary lm-ref-addsave">保存</button>' +
+      '  <button type="button" class="lm-btn lm-btn-sm lm-ref-addcancel">取消</button>' +
+      '</div>';
+    this.addForm.hidden = false;
+    if (this.addBtn) this.addBtn.classList.add("is-on");
+    const self = this;
+    const save = this.addForm.querySelector(".lm-ref-addsave");
+    if (save) save.addEventListener("click", function () { self._submitAdd(); });
+    const cancel = this.addForm.querySelector(".lm-ref-addcancel");
+    if (cancel) cancel.addEventListener("click", function () { self._hideAdd(); });
+    const first = this.addForm.querySelector("input");
+    if (first) { try { first.focus(); } catch (_e) { /* noop */ } }
+  };
+
+  LMStepsRefPanel.prototype._submitAdd = function () {
+    if (!this.addForm || typeof this.onAdd !== "function") return;
+    const kind = this.tab;
+    const spec = ADD_FORMS[kind];
+    if (!spec) return;
+    const values = {};
+    Array.prototype.forEach.call(this.addForm.querySelectorAll("input[data-key]"),
+      function (el) { values[el.getAttribute("data-key")] = el.value.trim(); });
+    const errEl = this.addForm.querySelector(".lm-ref-adderr");
+    const saveBtn = this.addForm.querySelector(".lm-ref-addsave");
+    const missing = spec.filter(function (f) { return f.required && !values[f.key]; });
+    if (missing.length) {
+      if (errEl) { errEl.textContent = missing[0].label + "不能为空"; errEl.hidden = false; }
+      return;
+    }
+    if (errEl) errEl.hidden = true;
+    if (saveBtn) saveBtn.disabled = true;
+    const self = this;
+    Promise.resolve()
+      .then(function () { return self.onAdd(kind, values); })
+      .then(function () { self._hideAdd(); })
+      .catch(function (ex) {
+        if (errEl) { errEl.textContent = (ex && ex.message) || "新增失败"; errEl.hidden = false; }
+      })
+      .then(function () { if (saveBtn) saveBtn.disabled = false; });
+  };
+
+  // Accept raw rows: { lib: [...rows], const: [...rows], io: [...rows] }. Rows
+  // are mapped to entries and null (missing key field) rows are dropped.
   LMStepsRefPanel.prototype.setData = function (raw) {
     const lib = ((raw && raw.lib) || []).map(libEntry).filter(Boolean);
     const con = ((raw && raw.const) || []).map(constEntry).filter(Boolean);
+    const io = ((raw && raw.io) || []).map(ioEntry).filter(Boolean);
     // Stable, case-insensitive sort by title for predictable scanning.
     const byTitle = function (a, b) { return a.title.localeCompare(b.title); };
-    lib.sort(byTitle); con.sort(byTitle);
-    this.data = { lib: lib, const: con };
+    lib.sort(byTitle); con.sort(byTitle); io.sort(byTitle);
+    this.data = { lib: lib, const: con, io: io };
     this._renderList();
   };
 

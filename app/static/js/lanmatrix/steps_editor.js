@@ -49,6 +49,21 @@
     });
   }
 
+  // Signals are authored in a SINGLE cell as ``名称(路径)`` (path never contains
+  // parentheses — see the io pool spec), but stored as ``[name, path]``. These
+  // convert between the two: joinSig for display, splitSig for parsing a cell.
+  function joinSig(sig) {
+    const name = sig && sig[0] != null ? String(sig[0]) : "";
+    const path = sig && sig[1] != null ? String(sig[1]) : "";
+    return path ? name + "(" + path + ")" : name;
+  }
+  function splitSig(token) {
+    const t = String(token == null ? "" : token).trim();
+    const m = /^(.*?)\((.*)\)$/.exec(t);
+    if (m) return [m[1].trim(), m[2].trim()];
+    return [t, ""];
+  }
+
   function normStep(s) {
     s = s || {};
     return {
@@ -141,15 +156,52 @@
     // ---- Lib/Const reference panel ------------------------------------- //
 
     _initRefPanel() {
-      if (!this.refEl || !window.LMStepsRefPanel) return;
-      try { this.refPanel = new window.LMStepsRefPanel(this.refEl); } catch (_e) { this.refPanel = null; }
+      // Bind the toggle button UNCONDITIONALLY and build the panel lazily on
+      // first use. Constructing the panel eagerly here is fragile: if
+      // window.LMStepsRefPanel isn't ready yet (script load order) or its
+      // constructor throws once, the old code left refPanel permanently null
+      // with the click handler never bound — a silent, unrecoverable no-op.
       if (this.refToggleBtn) {
         this.refToggleBtn.addEventListener("click", () => this._toggleRef());
       }
+      this._ensureRefPanel();
+    }
+
+    // Lazily (re)build the reference panel. Returns true when a panel is ready.
+    // Unlike the old eager path, the constructor error is logged (not swallowed)
+    // so a genuine failure is visible in the console instead of silently dead.
+    _ensureRefPanel() {
+      if (this.refPanel) return true;
+      if (!this.refEl || !window.LMStepsRefPanel) return false;
+      try {
+        this.refPanel = new window.LMStepsRefPanel(this.refEl);
+      } catch (e) {
+        console.error("参考面板初始化失败:", e);
+        this.refPanel = null;
+        return false;
+      }
+      // "Add new" (const / io) hook: the panel collects the field values and
+      // hands them here; we delegate to the host and refresh the panel data.
+      this.refPanel.onAdd = (kind, values) => this._addPoolEntry(kind, values);
+      return true;
+    }
+
+    // Create a new reference-pool entry (kind: "io" | "const") via the host, then
+    // reload the panel so the new row appears immediately. Rejects (surfaced by
+    // the panel) when the host is unavailable or uniqueness is violated.
+    async _addPoolEntry(kind, values) {
+      if (typeof this.addPool !== "function") throw new Error("当前不可新增");
+      const sheet = kind === "io" ? "io" : "const";
+      await this.addPool(sheet, values);
+      this._refLoaded = false;
+      this._loadRefData();
     }
 
     _toggleRef() {
-      if (!this.refEl || !this.refPanel) return;
+      if (!this.refEl) return;
+      // Build the panel on demand so a first-use click always works even if the
+      // eager construction in the constructor was skipped or failed.
+      if (!this._ensureRefPanel()) return;
       const show = this.refEl.hidden;
       this.refEl.hidden = !show;
       if (this.refToggleBtn) this.refToggleBtn.classList.toggle("is-on", show);
@@ -385,6 +437,8 @@
       this.onEnqueue = (opts && opts.onEnqueue) || null;
       this.getStatus = (opts && opts.getStatus) || null;
       this.loadRef = (opts && opts.loadRef) || null;
+      this.addPool = (opts && opts.addPool) || null;
+      if (this.refPanel) this.refPanel.canAdd = typeof this.addPool === "function";
       // Re-fetch lib/const on each open so edits elsewhere are reflected; if the
       // panel is already visible, refresh it now, otherwise it loads on toggle.
       this._refLoaded = false;
@@ -571,15 +625,14 @@
       const rows = list.map((sig, i) => `
         <tr>
           <td class="lm-se-idx">${i + 1}</td>
-          <td><input class="lm-input lm-se-cell" data-kind="${kind}" data-i="${i}" data-f="0" value="${esc(sig[0])}" placeholder="信号名"></td>
-          <td><input class="lm-input lm-se-cell" data-kind="${kind}" data-i="${i}" data-f="1" value="${esc(sig[1])}" placeholder="路径 / path"></td>
+          <td><input class="lm-input lm-se-cell" data-kind="${kind}" data-i="${i}" value="${esc(joinSig(sig))}" placeholder="名称(路径)"></td>
           <td><button class="lm-btn lm-btn-sm lm-se-del" data-kind="${kind}" data-i="${i}">删除</button></td>
         </tr>`).join("");
       return `<div class="lm-se-block">
         <h4>${label}</h4>
         <table class="lm-table lm-se-table">
-          <thead><tr><th>#</th><th>名称</th><th>路径</th><th></th></tr></thead>
-          <tbody>${rows || `<tr><td colspan="4" class="lm-muted">无</td></tr>`}</tbody>
+          <thead><tr><th>#</th><th>名称(路径)</th><th></th></tr></thead>
+          <tbody>${rows || `<tr><td colspan="3" class="lm-muted">无</td></tr>`}</tbody>
         </table>
         <div class="lm-se-actions">
           <button class="lm-btn lm-btn-sm lm-se-add" data-kind="${kind}">+ 添加信号</button>
@@ -630,15 +683,13 @@
         el.addEventListener("input", () => {
           const kind = el.dataset.kind;
           const list = kind === "input" ? self.doc.input_signals : self.doc.expected_signals;
-          list[Number(el.dataset.i)][Number(el.dataset.f)] = el.value;
+          // Single cell holds ``名称(路径)``; parse it back to [name, path].
+          list[Number(el.dataset.i)] = splitSig(el.value);
         });
-        // Signal name (data-f="0") feeds the 手順 (steps) column headers
-        // ("入力: <name>" / "期待: <name>"). Re-render on commit (blur / Enter)
-        // so the step table columns stay in sync — but not on every keystroke,
+        // The signal name feeds the 手順 (steps) column headers, so re-render on
+        // commit (blur / Enter) to keep them in sync — but not on every keystroke,
         // which would steal focus mid-typing.
-        el.addEventListener("change", () => {
-          if (el.dataset.f === "0") self.render();
-        });
+        el.addEventListener("change", () => { self.render(); });
       });
       // Add an input / expected signal, then grow every step row's cell arity
       // and re-render so the new 手順 column appears immediately.

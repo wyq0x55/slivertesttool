@@ -196,6 +196,66 @@ def create_item(user: LMUser, project: Project, values: dict[str, Any],
     return item
 
 
+# --------------------------------------------------------------------------- #
+# Reference-pool entries (const / io "add new" from the step editor)
+# --------------------------------------------------------------------------- #
+# Managed rows added one-at-a-time from the step editor's reference panel. Each
+# sheet has a small uniqueness contract enforced here (the generic custom-field
+# ``_unique_checker`` is a no-op for non-``case_id`` keys): the 入出力 pool keeps
+# both ``io_name`` and ``io_path`` unique, the const pool keeps ``const_name``
+# unique, so a copied ``名称(路径)`` token never resolves ambiguously.
+_POOL_SPECS: dict[str, str] = {"io": "IO_FIELDS", "const": "CONST_FIELDS"}
+_POOL_UNIQUE: dict[str, tuple[str, ...]] = {
+    "io": ("io_name", "io_path"),
+    "const": ("const_name",),
+}
+_POOL_REQUIRED: dict[str, tuple[str, ...]] = {
+    "io": ("io_name",),
+    "const": ("const_name",),
+}
+_POOL_LABELS: dict[str, str] = {
+    "io_name": "名称", "io_path": "路径", "const_name": "识别子名",
+}
+
+
+def _check_pool_unique(project_id: int, sheet: str, keys: tuple[str, ...],
+                       values: dict[str, Any]) -> None:
+    rows = TestItemRow.query.filter_by(
+        project_id=project_id, sheet=sheet, deleted_at=None).all()
+    for key in keys:
+        want = str(values.get(key, "") or "").strip().lower()
+        if not want:
+            continue
+        for row in rows:
+            have = str(row.get_field(key) or "").strip().lower()
+            if have and have == want:
+                label = _POOL_LABELS.get(key, key)
+                raise ServiceError(
+                    f"{label} 已存在：{values.get(key)}", code="VALIDATION_ERROR")
+
+
+def add_pool_entry(user: LMUser, project: Project, sheet: str,
+                   values: dict[str, Any], *, commit: bool = True) -> TestItemRow:
+    """Create one reference-pool row (``io`` / ``const``).
+
+    Provisions the sheet's field set on demand (so a fresh project renders the
+    new columns) and enforces the pool's uniqueness contract before delegating to
+    :func:`create_item`.
+    """
+    from . import fields as fld, fields_service
+    sheet = (sheet or "").strip()
+    if sheet not in _POOL_SPECS:
+        raise ServiceError("不支持的参考池", code="VALIDATION_ERROR")
+    values = dict(values or {})
+    for key in _POOL_REQUIRED[sheet]:
+        if not str(values.get(key, "") or "").strip():
+            raise ServiceError(f"{_POOL_LABELS.get(key, key)} 不能为空",
+                               code="VALIDATION_ERROR")
+    fields_service.ensure_fields(user, project, getattr(fld, _POOL_SPECS[sheet]))
+    _check_pool_unique(project.id, sheet, _POOL_UNIQUE[sheet], values)
+    return create_item(user, project, values, sheet=sheet, commit=commit)
+
+
 def update_item(user: LMUser, project: Project, item: TestItemRow,
                 version: int, changes: dict[str, Any],
                 *, commit: bool = True) -> TestItemRow:

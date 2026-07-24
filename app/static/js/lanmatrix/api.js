@@ -93,6 +93,14 @@
     patchItem(id, iid, version, changes) {
       return request("PATCH", `/projects/${id}/items/${iid}`, { body: { version, changes } });
     },
+    // Reference-pool "add new" (sheet: "io" | "const"). REST path only — the
+    // collaboration path inserts through the Y.Doc and calls ensurePoolFields.
+    addPoolEntry(id, sheet, values) {
+      return request("POST", `/projects/${id}/pool/${sheet}/entries`, { body: { values } });
+    },
+    ensurePoolFields(id, sheet) {
+      return request("POST", `/projects/${id}/pool/${sheet}/fields`, {});
+    },
     deleteItem(id, iid) { return request("DELETE", `/projects/${id}/items/${iid}`); },
     duplicateItem(id, iid) { return request("POST", `/projects/${id}/items/${iid}/duplicate`, {}); },
     restoreItem(id, iid) { return request("POST", `/projects/${id}/items/${iid}/restore`, {}); },

@@ -127,7 +127,7 @@ create table lm_field_definitions (
   -- left unconstrained on purpose.
   data_type      text        not null default 'text',
   sheet          text        not null default 'test'
-                              check (sheet in ('test','const','lib')),
+                              check (sheet in ('test','const','lib','io')),
   is_system      boolean     not null default false,
   is_required    boolean     not null default false,
   is_readonly    boolean     not null default false,
@@ -175,7 +175,7 @@ create table lm_test_items (
   project_id      bigint      not null references lm_projects(id) on delete cascade,
   row_order       integer     not null default 0,
   sheet           text        not null default 'test'
-                              check (sheet in ('test','const','lib')),
+                              check (sheet in ('test','const','lib','io')),
   case_id         text        not null default '',
   title           text        not null default '',
   module          text,

@@ -1120,8 +1120,37 @@
             const grab = async (sheet) => {
               try { return await fetchAllItems(sheet); } catch (_e) { return []; }
             };
-            const [lib, cst] = await Promise.all([grab("lib"), grab("const")]);
-            return { lib, const: cst };
+            const [lib, cst, io] = await Promise.all(
+              [grab("lib"), grab("const"), grab("io")]);
+            return { lib, const: cst, io };
+          },
+          // Add a new reference-pool entry (sheet: "io" | "const") from the step
+          // editor's reference panel. Enforces the pool's uniqueness contract
+          // (io: name & path; const: identifier) client-side for instant
+          // feedback; the REST path re-checks server-side. In collab mode the row
+          // is inserted through the shared Y.Doc (REST writes are blocked), and
+          // the pool's field definitions are provisioned via a separate endpoint
+          // so its columns render.
+          addPool: async (sheet, values) => {
+            const key = String(sheet) === "io" ? "io" : "const";
+            const uniq = key === "io" ? ["io_name", "io_path"] : ["const_name"];
+            const labels = { io_name: "名称", io_path: "路径", const_name: "识别子名" };
+            const norm = (v) => String(v == null ? "" : v).trim().toLowerCase();
+            const existing = await fetchAllItems(key);
+            for (const f of uniq) {
+              const want = norm(values[f]);
+              if (!want) continue;
+              if (existing.some((row) => norm(row[f]) === want)) {
+                throw new Error(`${labels[f] || f} 已存在：${values[f]}`);
+              }
+            }
+            if (collabActive()) {
+              try { await LMApi.ensurePoolFields(pid, key); } catch (_e) { /* columns provision best-effort */ }
+              collab.insertRow(key, { values });
+            } else {
+              await LMApi.addPoolEntry(pid, key, values);
+            }
+            return true;
           },
           onSave: async (json) => {
             const changes = {}; changes[stepsKey] = json;

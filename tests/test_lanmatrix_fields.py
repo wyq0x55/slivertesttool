@@ -56,10 +56,11 @@ class CoercionTest(unittest.TestCase):
 
 class SheetCatalogueTest(unittest.TestCase):
     """The unified identity protocol exposes one field catalogue per sheet
-    (``test`` / ``const`` / ``lib``) instead of a separate system-field set."""
+    (``test`` / ``const`` / ``lib`` / ``io``) instead of a separate system-field
+    set."""
 
     def test_sheets_declared(self):
-        self.assertEqual(set(fld.SHEETS), {"test", "const", "lib"})
+        self.assertEqual(set(fld.SHEETS), {"test", "const", "lib", "io"})
         self.assertIn(fld.DEFAULT_SHEET, fld.SHEETS)
 
     def test_required_test_keys_present(self):
@@ -70,7 +71,8 @@ class SheetCatalogueTest(unittest.TestCase):
             self.assertIn(k, keys)
 
     def test_every_field_has_supported_type(self):
-        for sheet_fields in (fld.TEST_FIELDS, fld.CONST_FIELDS, fld.LIB_FIELDS):
+        for sheet_fields in (fld.TEST_FIELDS, fld.CONST_FIELDS, fld.LIB_FIELDS,
+                             fld.IO_FIELDS):
             for f in sheet_fields:
                 self.assertIn(f["data_type"], fld.DATA_TYPES)
                 self.assertIn(f["sheet"], fld.SHEETS)
