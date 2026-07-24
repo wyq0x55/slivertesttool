@@ -730,16 +730,32 @@
     const uuid = genUuid();
     const values = opts.values || {};
     let index = arr.length;
+    let anchorMap = null;
     if (opts.anchorId !== null && opts.anchorId !== undefined) {
       const anchor = Number(opts.anchorId);
       let ai = -1;
-      arr.forEach(function (m, i) { if (ai < 0 && rowIdOfMap(m) === anchor) ai = i; });
+      arr.forEach(function (m, i) {
+        if (ai < 0 && rowIdOfMap(m) === anchor) { ai = i; anchorMap = m; }
+      });
       if (ai >= 0) index = opts.place === "above" ? ai : ai + 1;
+    }
+    // Inherit the anchor row's テスト区分 (category) so an inserted blank row
+    // stays in the same category group/page it was inserted into, instead of
+    // collapsing into "未分类" — a page the user usually isn't viewing, which
+    // would make the row count rise while the row itself stays hidden. Only
+    // fills what the caller didn't explicitly provide.
+    const inherit = {};
+    if (anchorMap) {
+      ["category", "category_name"].forEach(function (k) {
+        const v = anchorMap.get(k);
+        if (v !== null && v !== undefined && values[k] === undefined) inherit[k] = v;
+      });
     }
     const m = new Y.Map();
     this.doc.transact(function () {
       arr.insert(index, [m]);
       m.set("uuid", uuid);
+      Object.keys(inherit).forEach(function (k) { m.set(k, inherit[k]); });
       Object.keys(values).forEach(function (k) {
         if (!SKIP_ON_COPY[k]) m.set(k, values[k]);
       });

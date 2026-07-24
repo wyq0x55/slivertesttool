@@ -160,6 +160,7 @@ def create_item(user: LMUser, project: Project, values: dict[str, Any],
     # Positional insert: place the new row above/below an anchor row and shift
     # the following rows down to make room. Without an anchor we append at end.
     target_order = _max_row_order(project.id) + 1
+    anchor = None
     if anchor_id is not None:
         anchor = TestItemRow.query.filter_by(
             id=anchor_id, project_id=project.id, deleted_at=None).first()
@@ -170,6 +171,17 @@ def create_item(user: LMUser, project: Project, values: dict[str, Any],
                        sheet=row_sheet,
                        created_by=user.id, updated_by=user.id, version=1)
     _apply_values(item, coerced, specs)
+    # Inherit the anchor row's テスト区分 (category) for a positional insert, so a
+    # blank draft stays in the category group it was inserted into. Without this
+    # the row's category is empty and the editor's category pager files it under
+    # "未分类" — the row count rises but the row is hidden on a page the user is
+    # not viewing. Only fill when the caller left the field empty.
+    if anchor is not None:
+        for _k in ("category", "category_name"):
+            if not values.get(_k) and item.get_field(_k) in (None, ""):
+                inherited = anchor.get_field(_k)
+                if inherited not in (None, ""):
+                    item.set_field(_k, inherited)
     # ``case_id`` is an internal identity column and is no longer surfaced as a
     # seeded field, so it won't be in ``coerced`` / ``specs``; apply the value
     # (auto-generated in ``_apply_field_defaults``) directly to the column.

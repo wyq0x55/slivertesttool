@@ -282,8 +282,56 @@ def _migrate_schema() -> None:
             logging.getLogger(__name__).warning(
                 "schema migration: could not index %s.sheet: %s", table, exc)
 
+    _migrate_widen_testitem_uuid(existing_tables, inspector)
     _migrate_user_fk_ondelete(inspector)
     _migrate_testitem_field_keys(existing_tables)
+
+
+def _migrate_widen_testitem_uuid(existing_tables, inspector) -> None:
+    """Widen ``lm_test_items.uuid`` so a client-generated UUID fits.
+
+    The column was created as ``VARCHAR(32)`` to hold the server default
+    (``uuid.uuid4().hex`` -- 32 chars, no dashes). But in collaborative mode the
+    browser/CRDT layer mints canonical **36-char dashed** UUIDs, and the
+    materializer persists each row under that same uuid *verbatim* (it also
+    writes the authoritative id/version back into the Y.Doc keyed by uuid, so
+    the stored value must equal the doc's uuid exactly -- it can never be
+    truncated). Inserting such a row into ``VARCHAR(32)`` overflowed the column
+    and every collab-created row failed with ``DataError: value too long for
+    type character varying(32)`` -- which is why freshly inserted rows vanished
+    on save while imported rows (32-hex ids) survived.
+
+    ``db.create_all()`` never alters an existing column, so widen it in place
+    here. Idempotent: only runs on PostgreSQL when the current length is under
+    64. (SQLite does not enforce VARCHAR length, so the step is skipped there.)
+    """
+    if "lm_test_items" not in existing_tables:
+        return
+    if db.engine.dialect.name != "postgresql":
+        return
+
+    from sqlalchemy import text
+
+    log = logging.getLogger(__name__)
+    try:
+        col = next((c for c in inspector.get_columns("lm_test_items")
+                    if c["name"] == "uuid"), None)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("schema migration: could not inspect lm_test_items.uuid: %s", exc)
+        return
+    if col is None:
+        return
+    length = getattr(col.get("type"), "length", None)
+    if length is not None and length >= 64:
+        return  # already wide enough
+    try:
+        with db.engine.begin() as conn:
+            conn.execute(text(
+                "ALTER TABLE lm_test_items ALTER COLUMN uuid TYPE VARCHAR(64)"))
+        log.info("schema migration: widened lm_test_items.uuid to VARCHAR(64)")
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "schema migration: could not widen lm_test_items.uuid: %s", exc)
 
 
 def _migrate_testitem_field_keys(existing_tables) -> None:

@@ -283,7 +283,12 @@ class TestItemRow(db.Model):
     )
 
     id = db.Column(db.Integer, primary_key=True)
-    uuid = db.Column(db.String(32), nullable=False, default=_uuid, index=True)
+    # Wide enough for BOTH the server default (``uuid4().hex`` = 32 chars) and a
+    # client/CRDT-minted canonical UUID (36 chars, dashed). The collab layer
+    # persists the row under the doc's own uuid verbatim (and writes id/version
+    # back keyed by that uuid), so this must not be narrower than 36 or those
+    # inserts overflow with ``DataError: value too long for character varying``.
+    uuid = db.Column(db.String(64), nullable=False, default=_uuid, index=True)
     project_id = db.Column(
         db.Integer, db.ForeignKey("lm_projects.id", ondelete="CASCADE"),
         nullable=False, index=True,

@@ -226,6 +226,12 @@ export class UniverGridAdapter {
   private switchingActive = false; // guards programmatic tab switches from re-firing onSheetChange
   private syncTimer: any = null; // debounce for range/paste/fill persistence
   private syncing = false;       // guards overlapping flushes
+  // True from the moment a native Univer row insert/remove is intercepted until
+  // the host reloads (setSheetData). While set, _flushSync bails out so the
+  // transient, shifted-but-stale grid is never mistaken for cell edits and
+  // half-saved. Cleared by setSheetData or, as a safety net, a timeout.
+  private structuralPending = false;
+  private structuralTimer: any = null;
   private lastStepsKey: string | null = null; // de-dupes step-dialog open per cell
   private editing = false;       // true while the user has a cell editor open (SheetEditStarted→Ended)
   private activeCell: { id: number; col: number } | null = null; // last single-cell selection (anchor source)
@@ -402,6 +408,9 @@ export class UniverGridAdapter {
   }
 
   setSheetData(key: string, items: Item[]): void {
+    // A reload is the authoritative end of any native row insert/remove we
+    // intercepted, so lift the sync-suppression guard here.
+    this._endStructural();
     const ctx = this._ctx(key);
     if (!ctx) return;
     ctx.items = items || [];
@@ -936,6 +945,13 @@ export class UniverGridAdapter {
       try {
         api.onCommandExecuted((cmd: any) => {
           const id = cmd && cmd.id ? String(cmd.id) : "";
+          // Native "insert row" / "remove row" (context menu, toolbar) only mutate
+          // Univer's in-memory grid — they create no backing server Item, so the
+          // row is dropped on the next save/reload. Route them to the host's
+          // create/delete flow (createItem(draft) / bulk-delete + reload) so the
+          // change is persisted, then stop: they must not fall through to the
+          // cell-diff sync below.
+          if (this._maybeHandleStructural(id, cmd)) return;
           if (/paste|set-?range-?values|set-?range|fill|clear-?selection-?content|delete-?range/i.test(id)) {
             this._scheduleSync();
           } else if (/set-?worksheet-?active|active-?sheet|activate-?sheet/i.test(id)) {
@@ -1013,8 +1029,100 @@ export class UniverGridAdapter {
 
   private _scheduleSync(): void {
     if (this.applying) return;
+    if (this.structuralPending) return;
     if (this.syncTimer) clearTimeout(this.syncTimer);
     this.syncTimer = setTimeout(() => { this.syncTimer = null; this._flushSync(); }, 90);
+  }
+
+  // Intercept Univer's native row-structure commands and route them to the host
+  // callbacks that own server persistence. Matches ONLY the top-level command
+  // ids (`sheet.command.insert-row` / `sheet.command.remove-row`) — never the
+  // `sheet.mutation.*` ids — so each user action is handled exactly once.
+  // Returns true when it consumed the command (caller then returns early).
+  private _maybeHandleStructural(id: string, cmd: any): boolean {
+    const ctx = this.active;
+    if (!ctx) return false;
+    const params = (cmd && cmd.params) || {};
+    const range = params && params.range ? params.range : null;
+
+    // --- insert row -------------------------------------------------------
+    // InsertRowCommand's `range` is the block the NEW blank row(s) occupy, so
+    // `range.startRow` is the absolute sheet row the blank now sits at. The item
+    // that lived there (pre-insert; ctx.items is still the old layout) is the
+    // anchor to insert ABOVE. Works for both "insert above" and "insert below"
+    // without depending on params.direction. No item there → append at the end.
+    if (/(?:^|\.)sheet\.command\.insert-row$/.test(id)) {
+      if (!this.opts.onInsert) return false;
+      const blankRow = range && typeof range.startRow === "number"
+        ? range.startRow : ctx.items.length + HEADER_ROWS;
+      const anchor = this._rowToItem(ctx, blankRow);
+      this._beginStructural();
+      try {
+        if (anchor) {
+          this.opts.onInsert(anchor, "above");
+        } else {
+          const last = ctx.items.length ? ctx.items[ctx.items.length - 1] : null;
+          if (last) this.opts.onInsert(last, "below");
+          else this.opts.onInsert(null as any, "below"); // empty sheet → append
+        }
+      } catch (e) {
+        console.warn("[LMUniver] onInsert failed:", e);
+        this._endStructural();
+      }
+      return true;
+    }
+
+    // --- remove row -------------------------------------------------------
+    if (/(?:^|\.)sheet\.command\.remove-row$/.test(id)) {
+      if (!range) return false;
+      if (!this.opts.onBulkDelete && !this.opts.onDelete) return false;
+      const s = Number(range.startRow);
+      const e = Number(range.endRow);
+      const ids: number[] = [];
+      for (let r = s; r <= e; r++) {
+        const it = this._rowToItem(ctx, r);
+        if (it) ids.push(it.id as number);
+      }
+      if (!ids.length) return false;
+      this._beginStructural();
+      try {
+        if (ids.length > 1 && this.opts.onBulkDelete) {
+          this.opts.onBulkDelete(ids);
+        } else if (this.opts.onDelete) {
+          const first = this._rowToItem(ctx, s);
+          if (first) this.opts.onDelete(first); else this._endStructural();
+        } else if (this.opts.onBulkDelete) {
+          this.opts.onBulkDelete(ids);
+        } else {
+          this._endStructural();
+        }
+      } catch (e) {
+        console.warn("[LMUniver] onDelete failed:", e);
+        this._endStructural();
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  // Enter the "structural change pending" state: suppress cell-diff saves and
+  // drop any queued flush. A safety timeout lifts the guard even if the host
+  // never calls setSheetData (e.g. the create/delete request failed), so saves
+  // can never wedge permanently.
+  private _beginStructural(): void {
+    this.structuralPending = true;
+    if (this.syncTimer) { clearTimeout(this.syncTimer); this.syncTimer = null; }
+    if (this.structuralTimer) clearTimeout(this.structuralTimer);
+    this.structuralTimer = setTimeout(() => {
+      this.structuralPending = false;
+      this.structuralTimer = null;
+    }, 6000);
+  }
+
+  private _endStructural(): void {
+    this.structuralPending = false;
+    if (this.structuralTimer) { clearTimeout(this.structuralTimer); this.structuralTimer = null; }
   }
 
   // Diff the active worksheet's data region against its local cache and persist
@@ -1022,6 +1130,10 @@ export class UniverGridAdapter {
   // Delete-key clears, drag-fill and multi-cell paste uniformly.
   private async _flushSync(): Promise<void> {
     if (this.applying) return;
+    // A native row insert/remove is in flight; the grid is intentionally out of
+    // sync with ctx.items until the host reloads. Diffing now would mis-save the
+    // shifted rows, so skip — setSheetData will clear the guard.
+    if (this.structuralPending) return;
     if (this.syncing) { this._scheduleSync(); return; }
     const ctx = this.active;
     if (!ctx) return;
@@ -1190,3 +1302,4 @@ export class UniverGridAdapter {
     try { this.opts.onSteps(item); } catch (e) { console.warn("[LMUniver] onSteps failed:", e); }
   }
 }
+

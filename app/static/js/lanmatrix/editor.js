@@ -382,16 +382,37 @@
   // required cells may stay blank and be filled inline afterwards.
   async function addRow(opts) {
     try {
+      let created = null;
       if (collabActive()) {
-        collab.insertRow(currentSheet, {
+        created = collab.insertRow(currentSheet, {
           anchorId: opts && opts.anchor_id, place: opts && opts.place, values: {},
         });
       } else {
-        await LMApi.createItem(pid, { draft: true }, Object.assign({ sheet: currentSheet }, opts || {}));
+        const data = await LMApi.createItem(
+          pid, { draft: true }, Object.assign({ sheet: currentSheet }, opts || {}));
+        created = data && data.item;
       }
       await loadItems();
+      focusItemPage(created);
       toast(opts && opts.anchor_id ? "已插入空白行" : "已新增空白行，可直接编辑", true);
     } catch (ex) { toast(ex.message, false); }
+  }
+
+  // After inserting a row, make sure it is actually on screen. The test sheet is
+  // paginated by テスト区分 (category), so a freshly inserted row can land on a
+  // category page other than the one being viewed — the total count would rise
+  // while the row itself stays hidden (visible symptom: "行数增加了但空白行不显
+  // 示"). Jump the pager to the page holding the new row (matched by uuid/id) and
+  // re-render. No-op for flat sheets (const/lib) and when already on that page.
+  function focusItemPage(item) {
+    if (!item || currentSheet !== "test") return;
+    const uuid = item.uuid;
+    const idx = categoryPages.findIndex((p) => (p.items || []).some(
+      (it) => (uuid && it.uuid === uuid) || (item.id != null && it.id === item.id)));
+    if (idx >= 0 && idx + 1 !== page) {
+      page = idx + 1;
+      renderView();
+    }
   }
 
   // Insert above/below relative to the current selection (or the pointed row
