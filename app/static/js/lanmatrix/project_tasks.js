@@ -223,6 +223,8 @@
     const checked = selected.has(t.task_id) ? " checked" : "";
     const sel = `<td class="lm-col-check"><input type="checkbox" class="lm-task-sel" data-k="${esc(t.task_id)}"${checked}></td>`;
     const view = `<button class="lm-btn lm-btn-sm lm-task-view" data-k="${esc(t.task_id)}">查看</button>`;
+    const steps = t.test_id
+      ? `<button class="lm-btn lm-btn-sm lm-task-steps" data-k="${esc(t.task_id)}" data-tid="${esc(t.test_id)}">测试手顺</button>` : "";
     const dl = t.has_result
       ? `<a class="lm-btn lm-btn-sm" href="${LMApi.projectTaskDownloadUrl(pid, t.task_id)}">下载</a>` : "";
     const cancel = FINAL.includes(t.status)
@@ -238,7 +240,7 @@
       <td class="lm-cell-status">${mergedBadge(t)}</td>
       <td class="lm-cell-progress">${t.progress || 0}%</td>
       <td class="lm-cell-time"><code>${esc(fmtFinished(t))}</code></td>
-      <td class="lm-row-actions">${view} ${cancel} ${dl} ${del}</td>
+      <td class="lm-row-actions">${view} ${steps} ${cancel} ${dl} ${del}</td>
     </tr>`;
   }
   function bindRowActions() {
@@ -248,6 +250,8 @@
       b.addEventListener("click", () => deleteTask(b.dataset.k)));
     document.querySelectorAll(".lm-task-view").forEach((b) =>
       b.addEventListener("click", () => openDetail(b.dataset.k)));
+    document.querySelectorAll(".lm-task-steps").forEach((b) =>
+      b.addEventListener("click", () => openSteps(b.dataset.tid)));
     document.querySelectorAll(".lm-task-open").forEach((a) =>
       a.addEventListener("click", (e) => { e.preventDefault(); openDetail(a.dataset.k); }));
     document.querySelectorAll(".lm-task-sel").forEach((cb) =>
@@ -493,6 +497,109 @@
     }
   }
 
+  // --- 测试手顺直接编辑 ---------------------------------------------------- //
+  // Reuses the matrix editor's graphical step-table drawer (LMStepsEditor,
+  // steps_editor.js) so a task's 手順 can be edited *in place* from the task
+  // list — the drawer slides up from the bottom exactly like on the editor page.
+  // We locate the ``test`` sheet row whose ``test_id`` matches the task, hand it
+  // to the drawer, and PATCH the ``steps`` cell on save through the normal
+  // optimistic-locked item API. Rows are cached per page load and re-pulled on
+  // refresh so concurrent edits are picked up.
+  let testItemsCache = null;   // all ``test`` sheet rows, fetched once
+
+  async function fetchTestItems() {
+    if (testItemsCache) return testItemsCache;
+    const acc = [];
+    let p = 1;
+    for (;;) {
+      const data = await LMApi.listItems(pid, { page: p, page_size: 500, sheet: "test" });
+      const batch = (data && data.items) || [];
+      acc.push.apply(acc, batch);
+      if (acc.length >= ((data && data.total) || 0) || batch.length === 0) break;
+      p++;
+      if (p > 2000) break;
+    }
+    testItemsCache = acc;
+    return acc;
+  }
+
+  // Fetch all rows of a reference sheet (lib / const / io) for the drawer's
+  // Lib/Const reference-search panel.
+  async function fetchSheetItems(sheet) {
+    const acc = [];
+    let p = 1;
+    for (;;) {
+      const data = await LMApi.listItems(pid, { page: p, page_size: 500, sheet });
+      const batch = (data && data.items) || [];
+      acc.push.apply(acc, batch);
+      if (acc.length >= ((data && data.total) || 0) || batch.length === 0) break;
+      p++;
+      if (p > 2000) break;
+    }
+    return acc;
+  }
+
+  async function openSteps(testId) {
+    if (!window.LMStepsEditor) { toast("步骤编辑器未加载", false); return; }
+    const tid = String(testId == null ? "" : testId).trim();
+    if (!tid) { toast("该任务缺少 test id", false); return; }
+    try {
+      const items = await fetchTestItems();
+      const row = items.find((it) => String(it.test_id == null ? "" : it.test_id).trim() === tid);
+      if (!row) {
+        toast(`在测试矩阵中未找到 test id「${tid}」对应的行`, false);
+        return;
+      }
+      LMStepsEditor.open(row, {
+        fieldKey: "steps",
+        testId: tid,
+        onSave: async (json) => {
+          const changes = { steps: json };
+          const data = await LMApi.patchItem(pid, row.id, row.version, changes);
+          const merged = data.item;
+          row.version = merged.version;
+          row.steps = merged.steps;
+          toast("步骤明细已保存", true);
+        },
+        // Lib/Const/IO reference lookup for the drawer's reference panel.
+        loadRef: async () => {
+          const grab = async (sheet) => {
+            try { return await fetchSheetItems(sheet); } catch (_e) { return []; }
+          };
+          const [lib, cst, io] = await Promise.all([grab("lib"), grab("const"), grab("io")]);
+          return { lib, const: cst, io };
+        },
+        // Add a new io/const pool entry from the reference panel.
+        addPool: async (sheet, values) => {
+          const key = String(sheet) === "io" ? "io" : "const";
+          await LMApi.addPoolEntry(pid, key, values);
+          return true;
+        },
+        // Re-run this test id from the drawer's enqueue button.
+        onEnqueue: async (id) => {
+          const res = await LMApi.runSelectedTasks(pid, { test_ids: [id] });
+          const errors = (res.errors || []);
+          const missing = (res.missing || []);
+          if (errors.length) throw new Error(errors[0].error || "入队失败");
+          if (missing.length) throw new Error("未找到该 test_id 对应的测试行");
+          toast(`已入队测试 ${id}`, true);
+          load();
+          return res;
+        },
+        getStatus: async (id) => {
+          const res = await LMApi.listProjectTasks(pid);
+          const tasks = (res && res.tasks) || [];
+          const mine = tasks.filter((t) => String(t.test_id) === String(id));
+          if (!mine.length) return null;
+          mine.sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+          return mine[0].status || null;
+        },
+      });
+    } catch (ex) {
+      toast("加载手顺失败：" + (ex.message || "未知错误"), false);
+    }
+  }
+
   function closeDetail() {
     closeDetailStream();
     detailKey = null;
@@ -525,6 +632,7 @@
 
   async function load() {
     try {
+      testItemsCache = null;   // refresh: re-pull steps so edits show on next view
       const data = await LMApi.listProjectTasks(pid);
       renderModels(data.models || []);
       renderLicense(data.license);

@@ -157,7 +157,32 @@
     </div>
   </div>
 </dialog>
+<!-- 测试手顺可编辑抽屉：与矩阵编辑器共用 LMStepsEditor，从底部滑出，可直接修改步骤。 -->
+<dialog id="lm-steps-dialog" class="lm-steps-drawer">
+  <form method="dialog" class="lm-steps-drawer-card">
+    <header class="lm-steps-drawer-head">
+      <h3>步骤明细编辑 · <span id="lm-steps-title" class="lm-muted"></span><span id="lm-steps-task-status" class="lm-badge lm-status-notask" hidden></span></h3>
+      <div class="lm-steps-tools">
+        <button type="button" class="lm-btn lm-btn-sm" id="lm-steps-ref-toggle" title="Lib / Const 参考查询">📚 参考</button>
+        <button type="button" class="lm-btn lm-btn-sm" id="lm-steps-fullscreen">⛶ 全屏</button>
+        <button type="button" class="lm-btn lm-btn-sm" id="lm-steps-enqueue" hidden>▶ 入队测试</button>
+        <button value="save" id="lm-steps-save" class="lm-btn lm-btn-sm lm-btn-primary">保存步骤</button>
+      </div>
+    </header>
+    <div class="lm-steps-drawer-main">
+      <div id="lm-steps-body" class="lm-steps-drawer-body"></div>
+      <aside id="lm-steps-ref" class="lm-ref-panel" hidden></aside>
+    </div>
+    <div class="lm-error" id="lm-steps-error" hidden></div>
+  </form>
+</dialog>
 {% endblock %}
 {% block scripts %}
+{% if univer_available %}
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/univer/univer.full.umd.css') }}">
+<script src="{{ url_for('static', filename='vendor/univer/univer.full.umd.js') }}"></script>
+{% endif %}
+<script src="{{ url_for('static', filename='js/lanmatrix/steps_ref_panel.js') }}"></script>
+<script src="{{ url_for('static', filename='js/lanmatrix/steps_editor.js') }}"></script>
 <script src="{{ url_for('static', filename='js/lanmatrix/project_tasks.js') }}"></script>
 {% endblock %}

@@ -146,7 +146,8 @@ def project_tasks(project_id: int):
         return redirect(url_for("lanmatrix_pages.login"))
     return render_template(
         "lanmatrix/project_tasks.html", user=user.to_dict(),
-        project_id=project_id)
+        project_id=project_id,
+        univer_available=_univer_bundle_available())
 
 
 @pages_bp.get("/projects/<int:project_id>/members")
