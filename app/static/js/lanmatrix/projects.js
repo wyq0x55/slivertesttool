@@ -35,6 +35,7 @@
           <td class="lm-row-actions">
             <a class="lm-btn lm-btn-sm" href="/lanmatrix/projects/${p.id}">打开</a>
             <a class="lm-btn lm-btn-sm" href="/lanmatrix/projects/${p.id}/tasks">任务</a>
+            <a class="lm-btn lm-btn-sm" href="/lanmatrix/projects/${p.id}/models">模型管理</a>
             <a class="lm-btn lm-btn-sm" href="/lanmatrix/projects/${p.id}/members">成员</a>
             <button class="lm-btn lm-btn-sm lm-btn-danger" data-del="${p.id}"
               data-code="${esc(p.code)}" data-name="${esc(p.name)}">删除</button>

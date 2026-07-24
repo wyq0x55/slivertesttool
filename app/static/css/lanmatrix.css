@@ -282,6 +282,15 @@ tr.lm-dragging { opacity: 0.5; background: #eef4ff; }
 .lm-db-tab.is-active { background: #2f6bd8; color: #fff; border-color: #2f6bd8; }
 .lm-db-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .lm-db-pane[hidden] { display: none; }
+/* The console pane carries BOTH .lm-db-body (2-col grid: 连接概览 | SQL 控制台)
+   and .lm-db-pane (flex column, needed by the browser pane). Without this more
+   specific rule the later .lm-db-pane `display:flex` overrides `display:grid`
+   and the two panels stack vertically. Restore the intended side-by-side grid
+   so 连接概览 sits on the left and the SQL 控制台 (with its query result rendered
+   directly below the editor) sits on the right. The :not([hidden]) keeps this
+   from beating `.lm-db-pane[hidden] { display:none }` (equal specificity), so
+   the console pane stays hidden while the table-browser tab is active. */
+.lm-db-pane.lm-db-body:not([hidden]) { display: grid; }
 
 .lm-db-browser { flex: 1; display: grid; grid-template-columns: 240px 1fr;
   gap: 0; min-height: 0; overflow: hidden; }
@@ -349,6 +358,29 @@ tr.lm-dragging { opacity: 0.5; background: #eef4ff; }
   padding: 6px 16px; border-radius: 8px; cursor: pointer; font-size: 13px; }
 .lm-tab.lm-active { background: #2f6bd8; color: #fff; border-color: #2f6bd8; }
 .lm-tabpane[hidden] { display: none; }
+
+/* Task-list toolbar: compact single-row filters + batch actions, wrapping
+   gracefully on narrow screens with a subtle divider between the two groups. */
+.lm-tasks-toolbar { display: flex; flex-wrap: wrap; align-items: center;
+  gap: 8px 12px; padding: 10px 12px; }
+.lm-filters, .lm-batch-actions { display: flex; flex-wrap: wrap;
+  align-items: center; gap: 8px; }
+.lm-filters select, .lm-filters input[type="text"] {
+  height: 30px; padding: 2px 8px; font-size: 13px; border: 1px solid #cdd6e4;
+  border-radius: 6px; background: #fff; }
+.lm-filters input[type="text"] { width: 150px; }
+.lm-filters select { max-width: 140px; }
+.lm-toolbar-sep { flex: 1 1 auto; min-width: 0; }
+.lm-batch-actions { justify-content: flex-end; }
+@media (max-width: 720px) {
+  .lm-toolbar-sep { flex-basis: 100%; height: 0; }
+  .lm-filters input[type="text"] { width: 100%; }
+}
+
+/* Upload dialog is wider than the default modal and scrolls internally. */
+.lm-upload-dialog .lm-card { min-width: 560px; max-width: 760px;
+  max-height: 82vh; overflow: auto; }
+@media (max-width: 640px) { .lm-upload-dialog .lm-card { min-width: 88vw; } }
 
 /* Upload form + test-id checklist. */
 .lm-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));

@@ -556,6 +556,23 @@
   $("lm-sel-none").addEventListener("click", () => { checkboxes().forEach((c) => (c.checked = false)); updateCount(); });
   $("lm-refresh").addEventListener("click", load);
 
+  // Upload is now a modal dialog opened from the task-list header. Guard every
+  // node: if a cached/older template is served these must not throw and abort
+  // the rest of init (filters, sorting, list load) — that would break the page.
+  const uploadDlg = $("lm-upload-dialog");
+  const openUpload = $("lm-open-upload");
+  const closeUpload = $("lm-upload-close");
+  if (openUpload && uploadDlg) {
+    openUpload.addEventListener("click", () => {
+      if (uploadDlg.showModal) uploadDlg.showModal(); else uploadDlg.setAttribute("open", "");
+    });
+  }
+  if (closeUpload && uploadDlg) {
+    closeUpload.addEventListener("click", () => {
+      if (uploadDlg.close) uploadDlg.close(); else uploadDlg.removeAttribute("open");
+    });
+  }
+
   // Filter + sort + batch selection.
   ["lm-f-status", "lm-f-submitter", "lm-f-text"].forEach((id) =>
     $(id).addEventListener("input", renderTasks));

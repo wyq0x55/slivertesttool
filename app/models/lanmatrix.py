@@ -71,6 +71,27 @@ class LMUser(db.Model):
     def is_active(self) -> bool:
         return self.status == "active"
 
+    @property
+    def is_bootstrap_admin(self) -> bool:
+        """The single bootstrap administrator (username == LM_ADMIN_USER).
+
+        Ordinary accounts can be granted ``is_system_admin`` from the admin
+        console, but only this bootstrap account may reach destructive,
+        whole-database surfaces such as the PostgreSQL management console.
+        """
+        if not self.is_system_admin:
+            return False
+        admin_user = None
+        try:  # prefer the live app config; fall back to the static default
+            from flask import current_app
+            admin_user = current_app.config.get("LM_ADMIN_USER")
+        except Exception:
+            admin_user = None
+        if not admin_user:
+            from ..config import Config
+            admin_user = Config.LM_ADMIN_USER
+        return (self.username or "").lower() == (admin_user or "").lower()
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -79,6 +100,7 @@ class LMUser(db.Model):
             "email": self.email,
             "status": self.status,
             "is_system_admin": self.is_system_admin,
+            "is_bootstrap_admin": self.is_bootstrap_admin,
             "must_change_password": self.must_change_password,
             "last_login_at": _iso(self.last_login_at),
         }

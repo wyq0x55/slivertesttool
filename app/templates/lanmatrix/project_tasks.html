@@ -6,7 +6,6 @@
     <h1>上传任务</h1>
     <div class="lm-subnav">
       <a class="lm-btn lm-btn-sm" href="/lanmatrix/projects/{{ project_id }}">编辑器</a>
-      <a class="lm-btn lm-btn-sm" href="/lanmatrix/projects/{{ project_id }}/models">模型管理</a>
       <a class="lm-btn lm-btn-sm" href="/lanmatrix/projects/{{ project_id }}/members">成员管理</a>
     </div>
   </div>
@@ -16,62 +15,31 @@
   </div>
 
   <div id="lm-tasks-body" hidden>
-    <div class="lm-card lm-upload">
-      <h3>提交测试</h3>
-      <p class="lm-muted">选择包含测试用例的文件夹（每个含 <code>judge.py</code> 的子文件夹是一个 test id），
-        勾选要运行的 test id 后提交。提交者取自你的登录账户。</p>
-      <div class="lm-inline">
-        <label>模型 (.sil)
-          <select id="lm-model"></select>
-        </label>
-        <span id="lm-license" class="lm-muted"></span>
-      </div>
-      <div class="lm-form-grid">
-        <label>测试用例文件夹
-          <input type="file" id="lm-folder" webkitdirectory directory multiple></label>
-        <label>lib 文件夹 <span class="lm-muted">(可选)</span>
-          <input type="file" id="lm-lib" webkitdirectory directory multiple></label>
-        <label>stdlib 文件夹 <span class="lm-muted">(可选)</span>
-          <input type="file" id="lm-stdlib" webkitdirectory directory multiple></label>
-      </div>
-      <div id="lm-scan-status" class="lm-muted"></div>
-
-      <div id="lm-step2" hidden>
-        <div class="lm-inline">
-          <button class="lm-btn lm-btn-sm" id="lm-sel-all" type="button">全选</button>
-          <button class="lm-btn lm-btn-sm" id="lm-sel-none" type="button">清除</button>
-          <span id="lm-sel-count" class="lm-muted"></span>
-        </div>
-        <div id="lm-testids" class="lm-checklist"></div>
-        <button class="lm-btn lm-btn-primary" id="lm-submit">提交所选到队列</button>
-        <span id="lm-submit-status" class="lm-muted"></span>
-        <div id="lm-submit-result"></div>
-      </div>
-    </div>
-
     <div class="lm-page-head">
       <h2>任务列表</h2>
-      <button class="lm-btn lm-btn-sm" id="lm-refresh">刷新</button>
+      <div class="lm-inline">
+        <button class="lm-btn lm-btn-primary lm-btn-sm" id="lm-open-upload" type="button">＋ 上传任务</button>
+        <button class="lm-btn lm-btn-sm" id="lm-refresh" type="button">刷新</button>
+      </div>
     </div>
 
     <div class="lm-card lm-tasks-toolbar">
-      <div class="lm-inline lm-wrap">
-        <label>筛选
-          <select id="lm-f-status">
-            <option value="">全部状态</option>
-            <option value="queued">queued</option>
-            <option value="running">running</option>
-            <option value="passed">passed</option>
-            <option value="failed">failed</option>
-            <option value="cancelled">cancelled</option>
-          </select>
-        </label>
-        <input type="text" id="lm-f-submitter" placeholder="提交者包含…">
-        <input type="text" id="lm-f-text" placeholder="任务 / test id 包含…">
-        <button class="lm-btn lm-btn-sm" id="lm-f-clear" type="button">清除</button>
+      <div class="lm-filters">
+        <select id="lm-f-status" title="按状态筛选">
+          <option value="">全部状态</option>
+          <option value="queued">queued</option>
+          <option value="running">running</option>
+          <option value="passed">passed</option>
+          <option value="failed">failed</option>
+          <option value="cancelled">cancelled</option>
+        </select>
+        <input type="text" id="lm-f-submitter" placeholder="提交者…">
+        <input type="text" id="lm-f-text" placeholder="任务 / test id…">
+        <button class="lm-btn lm-btn-sm" id="lm-f-clear" type="button">清除筛选</button>
       </div>
-      <div class="lm-inline lm-wrap">
-        <button class="lm-btn lm-btn-sm" id="lm-sel-all-tasks" type="button">全选（当前筛选）</button>
+      <div class="lm-toolbar-sep"></div>
+      <div class="lm-batch-actions">
+        <button class="lm-btn lm-btn-sm" id="lm-sel-all-tasks" type="button">全选</button>
         <button class="lm-btn lm-btn-sm" id="lm-sel-none-tasks" type="button">清除选择</button>
         <button class="lm-btn lm-btn-sm lm-btn-primary" id="lm-batch-download" type="button">下载所选报告</button>
         <button class="lm-btn lm-btn-sm lm-btn-danger" id="lm-batch-delete" type="button" hidden>删除所选</button>
@@ -100,6 +68,44 @@
     <p class="lm-muted" id="lm-tasks-empty" hidden>没有符合筛选条件的任务。</p>
   </div>
 </div>
+
+<dialog id="lm-upload-dialog" class="lm-dialog lm-upload-dialog">
+  <div class="lm-card lm-upload">
+    <div class="lm-page-head">
+      <h3>提交测试</h3>
+      <button class="lm-btn lm-btn-sm" id="lm-upload-close" type="button">关闭</button>
+    </div>
+    <p class="lm-muted">选择包含测试用例的文件夹（每个含 <code>judge.py</code> 的子文件夹是一个 test id），
+      勾选要运行的 test id 后提交。提交者取自你的登录账户。</p>
+    <div class="lm-inline">
+      <label>模型 (.sil)
+        <select id="lm-model"></select>
+      </label>
+      <span id="lm-license" class="lm-muted"></span>
+    </div>
+    <div class="lm-form-grid">
+      <label>测试用例文件夹
+        <input type="file" id="lm-folder" webkitdirectory directory multiple></label>
+      <label>lib 文件夹 <span class="lm-muted">(可选)</span>
+        <input type="file" id="lm-lib" webkitdirectory directory multiple></label>
+      <label>stdlib 文件夹 <span class="lm-muted">(可选)</span>
+        <input type="file" id="lm-stdlib" webkitdirectory directory multiple></label>
+    </div>
+    <div id="lm-scan-status" class="lm-muted"></div>
+
+    <div id="lm-step2" hidden>
+      <div class="lm-inline">
+        <button class="lm-btn lm-btn-sm" id="lm-sel-all" type="button">全选</button>
+        <button class="lm-btn lm-btn-sm" id="lm-sel-none" type="button">清除</button>
+        <span id="lm-sel-count" class="lm-muted"></span>
+      </div>
+      <div id="lm-testids" class="lm-checklist"></div>
+      <button class="lm-btn lm-btn-primary" id="lm-submit" type="button">提交所选到队列</button>
+      <span id="lm-submit-status" class="lm-muted"></span>
+      <div id="lm-submit-result"></div>
+    </div>
+  </div>
+</dialog>
 
 <dialog id="lm-task-dialog" class="lm-dialog lm-task-dialog">
   <div class="lm-card lm-detail">

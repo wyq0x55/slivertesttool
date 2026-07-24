@@ -66,11 +66,11 @@ def home():
 
 @pages_bp.get("/admin/db")
 def admin_db():
-    """PostgreSQL management console — system administrators only."""
+    """PostgreSQL management console — bootstrap admin account only."""
     user = _current_user()
     if user is None:
         return redirect(url_for("lanmatrix_pages.login"))
-    if not user.is_system_admin:
+    if not user.is_bootstrap_admin:
         return redirect(url_for("lanmatrix_pages.projects"))
     return render_template("lanmatrix/admin_db.html", user=user.to_dict())
 

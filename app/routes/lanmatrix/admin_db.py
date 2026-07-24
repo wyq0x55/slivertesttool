@@ -25,7 +25,7 @@ from ...services.lanmatrix import (
     dbadmin, excel_service, permissions, service, settings,
 )
 from ._base import (
-    ok, err, current_user, login_required, system_admin_required,
+    ok, err, current_user, login_required, bootstrap_admin_required,
     register_common, _project_and_role, _client_ip,
     _LOCK_THRESHOLD, _LOCK_MINUTES,
 )
@@ -34,7 +34,7 @@ bp = Blueprint("lanmatrix_admin_db", __name__, url_prefix="/api/v1")
 register_common(bp)
 
 @bp.get("/admin/db/overview")
-@system_admin_required
+@bootstrap_admin_required
 def admin_db_overview():
     try:
         return ok(dbadmin.overview())
@@ -42,7 +42,7 @@ def admin_db_overview():
         return err("DB_ERROR", str(ex), status=400)
 
 @bp.post("/admin/db/query")
-@system_admin_required
+@bootstrap_admin_required
 def admin_db_query():
     body = request.get_json(silent=True) or {}
     sql = (body.get("sql") or "").strip()
@@ -56,7 +56,7 @@ def admin_db_query():
     return ok(result)
 
 @bp.get("/admin/db/tables")
-@system_admin_required
+@bootstrap_admin_required
 def admin_db_tables():
     try:
         return ok({"tables": dbadmin.list_manageable_tables()})
@@ -64,7 +64,7 @@ def admin_db_tables():
         return err("DB_ERROR", str(ex), status=400)
 
 @bp.get("/admin/db/tables/<table>/schema")
-@system_admin_required
+@bootstrap_admin_required
 def admin_db_table_schema(table):
     try:
         return ok(dbadmin.table_schema(table))
@@ -72,7 +72,7 @@ def admin_db_table_schema(table):
         return err("DB_ERROR", str(ex), status=404)
 
 @bp.get("/admin/db/tables/<table>/rows")
-@system_admin_required
+@bootstrap_admin_required
 def admin_db_table_rows(table):
     try:
         result = dbadmin.read_rows(
@@ -87,7 +87,7 @@ def admin_db_table_rows(table):
     return ok(result)
 
 @bp.post("/admin/db/tables/<table>/rows")
-@system_admin_required
+@bootstrap_admin_required
 def admin_db_insert_row(table):
     body = request.get_json(silent=True) or {}
     values = body.get("values", {})
@@ -100,7 +100,7 @@ def admin_db_insert_row(table):
     return ok({"row": row}, status=201)
 
 @bp.patch("/admin/db/tables/<table>/rows")
-@system_admin_required
+@bootstrap_admin_required
 def admin_db_update_row(table):
     body = request.get_json(silent=True) or {}
     pk = body.get("pk", {})
@@ -114,7 +114,7 @@ def admin_db_update_row(table):
     return ok({"row": row})
 
 @bp.delete("/admin/db/tables/<table>/rows")
-@system_admin_required
+@bootstrap_admin_required
 def admin_db_delete_row(table):
     body = request.get_json(silent=True) or {}
     pk = body.get("pk", {})

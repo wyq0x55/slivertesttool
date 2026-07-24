@@ -93,6 +93,25 @@ def system_admin_required(fn):
     return wrapper
 
 
+def bootstrap_admin_required(fn):
+    """Gate an endpoint to the single bootstrap administrator only.
+
+    Stricter than :func:`system_admin_required`: accounts merely granted the
+    ``is_system_admin`` flag are rejected. Used for whole-database surfaces
+    (the PostgreSQL console) that only the bootstrap ``admin`` account may use.
+    """
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        user = current_user()
+        if user is None:
+            return err("UNAUTHENTICATED", "未登录或会话已过期", status=401)
+        if not user.is_bootstrap_admin:
+            return err("PERMISSION_DENIED", "仅系统 admin 账户可访问", status=403)
+        g.user = user
+        return fn(*args, **kwargs)
+    return wrapper
+
+
 # Endpoints exempt from CSRF: login bootstraps the token, logout only clears
 # state. Both are safe without a pre-existing token (login is guarded by
 # credentials; logout is idempotent). Endpoint names are blueprint-qualified;
