@@ -108,7 +108,7 @@ def search_users(query: str = "", *, limit: int = 20,
         like = f"%{query}%"
         q = q.filter(db.or_(LMUser.username.ilike(like),
                             LMUser.display_name.ilike(like)))
-    return q.order_by(LMUser.username.asc()).limit(max(1, min(limit, 100))).all()
+    return q.order_by(LMUser.username.asc()).limit(max(1, min(limit, 1000))).all()
 
 
 def add_member(actor: LMUser, project: Project, *, username: str = "",

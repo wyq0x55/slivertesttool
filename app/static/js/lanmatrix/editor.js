@@ -193,6 +193,20 @@
       if (!buckets.has(key)) { buckets.set(key, []); order.push(key); }
       buckets.get(key).push(it);
     });
+    // Order the category pages by テスト区分 number (natural/numeric) rather than
+    // first-seen order, so a newly added 区分 lands in its proper sequential slot
+    // instead of always at the last page. "未分类" (no category) always sorts last.
+    order.sort((a, b) => {
+      if (a === "__none__") return 1;
+      if (b === "__none__") return -1;
+      const na = parseFloat(a);
+      const nb = parseFloat(b);
+      const aNum = !isNaN(na) && String(na) === a.trim();
+      const bNum = !isNaN(nb) && String(nb) === b.trim();
+      if (aNum && bNum) return na - nb;      // both numeric → numeric order
+      if (aNum !== bNum) return aNum ? -1 : 1; // numeric 区分 before textual ones
+      return a.localeCompare(b, undefined, { numeric: true }); // textual/natural
+    });
     return order.map((key) => {
       const list = buckets.get(key);
       const cname = list[0].category_name;

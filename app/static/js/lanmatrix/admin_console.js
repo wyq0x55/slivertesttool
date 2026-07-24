@@ -45,7 +45,7 @@
   }
 
   // --- tabs ---------------------------------------------------------------- //
-  const loaders = { users: loadUsers, models: loadModels, license: loadLicense, tasks: loadTasks };
+  const loaders = { users: loadUsers, license: loadLicense, tasks: loadTasks };
   root.querySelectorAll(".lm-tab").forEach((tab) => {
     tab.addEventListener("click", () => {
       root.querySelectorAll(".lm-tab").forEach((t) => t.classList.remove("lm-active"));
@@ -138,38 +138,8 @@
     catch (ex) { toast(ex.message, false); }
   }
 
-  // --- models -------------------------------------------------------------- //
-  async function loadModels() {
-    const tb = $("lm-model-rows");
-    try {
-      const data = await LMApi.adminGetModels();
-      const models = data.models || [];
-      tb.innerHTML = models.map((m) => `
-        <tr>
-          <td>${esc(m.name)}</td>
-          <td><code>${esc(m.path || "")}</code></td>
-          <td>${m.exists === false ? '<span class="lm-err">缺失</span>' : "✔"}</td>
-          <td><button class="lm-btn lm-btn-sm lm-btn-danger lm-model-del" data-name="${esc(m.name)}">删除</button></td>
-        </tr>`).join("") || '<tr><td colspan="4" class="lm-muted">尚未注册模型</td></tr>';
-      tb.querySelectorAll(".lm-model-del").forEach((b) =>
-        b.addEventListener("click", () => delModel(b.dataset.name)));
-    } catch (ex) {
-      tb.innerHTML = `<tr><td colspan="4" class="lm-err">${esc(ex.message)}</td></tr>`;
-    }
-  }
-  $("lm-model-add").addEventListener("click", async () => {
-    try {
-      await LMApi.adminAddModel($("lm-model-name").value.trim(), $("lm-model-path").value.trim());
-      $("lm-model-name").value = ""; $("lm-model-path").value = "";
-      toast("模型已添加", true);
-      loadModels();
-    } catch (ex) { toast(ex.message, false); }
-  });
-  async function delModel(name) {
-    if (!confirm(`删除模型 ${name}？`)) return;
-    try { await LMApi.adminRemoveModel(name); toast("已删除", true); loadModels(); }
-    catch (ex) { toast(ex.message, false); }
-  }
+  // Model registration lives on the per-project 模型管理 page; it was removed
+  // from the system console to avoid a duplicate, global surface.
 
   // --- license ------------------------------------------------------------- //
   async function loadLicense() {

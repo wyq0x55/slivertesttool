@@ -67,6 +67,9 @@
         canManage = true;
         addBox.hidden = false;
         renderMembers(data.members || []);
+        // Show the full pick-list up front so admins can select any user
+        // without having to type a query first.
+        runSearch();
       } catch (ex) {
         canManage = false;
       }
@@ -87,7 +90,9 @@
       const data = await LMApi.memberCandidates(pid, q);
       const list = data.candidates || [];
       if (!list.length) {
-        candEl.innerHTML = '<span class="lm-muted">无匹配用户</span>';
+        candEl.innerHTML = q
+          ? '<span class="lm-muted">无匹配用户</span>'
+          : '<span class="lm-muted">没有可添加的用户（其余用户均已是成员）</span>';
         return;
       }
       candEl.innerHTML = list.map((u) => `

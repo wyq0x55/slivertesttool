@@ -9,7 +9,6 @@
 
   <div class="lm-tabs" role="tablist">
     <button class="lm-tab lm-active" data-tab="users">账号管理</button>
-    <button class="lm-tab" data-tab="models">模型管理</button>
     <button class="lm-tab" data-tab="license">授权 / 并发</button>
     <button class="lm-tab" data-tab="tasks">任务管理</button>
   </div>
@@ -28,22 +27,6 @@
   </section>
 
   <!-- Models -->
-  <section class="lm-tabpane" data-pane="models" hidden>
-    <div class="lm-page-head"><h2>已注册 .sil 模型</h2></div>
-    <p class="lm-muted">模型以服务器端路径注册，运行时按路径打开（不上传文件）。</p>
-    <div class="lm-card">
-      <div class="lm-inline">
-        <input id="lm-model-name" placeholder="名称（可留空，用文件名）">
-        <input id="lm-model-path" placeholder="服务器端 .sil 绝对路径" class="lm-grow">
-        <button class="lm-btn lm-btn-primary" id="lm-model-add">添加</button>
-      </div>
-    </div>
-    <table class="lm-table">
-      <thead><tr><th>名称</th><th>路径</th><th>存在</th><th></th></tr></thead>
-      <tbody id="lm-model-rows"><tr><td colspan="4" class="lm-muted">加载中…</td></tr></tbody>
-    </table>
-  </section>
-
   <!-- License -->
   <section class="lm-tabpane" data-pane="license" hidden>
     <div class="lm-page-head"><h2>授权并发</h2></div>

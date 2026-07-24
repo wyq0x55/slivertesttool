@@ -707,7 +707,10 @@ def list_members(project_id):
 def member_candidates(project_id):
     _project_and_role(project_id, "project.members")
     existing = {m.user_id for m in service.list_members(project_id)}
-    users = service.search_users(request.args.get("q", ""), limit=20)
+    q = request.args.get("q", "")
+    # With no query we present the full pick-list (all active users) so the
+    # admin can choose anyone directly; a typed query narrows and stays snappy.
+    users = service.search_users(q, limit=500 if not q.strip() else 50)
     out = [{"id": u.id, "username": u.username,
             "display_name": u.display_name or u.username}
            for u in users if u.id not in existing]
