@@ -552,6 +552,48 @@ def import_const(project_id):
     from ...services.lanmatrix import libconst_bridge
     return _import_libconst(project_id, libconst_bridge.import_const)
 
+@bp.post("/projects/<int:project_id>/io/import")
+@login_required
+def import_io(project_id):
+    """Import an 入出力 (I/O signal pool) workbook: one signal -> one editor row
+    (io_name / io_path / io_note), keeping name AND path unique."""
+    from ...services.lanmatrix import libconst_bridge
+    return _import_libconst(project_id, libconst_bridge.import_io)
+
+@bp.post("/projects/<int:project_id>/io/extract")
+@login_required
+def extract_io(project_id):
+    """Harvest I/O signal declarations from step procedures into the 入出力 pool.
+
+    Scans the ``input_signals`` / ``expected_signals`` of the requested sheets'
+    step docs (``lib`` by default; ``test`` optionally), de-duplicates on
+    name+path, and merges the result into the pool with the same uniqueness and
+    per-row error reporting as an Excel import."""
+    from ...services.lanmatrix import libconst_bridge
+
+    project, _ = _project_and_role(project_id, "import.run")
+    if not project.is_editable:
+        return err("PROJECT_LOCKED", "项目当前不可编辑", status=409)
+    payload = request.get_json(silent=True) or {}
+    mode = payload.get("mode") or request.form.get("mode") or "upsert"
+    if mode == "replace_all":
+        _project_and_role(project_id, "import.replace")
+    raw_sheets = payload.get("sheets")
+    if raw_sheets is None:
+        form_sheets = request.form.get("sheets")
+        raw_sheets = form_sheets.split(",") if form_sheets else ["lib"]
+    sheets = [str(s).strip() for s in raw_sheets if str(s).strip()] or ["lib"]
+    try:
+        summary = libconst_bridge.extract_io_from_steps(
+            g.user, project, sheets=sheets, mode=mode, source_label="extract")
+    except (ServiceError, PermissionDenied, VersionConflict):
+        raise
+    except Exception as exc:  # noqa: BLE001 - never leak an opaque HTML 500
+        current_app.logger.exception("IO extract crashed")
+        return err("IMPORT_PARSE_ERROR",
+                   f"抽取失败：{type(exc).__name__}: {exc}", status=400)
+    return ok({"summary": summary}, status=201)
+
 def _import_libconst(project_id, importer):
     """Shared request handling for the Lib / Const one-step imports (mirrors the
     Test-Matrix import: parse -> create/update, with replace_all guarded by the
@@ -616,6 +658,19 @@ def export_const(project_id):
     ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     return send_file(buf, as_attachment=True,
                      download_name=f"{project.code}_const_{ts}.xlsx",
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+@bp.get("/projects/<int:project_id>/io/export")
+@login_required
+def export_io(project_id):
+    """Export the project's 入出力 pool rows as a flat-table .xlsx."""
+    from ...services.lanmatrix import libconst_bridge
+
+    project, _ = _project_and_role(project_id, "export.run")
+    buf = libconst_bridge.export_io(project)
+    ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    return send_file(buf, as_attachment=True,
+                     download_name=f"{project.code}_io_{ts}.xlsx",
                      mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 @bp.post("/projects/<int:project_id>/exports")

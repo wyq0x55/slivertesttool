@@ -17,7 +17,8 @@ LM_DIR = pathlib.Path(__file__).resolve().parent.parent / "app" / "services" / "
 _PKG = "lmpure"
 # Load order respects intra-package dependencies.
 _MODULES = ["security", "fields", "batch", "validation", "excel_io",
-            "testmatrix_bridge"]
+            "testmatrix_bridge", "matrix_excel", "const_excel", "io_excel",
+            "libconst_bridge"]
 
 
 def load():

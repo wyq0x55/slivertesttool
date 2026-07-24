@@ -10,6 +10,8 @@
   const rows = document.getElementById("lm-fields-rows");
   const dialog = document.getElementById("lm-field-dialog");
   let editingId = null; // null => create mode
+  let dragEl = null;     // row currently being dragged (reorder)
+  let currentFields = []; // last-loaded field list, for order diffing
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
@@ -42,12 +44,11 @@
   async function load() {
     try {
       const data = await LMApi.listFields(pid);
-      const n = data.fields.length;
-      rows.innerHTML = data.fields.map((f, i) => `
+      currentFields = data.fields;
+      rows.innerHTML = data.fields.map((f) => `
         <tr data-id="${f.id}">
           <td class="lm-order">
-            <button class="lm-btn lm-btn-sm lm-move-up" title="上移" ${i === 0 ? "disabled" : ""}>↑</button>
-            <button class="lm-btn lm-btn-sm lm-move-down" title="下移" ${i === n - 1 ? "disabled" : ""}>↓</button>
+            <span class="lm-drag-handle" title="拖拽排序" aria-label="拖拽排序">⠿</span>
           </td>
           <td><span class="lm-badge">${esc(f.sheet || "test")}</span></td>
           <td><code>${esc(f.field_key)}</code></td>
@@ -69,42 +70,93 @@
     }
   }
 
-  // Reorder by swapping display_order with the adjacent field. The editor page
-  // re-reads fields (ordered by display_order) on focus, so the Univer table's
-  // column order follows automatically.
-  async function moveField(fieldList, id, dir) {
-    const idx = fieldList.findIndex((f) => f.id === id);
-    if (idx < 0) return;
-    const j = dir === "up" ? idx - 1 : idx + 1;
-    if (j < 0 || j >= fieldList.length) return;
-    const a = fieldList[idx];
-    const b = fieldList[j];
-    const ao = a.display_order == null ? idx : a.display_order;
-    const bo = b.display_order == null ? j : b.display_order;
-    let na = bo;
-    let nb = ao;
-    if (na === nb) { na = j; nb = idx; } // break ties from legacy null orders
+  // Find the row that the cursor is currently hovering above, so the dragged
+  // row can be inserted before it (classic HTML5 drag-sort). Returns null when
+  // the cursor is below every remaining row (append to the end).
+  function rowAfter(y) {
+    const els = Array.prototype.slice.call(
+      rows.querySelectorAll("tr:not(.lm-dragging)"));
+    let closest = null;
+    let closestOffset = -Infinity;
+    els.forEach((el) => {
+      const box = el.getBoundingClientRect();
+      const offset = y - box.top - box.height / 2;
+      if (offset < 0 && offset > closestOffset) { closestOffset = offset; closest = el; }
+    });
+    return closest;
+  }
+
+  // Persist the current DOM row order into display_order. Only fields whose
+  // position actually changed are PATCHed. The editor page re-reads fields
+  // (ordered by display_order) on focus, so the Univer table's column order
+  // follows automatically.
+  async function commitOrder() {
+    const byId = {};
+    currentFields.forEach((f) => { byId[f.id] = f; });
+    const ids = Array.prototype.slice.call(rows.querySelectorAll("tr"))
+      .map((tr) => Number(tr.dataset.id));
+    const patches = [];
+    ids.forEach((id, i) => {
+      const f = byId[id];
+      if (f && f.display_order !== i) patches.push({ id: id, order: i });
+    });
+    if (!patches.length) return;
     try {
-      await LMApi.patchField(pid, a.id, { display_order: na });
-      await LMApi.patchField(pid, b.id, { display_order: nb });
+      for (const p of patches) {
+        await LMApi.patchField(pid, p.id, { display_order: p.order });
+      }
       await load();
-    } catch (ex) { toast(ex.message, false); }
+    } catch (ex) { toast(ex.message, false); await load(); }
+  }
+
+  // Drag-to-reorder, registered ONCE on the persistent <tbody>. Rows are
+  // rebuilt on every load(), but this delegated wiring survives, so it must
+  // not be re-added inside wire() (that would stack duplicate handlers and
+  // fire commitOrder repeatedly). A row is only made draggable while its
+  // handle is held, so the action buttons inside the row keep working.
+  function initDragSort() {
+    rows.addEventListener("mousedown", (e) => {
+      const h = e.target.closest ? e.target.closest(".lm-drag-handle") : null;
+      if (!h) return;
+      const tr = h.closest("tr");
+      if (tr) tr.draggable = true;
+    });
+    document.addEventListener("mouseup", () => {
+      if (dragEl) return; // an active drag clears itself on dragend
+      const stray = rows.querySelector('tr[draggable="true"]');
+      if (stray) stray.draggable = false;
+    });
+    rows.addEventListener("dragstart", (e) => {
+      const tr = e.target.closest ? e.target.closest("tr") : null;
+      if (!tr || !tr.draggable) return;
+      dragEl = tr;
+      tr.classList.add("lm-dragging");
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = "move";
+        try { e.dataTransfer.setData("text/plain", tr.dataset.id); } catch (_e) { /* noop */ }
+      }
+    });
+    rows.addEventListener("dragover", (e) => {
+      if (!dragEl) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+      const after = rowAfter(e.clientY);
+      if (after == null) rows.appendChild(dragEl);
+      else if (after !== dragEl) rows.insertBefore(dragEl, after);
+    });
+    rows.addEventListener("drop", (e) => { if (dragEl) e.preventDefault(); });
+    rows.addEventListener("dragend", async () => {
+      if (!dragEl) return;
+      dragEl.classList.remove("lm-dragging");
+      dragEl.draggable = false;
+      dragEl = null;
+      await commitOrder();
+    });
   }
 
   function wire(fieldList) {
     const byId = {};
     fieldList.forEach((f) => { byId[f.id] = f; });
-
-    rows.querySelectorAll(".lm-move-up").forEach((b) => {
-      b.addEventListener("click", () => {
-        moveField(fieldList, Number(b.closest("tr").dataset.id), "up");
-      });
-    });
-    rows.querySelectorAll(".lm-move-down").forEach((b) => {
-      b.addEventListener("click", () => {
-        moveField(fieldList, Number(b.closest("tr").dataset.id), "down");
-      });
-    });
 
     rows.querySelectorAll(".lm-toggle").forEach((b) => {
       b.addEventListener("click", async () => {
@@ -175,5 +227,6 @@
     } catch (ex) { err.textContent = ex.message; err.hidden = false; }
   });
 
+  initDragSort();
   load();
 })();

@@ -144,6 +144,7 @@
     testMatrixExportUrl(id) { return `${BASE}/projects/${id}/testmatrix/export`; },
     libFuncExportUrl(id) { return `${BASE}/projects/${id}/libfunc/export`; },
     constExportUrl(id) { return `${BASE}/projects/${id}/const/export`; },
+    ioExportUrl(id) { return `${BASE}/projects/${id}/io/export`; },
     importLibFunc(id, file, mode) {
       const fd = new FormData();
       fd.append("file", file);
@@ -155,6 +156,17 @@
       fd.append("file", file);
       fd.append("mode", mode || "upsert");
       return request("POST", `/projects/${id}/const/import`, { body: fd });
+    },
+    importIo(id, file, mode) {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("mode", mode || "upsert");
+      return request("POST", `/projects/${id}/io/import`, { body: fd });
+    },
+    extractIo(id, sheets, mode) {
+      return request("POST", `/projects/${id}/io/extract`, {
+        body: { sheets: sheets || ["lib"], mode: mode || "upsert" },
+      });
     },
     async exportProject(id, payload) {
       const resp = await request("POST", `/projects/${id}/exports`, { body: payload || {}, raw: true });

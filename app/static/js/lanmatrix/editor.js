@@ -701,11 +701,13 @@
     err.hidden = true;
     const format = exportFormatSel ? exportFormatSel.value : "generic";
     try {
-      if (format === "test_matrix" || format === "libfunc" || format === "const") {
+      if (format === "test_matrix" || format === "libfunc" || format === "const"
+          || format === "io") {
         const urlFor = {
           test_matrix: LMApi.testMatrixExportUrl,
           libfunc: LMApi.libFuncExportUrl,
           const: LMApi.constExportUrl,
+          io: LMApi.ioExportUrl,
         }[format];
         const a = document.createElement("a");
         a.href = urlFor(pid);
@@ -741,6 +743,8 @@
                label: "Lib 函数库 (lib_Func + 手順明细)" },
     const: { call: (id, f, m) => LMApi.importConst(id, f, m),
              label: "Const 常量表 (No. / 識別子名)" },
+    io: { call: (id, f, m) => LMApi.importIo(id, f, m),
+          label: "入出力信号池 (名称 / 路径)" },
   };
 
   function applyFormatUI() {
@@ -750,6 +754,10 @@
     if (oneStep) {
       const m = document.getElementById("lm-import-mode");
       if (m.selectedOptions[0] && m.selectedOptions[0].hidden) m.value = "upsert";
+    }
+    const extractBlock = document.getElementById("lm-extract-io-block");
+    if (extractBlock) {
+      extractBlock.hidden = !(importFormatSel && importFormatSel.value === "io");
     }
   }
   if (importFormatSel) importFormatSel.addEventListener("change", () => {
@@ -785,7 +793,8 @@
     // Preselect the import format that matches the active sheet.
     if (importFormatSel) {
       const pref = currentSheet === "const" ? "const"
-        : currentSheet === "lib" ? "libfunc" : importFormatSel.value;
+        : currentSheet === "lib" ? "libfunc"
+        : currentSheet === "io" ? "io" : importFormatSel.value;
       importFormatSel.value = pref;
     }
     applyFormatUI();
@@ -844,7 +853,8 @@
         const rowErrors = s.errors || [];
         // Jump to the sheet the imported rows landed on so they're visible.
         const targetSheet = pendingImportFormat === "libfunc" ? "lib"
-          : pendingImportFormat === "const" ? "const" : "test";
+          : pendingImportFormat === "const" ? "const"
+          : pendingImportFormat === "io" ? "io" : "test";
         if (targetSheet !== currentSheet) {
           if (isUniver() && typeof grid.setActiveSheetKey === "function") {
             grid.setActiveSheetKey(targetSheet);
@@ -910,6 +920,70 @@
     } catch (ex) {
       err.textContent = ex.message; err.hidden = false;
       commitBtn.disabled = false;
+    }
+  });
+
+  const extractIoBtn = document.getElementById("lm-import-extract-io");
+  if (extractIoBtn) extractIoBtn.addEventListener("click", async () => {
+    const err = document.getElementById("lm-import-error");
+    err.hidden = true;
+    const sheets = [];
+    if (document.getElementById("lm-extract-src-lib").checked) sheets.push("lib");
+    if (document.getElementById("lm-extract-src-test").checked) sheets.push("test");
+    if (!sheets.length) {
+      err.textContent = "请至少选择一个手順来源（Lib / 测试）。"; err.hidden = false;
+      return;
+    }
+    const mode = document.getElementById("lm-import-mode").value;
+    extractIoBtn.disabled = true;
+    try {
+      const data = await LMApi.extractIo(pid, sheets, mode);
+      const s = data.summary || {};
+      const rowErrors = s.errors || [];
+      // Surface the newly-merged signals on the io sheet.
+      if (currentSheet !== "io") {
+        if (isUniver() && typeof grid.setActiveSheetKey === "function") {
+          grid.setActiveSheetKey("io");
+        }
+        await applySheetContext("io", false);
+      }
+      await loadFields();
+      if (collabActive()) await resyncSheetFromDb("io");
+      await loadItems();
+      const delPart = s.deleted ? `删除 ${s.deleted}，` : "";
+      const skipPart = s.skipped_nameless
+        ? ` 跳过无名称信号 ${s.skipped_nameless}。` : "";
+      let html =
+        `<p>抽取完成：扫描 ${s.scanned_rows || 0} 行手順，` +
+        `去重得 ${s.distinct_signals || 0} 个信号。${delPart}` +
+        `新增 ${s.created || 0}，更新 ${s.updated || 0}` +
+        (rowErrors.length
+          ? `，<b style="color:var(--danger,#c0392b)">失败 ${rowErrors.length}</b>` : "") +
+        `。${skipPart}</p>`;
+      if (rowErrors.length) {
+        const byMsg = new Map();
+        rowErrors.forEach((er) => {
+          const m = er.message || "未知错误";
+          if (!byMsg.has(m)) byMsg.set(m, []);
+          byMsg.get(m).push(er);
+        });
+        const groups = [...byMsg.entries()]
+          .sort((a, b) => b[1].length - a[1].length)
+          .map(([m, ers]) =>
+            `<li class="lm-import-errgroup"><b>${esc(m)}</b>` +
+            `<span class="lm-muted">（${ers.length} 个）</span></li>`).join("");
+        html += `<ul class="lm-import-errlist">${groups}</ul>`;
+      }
+      document.getElementById("lm-import-summary").innerHTML = html;
+      toast(
+        rowErrors.length
+          ? `抽取完成，但有 ${rowErrors.length} 个信号冲突，请查看说明`
+          : `抽取完成：新增 ${s.created || 0}，更新 ${s.updated || 0}`,
+        !rowErrors.length);
+    } catch (ex) {
+      err.textContent = ex.message; err.hidden = false;
+    } finally {
+      extractIoBtn.disabled = false;
     }
   });
 

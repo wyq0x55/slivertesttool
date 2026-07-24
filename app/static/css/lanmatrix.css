@@ -100,6 +100,9 @@ select.lm-cell-control[multiple] { min-height: 46px; }
 .lm-dialog menu { display: flex; justify-content: flex-end; gap: 8px; padding: 0; margin: 16px 0 0; }
 .lm-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
 .lm-batch-preview, .lm-import-summary { margin-top: 12px; max-height: 300px; overflow: auto; }
+.lm-extract-io { margin-top: 12px; padding: 10px 12px; border: 1px dashed var(--border, #ccc); border-radius: 6px; }
+.lm-extract-io > p { margin: 0 0 8px; }
+.lm-extract-io-src { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
 .lm-preview th, .lm-preview td { font-size: 12px; padding: 3px 6px; }
 .lm-preview tr.lm-err td { background: #fdecea; }
 
@@ -228,8 +231,16 @@ select.lm-cell-control[multiple] { min-height: 46px; }
 .lm-st-sig-ex { background: #fce0c4; }
 
 /* Field-config order column (move up/down) */
-.lm-order { white-space: nowrap; text-align: center; width: 68px; }
+.lm-order { white-space: nowrap; text-align: center; width: 48px; }
 .lm-order .lm-btn { padding: 1px 7px; margin: 0 1px; }
+.lm-drag-handle {
+  display: inline-block; cursor: grab; user-select: none;
+  padding: 2px 6px; color: #8a8f98; font-size: 15px; line-height: 1;
+  border-radius: 4px;
+}
+.lm-drag-handle:hover { background: #eef0f3; color: #4a4f58; }
+.lm-drag-handle:active { cursor: grabbing; }
+tr.lm-dragging { opacity: 0.5; background: #eef4ff; }
 
 /* --- Database management console (system_admin, v2.10.0) -------------- */
 .lm-dbadmin { display: flex; flex-direction: column; height: 100%; }

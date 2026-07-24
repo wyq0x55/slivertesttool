@@ -48,6 +48,7 @@
         <option value="test_matrix">测试矩阵 (日文 VHILS 表头)</option>
         <option value="libfunc">Lib 函数库 (lib_Func / 手順明细)</option>
         <option value="const">Const 常量表 (No. / 識別子名)</option>
+        <option value="io">入出力信号池 (名称 / 路径)</option>
       </select>
     </label>
     <div class="lm-error" id="lm-export-error" hidden></div>
@@ -67,6 +68,7 @@
         <option value="test_matrix">测试矩阵 (日文 VHILS 表头)</option>
         <option value="libfunc">Lib 函数库 (lib_Func / 手順明细)</option>
         <option value="const">Const 常量表 (No. / 識別子名)</option>
+        <option value="io">入出力信号池 (名称 / 路径)</option>
       </select>
     </label>
     <label>模式
@@ -78,6 +80,14 @@
       </select>
     </label>
     <input type="file" id="lm-import-dialog-file" accept=".xlsx">
+    <div class="lm-extract-io" id="lm-extract-io-block" hidden>
+      <p class="lm-muted">或不上传文件，直接从手順中抽取入出力信号（自动去重，按名称 + 路径唯一并入信号池）：</p>
+      <div class="lm-extract-io-src">
+        <label class="lm-inline"><input type="checkbox" id="lm-extract-src-lib" checked> Lib 手順</label>
+        <label class="lm-inline"><input type="checkbox" id="lm-extract-src-test"> 测试手順</label>
+        <button type="button" id="lm-import-extract-io" class="lm-btn">从手順抽取入出力</button>
+      </div>
+    </div>
     <div class="lm-import-summary" id="lm-import-summary"></div>
     <div class="lm-error" id="lm-import-error" hidden></div>
     <menu>
