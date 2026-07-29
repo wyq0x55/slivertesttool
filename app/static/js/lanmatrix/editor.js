@@ -664,6 +664,40 @@
   // Selected test_ids persist across filtering so narrowing the search never
   // silently drops a previously ticked case.
   let queueChecked = new Set();
+  // Active priority tier for the enqueue dialog. Defaults to "high" so only
+  // high-priority (優先度=高) test ids are pre-selected; the user can switch the
+  // tier (or pick "all") from the dialog's priority dropdown.
+  let queuePriority = "high";
+
+  // 優先度 normalisation. Mirrors the backend PRIORITY_JP_TO_EN map so Japanese
+  // (高/中/低) and English (High/Medium/Low/Critical) priority cells resolve to
+  // the same canonical tier. Critical is folded into "high" because it exports
+  // back to 高 and satisfies the workbook's =IF(優先度="高", …) test rule.
+  const PRIORITY_JP_TO_EN = {
+    "高": "High", "中": "Medium", "低": "Low",
+    "H": "High", "M": "Medium", "L": "Low",
+    "High": "High", "Medium": "Medium", "Low": "Low", "Critical": "Critical",
+  };
+  const PRIORITY_LABEL = { high: "高", medium: "中", low: "低", "": "—" };
+  const PRIORITY_STYLE = {
+    high: "background:#fdecea;color:#c0392b;",
+    medium: "background:#fff4e5;color:#b9770e;",
+    low: "background:#eaf3fb;color:#2471a3;",
+    "": "background:#eee;color:#777;",
+  };
+  function priorityTier(raw) {
+    const en = PRIORITY_JP_TO_EN[String(raw == null ? "" : raw).trim()] || "";
+    if (en === "High" || en === "Critical") return "high";
+    if (en === "Medium") return "medium";
+    if (en === "Low") return "low";
+    return "";
+  }
+  function priorityBadge(tier) {
+    const style = PRIORITY_STYLE[tier] || PRIORITY_STYLE[""];
+    return `<span class="lm-queue-prio" style="${style}border-radius:3px;`
+      + `padding:0 6px;margin-left:6px;font-size:12px;line-height:18px;">`
+      + `${esc(PRIORITY_LABEL[tier] || "—")}</span>`;
+  }
 
   // Build a short human-readable description for a test row from its first
   // non-empty text fields (skipping test_id / steps JSON), so users recognise a
@@ -694,30 +728,47 @@
       const tid = it && it.test_id != null ? String(it.test_id).trim() : "";
       if (!tid || seen.has(tid)) return;
       seen.add(tid);
-      out.push({ testId: tid, desc: queueRowDesc(it) });
+      out.push({ testId: tid, desc: queueRowDesc(it), tier: priorityTier(it.priority) });
     });
     out.sort((a, b) => a.testId.localeCompare(b.testId, undefined, { numeric: true }));
     return out;
+  }
+
+  // Reset the ticked set to every candidate matching the given priority tier
+  // ("all" keeps all). Called on open and whenever the tier dropdown changes so
+  // the default selection always reflects the chosen priority.
+  function queueSelectByPriority(tier) {
+    queueChecked = new Set();
+    queueCandidates().forEach((r) => {
+      if (tier === "all" || r.tier === tier) queueChecked.add(r.testId);
+    });
   }
 
   function renderQueueList() {
     if (!queueList) return;
     const q = (queueFilter && queueFilter.value ? queueFilter.value : "").trim().toLowerCase();
     const all = queueCandidates();
+    const byPrio = queuePriority === "all"
+      ? all
+      : all.filter((r) => r.tier === queuePriority);
     const rows = q
-      ? all.filter((r) => r.testId.toLowerCase().includes(q) || r.desc.toLowerCase().includes(q))
-      : all;
+      ? byPrio.filter((r) => r.testId.toLowerCase().includes(q) || r.desc.toLowerCase().includes(q))
+      : byPrio;
     if (!all.length) {
       queueList.innerHTML = '<div class="lm-queue-empty">当前测试用例表没有带 test_id 的行，无法入队。</div>';
     } else if (!rows.length) {
-      queueList.innerHTML = '<div class="lm-queue-empty">没有匹配的 test_id。</div>';
+      const label = PRIORITY_LABEL[queuePriority];
+      const hint = queuePriority !== "all" && label
+        ? `没有优先度为「${label}」的 test_id。`
+        : "没有匹配的 test_id。";
+      queueList.innerHTML = `<div class="lm-queue-empty">${hint}</div>`;
     } else {
       queueList.innerHTML = rows.map((r) => {
         const on = queueChecked.has(r.testId) ? " checked" : "";
         const desc = r.desc ? `<div class="lm-queue-desc">${esc(r.desc)}</div>` : "";
         return `<label class="lm-queue-row">`
           + `<input type="checkbox" value="${esc(r.testId)}"${on}>`
-          + `<span><span class="lm-queue-tid">${esc(r.testId)}</span>${desc}</span>`
+          + `<span><span class="lm-queue-tid">${esc(r.testId)}</span>${priorityBadge(r.tier)}${desc}</span>`
           + `</label>`;
       }).join("");
       queueList.querySelectorAll('input[type=checkbox]').forEach((cb) => {
@@ -738,9 +789,12 @@
 
   function openQueueDialog() {
     if (!queueDialog) { toast("入队弹窗未加载", false); return; }
-    queueChecked = new Set();
+    // Default to the high-priority tier and pre-tick every high-priority case.
+    queuePriority = "high";
+    if (queuePrioSel) queuePrioSel.value = "high";
     if (queueFilter) queueFilter.value = "";
     if (queueError) queueError.hidden = true;
+    queueSelectByPriority(queuePriority);
     renderQueueList();
     if (typeof queueDialog.showModal === "function") queueDialog.showModal();
     else queueDialog.setAttribute("open", "");
@@ -748,6 +802,34 @@
   }
 
   if (queueFilter) queueFilter.addEventListener("input", renderQueueList);
+  // Priority tier dropdown. Created here (rather than in the template) so the
+  // feature works even against a cached/older editor.html: if the select is not
+  // present it is built and prepended to the queue toolbar. Switching the tier
+  // re-selects every case in that tier (or all cases) so the ticked set always
+  // matches the chosen priority.
+  let queuePrioSel = document.getElementById("lm-queue-priority");
+  if (!queuePrioSel && queueDialog) {
+    const toolbar = queueDialog.querySelector(".lm-queue-toolbar");
+    if (toolbar) {
+      const wrap = document.createElement("label");
+      wrap.className = "lm-queue-prio-pick";
+      wrap.textContent = "优先度 ";
+      queuePrioSel = document.createElement("select");
+      queuePrioSel.id = "lm-queue-priority";
+      queuePrioSel.innerHTML =
+        '<option value="high">高（默认）</option>'
+        + '<option value="medium">中</option>'
+        + '<option value="low">低</option>'
+        + '<option value="all">全部</option>';
+      wrap.appendChild(queuePrioSel);
+      toolbar.insertBefore(wrap, toolbar.firstChild);
+    }
+  }
+  if (queuePrioSel) queuePrioSel.addEventListener("change", () => {
+    queuePriority = queuePrioSel.value || "high";
+    queueSelectByPriority(queuePriority);
+    renderQueueList();
+  });
   const queueSelAll = document.getElementById("lm-queue-sel-all");
   const queueSelNone = document.getElementById("lm-queue-sel-none");
   if (queueSelAll) queueSelAll.addEventListener("click", () => {
