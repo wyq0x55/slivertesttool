@@ -292,6 +292,47 @@ def _signal_pairs(signals: Any) -> list[tuple[str, str]]:
     return out
 
 
+def _body_signal_paths(body: dict) -> list[str]:
+    """The Silver variable paths of a step-body's input + expected signals.
+
+    These are the ``path`` halves of ``input_signals`` / ``expected_signals``
+    (the same identifiers each step uses as its ``var``), i.e. exactly the
+    signals a case reads or checks — the set worth recording to ``output.csv``.
+    Blank paths are dropped.
+    """
+    paths: list[str] = []
+    for group in ("input_signals", "expected_signals"):
+        for _name, path in _signal_pairs(body.get(group)):
+            token = (path or "").strip()
+            if token:
+                paths.append(token)
+    return paths
+
+
+def build_signal_list(test_row: TestItemRow,
+                      lib_rows: Iterable[TestItemRow]) -> list[str]:
+    """Ordered, de-duplicated Silver signals relevant to one test case.
+
+    Combines the test row's own input/expected signals with those of every lib
+    subroutine (its ``lib_stb`` body), so CsvWriter's ``-l`` list records exactly
+    the signals the case — and the subroutines it calls — reads or checks. Order
+    is preserved (test row first, then libs in row order) and duplicates removed.
+    """
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def _add(paths: list[str]) -> None:
+        for token in paths:
+            if token not in seen:
+                seen.add(token)
+                ordered.append(token)
+
+    _add(_body_signal_paths(_parse_json_field(test_row.get_field(TEST_STEPS))))
+    for row in lib_rows:
+        _add(_body_signal_paths(_parse_json_field(row.get_field(LIB_STEPS))))
+    return ordered
+
+
 def _step_subroutine(step: dict) -> str:
     sub = step.get("subroutine")
     return str(sub).strip() if sub not in (None, "") else ""
@@ -493,6 +534,11 @@ def materialise_run_dir(
     case_dir = Path(case_dir)
     case_dir.mkdir(parents=True, exist_ok=True)
 
+    # Materialise lib_rows once: it is consumed twice below (build_lib + the
+    # CsvWriter signal list), so a bare generator would come up empty the second
+    # time.
+    lib_rows = list(lib_rows)
+
     runner_path = silver_json.copy_framework(case_dir)
 
     const_doc = build_constants(const_rows)
@@ -514,9 +560,21 @@ def materialise_run_dir(
     (case_dir / testcase_name).write_text(
         json.dumps(case_doc, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    # CsvWriter signal-selection list (``output.txt``). One Silver signal name
+    # per line, no comments. When present, ``silver_runner`` passes it as
+    # CsvWriter's ``-l`` argument so ``output.csv`` records only the case-relevant
+    # signals (test row + every lib subroutine it may call); when the case
+    # declares no signals we skip the file entirely, and CsvWriter falls back to
+    # recording all variables.
+    output_txt = case_dir / "output.txt"
+    signal_paths = build_signal_list(test_row, lib_rows)
+    if signal_paths:
+        output_txt.write_text("\n".join(signal_paths) + "\n", encoding="utf-8")
+
     return {
         "runner": runner_path,
         "testcase_json": case_dir / testcase_name,
         "constants_json": case_dir / "constants.json",
         "lib_json": case_dir / "lib.json",
+        "output_txt": output_txt if signal_paths else None,
     }
