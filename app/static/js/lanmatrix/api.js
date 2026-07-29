@@ -236,7 +236,10 @@
   global.LMReady = LMApi.me().then((u) => u).catch(() => null);
 
   document.addEventListener("click", async (e) => {
-    if (e.target && e.target.id === "lm-logout") {
+    // The logout link wraps child <span>s (icon + label), so a click can land on
+    // an inner span rather than the <a> itself — match the nearest #lm-logout.
+    const logout = e.target && e.target.closest && e.target.closest("#lm-logout");
+    if (logout) {
       e.preventDefault();
       await LMApi.logout();
       window.location = LM.urls.login;
