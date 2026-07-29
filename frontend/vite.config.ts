@@ -14,6 +14,14 @@ import { resolve } from "path";
  * grid, so shipping this is always optional and non-breaking.
  */
 export default defineConfig({
+  // The Univer footer pager (adapter.ts `registerUIPart`) authors a React element
+  // with `react`'s `createElement`. Univer 0.25.x renders it with React 19, whose
+  // element uses `Symbol.for("react.transitional.element")`. A SECOND React copy
+  // would produce incompatible elements and break the footer, so force a single,
+  // shared React/ReactDOM instance across our code and all Univer packages.
+  resolve: {
+    dedupe: ["react", "react-dom"],
+  },
   // Univer and some of its deps read `process.env.NODE_ENV` (and, rarely, other
   // `process.*` / `global`) at runtime. In a browser those globals don't exist,
   // which throws "process is not defined" and aborts Univer's bootstrap — so the

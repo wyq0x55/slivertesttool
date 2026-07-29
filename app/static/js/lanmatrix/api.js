@@ -242,4 +242,34 @@
       window.location = LM.urls.login;
     }
   });
+
+  // Global left-rail collapse toggle (base_lm.html). Present on every logged-in
+  // page, so it is wired here (api.js loads everywhere) rather than in editor.js.
+  // State persists per browser. On the editor page a collapse changes the grid
+  // host size; editor.js observes that and makes Univer re-measure.
+  (function setupSideRail() {
+    const KEY = "lm.side.collapsed";
+    const bind = () => {
+      const side = document.getElementById("lm-side");
+      const toggle = document.getElementById("lm-side-toggle");
+      if (!side || !toggle) return;
+      const apply = (collapsed) => {
+        side.classList.toggle("lm-side--collapsed", collapsed);
+        toggle.setAttribute("aria-expanded", String(!collapsed));
+      };
+      let collapsed = false;
+      try { collapsed = localStorage.getItem(KEY) === "1"; } catch (_e) { /* ignore */ }
+      apply(collapsed);
+      toggle.addEventListener("click", () => {
+        collapsed = !collapsed;
+        apply(collapsed);
+        try { localStorage.setItem(KEY, collapsed ? "1" : "0"); } catch (_e) { /* ignore */ }
+      });
+    };
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", bind);
+    } else {
+      bind();
+    }
+  })();
 })(window);

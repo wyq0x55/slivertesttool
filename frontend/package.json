@@ -24,6 +24,9 @@
     "@univerjs/sheets-crosshair-highlight": "0.25.1",
     "@univerjs/engine-render": "0.25.1",
     "@univerjs/sheets-ui": "0.25.1",
+    "@univerjs/ui": "0.25.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
     "yjs": "^13.6.18",
     "y-websocket": "^1.5.4",
     "y-protocols": "^1.0.6"
@@ -66,7 +69,9 @@
     "@univerjs/sheets-conditional-formatting-ui": "0.25.1",
     "@univerjs/sheets-table": "0.25.1",
     "@univerjs/sheets-table-ui": "0.25.1",
-    "@univerjs/sheets-crosshair-highlight": "0.25.1"
+    "@univerjs/sheets-crosshair-highlight": "0.25.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

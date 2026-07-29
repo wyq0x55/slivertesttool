@@ -374,21 +374,37 @@
     const el = document.getElementById("lm-pager");
     el.innerHTML = "";
     if (pages <= 1) return;
-    const mk = (label, target, disabled) => {
+    const cur = categoryPages[page - 1];
+    // Compact segmented control: ◀ [区分] ▶ — sits to the right of the 入出力
+    // sheet tabs (inside Univer's footer). The full label lives in a hover bubble
+    // so the control stays tiny.
+    const wrap = document.createElement("div");
+    wrap.className = "lm-kubun";
+    const mkArrow = (glyph, target, disabled, title) => {
       const b = document.createElement("button");
-      b.className = "lm-btn lm-btn-sm";
-      b.textContent = label;
+      b.type = "button";
+      b.className = "lm-kubun-arrow";
+      b.textContent = glyph;
       b.disabled = disabled;
+      b.title = title;                 // native tooltip on the arrows themselves
+      b.setAttribute("aria-label", title);
       b.addEventListener("click", () => { page = target; renderView(); });
       return b;
     };
-    el.appendChild(mk("上一区分", page - 1, page <= 1));
-    const cur = categoryPages[page - 1];
-    const span = document.createElement("span");
-    span.className = "lm-muted";
-    span.textContent = ` ${cur ? cur.label : ""}（${page} / ${pages}，${cur ? cur.items.length : 0} 条） `;
-    el.appendChild(span);
-    el.appendChild(mk("下一区分", page + 1, page >= pages));
+    wrap.appendChild(mkArrow("‹", page - 1, page <= 1, "上一区分"));
+    const curEl = document.createElement("span");
+    curEl.className = "lm-kubun-cur";
+    curEl.textContent = cur
+      ? (cur.key === "__none__" ? "未分类" : "区分 " + cur.key)
+      : "";
+    wrap.appendChild(curEl);
+    wrap.appendChild(mkArrow("›", page + 1, page >= pages, "下一区分"));
+    // Hover bubble with the full category label + position + row count.
+    const bubble = document.createElement("span");
+    bubble.className = "lm-kubun-bubble";
+    bubble.textContent = `${cur ? cur.label : ""}（${page} / ${pages}，${cur ? cur.items.length : 0} 条）`;
+    wrap.appendChild(bubble);
+    el.appendChild(wrap);
   }
 
   // --- Toolbar ---
@@ -1257,6 +1273,10 @@
     } catch (_e) { /* stay on REST */ }
   }
 
+  // NOTE: the collapsible left navigation rail is now global (base_lm.html) and
+  // its toggle is wired once, for every page, in api.js. When it collapses on the
+  // editor page the ResizeObserver on #lm-grid-host makes Univer re-measure.
+
   async function init() {
     await window.LMReady;
     await loadConfig();
@@ -1264,6 +1284,15 @@
       host: document.getElementById("lm-grid-host"),
       fields,
       sheets: SHEET_SPECS,
+      // Footer slot (count + テスト区分 pager + dirty). With the Univer engine the
+      // adapter adopts it into Univer's native footer; the built-in fallback grid
+      // ignores it and the slot stays as its own thin bottom bar (CSS).
+      footerSlot: document.getElementById("lm-footer-slot"),
+      // Toolbar groups (status/actions). With the Univer engine the adapter adopts
+      // these into Univer's own top ribbon row (flanking the menu tabs); the
+      // built-in fallback grid ignores them and they stay inside .lm-toolbar.
+      toolbarLeft: document.getElementById("lm-toolbar-left"),
+      toolbarRight: document.getElementById("lm-toolbar-right"),
       onSheetChange: (key) => {
         // User clicked a native Univer worksheet tab: sync editor state. Data is
         // already loaded in the worksheet, so no reload needed.
@@ -1385,6 +1414,65 @@
         });
       },
     });
+    // The Univer engine adopts #lm-footer-slot into its native footer (and shows
+    // it there). The built-in fallback grid has no footer, so reveal the slot as
+    // a thin bottom bar instead — otherwise the テスト区分 pager would be hidden.
+    try {
+      if (grid && grid.engine !== "univer") {
+        const fs = document.getElementById("lm-footer-slot");
+        if (fs) { fs.hidden = false; fs.classList.add("lm-footer-slot--bottom"); }
+      }
+    } catch (_e) { /* fallback reveal is best-effort */ }
+    // Univer sizes its canvas to the host and only re-measures on window resize.
+    // The new layout (collapsible left sidebar, flex-filled grid) changes the
+    // host width/height WITHOUT a window resize, which would leave Univer painted
+    // at a stale size. Nudge it whenever the host box actually changes by
+    // re-emitting a window resize, which Univer already listens for.
+    try {
+      const host = document.getElementById("lm-grid-host");
+      if (host && typeof ResizeObserver === "function") {
+        let raf = 0;
+        const ro = new ResizeObserver(() => {
+          if (raf) cancelAnimationFrame(raf);
+          raf = requestAnimationFrame(() => {
+            raf = 0;
+            window.dispatchEvent(new Event("resize"));
+          });
+        });
+        ro.observe(host);
+      }
+    } catch (_e) { /* resize sync is best-effort */ }
+    // Safety net: with the Univer engine the adapter is expected to adopt the
+    // footer slot into Univer's native footer (which unhides it). If that ever
+    // fails (e.g. facade shape changed), the slot would stay hidden and the
+    // テスト区分 pager unreachable. So if it is still hidden shortly after mount,
+    // fall back to revealing it as a thin bottom bar.
+    try {
+      if (grid && grid.engine === "univer") {
+        setTimeout(() => {
+          const fs = document.getElementById("lm-footer-slot");
+          if (fs && fs.hidden) {
+            fs.hidden = false;
+            fs.classList.add("lm-footer-slot--bottom");
+          }
+        }, 1500);
+      }
+    } catch (_e) { /* best-effort */ }
+    // Toolbar merge: with the Univer engine the adapter adopts #lm-toolbar-left /
+    // #lm-toolbar-right into Univer's own ribbon row. Once that happened the
+    // groups no longer live inside #lm-toolbar, so hide the now-empty shell to
+    // reclaim the row. If adoption failed (groups still inside), keep the shell
+    // visible as the app's own top bar so the actions stay reachable.
+    try {
+      if (grid && grid.engine === "univer") {
+        setTimeout(() => {
+          const tb = document.getElementById("lm-toolbar");
+          const left = document.getElementById("lm-toolbar-left");
+          const adopted = left && tb && left.parentElement !== tb;
+          if (tb && adopted) tb.style.display = "none";
+        }, 1500);
+      }
+    } catch (_e) { /* best-effort */ }
     try {
       await loadProject();
       // Bring up real-time collaboration before the first data load so the

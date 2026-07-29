@@ -7,25 +7,49 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/lanmatrix.css') }}">
 </head>
-<body class="lm-body">
-  <nav class="navbar lm-navbar">
-    <div class="nav-inner">
-      <a class="brand" href="{{ url_for('lanmatrix_pages.projects') }}">🧪 测试矩阵编辑器</a>
-      <div class="nav-links">
-        <a href="{{ url_for('lanmatrix_pages.projects') }}">项目</a>
-        {% if user and user.is_system_admin %}
-        <a href="{{ url_for('lanmatrix_pages.admin_console') }}">管理台</a>
-        {% endif %}
-        {% if user and user.is_bootstrap_admin %}
-        <a href="{{ url_for('lanmatrix_pages.admin_db') }}">数据库管理</a>
-        {% endif %}
-        {% if user %}
-        <span class="lm-user">👤 {{ user.display_name or user.username }}</span>
-        <a href="#" id="lm-logout">退出</a>
-        {% endif %}
-      </div>
+<body class="lm-body{% if user %} lm-has-side{% endif %}">
+  {% if user %}
+  <!-- Global navigation rail (replaces the old top navbar). Present on every
+       logged-in page; collapsible (☰), width persisted in localStorage. When a
+       project context is active (project_id defined) the per-project links are
+       appended below the global links. All hrefs are unchanged so backend
+       routing is unaffected. -->
+  <aside class="lm-side" id="lm-side">
+    <div class="lm-side-top">
+      <a class="lm-side-brand" href="{{ url_for('lanmatrix_pages.projects') }}" title="测试矩阵编辑器">
+        <span class="lm-side-ic">🧪</span><span class="lm-side-tx">测试矩阵</span>
+      </a>
+      <button type="button" class="lm-side-toggle" id="lm-side-toggle"
+              aria-label="展开/收起导航" aria-expanded="true" title="展开 / 收起导航">☰</button>
     </div>
-  </nav>
+    <nav class="lm-side-nav">
+      <a class="lm-side-link" href="{{ url_for('lanmatrix_pages.projects') }}"><span class="lm-side-ic">📁</span><span class="lm-side-tx">项目</span></a>
+      {% if project_id is defined and project_id %}
+      <div class="lm-side-sep"></div>
+      <div class="lm-side-cap"><span class="lm-side-tx">当前项目</span></div>
+      <a class="lm-side-link" href="/lanmatrix/projects/{{ project_id }}"><span class="lm-side-ic">🧮</span><span class="lm-side-tx">在线编辑</span></a>
+      <a class="lm-side-link" href="/lanmatrix/projects/{{ project_id }}/fields"><span class="lm-side-ic">🧩</span><span class="lm-side-tx">字段配置</span></a>
+      <a class="lm-side-link" href="/lanmatrix/projects/{{ project_id }}/models"><span class="lm-side-ic">📦</span><span class="lm-side-tx">模型管理</span></a>
+      <a class="lm-side-link" href="/lanmatrix/projects/{{ project_id }}/tasks"><span class="lm-side-ic">📤</span><span class="lm-side-tx">上传任务</span></a>
+      <a class="lm-side-link" href="/lanmatrix/projects/{{ project_id }}/members"><span class="lm-side-ic">👥</span><span class="lm-side-tx">成员管理</span></a>
+      <a class="lm-side-link" href="/lanmatrix/projects/{{ project_id }}/audit"><span class="lm-side-ic">📝</span><span class="lm-side-tx">审计</span></a>
+      {% endif %}
+      {% if user.is_system_admin or user.is_bootstrap_admin %}
+      <div class="lm-side-sep"></div>
+      {% endif %}
+      {% if user.is_system_admin %}
+      <a class="lm-side-link" href="{{ url_for('lanmatrix_pages.admin_console') }}"><span class="lm-side-ic">🛠️</span><span class="lm-side-tx">管理台</span></a>
+      {% endif %}
+      {% if user.is_bootstrap_admin %}
+      <a class="lm-side-link" href="{{ url_for('lanmatrix_pages.admin_db') }}"><span class="lm-side-ic">🗄️</span><span class="lm-side-tx">数据库管理</span></a>
+      {% endif %}
+    </nav>
+    <div class="lm-side-bottom">
+      <span class="lm-side-user" title="{{ user.display_name or user.username }}"><span class="lm-side-ic">👤</span><span class="lm-side-tx">{{ user.display_name or user.username }}</span></span>
+      <a href="#" id="lm-logout" class="lm-side-link"><span class="lm-side-ic">🚪</span><span class="lm-side-tx">退出</span></a>
+    </div>
+  </aside>
+  {% endif %}
   <main class="lm-main">
     {% block content %}{% endblock %}
   </main>

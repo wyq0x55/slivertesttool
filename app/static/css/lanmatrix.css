@@ -5,6 +5,11 @@
 .lm-user { color: #9fb3d8; margin-left: 12px; }
 .lm-main { max-width: 100%; padding: 0; }
 
+/* Global shell: the left rail (base_lm.html) sits beside the page content. Only
+   applied when logged in (login/register keep the plain centered layout). */
+.lm-has-side { display: flex; align-items: stretch; min-height: 100vh; }
+.lm-has-side .lm-main { flex: 1; min-width: 0; }
+
 .lm-page { max-width: 1180px; margin: 24px auto; padding: 0 16px; }
 .lm-page-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .lm-page-head h1 { font-size: 22px; margin: 0; }
@@ -49,13 +54,63 @@
 .lm-login-card h2 { margin: 0 0 4px; }
 .lm-login-alt { margin: 12px 0 0; text-align: center; }
 
-/* Editor */
-.lm-editor { display: flex; flex-direction: column; height: calc(100vh - 96px); }
-.lm-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px;
-  padding: 10px 16px; background: #fff; border-bottom: 1px solid #dce3ee; flex-wrap: wrap; }
-.lm-tb-left { display: flex; align-items: center; gap: 8px; }
-.lm-tb-right { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.lm-grid-host { flex: 1; overflow: auto; padding: 0; background: #fff; }
+/* Global left navigation rail (base_lm.html). Full-height, sticky, collapsible.
+   Holds brand, global links, per-project links (when in a project), and the
+   user/logout block pinned to the bottom. */
+.lm-side { flex: 0 0 210px; align-self: flex-start; position: sticky; top: 0;
+  height: 100vh; display: flex; flex-direction: column; gap: 4px;
+  background: #16223b; color: #cdd8ee; padding: 10px 8px 12px; overflow-y: auto;
+  overflow-x: hidden; transition: flex-basis .15s ease; }
+.lm-side--collapsed { flex-basis: 56px; }
+.lm-side-top { display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  padding: 2px 4px 8px; }
+.lm-side-brand { display: flex; align-items: center; gap: 8px; color: #eaf0fb;
+  font-weight: 600; text-decoration: none; white-space: nowrap; overflow: hidden; }
+.lm-side-brand:hover { text-decoration: none; color: #fff; }
+.lm-side-toggle { flex: 0 0 auto; width: 32px; height: 32px; border: none;
+  border-radius: 6px; background: transparent; color: #cdd8ee; cursor: pointer;
+  font-size: 16px; line-height: 1; }
+.lm-side-toggle:hover { background: rgba(255,255,255,.12); }
+.lm-side-nav { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; }
+.lm-side-cap { padding: 8px 10px 2px; font-size: 11px; letter-spacing: .04em;
+  text-transform: uppercase; color: #7f92b6; white-space: nowrap; }
+.lm-side-sep { height: 1px; background: rgba(255,255,255,.10); margin: 8px 6px; }
+.lm-side-link { display: flex; align-items: center; gap: 10px; padding: 9px 10px;
+  border-radius: 7px; color: #cdd8ee; text-decoration: none; white-space: nowrap;
+  font-size: 14px; }
+.lm-side-link:hover { background: rgba(255,255,255,.12); color: #fff; text-decoration: none; }
+.lm-side-ic { flex: 0 0 22px; text-align: center; font-size: 15px; }
+.lm-side-tx { overflow: hidden; text-overflow: ellipsis; }
+.lm-side-bottom { border-top: 1px solid rgba(255,255,255,.10); padding-top: 8px; margin-top: 4px; }
+.lm-side-user { display: flex; align-items: center; gap: 10px; padding: 6px 10px;
+  font-size: 13px; color: #9fb3d8; white-space: nowrap; }
+/* Collapsed rail: icons only. */
+.lm-side--collapsed .lm-side-tx,
+.lm-side--collapsed .lm-side-cap { display: none; }
+.lm-side--collapsed .lm-side-link,
+.lm-side--collapsed .lm-side-user { justify-content: center; padding-left: 0; padding-right: 0; }
+.lm-side--collapsed .lm-side-brand { justify-content: center; }
+
+/* Editor — single column filling the main area (the global rail is beside it,
+   there is no top navbar anymore, so it uses the full viewport height). */
+.lm-editor { display: flex; flex-direction: column; height: 100vh; min-height: 0; }
+
+/* Kill the page-level scrollbars on the editor: the shell is exactly 100vh and
+   Univer scrolls INTERNALLY (its own thin in-grid scrollbars stay). Scoped via
+   :has so only the editor page is locked; other pages scroll normally. */
+html:has(.lm-editor), body:has(.lm-editor) { height: 100%; overflow: hidden; }
+
+/* Toolbar (fallback bar). Under the Univer engine its two groups are adopted
+   into Univer's own ribbon row and this shell is hidden by editor.js; it only
+   shows with the built-in fallback grid. Styled to mimic Univer's own bar
+   (self-CSS replica), space-between keeps status left / actions right. No
+   horizontal scroll — the page must not scroll sideways. */
+.lm-toolbar { display: flex; width: 100%; align-items: center; justify-content: space-between;
+  gap: 4px; overflow: hidden; border-radius: 6px; background: #f9fafb;
+  padding: 6px 12px; margin: 6px 8px 0; flex: 0 0 auto; }
+.lm-tb-left { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.lm-tb-right { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.lm-grid-host { flex: 1; min-height: 0; overflow: hidden; padding: 0; background: #fff; }
 .lm-sheet-tabs { display: flex; gap: 4px; padding: 6px 16px 0; background: #fff;
   border-bottom: 1px solid #e3e9f2; }
 .lm-sheet-tabs[hidden] { display: none; }
@@ -64,8 +119,84 @@
   font-size: 13px; }
 .lm-sheet-tab.active { background: #fff; color: #1a2233; font-weight: 600;
   box-shadow: inset 0 2px 0 #3b6fd4; }
+
+/* Footer slot: count + テスト区分 pager + dirty indicator. Default styling suits
+   living INSIDE Univer's native footer (compact, transparent, on one line). The
+   fallback grid reveals it as a thin bottom bar via .lm-footer-slot--bottom. */
+.lm-footer-slot { display: flex; gap: 12px; align-items: center; font-size: 12px;
+  color: #46536b; white-space: nowrap; padding: 0 10px; }
+.lm-footer-slot[hidden] { display: none; }
+.lm-footer-slot--bottom { padding: 6px 16px; background: #f0f4fa;
+  border-top: 1px solid #dce3ee; font-size: 13px; }
+/* ── Pager adopted into Univer's native footer ─────────────────────────────
+   Univer's <footer> renders each registered FOOTER component as a plain block
+   sibling, so our pager <div.lm-univer-footerpager> dropped onto its own row
+   *below* the 入出力 sheet bar (a <section class="univer-box-border …
+   univer-grid univer-w-full … univer-bg-white … univer-px-5" style=height:36>).
+   Fix: turn just that footer into a flex row (scoped via :has so no other
+   <footer> is affected), let the sheet section flex to fill, and dock our pager
+   at the right — styled to match Univer's own footer box (box-border, white,
+   36px tall, horizontal padding, a hairline divider, plus a dark variant). */
+footer:has(> .lm-univer-footerpager) { display: flex; align-items: stretch; }
+footer:has(> .lm-univer-footerpager) > section {
+  flex: 1 1 auto; width: auto; min-width: 0; }
+.lm-univer-footerpager { box-sizing: border-box; flex: 0 0 auto;
+  display: flex; align-items: center; height: 36px; padding: 0 12px;
+  background: #fff; border-left: 1px solid #e3e9f2; color: #1a2233; }
+.lm-univer-footerpager .lm-footer-slot { padding: 0; }
+@media (prefers-color-scheme: dark) {
+  .lm-univer-footerpager { background: #111827; border-left-color: #374151;
+    color: #e5e7eb; }
+}
+
+/* ── Toolbar groups adopted into Univer's OWN top ribbon row ────────────────
+   The adapter registers #lm-toolbar-left / #lm-toolbar-right into Univer's
+   TOOLBAR UI part. Univer renders them inside <header data-u-comp="headerbar">
+   (position:relative), which stacks two rows: the top menu-tab bar (h-9 = 36px,
+   the "univer-bg-gray-50" bar with the tabs centred) and, below it, the ribbon
+   tools row (h-10). We absolutely dock each slot onto the TOP 36px row, flanking
+   the centred tabs — status group on the left, action group on the right — so
+   the app controls share Univer's own top bar on the SAME line as the tabs.
+   Kept compact so they never exceed the 36px row (header clips overflow). */
+.lm-univer-tbslot { position: absolute; top: 0; height: 36px; display: flex;
+  align-items: center; gap: 8px; z-index: 11; }
+.lm-univer-tbslot--left { left: 12px; }
+.lm-univer-tbslot--right { right: 12px; }
+.lm-univer-tbslot .lm-tb-left,
+.lm-univer-tbslot .lm-tb-right { flex: 0 0 auto; }
+/* Shrink the adopted controls to fit the slim tab row. */
+.lm-univer-tbslot .lm-btn { padding: 3px 10px; font-size: 12px; line-height: 1.4; }
+.lm-univer-tbslot #lm-proj-title { font-size: 13px; }
+.lm-univer-tbslot .lm-badge { font-size: 11px; padding: 1px 6px; }
+.lm-univer-tbslot .lm-muted { font-size: 12px; }
+
+/* Compact テスト区分 control: ◀ [区分] ▶ (crosshair-toolbar style). Prev/next are
+   merged into one small segmented box; the full label appears in a hover bubble
+   so the footer stays tiny. */
+.lm-kubun { position: relative; display: inline-flex; align-items: center;
+  height: 22px; border: 1px solid #d5deec; border-radius: 6px; overflow: visible;
+  background: #fff; }
+.lm-kubun-arrow { width: 24px; height: 20px; border: none; background: transparent;
+  color: #46536b; cursor: pointer; font-size: 14px; line-height: 1; padding: 0; }
+.lm-kubun-arrow:first-child { border-right: 1px solid #e3e9f2; }
+.lm-kubun-arrow:last-child { border-left: 1px solid #e3e9f2; }
+.lm-kubun-arrow:hover:not(:disabled) { background: #eef2f9; color: #1a2233; }
+.lm-kubun-arrow:disabled { opacity: .35; cursor: default; }
+.lm-kubun-cur { padding: 0 8px; font-size: 12px; color: #1a2233; white-space: nowrap; }
+.lm-kubun-bubble { position: absolute; bottom: 100%; right: 0; margin-bottom: 6px;
+  background: #1f2733; color: #fff; font-size: 12px; line-height: 1.4;
+  padding: 4px 8px; border-radius: 6px; white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(16,25,43,.28); opacity: 0; pointer-events: none;
+  transition: opacity .12s ease; z-index: 50; }
+.lm-kubun:hover .lm-kubun-bubble { opacity: 1; }
+
 .lm-statusbar { display: flex; gap: 16px; align-items: center; padding: 6px 16px;
   background: #f0f4fa; border-top: 1px solid #dce3ee; font-size: 13px; }
+
+/* Dark-mode variant for the Univer-style toolbar (mirrors dark:!bg-gray-900). */
+@media (prefers-color-scheme: dark) {
+  .lm-toolbar { background: #111827; }
+}
 
 .lm-grid { border-collapse: collapse; width: max-content; min-width: 100%; }
 .lm-grid th, .lm-grid td { border: 1px solid #e3e9f2; padding: 4px 8px; font-size: 13px;

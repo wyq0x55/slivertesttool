@@ -22,6 +22,7 @@
  *            onSheetChange(key)
  */
 
+import { createElement } from "react";
 import { CollabOverlay } from "./collab_overlay";
 import type { OverlaySelection } from "./collab_overlay";
 import { CellTooltip } from "./cell_tooltip";
@@ -147,6 +148,18 @@ export interface MountOpts {
   onMove?: ((ids: number[], dir: "up" | "down") => void) | null;
   // Fired when the user switches the active native worksheet tab.
   onSheetChange?: ((key: string) => void) | null;
+  // Optional DOM node (the editor's "#lm-footer-slot" holding the row count,
+  // テスト区分 pager and dirty indicator). When provided it is adopted into
+  // Univer's native footer (right of the worksheet tabs) via registerUIPart,
+  // so the pager rides inside the spreadsheet chrome instead of a separate bar.
+  footerSlot?: HTMLElement | null;
+  // Optional DOM nodes (the editor's "#lm-toolbar-left" / "#lm-toolbar-right"
+  // groups). When provided they are adopted into Univer's OWN top ribbon row via
+  // registerUIPart(TOOLBAR), flanking the centred menu tabs (status on the left,
+  // actions on the right), so the app controls share Univer's top bar instead of
+  // occupying a separate row above it.
+  toolbarLeft?: HTMLElement | null;
+  toolbarRight?: HTMLElement | null;
 }
 
 export interface UniverDeps {
@@ -232,6 +245,8 @@ export class UniverGridAdapter {
   // half-saved. Cleared by setSheetData or, as a safety net, a timeout.
   private structuralPending = false;
   private structuralTimer: any = null;
+  private footerMounted = false; // guards one-time footer-slot adoption
+  private toolbarMounted = false; // guards one-time toolbar-slot adoption
   private lastStepsKey: string | null = null; // de-dupes step-dialog open per cell
   private editing = false;       // true while the user has a cell editor open (SheetEditStarted→Ended)
   private activeCell: { id: number; col: number } | null = null; // last single-cell selection (anchor source)
@@ -345,6 +360,8 @@ export class UniverGridAdapter {
             this._applyFreeze(this.active);
             this._ensureOverlay();
             this._ensureCellTooltip();
+            this._mountFooterSlot();
+            this._mountToolbarSlots();
           }
         });
       }
@@ -357,6 +374,85 @@ export class UniverGridAdapter {
       this._renderRows(ctx);
     });
     this._applyFreeze(this.active);
+  }
+
+  // Adopt the editor-owned footer slot (row count + テスト区分 pager + dirty
+  // indicator) into Univer's NATIVE footer, to the right of the worksheet tabs.
+  //
+  // We register a component into BuiltInUIPart.FOOTER. Univer renders it inside
+  // its own <footer> ComponentContainer (same row as the sheet-bar), so the
+  // pager visually lives inside the spreadsheet chrome. The component itself is
+  // deliberately logic-free: a ref callback moves the existing DOM node
+  // (#lm-footer-slot) into Univer's footer. All pager behaviour stays in
+  // editor.js, which keeps driving the SAME elements by id — nothing here
+  // reimplements paging. `marginLeft:auto` pushes the slot to the far right.
+  private _mountFooterSlot(): void {
+    if (this.footerMounted) return;
+    const slot = this.opts.footerSlot;
+    if (!slot) return;
+    const api = this.univerAPI;
+    const FOOTER = api && api.Enum && api.Enum.BuiltInUIPart
+      ? api.Enum.BuiltInUIPart.FOOTER : "footer";
+    if (!api || typeof api.registerUIPart !== "function") return;
+    try {
+      api.registerUIPart(FOOTER, () =>
+        createElement("div", {
+          className: "lm-univer-footerpager",
+          style: { marginLeft: "auto", display: "flex", alignItems: "center", height: "100%" },
+          ref: (node: HTMLElement | null) => {
+            // Adopt once the container mounts; guard against re-parenting on
+            // every React re-render (node stays stable, slot already inside).
+            if (node && slot.parentElement !== node) {
+              slot.hidden = false;
+              node.appendChild(slot);
+            }
+          },
+        })
+      );
+      this.footerMounted = true;
+    } catch (_e) {
+      // registerUIPart is best-effort: if the facade shape changes the editor
+      // still shows the slot as its own bottom bar (CSS fallback), so paging
+      // never becomes unreachable.
+    }
+  }
+
+  // Adopt the editor-owned toolbar groups (#lm-toolbar-left / #lm-toolbar-right)
+  // into Univer's OWN top ribbon row. We register two components into
+  // BuiltInUIPart.TOOLBAR; Univer renders them inside the same headerbar
+  // ComponentContainer as its Ribbon. CSS (.lm-univer-tbslot) then absolutely
+  // positions each slot onto the top menu-tab row of the headerbar, flanking the
+  // centred tabs (left group left, right group right). Same logic-free pattern as
+  // the footer: a ref callback moves the existing DOM node; all button behaviour
+  // stays in editor.js driving the SAME elements by id.
+  private _mountToolbarSlots(): void {
+    if (this.toolbarMounted) return;
+    const left = this.opts.toolbarLeft;
+    const right = this.opts.toolbarRight;
+    if (!left && !right) return;
+    const api = this.univerAPI;
+    if (!api || typeof api.registerUIPart !== "function") return;
+    const TOOLBAR = api.Enum && api.Enum.BuiltInUIPart
+      ? api.Enum.BuiltInUIPart.TOOLBAR : "toolbar";
+    const makeSlot = (node: HTMLElement, side: "left" | "right") => () =>
+      createElement("div", {
+        className: "lm-univer-tbslot lm-univer-tbslot--" + side,
+        ref: (host: HTMLElement | null) => {
+          if (host && node && node.parentElement !== host) {
+            node.hidden = false;
+            host.appendChild(node);
+          }
+        },
+      });
+    try {
+      if (left) api.registerUIPart(TOOLBAR, makeSlot(left, "left"));
+      if (right) api.registerUIPart(TOOLBAR, makeSlot(right, "right"));
+      this.toolbarMounted = true;
+    } catch (_e) {
+      // Best-effort: on failure the editor keeps .lm-toolbar visible as its own
+      // top bar (editor.js only hides it after confirming adoption), so the
+      // import/export/queue actions never become unreachable.
+    }
   }
 
   // Reuse the default sheet for the first requested one, then create more.

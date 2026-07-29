@@ -2,8 +2,14 @@
 {% block title %}矩阵编辑{% endblock %}
 {% block content %}
 <div class="lm-editor" data-project-id="{{ project_id }}" data-collab="{{ '1' if collab_available else '0' }}">
-  <div class="lm-toolbar">
-    <div class="lm-tb-left">
+  <!-- Editor controls. Under the Univer engine the adapter adopts the two groups
+       (#lm-toolbar-left / #lm-toolbar-right) into Univer's OWN top ribbon row via
+       registerUIPart(TOOLBAR) — the left group flanks the menu tabs on the left,
+       the right group on the right — and this .lm-toolbar shell is then hidden.
+       With the built-in fallback grid (no Univer chrome) the shell stays visible
+       as a slim top bar. Element ids are unchanged; editor.js drives them by id. -->
+  <div class="lm-toolbar" id="lm-toolbar">
+    <div class="lm-tb-left" id="lm-toolbar-left">
       <strong id="lm-proj-title">项目 #{{ project_id }}</strong>
       <span class="lm-badge" id="lm-proj-status"></span>
       <span class="lm-muted" id="lm-grid-engine"></span>
@@ -12,15 +18,10 @@
            per collaborator, rendered by editor.js from awareness presence. -->
       <span class="lm-collab-members" id="lm-collab-members" hidden></span>
     </div>
-    <div class="lm-tb-right">
+    <div class="lm-tb-right" id="lm-toolbar-right">
       <button class="lm-btn" id="lm-import">导入</button>
       <button class="lm-btn" id="lm-export">导出 Excel</button>
       <button class="lm-btn lm-btn-primary" id="lm-run-selected" hidden>队列测试</button>
-      <a class="lm-btn" href="/lanmatrix/projects/{{ project_id }}/fields">字段配置</a>
-      <a class="lm-btn" href="/lanmatrix/projects/{{ project_id }}/models">模型管理</a>
-      <a class="lm-btn" href="/lanmatrix/projects/{{ project_id }}/tasks">上传任务</a>
-      <a class="lm-btn" href="/lanmatrix/projects/{{ project_id }}/members">成员管理</a>
-      <a class="lm-btn" href="/lanmatrix/projects/{{ project_id }}/audit">审计</a>
     </div>
   </div>
 
@@ -31,7 +32,14 @@
 
   <div id="lm-grid-host" class="lm-grid-host"></div>
 
-  <div class="lm-statusbar">
+  <!-- Row count + テスト区分 pager + dirty indicator. Starts hidden; the Univer
+       adapter adopts this node into Univer's native footer, so it sits to the
+       right of the 入出力 sheet tabs. The pager (#lm-pager) renders a compact
+       ◀ [区分] ▶ control with a hover bubble. With the built-in fallback grid,
+       editor.js reveals it as a thin bottom bar (.lm-footer-slot--bottom) so
+       paging stays reachable. Element ids are unchanged — editor.js drives them
+       by id. -->
+  <div id="lm-footer-slot" class="lm-footer-slot" hidden>
     <span id="lm-count" class="lm-muted"></span>
     <span id="lm-pager"></span>
     <span id="lm-dirty" class="lm-muted"></span>
