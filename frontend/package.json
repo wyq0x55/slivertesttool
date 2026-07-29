@@ -8,7 +8,7 @@
     "build": "vite build && vite build --config vite.collab.config.ts && npm run build:sbs",
     "build:univer": "vite build",
     "build:collab": "vite build --config vite.collab.config.ts",
-    "build:sbs": "vite build --config vite.sbs.config.ts && node scripts/copy-onig-wasm.mjs",
+    "build:sbs": "vite build --config vite.sbs.config.ts",
     "dev": "vite build --watch",
     "dev:collab": "vite build --config vite.collab.config.ts --watch",
     "dev:sbs": "vite build --config vite.sbs.config.ts --watch",

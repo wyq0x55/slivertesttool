@@ -20,7 +20,7 @@
     </div>
     <div class="lm-tb-right" id="lm-toolbar-right">
       <button class="lm-btn" id="lm-import">导入</button>
-      <button class="lm-btn" id="lm-export">导出 Excel</button>
+      <button class="lm-btn" id="lm-export">导出</button>
       <button class="lm-btn lm-btn-primary" id="lm-run-selected" hidden>队列测试</button>
     </div>
   </div>
@@ -67,11 +67,11 @@
 
 <dialog id="lm-export-dialog" class="lm-dialog">
   <form method="dialog" class="lm-card">
-    <h3>导出 Excel</h3>
+    <h3>导出</h3>
     <label>格式
       <select id="lm-export-format">
         <option value="generic">通用模板 (本平台格式)</option>
-        <option value="test_matrix">测试矩阵 (日文 VHILS 表头)</option>
+        <option value="test_matrix">测试矩阵 (日文表头)</option>
         <option value="libfunc">Lib 函数库 (lib_Func / 手順明细)</option>
         <option value="const">Const 常量表 (No. / 識別子名)</option>
         <option value="io">入出力信号池 (名称 / 路径)</option>
@@ -87,11 +87,11 @@
 
 <dialog id="lm-import-dialog" class="lm-dialog lm-dialog-wide">
   <form method="dialog" class="lm-card">
-    <h3>导入 Excel</h3>
+    <h3>导入</h3>
     <label>格式
       <select id="lm-import-format">
         <option value="generic">通用模板 (本平台导出/模板格式)</option>
-        <option value="test_matrix">测试矩阵 (日文 VHILS 表头)</option>
+        <option value="test_matrix">测试矩阵 (日文表头)</option>
         <option value="libfunc">Lib 函数库 (lib_Func / 手順明细)</option>
         <option value="const">Const 常量表 (No. / 識別子名)</option>
         <option value="io">入出力信号池 (名称 / 路径)</option>

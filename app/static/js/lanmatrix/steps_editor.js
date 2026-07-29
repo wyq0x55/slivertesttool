@@ -455,7 +455,11 @@
       this.dialog.classList.remove("lm-steps-drawer-full");
       const fsBtn = this.dialog.querySelector("#lm-steps-fullscreen");
       if (fsBtn) fsBtn.textContent = "⛶ 全屏";
-      this.titleEl.textContent = item.case_id || item.title || `#${item.id}`;
+      // Prefer the row's test_id (the key used for enqueue/run) so the drawer
+      // header reflects an edited test_id; fall back to case_id/title/#id for
+      // sheets/rows without a test_id.
+      this.titleEl.textContent =
+        this.testId || item.case_id || item.title || `#${item.id}`;
       this._syncStepArity();
       // Show NON-modally (with our own backdrop) so Univer's cell editor stays
       // interactive — see the constructor note. Show first so the Univer canvas

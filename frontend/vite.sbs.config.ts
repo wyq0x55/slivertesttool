@@ -1,5 +1,31 @@
 import { defineConfig } from "vite";
-import { resolve } from "path";
+import { createRequire } from "module";
+import { copyFileSync, mkdirSync } from "fs";
+import { dirname, resolve } from "path";
+
+const require = createRequire(import.meta.url);
+
+/**
+ * Vite plugin: after the bundle is written, copy the Oniguruma WASM regex
+ * engine next to the vendored SBS grammar so the browser can fetch it at
+ * runtime (app/static/vendor/sbs/onig.wasm). The editor bundle intentionally
+ * does NOT inline the wasm; it fetches this file. Doing the copy here (instead
+ * of a separate npm script) keeps the build self-contained -- no external
+ * script file to go missing.
+ */
+function copyOnigWasm() {
+  return {
+    name: "copy-onig-wasm",
+    closeBundle() {
+      const src = require.resolve("vscode-oniguruma/release/onig.wasm");
+      const dest = resolve(__dirname, "../app/static/vendor/sbs/onig.wasm");
+      mkdirSync(dirname(dest), { recursive: true });
+      copyFileSync(src, dest);
+      // eslint-disable-next-line no-console
+      console.log("copied onig.wasm ->", dest);
+    },
+  };
+}
 
 /**
  * Library build: bundle CodeMirror 6 + vscode-textmate + vscode-oniguruma into
@@ -23,6 +49,7 @@ import { resolve } from "path";
  * `npm run build:sbs`.
  */
 export default defineConfig({
+  plugins: [copyOnigWasm()],
   define: {
     "process.env.NODE_ENV": JSON.stringify("production"),
     "process.env": "{}",

@@ -309,7 +309,7 @@ def _row_is_empty(row_vals: dict[str, Any]) -> bool:
     return all(v is None or v == "" for v in row_vals.values())
 
 
-# Placeholder glyphs the VHILS workbook writes into "not applicable" cells when
+# Placeholder glyphs the workbook writes into "not applicable" cells when
 # 項目作成 (item_created) is 不要 — chiefly 実施日 (exec_date) and 実施者 (executor).
 # These must be treated as empty, otherwise a lone dash breaks date coercion /
 # field validation on import ("格式不正确").
