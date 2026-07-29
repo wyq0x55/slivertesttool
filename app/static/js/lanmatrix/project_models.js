@@ -41,11 +41,18 @@
         <td>${m.exists === false
           ? '<span class="lm-err">服务器缺失</span>' : "正常"}</td>
         <td>${canManage
-          ? `<button class="lm-btn lm-btn-sm lm-btn-danger lm-model-del" data-name="${esc(m.name)}">删除</button>`
+          ? (m.kind === "bundle"
+              ? `<button class="lm-btn lm-btn-sm lm-model-sbs" data-name="${esc(m.name)}">编辑 SBS</button> `
+              : "") +
+            `<button class="lm-btn lm-btn-sm lm-btn-danger lm-model-del" data-name="${esc(m.name)}">删除</button>`
           : ""}</td>
       </tr>`).join("");
     rows.querySelectorAll(".lm-model-del").forEach((b) =>
       b.addEventListener("click", () => removeModel(b.dataset.name)));
+    rows.querySelectorAll(".lm-model-sbs").forEach((b) =>
+      b.addEventListener("click", () => {
+        if (window.LMSbsModal) { window.LMSbsModal.open(pid, b.dataset.name); }
+      }));
   }
 
   async function load() {

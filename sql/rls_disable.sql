@@ -21,8 +21,8 @@ declare t text;
 begin
   foreach t in array array[
     'app_settings', 'lm_users', 'lm_projects', 'lm_project_members',
-    'lm_field_definitions', 'lm_project_models', 'lm_test_items',
-    'lm_cell_comments', 'lm_audit_logs', 'lm_data_jobs',
+    'lm_field_definitions', 'lm_project_models', 'lm_sbs_revisions',
+    'lm_test_items', 'lm_cell_comments', 'lm_audit_logs', 'lm_data_jobs',
     'lm_collab_doc', 'lm_collab_presence', 'tasks', 'task_events'
   ]
   loop
@@ -46,6 +46,7 @@ drop policy if exists p_audit_read on lm_audit_logs;
 drop policy if exists lm_project_members_member    on lm_project_members;
 drop policy if exists lm_field_definitions_member  on lm_field_definitions;
 drop policy if exists lm_project_models_member     on lm_project_models;
+drop policy if exists lm_sbs_revisions_member       on lm_sbs_revisions;
 drop policy if exists lm_test_items_member         on lm_test_items;
 drop policy if exists lm_cell_comments_member      on lm_cell_comments;
 drop policy if exists lm_data_jobs_member          on lm_data_jobs;

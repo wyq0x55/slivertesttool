@@ -53,8 +53,8 @@ declare t text;
 begin
   foreach t in array array[
     'lm_projects', 'lm_project_members', 'lm_field_definitions',
-    'lm_project_models', 'lm_test_items', 'lm_cell_comments',
-    'lm_data_jobs', 'lm_collab_doc', 'lm_collab_presence'
+    'lm_project_models', 'lm_sbs_revisions', 'lm_test_items',
+    'lm_cell_comments', 'lm_data_jobs', 'lm_collab_doc', 'lm_collab_presence'
   ]
   loop
     execute format('alter table %I enable row level security;', t);
@@ -72,7 +72,7 @@ declare t text;
 begin
   foreach t in array array[
     'lm_project_members', 'lm_field_definitions', 'lm_project_models',
-    'lm_test_items', 'lm_cell_comments', 'lm_data_jobs',
+    'lm_sbs_revisions', 'lm_test_items', 'lm_cell_comments', 'lm_data_jobs',
     'lm_collab_doc', 'lm_collab_presence'
   ]
   loop

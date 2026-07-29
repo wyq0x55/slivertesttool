@@ -295,6 +295,49 @@ class ProjectModel(db.Model):
 
 
 # --------------------------------------------------------------------------- #
+# SBS revision history
+# --------------------------------------------------------------------------- #
+# Every save of a bundle model's ``.sbs`` file appends a snapshot here so the
+# UI can browse / preview / restore prior versions. The optimistic-lock check
+# compares the client's ``base_version`` (sha256) against the current on-disk
+# sha before writing. History is pruned to the most recent 50 rows per model.
+class SbsRevision(db.Model):
+    __tablename__ = "lm_sbs_revisions"
+    __table_args__ = (
+        db.Index("ix_sbs_model_time", "model_id", "created_at"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(
+        db.Integer, db.ForeignKey("lm_projects.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    model_id = db.Column(
+        db.Integer, db.ForeignKey("lm_project_models.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    filename = db.Column(db.String(255), nullable=False, default="")
+    content = db.Column(db.Text, nullable=False, default="")
+    sha256 = db.Column(db.String(64), nullable=False, default="")
+    size = db.Column(db.Integer, nullable=False, default=0)
+    author_id = db.Column(db.Integer, db.ForeignKey("lm_users.id"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=_utcnow, index=True)
+
+    def to_dict(self, *, include_content: bool = False) -> dict:
+        entry = {
+            "id": self.id,
+            "filename": self.filename,
+            "sha256": self.sha256,
+            "size": self.size,
+            "author_id": self.author_id,
+            "created_at": _iso(self.created_at),
+        }
+        if include_content:
+            entry["content"] = self.content
+        return entry
+
+
+# --------------------------------------------------------------------------- #
 # Test items
 # --------------------------------------------------------------------------- #
 class TestItemRow(db.Model):

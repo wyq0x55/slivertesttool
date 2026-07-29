@@ -13,6 +13,7 @@ from .lanmatrix import (
     Project,
     ProjectMember,
     ProjectModel,
+    SbsRevision,
     TestItemRow,
 )
 from .setting import Setting
@@ -30,6 +31,7 @@ __all__ = [
     "ProjectMember",
     "Project",
     "ProjectModel",
+    "SbsRevision",
     "FieldDefinition",
     "TestItemRow",
     "CellComment",

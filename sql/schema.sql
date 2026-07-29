@@ -165,6 +165,24 @@ create table lm_project_models (
 create index lm_project_models_created_by_idx on lm_project_models (created_by);
 
 -- ===========================================================================
+-- lm_sbs_revisions  (in-app SBS editor history; last 50 kept per model)
+-- ===========================================================================
+create table lm_sbs_revisions (
+  id         bigint generated always as identity primary key,
+  project_id bigint      not null references lm_projects(id) on delete cascade,
+  model_id   bigint      not null references lm_project_models(id) on delete cascade,
+  filename   text        not null default '',
+  content    text        not null default '',
+  sha256     text        not null default '',
+  size       integer     not null default 0,
+  author_id  bigint      references lm_users(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+create index lm_sbs_revisions_project_id_idx on lm_sbs_revisions (project_id);
+create index lm_sbs_revisions_author_id_idx  on lm_sbs_revisions (author_id);
+create index lm_sbs_revisions_model_time_idx on lm_sbs_revisions (model_id, created_at desc);
+
+-- ===========================================================================
 -- lm_test_items  (the matrix rows; first-class core columns + JSONB overflow)
 -- ===========================================================================
 create table lm_test_items (

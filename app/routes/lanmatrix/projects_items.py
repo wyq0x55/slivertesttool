@@ -22,7 +22,7 @@ from ...services import (
 )
 from ...services.upload_service import UploadError
 from ...services.lanmatrix import (
-    dbadmin, excel_service, fields, permissions, service, settings,
+    dbadmin, excel_service, fields, permissions, sbs_service, service, settings,
 )
 from ...services.lanmatrix.permissions import PermissionDenied
 from ...services.lanmatrix.service import ServiceError, VersionConflict
@@ -219,6 +219,59 @@ def remove_project_model(project_id):
     return ok({"removed": removed,
                "models": project_model_service.list_models(
                    project_id, include_path=True)})
+
+# --------------------------------------------------------------------------- #
+# In-app SBS editor (bundle models): read / save (optimistic lock) + history
+# --------------------------------------------------------------------------- #
+@bp.get("/projects/<int:project_id>/models/sbs")
+@login_required
+def get_model_sbs(project_id):
+    _project_and_role(project_id, "model.manage")
+    name = (request.args.get("name") or "").strip()
+    return ok({"sbs": sbs_service.read_sbs(project_id, name)})
+
+@bp.put("/projects/<int:project_id>/models/sbs")
+@login_required
+def save_model_sbs(project_id):
+    _project_and_role(project_id, "model.manage")
+    body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()
+    try:
+        result = sbs_service.write_sbs(
+            project_id, name, body.get("content"),
+            (body.get("base_version") or "").strip(),
+            author_id=g.user.id, client_ip=_client_ip())
+    except sbs_service.SbsConflict as exc:
+        return err(exc.code, str(exc), details=exc.server_data, status=409)
+    return ok({"sbs": result})
+
+@bp.get("/projects/<int:project_id>/models/sbs/revisions")
+@login_required
+def list_model_sbs_revisions(project_id):
+    _project_and_role(project_id, "model.manage")
+    name = (request.args.get("name") or "").strip()
+    return ok({"revisions": sbs_service.list_revisions(project_id, name)})
+
+@bp.get("/projects/<int:project_id>/models/sbs/revisions/<int:revision_id>")
+@login_required
+def get_model_sbs_revision(project_id, revision_id):
+    _project_and_role(project_id, "model.manage")
+    name = (request.args.get("name") or "").strip()
+    return ok({"revision": sbs_service.get_revision(project_id, name, revision_id)})
+
+@bp.post("/projects/<int:project_id>/models/sbs/revisions/<int:revision_id>/restore")
+@login_required
+def restore_model_sbs_revision(project_id, revision_id):
+    _project_and_role(project_id, "model.manage")
+    body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()
+    try:
+        result = sbs_service.restore_revision(
+            project_id, name, revision_id,
+            author_id=g.user.id, client_ip=_client_ip())
+    except sbs_service.SbsConflict as exc:
+        return err(exc.code, str(exc), details=exc.server_data, status=409)
+    return ok({"sbs": result})
 
 @bp.get("/projects/<int:project_id>/items")
 @login_required

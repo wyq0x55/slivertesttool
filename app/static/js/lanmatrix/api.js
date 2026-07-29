@@ -197,6 +197,11 @@
     addProjectModel(id, name, path) { return request("POST", `/projects/${id}/models`, { body: { name, path } }); },
     uploadProjectModel(id, formData) { return request("POST", `/projects/${id}/models/upload`, { body: formData }); },
     removeProjectModel(id, name) { return request("DELETE", `/projects/${id}/models`, { body: { name } }); },
+    getModelSbs(id, name) { return request("GET", `/projects/${id}/models/sbs`, { query: { name } }); },
+    saveModelSbs(id, body) { return request("PUT", `/projects/${id}/models/sbs`, { body }); },
+    listModelSbsRevisions(id, name) { return request("GET", `/projects/${id}/models/sbs/revisions`, { query: { name } }); },
+    getModelSbsRevision(id, name, rev) { return request("GET", `/projects/${id}/models/sbs/revisions/${rev}`, { query: { name } }); },
+    restoreModelSbsRevision(id, name, rev) { return request("POST", `/projects/${id}/models/sbs/revisions/${rev}/restore`, { body: { name } }); },
 
     // --- Project Upload Tasks (test execution) --------------------------- //
     listProjectTasks(id) { return request("GET", `/projects/${id}/tasks`); },
