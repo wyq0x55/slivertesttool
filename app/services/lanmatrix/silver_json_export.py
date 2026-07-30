@@ -141,10 +141,23 @@ def _steps_list(body: dict) -> list:
 # input cell of ``-`` or blank means "no check / no input on this step".
 # --------------------------------------------------------------------------- #
 _PAREN_RE = re.compile(r"^(?P<jname>.*?)[（(]\s*(?P<ident>[^（）()]+?)\s*[)）]\s*$")
-# An interval / range cell such as "[0,50)" or "(0,50]" is passed through as a
-# bare identifier so the paren-splitter above does not strip its brackets.
+# An interval / range cell such as "[0,50)" or "(0,50]" — optionally carrying a
+# 和名 prefix like "カウント開始[0,65535)" — is detected here so the paren-splitter
+# above neither strips its brackets nor mistakes "(lo,hi)" for a single
+# identifier. The bracketed part is returned as the identifier; the runner
+# resolves any constant names inside it and honours [ ] (inclusive) vs ( )
+# (exclusive) bounds. Half- and full-width brackets / separators are accepted.
+_INTERVAL_OPEN = "\\[\\(\uff3b\uff08"          # [ ( （fw） ［fw］
+_INTERVAL_CLOSE = "\\]\\)\uff3d\uff09"         # ] ) ）fw） ］fw］
+_INTERVAL_SEP = ",\u3001\uff0c"                # , 、 ，
 _INTERVAL_CELL_RE = re.compile(
-    r"^[\[\(].*?[,\u3001\uff0c，].*?[\]\)]$", re.S)
+    r"^(?P<jname>.*?)"
+    r"(?P<interval>[" + _INTERVAL_OPEN + r"]"
+    r"[^" + _INTERVAL_OPEN + _INTERVAL_CLOSE + r"]*?"
+    r"[" + _INTERVAL_SEP + r"]"
+    r"[^" + _INTERVAL_OPEN + _INTERVAL_CLOSE + r"]*?"
+    r"[" + _INTERVAL_CLOSE + r"])\s*$",
+    re.S)
 
 
 def _blank_cell(cell: Any) -> bool:
@@ -155,14 +168,23 @@ def _blank_cell(cell: Any) -> bool:
 
 
 def _split_cell(cell: Any) -> tuple[str, str]:
-    """Split a ``和名(識別子)`` cell into ``(jname, identifier)``.
+    """Split a value cell into ``(jname, identifier)``.
 
-    Both full-width ``（）`` and half-width ``()`` parentheses are accepted. A
-    cell without parentheses is treated as a bare identifier (``jname=''``).
+    Three shapes are recognised, in priority order:
+
+    * an interval / range such as ``[0,50)`` / ``(0,65535]``, optionally with a
+      ``和名`` prefix (``カウント開始[U1G_DATA_ZERO,U2G_DAT_MAX)``). The bracketed
+      part is returned verbatim as the identifier so the runner can resolve the
+      constant names inside it and honour ``[`` ``]`` (inclusive) vs ``(`` ``)``
+      (exclusive) bounds; the prefix becomes ``jname``.
+    * ``和名(識別子)`` — a named constant / parameter; both full-width ``（）`` and
+      half-width ``()`` parentheses are accepted.
+    * anything else is treated as a bare identifier (``jname=''``).
     """
     s = "" if cell is None else str(cell).strip()
-    if _INTERVAL_CELL_RE.match(unicodedata.normalize("NFKC", s)):
-        return "", s
+    m = _INTERVAL_CELL_RE.match(s)
+    if m:
+        return m.group("jname").strip(), m.group("interval").strip()
     m = _PAREN_RE.match(s)
     if m:
         return m.group("jname").strip(), m.group("ident").strip()
@@ -350,8 +372,10 @@ def _convert_step(step: dict,
     inputs, checks``. Empty sections are omitted entirely.
 
     *params* (lib subroutines only) maps a subroutine's formal-parameter names
-    (``lib_para``) to their declared default; a value / expected cell naming a
-    parameter is bound to that default rather than resolved as a constant.
+    (``lib_para``) to their declared default. A value / expected cell naming a
+    parameter is emitted with the default as its baked value plus a ``param``
+    marker; at run time the caller's matching argument (実引数, emitted on the
+    calling step's ``args``) overrides that default via the ``param`` marker.
     """
     out: dict[str, Any] = {"no": step.get("no")}
 
@@ -363,7 +387,11 @@ def _convert_step(step: dict,
         out["comment"] = operation
 
     if action_sub:
-        out["actions"] = [{"subroutine": action_sub}]
+        action: dict[str, Any] = {"subroutine": action_sub}
+        call_args = _parse_call_args(step.get("args"))
+        if call_args:
+            action["args"] = call_args
+        out["actions"] = [action]
 
     inputs: list[dict] = []
     in_cells = step.get("inputs") or []
@@ -373,9 +401,10 @@ def _convert_step(step: dict,
             continue
         _jname, ident = _split_cell(cell)
         if params is not None and ident in params:
-            # The cell names a formal parameter (lib_para), not a constant. Bind
-            # it to the parameter's declared default; a parameter with no default
-            # falls back to 0 (there is no caller-argument passing mechanism yet).
+            # The cell names a formal parameter (lib_para), not a constant. Emit
+            # the parameter's declared default as the baked value (0 when none)
+            # and tag it with ``param``; the runner overrides this with the
+            # caller's actual argument (実引数) for that parameter at run time.
             dflt = params[ident]
             inputs.append({"var": path, "value": 0 if dflt is None else dflt,
                            "param": ident})
@@ -450,6 +479,23 @@ def build_constants(const_rows: Iterable[TestItemRow]) -> dict:
 # A ``lib_para`` (仮引数) token separator: comma / full-width comma / ideographic
 # comma / any newline. The field is authored as a single- or multi-value list.
 _LIB_PARA_SEP_RE = re.compile(r"[,\uFF0C\u3001\n\r]+")
+
+
+def _parse_call_args(raw: Any) -> list[str]:
+    """Split a step's ``args`` cell (実引数) into ordered positional tokens.
+
+    Uses the same comma / full-width comma / ideographic comma / newline
+    separators as a formal-parameter list. Each token is emitted verbatim (a
+    constant name, numeric / hex literal, or arithmetic expression); the runner
+    resolves it against the constant table when the subroutine is invoked. A
+    blank or ``-`` placeholder cell yields no arguments.
+    """
+    if raw is None:
+        return []
+    text = raw if isinstance(raw, str) else str(raw)
+    if text.strip() in ("", "-"):
+        return []
+    return [tok.strip() for tok in _LIB_PARA_SEP_RE.split(text) if tok.strip()]
 
 
 def _parse_lib_params(raw: Any) -> list[tuple[str, Any]]:
