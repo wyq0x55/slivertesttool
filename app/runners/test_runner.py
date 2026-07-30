@@ -23,8 +23,8 @@ from pathlib import Path
 from typing import Any
 
 from ..extensions import db
-from ..models import Task, TaskStatus
-from ..services import event_service, report_service
+from ..models import Task, TaskStatus, TestItemRow
+from ..services import event_service, report_service, task_service
 from . import run_layout
 from .silver_runner import (
     RunContext,
@@ -199,13 +199,16 @@ def _tail_console(app, task_pk: int, console_path: Path,
         time.sleep(_TAIL_POLL_SECONDS)
 
 
-def execute(app, config, task: Task, pool=None, instance=None) -> None:
+def execute(app, config, task: Task, pool=None, instance=None,
+            dedicated_slot=None) -> None:
     """Execute one task end-to-end. Must be called within an app context.
 
     When *pool* and *instance* are supplied the job runs on a pre-warmed,
     reusable pool instance (fast path -- no Silver process launch). Otherwise a
-    dedicated instance is launched for this job (classic path). Both paths share
-    identical configuration, cancellation and reporting logic.
+    dedicated instance is launched for this job (classic path). ``dedicated_slot``
+    (classic path only) is the recycled ``inst_<n>`` slot number the caller
+    reserved for this run so its run folder is reused instead of accumulating.
+    Both paths share identical configuration, cancellation and reporting logic.
     """
     pooled = pool is not None and instance is not None
 
@@ -218,7 +221,8 @@ def execute(app, config, task: Task, pool=None, instance=None) -> None:
     log_dir.mkdir(parents=True, exist_ok=True)
     staging = run_layout.staging_dir(workspace, task.test_id)
     run_dir = run_layout.instance_run_dir(
-        config, task.id, task.test_id, instance if pooled else None)
+        config, task.id, task.test_id, instance if pooled else None,
+        slot=None if pooled else dedicated_slot)
     shutil.rmtree(run_dir, ignore_errors=True)
     if staging.is_dir():
         shutil.copytree(staging, run_dir)
@@ -310,6 +314,10 @@ def execute(app, config, task: Task, pool=None, instance=None) -> None:
         _finalise(task, TaskStatus.FAILED, str(exc), verdict="ERROR")
         event_service.emit_error(task, str(exc))
         event_service.emit_result(task, "failed", str(exc))
+        # An ERROR is an environment problem, not a test-logic failure: abort the
+        # rest of THIS project's queue so it does not keep failing (other
+        # projects are untouched).
+        _cancel_project_queue_on_error(task, str(exc))
         return
     except Exception as exc:  # noqa: BLE001
         stop_threads.set()
@@ -319,6 +327,7 @@ def execute(app, config, task: Task, pool=None, instance=None) -> None:
         _finalise(task, TaskStatus.FAILED, f"Internal error: {exc}", verdict="ERROR")
         event_service.emit_error(task, f"Internal error: {exc}")
         event_service.emit_result(task, "failed", f"Internal error: {exc}")
+        _cancel_project_queue_on_error(task, f"Internal error: {exc}")
         return
     finally:
         stop_threads.set()
@@ -367,6 +376,32 @@ def _slice_console(source: Path, start_offset: int, dest: Path) -> None:
         logger.warning("Could not slice console log %s -> %s", source, dest)
 
 
+def _cancel_project_queue_on_error(task: Task, detail: str) -> None:
+    """Cancel the rest of ``task``'s project queue after an environment error.
+
+    Only the SAME project's still-queued tasks are cancelled; other projects and
+    already-running/finished tasks are left untouched. Best-effort: a failure
+    here must never mask the original error, so it is logged and swallowed.
+    """
+    try:
+        reason = (
+            "Cancelled: environment error in this project's queue "
+            f"(task {task.task_key}: {detail})."
+        )
+        cancelled = task_service.cancel_project_queue(
+            task.project_id, exclude_task_id=task.id, reason=reason)
+        for sibling in cancelled:
+            event_service.emit_status(sibling, "cancelled", reason)
+            event_service.emit_result(sibling, "cancelled", reason)
+        if cancelled:
+            logger.info(
+                "Environment error on task %s cancelled %d queued sibling(s) "
+                "in project %s", task.task_key, len(cancelled), task.project_id)
+    except Exception:  # noqa: BLE001 - never let cleanup mask the real error
+        logger.exception(
+            "Failed to cancel project queue after error on task %s", task.task_key)
+
+
 def _finalise(task: Task, status: TaskStatus, message: str, verdict: str) -> None:
     task.status = status.value
     task.message = message
@@ -374,3 +409,39 @@ def _finalise(task: Task, status: TaskStatus, message: str, verdict: str) -> Non
     task.finished_at = _utcnow()
     db.session.add(task)
     db.session.commit()
+    _write_row_result(task, verdict)
+
+
+def _write_row_result(task: Task, verdict: str) -> None:
+    """Mirror the task verdict onto the matching Test-Matrix row(s).
+
+    The editor colours each test row from its ``result`` field (row-level
+    conditional formatting), so the run outcome has to flow back from the
+    Task world into ``TestItemRow.result``. A row is matched by project +
+    logical test id (``row_test_id`` = the row's ``test_id`` field, else its
+    ``case_id``); a test id shared by several rows updates all of them. Purely
+    best-effort: a write-back failure must never fail the run itself.
+    """
+    if not task.project_id or not task.test_id:
+        return
+    try:
+        from ..services.lanmatrix import silver_json_export as sje
+
+        value = (verdict or "")[:24]
+        rows = TestItemRow.query.filter_by(
+            project_id=task.project_id, sheet="test", deleted_at=None,
+        ).all()
+        changed = False
+        for row in rows:
+            if sje.row_test_id(row) != task.test_id:
+                continue
+            if row.result != value:
+                row.result = value
+                row.version = (row.version or 1) + 1
+                db.session.add(row)
+                changed = True
+        if changed:
+            db.session.commit()
+    except Exception:  # pragma: no cover - defensive, never break the run
+        db.session.rollback()
+        logger.exception("failed to mirror verdict onto TestItemRow.result")

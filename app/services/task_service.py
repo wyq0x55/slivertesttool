@@ -169,6 +169,48 @@ def request_cancel(task: Task) -> str:
     return "cancelling_running"
 
 
+def cancel_project_queue(
+    project_id: Optional[int],
+    exclude_task_id: Optional[int] = None,
+    reason: str = "Cancelled: an environment error occurred earlier in this project's queue.",
+) -> List[Task]:
+    """Cancel every still-QUEUED task of ``project_id`` (except ``exclude_task_id``).
+
+    Used when one task in a project fails with an *environment* error: the shared
+    setup is presumed broken, so the remaining queued tests would only pile up
+    more failures. Cancelling them fast frees the licenses for other projects.
+
+    Scope guarantees:
+      * Only tasks with the SAME ``project_id`` are touched -- other projects run
+        unaffected.
+      * Unscoped tasks (``project_id is None``) never trigger a cascade.
+      * Only QUEUED tasks are cancelled; RUNNING/finished tasks are left alone.
+
+    Returns the list of tasks that were transitioned to CANCELLED so the caller
+    can emit UI/SSE events for each.
+    """
+    if project_id is None:
+        return []
+    query = Task.query.filter(
+        Task.project_id == project_id,
+        Task.status == TaskStatus.QUEUED.value,
+    )
+    if exclude_task_id is not None:
+        query = query.filter(Task.id != exclude_task_id)
+
+    cancelled: List[Task] = []
+    now = _utcnow()
+    for task in query.all():
+        task.cancel_requested = True
+        task.status = TaskStatus.CANCELLED.value
+        task.finished_at = now
+        task.message = reason
+        cancelled.append(task)
+    if cancelled:
+        db.session.commit()
+    return cancelled
+
+
 def delete_task(task: Task) -> None:
     db.session.delete(task)
     db.session.commit()

@@ -61,18 +61,30 @@ def staging_dir(workspace_root, test_id: str) -> Path:
     return Path(workspace_root) / ".pending" / safe_tid(test_id)
 
 
-def instance_label(task_id: int, instance: Any = None) -> str:
-    """Directory label for the runtime instance a job executes on."""
+def instance_label(task_id: int, instance: Any = None, slot: Any = None) -> str:
+    """Directory label for the runtime instance a job executes on.
+
+    The label is always ``inst_<n>`` where ``n`` is a *bounded, reused* slot
+    number: the pooled instance's ``uid`` (pool path) or an explicitly supplied
+    dedicated ``slot`` (classic path). Both are recycled once the run ends, so
+    the number of ``inst_<n>`` folders never exceeds the peak concurrency
+    instead of growing one-per-task.
+    """
     uid = getattr(instance, "uid", None)
     if uid is not None:
         return f"inst_{uid}"
-    return f"inst_dedicated_{task_id}"
+    if slot is not None:
+        return f"inst_{slot}"
+    # Last-resort fallback (should not happen in normal operation): keep it
+    # deterministic and collision-free by keying on the task id.
+    return f"inst_{task_id}"
 
 
-def instance_run_dir(config, task_id: int, test_id: str, instance: Any = None) -> Path:
+def instance_run_dir(config, task_id: int, test_id: str, instance: Any = None,
+                     slot: Any = None) -> Path:
     """Runtime run-script dir under ``POOL_DIR`` for the chosen instance.
 
     Scripts are copied here just before execution and removed afterwards.
     """
-    return (Path(config.POOL_DIR) / instance_label(task_id, instance)
+    return (Path(config.POOL_DIR) / instance_label(task_id, instance, slot)
             / f"run_{safe_tid(test_id)}")

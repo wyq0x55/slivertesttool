@@ -206,7 +206,11 @@ class SilverRunner(SilverRunnerBase):
         )
         try:
             moduleuuid = silver.add_module(index=index, sil_line=sil_line)
-            silver.set_module_property(moduleuuid,"remote_cluster","host32")
+            silver.set_module_property(moduleuuid, "remote_cluster", "host32")
+            # macroStep (macro time step) + speedup (real-time factor) are
+            # GLOBAL config properties -> emitted as top-level <property .../>.
+            silver.set_silver_property("macroStep", "0.001")
+            silver.set_silver_property("speedup", "0.0")
             silver.save(str(sil_path))
         finally:
             self._safe_dispose(silver)

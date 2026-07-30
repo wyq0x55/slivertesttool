@@ -195,6 +195,11 @@ def _run_task_dedicated(app, config, task_pk: int) -> None:
                 time.sleep(_LICENSE_POLL_SECONDS)
 
         # --- Phase 2: run, always releasing the slot. ---
+        # Reserve a bounded, reused run-folder slot so the classic path also
+        # labels its directory ``inst_<n>`` (recycled on release) instead of a
+        # unique ``inst_dedicated_<task_id>`` per task that piles up on disk.
+        from ..runners.slots import dedicated_allocator
+        slot = dedicated_allocator().acquire()
         try:
             task = db.session.get(Task, task_pk)
             if task is None:
@@ -208,7 +213,7 @@ def _run_task_dedicated(app, config, task_pk: int) -> None:
             db.session.commit()
             event_service.emit_status(task, "running", "Running on Silver.")
 
-            test_runner.execute(app, app.config_obj, task)
+            test_runner.execute(app, app.config_obj, task, dedicated_slot=slot)
         except Exception as exc:  # noqa: BLE001
             logger.exception("run_task failed for pk=%s", task_pk)
             task = db.session.get(Task, task_pk)
@@ -218,6 +223,7 @@ def _run_task_dedicated(app, config, task_pk: int) -> None:
                 task.finished_at = _utcnow()
                 db.session.commit()
         finally:
+            dedicated_allocator().release(slot)
             license_service.release()
 
 

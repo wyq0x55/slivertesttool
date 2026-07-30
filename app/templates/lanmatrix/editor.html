@@ -128,6 +128,7 @@
       <h3>步骤明细编辑 · <span id="lm-steps-title" class="lm-muted"></span><span id="lm-steps-task-status" class="lm-badge lm-status-notask" hidden></span></h3>
       <div class="lm-steps-tools">
         <button type="button" class="lm-btn lm-btn-sm" id="lm-steps-ref-toggle" title="Lib / Const 参考查询">📚 参考</button>
+        <button type="button" class="lm-btn lm-btn-sm" id="lm-steps-json-toggle" title="以 JSON 代码编辑，与表格实时同步">{ } JSON</button>
         <button type="button" class="lm-btn lm-btn-sm" id="lm-steps-fullscreen">⛶ 全屏</button>
         <button type="button" class="lm-btn lm-btn-sm" id="lm-steps-enqueue" hidden>▶ 入队测试</button>
         <button value="save" id="lm-steps-save" class="lm-btn lm-btn-sm lm-btn-primary">保存步骤</button>
@@ -139,6 +140,15 @@
       <aside id="lm-steps-ref" class="lm-ref-panel" hidden></aside>
     </div>
     <div class="lm-error" id="lm-steps-error" hidden></div>
+    <aside id="lm-steps-json" class="lm-steps-json-drawer" hidden>
+      <header class="lm-steps-json-head">
+        <strong>JSON 编辑</strong>
+        <span class="lm-muted lm-steps-json-hint">与表格实时双向同步</span>
+        <button type="button" class="lm-btn lm-btn-sm" id="lm-steps-json-close">✕ 关闭</button>
+      </header>
+      <div id="lm-steps-json-body" class="lm-steps-json-body"></div>
+      <div class="lm-error" id="lm-steps-json-error" hidden></div>
+    </aside>
   </form>
 </dialog>
 {% endblock %}
@@ -152,6 +162,7 @@
 {% endif %}
 <script src="{{ url_for('static', filename='js/lanmatrix/grid.js') }}"></script>
 <script src="{{ url_for('static', filename='js/lanmatrix/steps_ref_panel.js') }}"></script>
+<script src="{{ url_for('static', filename='js/lanmatrix/json_editor.js') }}"></script>
 <script src="{{ url_for('static', filename='js/lanmatrix/steps_editor.js') }}"></script>
 <script src="{{ url_for('static', filename='js/lanmatrix/collab.js') }}"></script>
 <script src="{{ url_for('static', filename='js/lanmatrix/editor.js') }}"></script>

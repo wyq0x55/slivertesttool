@@ -38,6 +38,7 @@ LIB_FUNC = "lib_func"
 LIB_NAME = "lib_name"
 LIB_ISINIT = "isinit"
 LIB_STEPS = "lib_stb"
+LIB_PARA = "lib_para"
 
 TEST_ID = "test_id"
 TEST_STEPS = "steps"
@@ -341,11 +342,16 @@ def _step_subroutine(step: dict) -> str:
 def _convert_step(step: dict,
                   in_sigs: list[tuple[str, str]],
                   exp_sigs: list[tuple[str, str]],
-                  *, action_sub: Optional[str] = None) -> dict:
+                  *, action_sub: Optional[str] = None,
+                  params: Optional[dict] = None) -> dict:
     """Turn one columnar step into a runner ``steps[]`` entry.
 
     Key order matches the reference JSON: ``no, category, comment, actions,
     inputs, checks``. Empty sections are omitted entirely.
+
+    *params* (lib subroutines only) maps a subroutine's formal-parameter names
+    (``lib_para``) to their declared default; a value / expected cell naming a
+    parameter is bound to that default rather than resolved as a constant.
     """
     out: dict[str, Any] = {"no": step.get("no")}
 
@@ -366,7 +372,15 @@ def _convert_step(step: dict,
         if _blank_cell(cell):
             continue
         _jname, ident = _split_cell(cell)
-        inputs.append({"var": path, "value": _coerce_const_value(ident)})
+        if params is not None and ident in params:
+            # The cell names a formal parameter (lib_para), not a constant. Bind
+            # it to the parameter's declared default; a parameter with no default
+            # falls back to 0 (there is no caller-argument passing mechanism yet).
+            dflt = params[ident]
+            inputs.append({"var": path, "value": 0 if dflt is None else dflt,
+                           "param": ident})
+        else:
+            inputs.append({"var": path, "value": _coerce_const_value(ident)})
     if inputs:
         out["inputs"] = inputs
 
@@ -378,7 +392,13 @@ def _convert_step(step: dict,
         if _blank_cell(cell):
             continue
         jname, ident = _split_cell(cell)
-        chk: dict[str, Any] = {"var": path, "label": name, "expected": ident}
+        if params is not None and ident in params:
+            dflt = params[ident]
+            chk: dict[str, Any] = {"var": path, "label": name,
+                                   "expected": 0 if dflt is None else dflt,
+                                   "param": ident}
+        else:
+            chk = {"var": path, "label": name, "expected": ident}
         if jname:
             chk["desc"] = jname
         chk["timing"] = tinfo.display
@@ -427,7 +447,94 @@ def build_constants(const_rows: Iterable[TestItemRow]) -> dict:
     return {"constants": consts}
 
 
-def build_lib(lib_rows: Iterable[TestItemRow]) -> dict:
+# A ``lib_para`` (仮引数) token separator: comma / full-width comma / ideographic
+# comma / any newline. The field is authored as a single- or multi-value list.
+_LIB_PARA_SEP_RE = re.compile(r"[,\uFF0C\u3001\n\r]+")
+
+
+def _parse_lib_params(raw: Any) -> list[tuple[str, Any]]:
+    """Parse a ``lib_para`` field into ordered ``(name, default)`` pairs.
+
+    Formal parameters are authored as a comma/newline-separated list; each entry
+    is a bare name (``value``) or ``name=default`` (``value1=0``). A single
+    parameter (``value``) and multiple parameters (``value1,value2``) are both
+    accepted, with optional defaults (``value1=0,value2=1``). Defaults are
+    coerced numerically where possible; a bare name has a ``None`` default.
+    Duplicate names keep their first occurrence.
+    """
+    if raw is None:
+        return []
+    text = raw if isinstance(raw, str) else str(raw)
+    out: list[tuple[str, Any]] = []
+    seen: set[str] = set()
+    for tok in _LIB_PARA_SEP_RE.split(text):
+        tok = tok.strip()
+        if not tok:
+            continue
+        if "=" in tok:
+            name, _, dflt = tok.partition("=")
+            name = name.strip()
+            default: Any = _coerce_const_value(dflt.strip())
+        else:
+            name, default = tok, None
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append((name, default))
+    return out
+
+
+def _lib_rows_by_name(lib_rows: Iterable[TestItemRow]) -> dict[str, TestItemRow]:
+    """Index lib rows by their subroutine name (``lib_func`` / ``lib_name`` / id)."""
+    by_name: dict[str, TestItemRow] = {}
+    for row in lib_rows:
+        name = (row.get_field(LIB_FUNC) or row.get_field(LIB_NAME)
+                or row.case_id or "")
+        name = str(name).strip()
+        if name and name not in by_name:
+            by_name[name] = row
+    return by_name
+
+
+def _body_subroutines(body: dict) -> list[str]:
+    """The non-empty ``subroutine`` names referenced by a step-doc body."""
+    names: list[str] = []
+    for step in _steps_list(body):
+        if not isinstance(step, dict):
+            continue
+        sub = _step_subroutine(step)
+        if sub:
+            names.append(sub)
+    return names
+
+
+def collect_used_subroutines(test_row: TestItemRow,
+                             lib_rows: Iterable[TestItemRow]) -> set[str]:
+    """Names of every subroutine the test case reaches, transitively.
+
+    Starts from the ``subroutine`` actions of the test row's own steps and
+    follows each referenced lib's steps (a subroutine may call further
+    subroutines), so pruning ``lib.json`` to this set never drops a procedure the
+    case actually calls. Unknown names (referenced but absent from the lib sheet)
+    are ignored — ``build_lib`` simply omits them.
+    """
+    by_name = _lib_rows_by_name(lib_rows)
+    used: set[str] = set()
+    stack = _body_subroutines(_parse_json_field(test_row.get_field(TEST_STEPS)))
+    while stack:
+        name = stack.pop()
+        if name in used:
+            continue
+        used.add(name)
+        row = by_name.get(name)
+        if row is not None:
+            stack.extend(
+                _body_subroutines(_parse_json_field(row.get_field(LIB_STEPS))))
+    return used
+
+
+def build_lib(lib_rows: Iterable[TestItemRow], *,
+              used_names: Optional[Iterable[str]] = None) -> dict:
     """``lib`` sheet rows -> ``lib.json`` document.
 
     Each row's ``lib_stb`` field carries the same columnar 手順 block as a test
@@ -435,7 +542,18 @@ def build_lib(lib_rows: Iterable[TestItemRow]) -> dict:
     name is the row's ``lib_func`` (fallback ``lib_name`` / ``case_id``). The
     columnar steps are converted to the runner's per-step schema so a
     subroutine's ``inputs`` / ``checks`` resolve exactly like a test case's.
+
+    When *used_names* is given, only subroutines whose name appears in it are
+    emitted (see :func:`collect_used_subroutines`), so ``lib.json`` carries just
+    the procedures the test case actually calls instead of the whole library.
+
+    A row's ``lib_para`` (仮引数) declares formal parameters with optional
+    defaults; each is recorded on the subroutine entry as ``params`` and any
+    value / expected cell naming a parameter is bound to its default rather than
+    resolved as a constant.
     """
+    want = (None if used_names is None
+            else {str(n).strip() for n in used_names if str(n).strip()})
     subs: dict[str, dict] = {}
     for row in lib_rows:
         name = (row.get_field(LIB_FUNC) or row.get_field(LIB_NAME)
@@ -443,20 +561,29 @@ def build_lib(lib_rows: Iterable[TestItemRow]) -> dict:
         name = str(name).strip()
         if not name:
             continue
+        if want is not None and name not in want:
+            continue
         body = _parse_json_field(row.get_field(LIB_STEPS))
         in_sigs = _signal_pairs(body.get("input_signals"))
         exp_sigs = _signal_pairs(body.get("expected_signals"))
+        params = _parse_lib_params(row.get_field(LIB_PARA))
+        param_map = {n: d for n, d in params}
         steps_out: list[dict] = []
         for step in _steps_list(body):
             if not isinstance(step, dict):
                 continue
             sub = _step_subroutine(step)
             steps_out.append(
-                _convert_step(step, in_sigs, exp_sigs, action_sub=sub or None))
+                _convert_step(step, in_sigs, exp_sigs, action_sub=sub or None,
+                              params=param_map))
         entry: dict[str, Any] = {
             "kind": "init" if _as_bool(row.get_field(LIB_ISINIT)) else "process",
-            "steps": steps_out,
         }
+        if params:
+            entry["params"] = [
+                ({"name": n, "default": d} if d is not None else {"name": n})
+                for n, d in params]
+        entry["steps"] = steps_out
         if "default_timeout" in body:
             entry["default_timeout"] = body["default_timeout"]
         subs[name] = entry
@@ -542,7 +669,10 @@ def materialise_run_dir(
     runner_path = silver_json.copy_framework(case_dir)
 
     const_doc = build_constants(const_rows)
-    lib_doc = build_lib(lib_rows)
+    # Emit only the subroutines this test case actually reaches (transitively),
+    # so lib.json is scoped to the procedure instead of the whole library.
+    used_names = collect_used_subroutines(test_row, lib_rows)
+    lib_doc = build_lib(lib_rows, used_names=used_names)
     init_names = {
         name for name, entry in lib_doc.get("subroutines", {}).items()
         if isinstance(entry, dict) and entry.get("kind") == "init"
@@ -567,7 +697,13 @@ def materialise_run_dir(
     # declares no signals we skip the file entirely, and CsvWriter falls back to
     # recording all variables.
     output_txt = case_dir / "output.txt"
-    signal_paths = build_signal_list(test_row, lib_rows)
+    # Scope the signal list to the same subroutines emitted into lib.json.
+    used_lib_rows = [
+        row for row in lib_rows
+        if str(row.get_field(LIB_FUNC) or row.get_field(LIB_NAME)
+                or row.case_id or "").strip() in used_names
+    ]
+    signal_paths = build_signal_list(test_row, used_lib_rows)
     if signal_paths:
         output_txt.write_text("\n".join(signal_paths) + "\n", encoding="utf-8")
 

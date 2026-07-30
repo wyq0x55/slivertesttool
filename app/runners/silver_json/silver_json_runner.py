@@ -535,7 +535,25 @@ def pre_init(time):
 
 
 def MainGenerator(*args):
-    yield from run_test(_ctx, _STEPS)
+    # Safety net: a failure raised while running a lib / nested subroutine
+    # (e.g. a judge-idiom generator that returned, or any test-logic error) must
+    # be reported as a normal test FAIL, never propagated to Silver. An exception
+    # escaping here is caught by Silver as a DLL_ERROR, which the runner
+    # classifies as an environment ERROR and which then cancels the rest of the
+    # project's queue -- a single flaky nested lib must not do that. Finish the
+    # run cleanly with a FAIL verdict instead so only THIS test is marked failed.
+    try:
+        yield from run_test(_ctx, _STEPS)
+    except Exception as exc:            # noqa: BLE001
+        step_no = _ctx.test_step_no if _ctx.test_step_no != -1 else 1
+        if _ctx.test_result == -1:
+            _ctx.test_result = step_no
+        logging.info('Test aborted by exception in lib: %r' % exc)
+        print('Test is failed in Step%s!!!!' % _ctx.test_result)
+        logging.info('Test is failed in Step%s!!!!' % _ctx.test_result)
+        _ctx.test_python_over = 0
+        for _ in range(10):
+            yield
 
 
 def pre_cleanup(time):

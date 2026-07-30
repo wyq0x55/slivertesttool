@@ -67,6 +67,23 @@
       this._drawCellErrors();
     }
 
+    // Row-level conditional formatting (result + priority). ``map`` is
+    // ``{ rowId: "#rrggbb" }``; rows absent from the map keep their original
+    // (white) background. Re-applied after every render because innerHTML wipes
+    // inline styles. The editor computes the colours (single source of truth).
+    setRowFormats(map) {
+      this._rowFormats = map || {};
+      this._drawRowFormats();
+    }
+
+    _drawRowFormats() {
+      const map = this._rowFormats || {};
+      this.host.querySelectorAll("tbody tr[data-id]").forEach((tr) => {
+        const c = map[tr.dataset.id];
+        tr.style.background = c || "";
+      });
+    }
+
     _drawCellErrors() {
       const map = this._cellErrors || {};
       this.host.querySelectorAll("td.lm-cell.lm-cell-collab-error").forEach((td) => {
@@ -284,6 +301,7 @@
       this._bind();
       this._syncSelectAll();
       this._drawRemoteSelections();   // innerHTML wiped the overlay: repaint it (§6.1)
+      this._drawRowFormats();      // innerHTML wiped row colours: repaint them
       this._drawCellErrors();      // innerHTML wiped cell marks: repaint them (§12.2)
     }
 

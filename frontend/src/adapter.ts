@@ -212,6 +212,9 @@ interface SheetCtx {
   // "row,col" keys currently painted as server-rejected cells, so the next
   // setCellErrors call knows which cells to clear (design §12.2).
   errCells?: Set<string>;
+  // Row-level conditional-format colours keyed by row id ({id: "#rrggbb"}),
+  // re-applied after every full render (see setRowFormats).
+  rowFmt?: Record<number, string>;
 }
 
 const HEADER_ROWS = 1; // row 0 is the header; data starts at row 1
@@ -683,6 +686,34 @@ export class UniverGridAdapter {
     ctx.errCells = next;
   }
 
+  // Row-level conditional formatting (result + priority). ``map`` is
+  // ``{ rowId: "#rrggbb" }``; rows absent from the map are reset to the original
+  // (white) background. The editor computes the colours (single source of truth
+  // for the result/priority semantics); the adapter only paints them and
+  // re-applies on every full render (a reload clears cell backgrounds).
+  setRowFormats(key: string, map: Record<number, string>): void {
+    const ctx = this._ctx(key);
+    if (!ctx) return;
+    ctx.rowFmt = map || {};
+    this._applyRowFormats(ctx);
+  }
+
+  private _applyRowFormats(ctx: SheetCtx): void {
+    if (!ctx.fSheet) return;
+    const vis = this._visibleFields(ctx);
+    const width = Math.max(vis.length, 1);
+    const map = ctx.rowFmt || {};
+    this.applying = true;
+    try {
+      ctx.items.forEach((it, idx) => {
+        const color = map[it.id as number] || null;
+        try {
+          ctx.fSheet.getRange(HEADER_ROWS + idx, 0, 1, width).setBackgroundColor(color);
+        } catch (_e) { /* per-row best-effort */ }
+      });
+    } finally { this.applying = false; }
+  }
+
   // Incremental remote apply (real-time collaboration, design §1.3). When the
   // incoming rows have the SAME id sequence AND the SAME visible columns as what
   // is already rendered, write ONLY the cells whose value changed — leaving
@@ -895,6 +926,7 @@ export class UniverGridAdapter {
       // (see engine-render calculateAutoHeightInRange). Re-applied on every full
       // render so a reload never leaves a stretched row behind.
       this._lockRowHeights(ctx);
+      this._applyRowFormats(ctx);   // reload cleared backgrounds → repaint row colours
       this._applyValidations(ctx);
       this._applyFilter(ctx, vis.length);
       // Record the columns this full render was drawn with, so a later

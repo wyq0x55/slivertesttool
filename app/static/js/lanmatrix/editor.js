@@ -239,10 +239,11 @@
       categoryPages = buildCategoryPages(items, currentSheet);
     }
     pushFields(currentSheet, sheetFields[currentSheet] || fields);
-    pushData(currentSheet, shown, incremental);
+    pushData(currentSheet, applyResultOverlay(currentSheet, shown), incremental);
     document.getElementById("lm-count").textContent = `共 ${total} 条`;
     if (currentSheet === "test") renderPager();
     else document.getElementById("lm-pager").innerHTML = "";
+    applyRowFormats();             // repaint drops row colours → re-apply (result/priority)
     applyCollabPresence();         // repaint drops overlay/highlight → re-apply (§6.1)
     applyCellErrors();             // repaint drops cell error marks → re-apply (§12.2)
   }
@@ -699,6 +700,219 @@
       + `${esc(PRIORITY_LABEL[tier] || "—")}</span>`;
   }
 
+  // --- Row-level conditional formatting (result + priority) ---
+  // A test row is coloured from its run outcome so the operator sees, at a
+  // glance, what the queue produced. Semantics requested by the field team:
+  //   * priority is NOT 高 -> dimmed grey ("won't be tested"), regardless of any
+  //     stale result (non-高 rows are never auto-queued);
+  //   * 高 but not yet run (result empty / "Not Tested") -> original white;
+  //   * otherwise -> coloured by the run result (PASS/FAIL/ERROR/CANCELLED/…).
+  // Only the "test" sheet carries 優先度/結果, so other sheets stay uncoloured.
+  const CF_COLORS = {
+    skip: "#b9bec6",   // non-high priority: dimmed, not going to run
+    pass: "#c6efce",   // green
+    fail: "#ffc7ce",   // red
+    error: "#ffd8a8",  // orange
+    cancel: "#dcdcdc", // neutral grey
+    other: "#dbe9ff",  // ran, but an unrecognised verdict
+  };
+  function normResult(v) {
+    return String(v == null ? "" : v).toUpperCase().replace(/[^A-Z0-9]/g, "");
+  }
+  // The logical test id of a row: its ``test_id`` field, else ``case_id`` — the
+  // exact key the backend runs/records results under (mirrors row_test_id()).
+  function rowTestId(item) {
+    if (!item) return "";
+    const tid = item.test_id != null ? String(item.test_id).trim() : "";
+    if (tid) return tid;
+    return item.case_id != null ? String(item.case_id).trim() : "";
+  }
+  // Server-authoritative run results, keyed by logical test id. The verdict is
+  // produced by the worker and written to the DB, but in real-time-collab mode
+  // the sheet rows come from the Y.Doc (which the server-side write never
+  // touches), so ``item.result`` alone can stay stale. We therefore fetch the
+  // project's task results over REST (independent of collab) and let them
+  // OVERRIDE the row's own result for colouring. See refreshTaskResults().
+  let resultsByTestId = {};
+  function effectiveResult(item) {
+    const tid = rowTestId(item);
+    if (tid && Object.prototype.hasOwnProperty.call(resultsByTestId, tid)) {
+      return resultsByTestId[tid];
+    }
+    return item ? item.result : "";
+  }
+  // Overlay the server-authoritative verdict onto each row's ``result`` cell for
+  // DISPLAY. The sheet's own ``result`` comes from the Y.Doc (collab) or a stale
+  // REST snapshot, so without this the 結果 column keeps showing "Not Tested"
+  // even after a run finished. We shallow-copy touched rows so the underlying
+  // ``sheetItems`` (and the collab document) are never mutated — this is a pure
+  // presentation overlay, not an edit, and triggers no save. Empty verdict (a
+  // freshly re-queued task) shows "Not Tested" again.
+  function applyResultOverlay(sheet, items) {
+    if (sheet !== "test" || !items || !items.length) return items;
+    let touched = false;
+    const out = items.map((it) => {
+      const tid = rowTestId(it);
+      if (!tid || !Object.prototype.hasOwnProperty.call(resultsByTestId, tid)) return it;
+      const rv = resultsByTestId[tid];
+      const shown = (rv == null || rv === "") ? "Not Tested" : rv;
+      if (it.result === shown) return it;
+      touched = true;
+      return Object.assign({}, it, { result: shown });
+    });
+    return touched ? out : items;
+  }
+  function rowFormatColor(item) {
+    if (!item) return null;
+    if (priorityTier(item.priority) !== "high") return CF_COLORS.skip;
+    const r = normResult(effectiveResult(item));
+    if (!r || r === "NOTTESTED" || r === "NOTRUN" || r === "PENDING") return null;
+    // Prefix matching so decorated verdicts (e.g. "PASS(no-judge)") still map.
+    if (r.indexOf("PASS") === 0 || r === "OK" || r === "SUCCESS") return CF_COLORS.pass;
+    if (r.indexOf("FAIL") === 0 || r === "NG") return CF_COLORS.fail;
+    if (r.indexOf("ERR") === 0) return CF_COLORS.error;
+    if (r.indexOf("CANCEL") === 0 || r.indexOf("SKIP") === 0) return CF_COLORS.cancel;
+    return CF_COLORS.other;
+  }
+  function rowColorMapById(items) {
+    const m = {};
+    (items || []).forEach((it) => {
+      if (!it || it.id == null) return;
+      const c = rowFormatColor(it);
+      if (c) m[it.id] = c;
+    });
+    return m;
+  }
+  // Paint whole-row backgrounds for the current sheet. Prefers a public grid
+  // API (present once frontend/ is rebuilt); otherwise, for the vendored Univer
+  // bundle that predates it, reaches the facade worksheet directly. Runs BEFORE
+  // applyCellErrors so a red error cell always paints on top of the row colour.
+  function applyRowFormats() {
+    if (!grid) return;
+    const isTest = currentSheet === "test";
+    const items = sheetItems[currentSheet] || [];
+    if (typeof grid.setRowFormats === "function") {
+      try { grid.setRowFormats(isTest ? rowColorMapById(items) : {}); }
+      catch (_e) { /* best-effort */ }
+      return;
+    }
+    if (grid.engine === "univer") applyUniverRowFormats();
+  }
+  // Fallback path for the current Univer bundle (no setRowFormats): TypeScript
+  // `private` fields survive at runtime, so the mounted adapter still exposes
+  // its worksheet contexts (`ctxs`/`active`) and each one's `fSheet` Facade.
+  function univerCtxFor(key) {
+    try {
+      if (grid.ctxs && grid.ctxs.length) {
+        const c = grid.ctxs.find((x) => x && x.key === key);
+        if (c) return c;
+      }
+    } catch (_e) { /* fall through */ }
+    return grid.active || null;
+  }
+  function applyUniverRowFormats() {
+    const ctx = univerCtxFor(currentSheet);
+    if (!ctx || !ctx.fSheet) return;
+    const isTest = ctx.key === "test";
+    const vis = (ctx.fields || []).filter((f) => f && f.is_active !== false);
+    const width = Math.max(vis.length, 1);
+    const rows = ctx.items || [];
+    // CRITICAL: raise the adapter's ``applying`` guard exactly like its own
+    // setCellErrors does. Without it the adapter's change observer treats our
+    // style writes as user edits and reverts them on the next re-render — which
+    // is why the row colours never stuck under the Univer engine. It is a plain
+    // public instance flag; the adapter clears it in its own finally, so we
+    // save/restore rather than assume a value.
+    const prevApplying = grid.applying;
+    grid.applying = true;
+    try {
+      // Repaint the whole previously-touched data band to white first (the row
+      // set may have shrunk/paged), then colour the rows that need it. Row 0 is
+      // the header, data starts at row 1 (the adapter's O1), so offset by +1.
+      const band = Math.max(rows.length, grid.__cfLastRows || 0, 1);
+      try { ctx.fSheet.getRange(1, 0, band, width).setBackgroundColor(null); }
+      catch (_e) { /* best-effort clear */ }
+      if (isTest) {
+        for (let i = 0; i < rows.length; i++) {
+          const color = rowFormatColor(rows[i]);
+          if (!color) continue;
+          try { ctx.fSheet.getRange(i + 1, 0, 1, width).setBackgroundColor(color); }
+          catch (_e) { /* per-row best-effort */ }
+        }
+      }
+      grid.__cfLastRows = rows.length;
+    } finally {
+      grid.applying = prevApplying;
+    }
+  }
+
+  // Pull the project's task verdicts over REST and, if any changed, recolour the
+  // grid. This runs on its own timer REGARDLESS of real-time collab, because the
+  // worker writes verdicts to the SQL DB while the collab sheet is driven by the
+  // Y.Doc — so this is the only channel that surfaces a finished run's result in
+  // collab mode. A newer task for the same test_id wins (list is newest-first).
+  const RESULTS_POLL_MS = 6000;
+  let resultsTimer = null;
+  async function refreshTaskResults() {
+    if (document.hidden) return;
+    let tasks;
+    try {
+      const resp = await LMApi.listProjectTasks(pid);
+      tasks = (resp && resp.tasks) || [];
+    } catch (_e) { return; }  // silent: transient network error
+    const map = {};
+    tasks.forEach((t) => {
+      const tid = t && t.test_id != null ? String(t.test_id).trim() : "";
+      if (!tid) return;
+      const r = t.result == null ? "" : String(t.result);
+      // Keep the FIRST verdict seen per test_id; list_project_tasks returns
+      // newest-first, so that is the latest run.
+      if (!Object.prototype.hasOwnProperty.call(map, tid)) map[tid] = r;
+    });
+    const changed = JSON.stringify(map) !== JSON.stringify(resultsByTestId);
+    resultsByTestId = map;
+    if (changed) {
+      // Collab: land the verdicts in the shared Y.Doc so EVERY peer sees the
+      // 結果 column update and the server snapshots them back to the DB (the
+      // worker only wrote SQL, which the collab sheet does not read). This makes
+      // the result a real, persisted part of the document — not just a local
+      // overlay. Non-collab sheets already read the verdict from the DB.
+      syncResultsToDoc();
+      // Re-render so the fresh verdict shows in the 結果 column cells (and rows
+      // recolour). Incremental: only changed cells repaint.
+      renderView(true);
+    }
+  }
+  // Persist finished-run verdicts into the shared Y.Doc (collab only). Idempotent:
+  // only rows whose Y.Doc ``result`` differs from the authoritative verdict are
+  // written, so at steady state this is a no-op and never loops across peers or
+  // fights concurrent editors. A re-queued task (empty verdict) resets the cell
+  // back to "Not Tested". Best-effort per row: a row deleted by a peer is skipped.
+  function syncResultsToDoc() {
+    if (!collabActive() || typeof collab.getItems !== "function") return;
+    let items;
+    try { items = collab.getItems("test") || []; } catch (_e) { return; }
+    items.forEach((it) => {
+      const tid = rowTestId(it);
+      if (!tid || !Object.prototype.hasOwnProperty.call(resultsByTestId, tid)) return;
+      const rv = resultsByTestId[tid];
+      const shown = (rv == null || rv === "") ? "Not Tested" : rv;
+      if (String(it.result == null ? "" : it.result) === shown) return;
+      try { collab.setCell("test", it, { result: shown }); } catch (_e) { /* row gone / not ready */ }
+    });
+  }
+  function startResultsPolling() {
+    if (resultsTimer) return;
+    refreshTaskResults();  // paint once immediately on open
+    resultsTimer = setInterval(refreshTaskResults, RESULTS_POLL_MS);
+  }
+  function stopResultsPolling() {
+    if (resultsTimer) { clearInterval(resultsTimer); resultsTimer = null; }
+  }
+  // Exposed so the run-queue flow can force an immediate recolour right after it
+  // enqueues jobs (verdicts arrive seconds later; the timer catches those).
+  window.LMRefreshTaskResults = refreshTaskResults;
+
   // Build a short human-readable description for a test row from its first
   // non-empty text fields (skipping test_id / steps JSON), so users recognise a
   // case without memorising bare ids.
@@ -813,7 +1027,6 @@
     if (toolbar) {
       const wrap = document.createElement("label");
       wrap.className = "lm-queue-prio-pick";
-      wrap.textContent = "优先度 ";
       queuePrioSel = document.createElement("select");
       queuePrioSel.id = "lm-queue-priority";
       queuePrioSel.innerHTML =
@@ -869,6 +1082,9 @@
         if (missing.length) msg += `；缺失 ${missing.length}`;
         if (errors.length) msg += `；失败 ${errors.length}`;
         toast(msg, errors.length === 0 && missing.length === 0);
+        // Newly-queued rows carry a fresh (reset) verdict; pull it so their
+        // colour reflects "queued/running" at once instead of a stale result.
+        refreshTaskResults();
         if (typeof queueDialog.close === "function") queueDialog.close();
         else queueDialog.removeAttribute("open");
       } catch (ex) {
@@ -1572,15 +1788,20 @@
       }
       // Pause polling when the tab is hidden; resume (and sync at once) on return.
       document.addEventListener("visibilitychange", () => {
-        if (document.hidden) { stopPolling(); }
+        if (document.hidden) { stopPolling(); stopResultsPolling(); }
         else {
           startPolling();
+          startResultsPolling();
           // Field order/config may have changed on the fields page; re-sync it
           // into the Univer table and force a re-render so column order updates.
           loadFields().then(loadItems).catch(() => silentPoll());
         }
       });
       startPolling();
+      // Row-colour results feed. Runs independently of the REST data poll and of
+      // real-time collab (verdicts live in the SQL DB, not the Y.Doc), so test
+      // outcomes recolour rows in every mode.
+      startResultsPolling();
       installForceSaveShortcut();
       // Defensive re-paint: some Univer builds drop cell values written before the
       // workbook finishes its first render (headers stick, data rows come up blank

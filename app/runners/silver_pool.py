@@ -34,7 +34,6 @@ Design notes
 
 from __future__ import annotations
 
-import itertools
 import logging
 import threading
 from dataclasses import dataclass, field
@@ -46,6 +45,7 @@ from .silver_runner import (
     RunContext,
     SilverRunner,
 )
+from .slots import SlotAllocator
 
 logger = logging.getLogger("silver.pool")
 
@@ -188,7 +188,10 @@ class SilverInstancePool:
         self._in_use = 0        # currently borrowed
         self._target = 0        # desired number of instances (== license count)
         self._closed = False
-        self._uid_seq = itertools.count(1)
+        # Instance uids double as the run-folder label (``inst_<uid>``). A slot
+        # allocator recycles released numbers so the labels stay bounded to
+        # ``inst_1 .. inst_<target>`` instead of growing without limit.
+        self._slots = SlotAllocator()
 
     # ---------------------- introspection ----------------------------------- #
     @property
@@ -240,10 +243,11 @@ class SilverInstancePool:
                 # Reserve a slot before the slow create so concurrent callers
                 # do not over-provision.
                 self._size += 1
-                uid = next(self._uid_seq)
+                uid = self._slots.acquire()
             sil = self._default_sil_getter()
             if sil is None:
                 # No model to open yet; undo the reservation and stop.
+                self._slots.release(uid)
                 with self._cond:
                     self._size -= 1
                     self._cond.notify_all()
@@ -253,6 +257,7 @@ class SilverInstancePool:
                 inst = self._make_instance(uid, Path(sil))
             except Exception:  # noqa: BLE001
                 logger.exception("Failed to pre-warm Silver instance %s", uid)
+                self._slots.release(uid)
                 with self._cond:
                     self._size -= 1
                     self._cond.notify_all()
@@ -293,7 +298,7 @@ class SilverInstancePool:
                     return inst
                 if self._size < self._target:
                     self._size += 1
-                    reserve_uid = next(self._uid_seq)
+                    reserve_uid = self._slots.acquire()
                 else:
                     self._cond.wait(timeout=poll)
                     continue
@@ -301,6 +306,7 @@ class SilverInstancePool:
             try:
                 inst = self._make_instance(reserve_uid, Path(sil_path))
             except Exception:  # noqa: BLE001
+                self._slots.release(reserve_uid)
                 with self._cond:
                     self._size -= 1
                     self._cond.notify_all()
@@ -382,6 +388,10 @@ class SilverInstancePool:
             self._driver.dispose(inst.handle)
         except Exception:  # noqa: BLE001 - best effort cleanup
             logger.exception("Error disposing Silver instance uid=%s", inst.uid)
+        finally:
+            # Recycle the slot so its ``inst_<uid>`` folder can be reused by the
+            # next instance the pool creates, keeping the label set bounded.
+            self._slots.release(inst.uid)
 
 
 # --------------------------------------------------------------------------- #

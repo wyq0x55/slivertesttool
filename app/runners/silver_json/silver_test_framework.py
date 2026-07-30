@@ -124,6 +124,10 @@ class TestContext:
         self._subs = {}                    # name -> List[Step] (JSON subroutines)
         self._cache = {}
         self.results = {}                  # captured lib return values
+        # Single-slot return channel: a subroutine (SubCall) writes its overall
+        # verdict here right before it finishes so the driving step can fail when
+        # a called subroutine (possibly nested) failed internally.
+        self.sub_ok = True
 
         # runtime state (mirror judge globals)
         self.test_python_over = -1
@@ -240,8 +244,22 @@ def _run_action(ctx: TestContext, call: Call):
 
     if kind == 'generator':
         gen = fn(*call.args)          # exactly judge's:  gen = SubRoutine()
-        while next(gen):              #                   while next(gen):
-            yield                     #                       yield
+        # Judge idiom, verbatim:  ``while next(gen): yield``.  The bare ``yield``
+        # (None) is what hands control back to *Silver* so it advances the model
+        # by one macro step -- this is how the lib's own wait/timeout (its default
+        # 5 s judge window) actually elapses in *simulated* time. Yielding a
+        # non-None token here does NOT step Silver's clock, which is why an
+        # earlier ``yield True`` left simulated time at 0.0 s and made every
+        # wait (nested or not) collapse instantly. A lib signals completion by
+        # yielding a falsy value (Wait-style ``yield False``) or by ``return``;
+        # a bare ``return`` makes ``next(gen)`` raise StopIteration, which inside
+        # a generator becomes RuntimeError (PEP 479) and would surface as a
+        # Silver DLL_ERROR, so we catch it and treat it as normal completion.
+        try:
+            while next(gen):
+                yield
+        except StopIteration:
+            pass
     else:
         result = fn(*call.args)
         if call.store:
@@ -249,11 +267,21 @@ def _run_action(ctx: TestContext, call: Call):
 
 
 def _run_subcall(ctx: TestContext, sub: SubCall):
-    """Drive a JSON-defined subroutine with the judge idiom."""
+    """Drive a JSON-defined subroutine (possibly itself nesting more subcalls).
+
+    Uses plain ``yield from`` rather than the ``while next(gen): yield`` judge
+    idiom on purpose. ``run_subroutine`` is our own generator that already yields
+    None (bare) while waiting and simply *returns* when finished, so ``yield
+    from`` forwards every wait straight to Silver (stepping the model) and ends
+    naturally when the subroutine returns. This is transparent to any depth of
+    nesting: a lib-nested-lib chain waits correctly at every level instead of the
+    inner wait being swallowed or the whole call being abandoned mid-wait, and
+    it never turns a nested wait into a lost macro step (which previously left
+    simulated time stuck at 0.0 s). The subroutine's pass/fail verdict is handed
+    back out-of-band via ``ctx.sub_ok``.
+    """
     steps = ctx.resolve_subroutine(sub.name)
-    gen = run_subroutine(ctx, sub.name, steps)
-    while next(gen):
-        yield
+    yield from run_subroutine(ctx, sub.name, steps)
 
 
 def _dispatch_action(ctx: TestContext, action):
@@ -273,8 +301,10 @@ def _checks_ok(ctx: TestContext, step: Step):
 
 def _judge_loop(ctx: TestContext, step: Step, time_st, wait_value):
     """
-    Shared judge/wait loop.  Yields `wait_value` while waiting (None for a
-    top-level test, True for a subroutine).  Returns the pass/fail result.
+    Shared judge/wait loop.  Yields `wait_value` while waiting -- always None so
+    every poll hands control back to Silver and advances the model by one macro
+    step (that is how the step's timeout / watch window elapses in *simulated*
+    time; a truthy token would freeze the clock).  Returns the pass/fail result.
     `time_st` is the step start time (recorded before any actions), so the
     timeout / watch window includes time spent in lib calls, exactly like judge.
     """
@@ -335,11 +365,20 @@ def run_test(ctx: TestContext, steps: List[Step]):
         # --- lib calls / subroutines before judging ----------------------- #
         # NOTE: time_st stays at the step start (judge records it once), so a
         # step's timeout / watch window includes any time spent in actions.
+        action_ok = True
         for action in step.actions:
+            ctx.sub_ok = True
             yield from _dispatch_action(ctx, action)
+            if not ctx.sub_ok:
+                action_ok = False
 
         # --- judge loop --------------------------------------------------- #
         is_ok = yield from _judge_loop(ctx, step, time_st, None)
+        # A called subroutine that failed internally (e.g. a lib whose own
+        # check, or a nested lib's check, did not pass) must fail this step too;
+        # otherwise the subroutine's verdict would be silently swallowed.
+        if not action_ok:
+            is_ok = False
 
         # --- detail output ------------------------------------------------ #
         _emit_step_detail(ctx, step)
@@ -404,10 +443,20 @@ def run_subroutine(ctx: TestContext, name, steps):
         for asg in step.inputs:
             ctx.var(asg.var).Value = asg.value
 
+        action_ok = True
         for action in step.actions:
+            ctx.sub_ok = True
             yield from _dispatch_action(ctx, action)
+            if not ctx.sub_ok:
+                action_ok = False
 
-        is_ok = yield from _judge_loop(ctx, step, time_st, True)
+        # Wait with a bare (None) token, exactly like the top-level test, so each
+        # poll steps Silver's clock and the subroutine's own timeout window
+        # elapses in simulated time (a truthy token would freeze the clock).
+        is_ok = yield from _judge_loop(ctx, step, time_st, None)
+        # Propagate a nested subroutine's failure up to this subroutine's step.
+        if not action_ok:
+            is_ok = False
 
         _emit_step_detail(ctx, step)
 
@@ -429,7 +478,13 @@ def run_subroutine(ctx: TestContext, name, steps):
     ctx.test_python_over = 0
     log.info(' Subroutine(%s) is ended!' % name)
 
-    yield False
+    # Hand this subroutine's overall verdict back to the calling step so a
+    # failure (including one bubbled up from a nested subroutine) is not lost.
+    # Completion is signalled by simply *returning* (the driving ``yield from``
+    # ends), not by yielding a sentinel -- so no extra macro step is consumed and
+    # the value can never be misread as "keep waiting".
+    ctx.sub_ok = (test_result == -1)
+    return
 
 
 def run_init_subroutine(ctx: TestContext, name, steps):

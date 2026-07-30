@@ -214,7 +214,9 @@
       tb.innerHTML = rows.map((t) => rowHtml(t)).join("");
       $("lm-tasks-empty").hidden = true;
     }
-    allTasks.forEach((t) => { if (!FINAL.includes(t.status)) openStream(t.task_id); });
+    rowSig = {};                   // full re-render: drop the per-row patch cache
+    allTasks.forEach((t) => { rowSig[t.task_id] = rowSignature(t); });
+    ensureListPolling();           // keep running rows fresh WITHOUT a stream each
     bindRowActions();
     updateSortIndicators();
     updateBatchBar();
@@ -300,28 +302,64 @@
     } catch (ex) { toast(ex.message, false); }
   }
 
-  function openStream(key) {
-    if (streams[key]) return;
-    const es = new EventSource(LMApi.projectTaskStreamUrl(pid, key));
-    streams[key] = es;
-    const parse = (ev) => { try { return JSON.parse(ev.data); } catch (e) { return null; } };
-    es.addEventListener("progress", (ev) => {
-      const d = parse(ev);
-      if (d && typeof d.value === "number") setCell(key, ".lm-cell-progress", d.value + "%");
-    });
-    es.addEventListener("status", (ev) => {
-      const d = parse(ev);
-      // In-flight updates (queued/running) show the plain lifecycle status; the
-      // final merged verdict (passed/failed/error) is rendered by refreshRow on
-      // ``end`` once the judge result is known.
-      if (d && d.status) setCell(key, ".lm-cell-status", statusBadge(d.status), true);
-    });
-    es.addEventListener("end", () => { closeStream(key); refreshRow(key); });
-    es.onerror = () => { closeStream(key); };
+  // Live progress for the whole LIST is delivered by ONE periodic poll of the
+  // tasks endpoint — not one EventSource per running row. A browser caps
+  // concurrent HTTP/1.1 connections per origin at ~6, so a batch run of many
+  // rows used to exhaust the pool with long-lived streams; the detail modal's
+  // own GET /detail + stream then could not connect, so "查看" showed no live
+  // log or result. A single short poll leaves the pool free for the modal.
+  const LIST_POLL_MS = 3000;
+  let listTimer = null;
+  let rowSig = {};   // task_id -> signature of the last painted row (skip no-op repaints)
+  function rowSignature(t) {
+    return [t.status, t.progress || 0, t.has_result ? 1 : 0,
+            t.result || "", fmtFinished(t)].join("|");
   }
-  function closeStream(key) {
-    if (streams[key]) { streams[key].close(); delete streams[key]; }
+  function anyRunning() {
+    return allTasks.some((t) => !FINAL.includes(t.status));
   }
+  function ensureListPolling() {
+    if (anyRunning()) startListPolling();
+    else stopListPolling();
+  }
+  function startListPolling() {
+    if (listTimer) return;
+    listTimer = setInterval(pollList, LIST_POLL_MS);
+  }
+  function stopListPolling() {
+    if (listTimer) { clearInterval(listTimer); listTimer = null; }
+  }
+  // Refresh task rows in place. Repaints only the rows whose state actually
+  // changed (status / progress / verdict / finish time / report availability),
+  // so scroll position, checkbox selection and an open detail modal are all
+  // preserved. Falls back to a full render when the row SET changes (a new task
+  // appeared or one was removed elsewhere).
+  async function pollList() {
+    if (document.hidden) return;
+    let data;
+    try { data = await LMApi.listProjectTasks(pid); }
+    catch (_e) { return; }   // transient: keep the last snapshot, try again next tick
+    const tasks = data.tasks || [];
+    const oldIds = allTasks.map((t) => t.task_id).join(",");
+    const newIds = tasks.map((t) => t.task_id).join(",");
+    allTasks = tasks;
+    const present = new Set(tasks.map((t) => t.task_id));
+    Array.from(selected).forEach((k) => { if (!present.has(k)) selected.delete(k); });
+    if (oldIds !== newIds) { renderTasks(); return; }   // structure changed → full render
+    let patched = false;
+    tasks.forEach((t) => {
+      const sig = rowSignature(t);
+      if (rowSig[t.task_id] === sig) return;
+      rowSig[t.task_id] = sig;
+      const row = document.querySelector(`tr[data-k="${cssEscape(t.task_id)}"]`);
+      if (row) { row.outerHTML = rowHtml(t); patched = true; }
+    });
+    if (patched) { bindRowActions(); updateBatchBar(); }
+    ensureListPolling();   // stop once every row reached a final state
+  }
+  // Retained for callers that used to tear down a per-row stream; streams are
+  // gone, so this is a harmless no-op kept to avoid touching every call site.
+  function closeStream() { /* no-op: list uses a single poll, not per-row SSE */ }
   function setCell(key, sel, val, html) {
     const row = document.querySelector(`tr[data-k="${cssEscape(key)}"]`);
     if (!row) return;

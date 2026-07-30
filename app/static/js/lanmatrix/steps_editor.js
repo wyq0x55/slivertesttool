@@ -102,6 +102,15 @@
       this.refToggleBtn = dialog.querySelector("#lm-steps-ref-toggle");
       this.loadRef = null;
       this._refLoaded = false;
+      // JSON code-editor drawer (right half-screen). Built lazily on first open.
+      this.jsonToggleBtn = dialog.querySelector("#lm-steps-json-toggle");
+      this.jsonDrawer = dialog.querySelector("#lm-steps-json");
+      this.jsonHost = dialog.querySelector("#lm-steps-json-body");
+      this.jsonErrEl = dialog.querySelector("#lm-steps-json-error");
+      this.jsonCloseBtn = dialog.querySelector("#lm-steps-json-close");
+      this.jsonEditor = null;
+      this._jsonTimer = null;      // polls the sheet -> refreshes JSON text
+      this._jsonApplyTimer = null; // debounces JSON text -> sheet apply
       // Live steps sub-structure binding (item 3). ``live`` is a small adapter
       // supplied by the host (editor.js) that maps to the row's nested steps
       // Y.Map when collaboration is active; null in the REST path.
@@ -123,6 +132,8 @@
       // context. We supply our own backdrop and hide it whenever the dialog closes.
       this.dialog.addEventListener("close", () => {
         this._hideBackdrop();
+        // The JSON drawer is a child of this dialog; close it with the dialog.
+        this._closeJson();
         // Flush a last pending live edit, then detach the steps CRDT observer.
         this._commitLive();
         this._unbindLive();
@@ -368,6 +379,12 @@
         .addEventListener("click", (e) => { e.preventDefault(); self._save(); });
       const fs = this.dialog.querySelector("#lm-steps-fullscreen");
       if (fs) fs.addEventListener("click", (e) => { e.preventDefault(); self._toggleFullscreen(); });
+      if (this.jsonToggleBtn) {
+        this.jsonToggleBtn.addEventListener("click", (e) => { e.preventDefault(); self._toggleJson(); });
+      }
+      if (this.jsonCloseBtn) {
+        this.jsonCloseBtn.addEventListener("click", (e) => { e.preventDefault(); self._closeJson(); });
+      }
       if (this.enqueueBtn) {
         this.enqueueBtn.addEventListener("click", (e) => { e.preventDefault(); self._enqueue(); });
       }
@@ -428,6 +445,95 @@
       }
     }
 
+    // ---- JSON code-editor drawer (right half-screen) ------------------- //
+
+    // Lazily build the CodeMirror-style editor and bind its change handler.
+    _ensureJsonEditor() {
+      if (this.jsonEditor || !this.jsonHost || !window.LMCodeEditor) return this.jsonEditor;
+      this.jsonEditor = new window.LMCodeEditor(this.jsonHost, {
+        onChange: (text) => this._onJsonInput(text),
+      });
+      if (typeof this.jsonEditor.onError === "function") {
+        this.jsonEditor.onError((msg) => {
+          if (!this.jsonErrEl) return;
+          this.jsonErrEl.textContent = msg || "";
+          this.jsonErrEl.hidden = !msg;
+        });
+      }
+      return this.jsonEditor;
+    }
+
+    _toggleJson() {
+      if (this.jsonDrawer && !this.jsonDrawer.hidden) this._closeJson();
+      else this._openJson();
+    }
+
+    _openJson() {
+      if (!this.jsonDrawer) return;
+      if (!this._ensureJsonEditor()) return;
+      this.jsonDrawer.hidden = false;
+      if (this.jsonToggleBtn) this.jsonToggleBtn.classList.add("is-on");
+      // Seed the editor from the current sheet state and keep it mirrored while
+      // the user edits the sheet (poll: the Univer view has no change event).
+      this._jsonSyncFromView(true);
+      if (this._jsonTimer) clearInterval(this._jsonTimer);
+      this._jsonTimer = setInterval(() => this._jsonSyncFromView(false), 500);
+    }
+
+    _closeJson() {
+      if (this._jsonTimer) { clearInterval(this._jsonTimer); this._jsonTimer = null; }
+      if (this._jsonApplyTimer) { clearTimeout(this._jsonApplyTimer); this._jsonApplyTimer = null; }
+      if (this.jsonDrawer) this.jsonDrawer.hidden = true;
+      if (this.jsonToggleBtn) this.jsonToggleBtn.classList.remove("is-on");
+    }
+
+    // Read the authoritative doc out of the sheet, pretty-print it, and refresh
+    // the editor text — unless the user is typing in it (don't fight the caret).
+    _jsonSyncFromView(force) {
+      if (!this.jsonEditor || !this.jsonDrawer || this.jsonDrawer.hidden) return;
+      if (!force && this.jsonEditor.isFocused()) return;
+      let json;
+      try {
+        this._pull();                       // sheet -> this.doc (no-op sans view)
+        json = JSON.stringify(this._serialize(), null, 2);
+      } catch (_e) { return; }
+      if (force || json !== this.jsonEditor.getValue()) {
+        this.jsonEditor.setValue(json, true); // silent: not a user edit
+        this.jsonEditor.setError("");
+      }
+    }
+
+    // The user edited the JSON text: validate + push it into the sheet (debounced
+    // so we don't reset the Univer canvas on every keystroke).
+    _onJsonInput(_text) {
+      if (this._jsonApplyTimer) clearTimeout(this._jsonApplyTimer);
+      this._jsonApplyTimer = setTimeout(() => {
+        this._jsonApplyTimer = null;
+        this._applyJsonToView();
+      }, 350);
+    }
+
+    _applyJsonToView() {
+      if (!this.jsonEditor) return;
+      const text = this.jsonEditor.getValue();
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch (ex) {
+        this.jsonEditor.setError("JSON 解析错误：" + ((ex && ex.message) || "无效 JSON"));
+        return;
+      }
+      this.jsonEditor.setError("");
+      // Normalise into the editor's working shape and push it into the sheet so
+      // the Univer view (or the built-in tables) reflect the edited JSON live.
+      this.doc = parseDoc(parsed);
+      this._syncStepArity();
+      this._applyingRemote = true;         // this is a JSON->sheet apply, not a sheet edit
+      try { this._rerenderFromDoc(); } finally { this._applyingRemote = false; }
+      // Propagate to collaborators (debounced) exactly like a sheet edit would.
+      if (this.live) this._scheduleLiveFlush();
+    }
+
     open(item, opts) {
       // Detach any binding from a previously opened item before switching.
       this._unbindLive();
@@ -486,6 +592,8 @@
       // Bind the step-detail editor to the row's nested steps CRDT so concurrent
       // edits merge and remote changes appear live (item 3). No-op in REST mode.
       this._bindLive();
+      // If the JSON drawer is open, refresh it to this newly-opened item.
+      if (this.jsonDrawer && !this.jsonDrawer.hidden) this._jsonSyncFromView(true);
     }
 
     _addStep() {
@@ -786,6 +894,8 @@
         this.doc = parseDoc(savedSteps != null ? savedSteps : json);
         this._syncStepArity();
         this._rerenderFromDoc();
+        // Reflect the authoritative saved value in the JSON drawer too.
+        if (this.jsonDrawer && !this.jsonDrawer.hidden) this._jsonSyncFromView(true);
       } catch (ex) {
         this.errEl.textContent = (ex && ex.message) || "保存失败";
         this.errEl.hidden = false;

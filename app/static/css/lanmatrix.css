@@ -303,6 +303,50 @@ select.lm-cell-control[multiple] { min-height: 46px; }
 .lm-steps-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35);
   z-index: 1000; }
 
+/* JSON code-editor drawer: a right half-screen panel over the steps drawer. */
+#lm-steps-json-toggle.is-on { background: #dfe8ff; border-color: #9db6ff; }
+.lm-steps-json-drawer { position: fixed; top: 0; right: 0; bottom: 0;
+  width: 50vw; max-width: 820px; min-width: 360px; z-index: 1003;
+  display: flex; flex-direction: column; box-sizing: border-box;
+  background: #fff; border-left: 1px solid #cdd6e4;
+  box-shadow: -12px 0 40px rgba(0,0,0,.28); padding: 12px 14px; }
+.lm-steps-json-drawer[hidden] { display: none; }
+.lm-steps-json-head { display: flex; align-items: center; gap: 10px;
+  margin-bottom: 8px; }
+.lm-steps-json-head strong { font-size: 14px; }
+.lm-steps-json-hint { font-size: 12px; }
+.lm-steps-json-head #lm-steps-json-close { margin-left: auto; }
+.lm-steps-json-body { flex: 1; min-height: 0; border: 1px solid #cdd6e4;
+  border-radius: 8px; overflow: hidden; background: #1e1e1e; }
+
+/* Self-contained CodeMirror-style code editor (json_editor.js). */
+.lm-ce { display: flex; height: 100%; width: 100%; font: 13px/20px
+  ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  background: #1e1e1e; color: #d4d4d4; }
+.lm-ce.lm-ce-invalid { outline: 2px solid #e0564b; outline-offset: -2px; }
+.lm-ce-gutter { flex: 0 0 auto; overflow: hidden; background: #23242a;
+  color: #7c8494; text-align: right; user-select: none; }
+.lm-ce-gutter-inner { padding: 8px 8px 8px 10px; white-space: pre;
+  will-change: transform; }
+.lm-ce-scroll { position: relative; flex: 1 1 auto; min-width: 0; }
+.lm-ce-hl, .lm-ce-ta { margin: 0; padding: 8px 10px; border: 0;
+  position: absolute; inset: 0; width: 100%; height: 100%; box-sizing: border-box;
+  font: inherit; line-height: 20px; white-space: pre; overflow: auto;
+  tab-size: 2; -moz-tab-size: 2; }
+.lm-ce-hl { pointer-events: none; overflow: hidden; z-index: 1;
+  color: #d4d4d4; }
+.lm-ce-ta { z-index: 2; resize: none; background: transparent;
+  color: transparent; caret-color: #ffffff; outline: none; }
+.lm-ce-key   { color: #9cdcfe; }
+.lm-ce-str   { color: #ce9178; }
+.lm-ce-num   { color: #b5cea8; }
+.lm-ce-kw    { color: #569cd6; }
+.lm-ce-punct { color: #d4d4d4; }
+#lm-steps-json-error { margin-top: 8px; }
+@media (max-width: 760px) {
+  .lm-steps-json-drawer { width: 100vw; max-width: none; }
+}
+
 /* Lib/Const reference search panel (docked right of the steps grid). */
 #lm-steps-ref-toggle.is-on { background: #dfe8ff; border-color: #9db6ff; }
 .lm-ref-panel { flex: 0 0 300px; display: flex; flex-direction: column;
