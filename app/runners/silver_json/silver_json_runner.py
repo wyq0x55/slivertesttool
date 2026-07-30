@@ -82,7 +82,7 @@ from silver_test_framework import (
     Assign, Call, SubCall, Check, Step, TestContext,
     run_test, run_cleanup, run_init_subroutine,
 )
-from framework_builtins import BUILTINS
+from framework_builtins import BUILTINS, MagicList
 
 DEFAULT_CONST_MODULES = ['Common_Constant', 'Constant', 'Bit', 'Extend', 'Wait']
 
@@ -332,11 +332,30 @@ def _eval_expr(text, consts):
     return _eval_node(tree, consts)
 
 
+def _resolve_single(s, consts):
+    """Resolve one (comma-free) value token: constant name, numeric/hex
+    literal, or an arithmetic expression over the constant table."""
+    if s in consts:
+        return _const_value(consts[s])
+    try:
+        return _eval_expr(s, consts)
+    except KeyError:
+        raise
+    except Exception:
+        raise KeyError('Unknown constant name in JSON: %r' % s)
+
+
 def _resolve_value(raw, consts):
     """Resolve a value cell.
 
-    number -> literal; string -> a constant NAME, a numeric/hex literal, or an
-    arithmetic expression over the constant table.
+    number -> literal; string -> a constant NAME, a numeric/hex literal, an
+    arithmetic expression over the constant table, or a comma-separated list of
+    the above.
+
+    A comma-separated list ("U1G_DATA_ZERO,U2G_DAT_MAX") means OR: the variable
+    matches when it equals ANY of the listed values. Each part is resolved
+    independently and wrapped in a ``MagicList`` (``observed == any-of-list``),
+    so both an equality check and an assignment fall back cleanly.
     """
     if not isinstance(raw, str):
         return raw
@@ -345,12 +364,14 @@ def _resolve_value(raw, consts):
     # be a valid Python identifier) resolves directly.
     if s in consts:
         return _const_value(consts[s])
-    try:
-        return _eval_expr(s, consts)
-    except KeyError:
-        raise
-    except Exception:
-        raise KeyError('Unknown constant name in JSON: %r' % raw)
+    # OR list: two or more comma-separated tokens -> MagicList of their values.
+    # (Intervals like "[0, 50)" are routed to _parse_interval before reaching
+    # here, so a comma at this point is always a value list.)
+    if ',' in s:
+        parts = [p.strip() for p in s.split(',') if p.strip()]
+        if len(parts) > 1:
+            return MagicList(_resolve_single(p, consts) for p in parts)
+    return _resolve_single(s, consts)
 
 
 def _load_lib(module_names):

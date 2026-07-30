@@ -669,6 +669,10 @@
   // high-priority (優先度=高) test ids are pre-selected; the user can switch the
   // tier (or pick "all") from the dialog's priority dropdown.
   let queuePriority = "high";
+  // Active result (verdict) filter for the enqueue dialog. Empty = all results;
+  // otherwise one of nottested/passed/failed/error/cancelled/other. Lets the
+  // operator narrow the list to, say, only the ERROR cases they want to re-run.
+  let queueResult = "";
 
   // 優先度 normalisation. Mirrors the backend PRIORITY_JP_TO_EN map so Japanese
   // (高/中/低) and English (High/Medium/Low/Critical) priority cells resolve to
@@ -718,6 +722,22 @@
   };
   function normResult(v) {
     return String(v == null ? "" : v).toUpperCase().replace(/[^A-Z0-9]/g, "");
+  }
+  // Bucket a raw verdict into the same tiers the row colouring uses, so the
+  // enqueue dialog can be filtered by result (e.g. show only the ERROR/FAIL
+  // cases you want to re-run). Mirrors rowFormatColor()'s prefix matching.
+  const RESULT_LABEL = {
+    nottested: "未测试", passed: "passed", failed: "failed",
+    error: "error", cancelled: "cancelled", other: "其它",
+  };
+  function resultCategory(v) {
+    const r = normResult(v);
+    if (!r || r === "NOTTESTED" || r === "NOTRUN" || r === "PENDING") return "nottested";
+    if (r.indexOf("PASS") === 0 || r === "OK" || r === "SUCCESS") return "passed";
+    if (r.indexOf("FAIL") === 0 || r === "NG") return "failed";
+    if (r.indexOf("ERR") === 0) return "error";
+    if (r.indexOf("CANCEL") === 0 || r.indexOf("SKIP") === 0) return "cancelled";
+    return "other";
   }
   // The logical test id of a row: its ``test_id`` field, else ``case_id`` — the
   // exact key the backend runs/records results under (mirrors row_test_id()).
@@ -942,19 +962,35 @@
       const tid = it && it.test_id != null ? String(it.test_id).trim() : "";
       if (!tid || seen.has(tid)) return;
       seen.add(tid);
-      out.push({ testId: tid, desc: queueRowDesc(it), tier: priorityTier(it.priority) });
+      // Use the server-authoritative verdict (same source the row colouring
+      // uses) so the result filter reflects the real last-run outcome, not a
+      // possibly-stale sheet cell.
+      const res = effectiveResult(it);
+      out.push({
+        testId: tid, desc: queueRowDesc(it), tier: priorityTier(it.priority),
+        result: res, resCat: resultCategory(res),
+      });
     });
     out.sort((a, b) => a.testId.localeCompare(b.testId, undefined, { numeric: true }));
     return out;
   }
 
-  // Reset the ticked set to every candidate matching the given priority tier
-  // ("all" keeps all). Called on open and whenever the tier dropdown changes so
-  // the default selection always reflects the chosen priority.
+  // A candidate is in scope when it matches BOTH the active priority tier
+  // ("all" keeps every tier) and the active result filter ("" keeps every
+  // result). Shared by pre-selection and rendering so the two never disagree.
+  function queueMatches(r, tier, res) {
+    if (!(tier === "all" || r.tier === tier)) return false;
+    if (res && r.resCat !== res) return false;
+    return true;
+  }
+
+  // Reset the ticked set to every candidate matching the active priority tier
+  // and result filter. Called on open and whenever either dropdown changes so
+  // the default selection always reflects the current scope.
   function queueSelectByPriority(tier) {
     queueChecked = new Set();
     queueCandidates().forEach((r) => {
-      if (tier === "all" || r.tier === tier) queueChecked.add(r.testId);
+      if (queueMatches(r, tier, queueResult)) queueChecked.add(r.testId);
     });
   }
 
@@ -962,27 +998,30 @@
     if (!queueList) return;
     const q = (queueFilter && queueFilter.value ? queueFilter.value : "").trim().toLowerCase();
     const all = queueCandidates();
-    const byPrio = queuePriority === "all"
-      ? all
-      : all.filter((r) => r.tier === queuePriority);
+    const byPrio = all.filter((r) => queueMatches(r, queuePriority, queueResult));
     const rows = q
       ? byPrio.filter((r) => r.testId.toLowerCase().includes(q) || r.desc.toLowerCase().includes(q))
       : byPrio;
     if (!all.length) {
       queueList.innerHTML = '<div class="lm-queue-empty">当前测试用例表没有带 test_id 的行，无法入队。</div>';
     } else if (!rows.length) {
-      const label = PRIORITY_LABEL[queuePriority];
-      const hint = queuePriority !== "all" && label
-        ? `没有优先度为「${label}」的 test_id。`
+      const plabel = PRIORITY_LABEL[queuePriority];
+      const scope = [];
+      if (queuePriority !== "all" && plabel) scope.push(`优先度「${plabel}」`);
+      if (queueResult) scope.push(`结果「${RESULT_LABEL[queueResult] || queueResult}」`);
+      const hint = scope.length
+        ? `没有${scope.join("、")}的 test_id。`
         : "没有匹配的 test_id。";
       queueList.innerHTML = `<div class="lm-queue-empty">${hint}</div>`;
     } else {
       queueList.innerHTML = rows.map((r) => {
         const on = queueChecked.has(r.testId) ? " checked" : "";
         const desc = r.desc ? `<div class="lm-queue-desc">${esc(r.desc)}</div>` : "";
+        const res = `<span class="lm-queue-res lm-queue-res-${esc(r.resCat)}">`
+          + `${esc(RESULT_LABEL[r.resCat] || r.resCat)}</span>`;
         return `<label class="lm-queue-row">`
           + `<input type="checkbox" value="${esc(r.testId)}"${on}>`
-          + `<span><span class="lm-queue-tid">${esc(r.testId)}</span>${priorityBadge(r.tier)}${desc}</span>`
+          + `<span><span class="lm-queue-tid">${esc(r.testId)}</span>${priorityBadge(r.tier)}${res}${desc}</span>`
           + `</label>`;
       }).join("");
       queueList.querySelectorAll('input[type=checkbox]').forEach((cb) => {
@@ -1003,9 +1042,12 @@
 
   function openQueueDialog() {
     if (!queueDialog) { toast("入队弹窗未加载", false); return; }
-    // Default to the high-priority tier and pre-tick every high-priority case.
+    // Default to the high-priority tier and pre-tick every high-priority case;
+    // clear any result filter so the full high-priority set is shown.
     queuePriority = "high";
+    queueResult = "";
     if (queuePrioSel) queuePrioSel.value = "high";
+    if (queueResultSel) queueResultSel.value = "";
     if (queueFilter) queueFilter.value = "";
     if (queueError) queueError.hidden = true;
     queueSelectByPriority(queuePriority);
@@ -1040,6 +1082,40 @@
   }
   if (queuePrioSel) queuePrioSel.addEventListener("change", () => {
     queuePriority = queuePrioSel.value || "high";
+    queueSelectByPriority(queuePriority);
+    renderQueueList();
+  });
+  // Result (verdict) filter dropdown. Built here for the same reason as the
+  // priority one (works against a cached editor.html). Changing it re-scopes the
+  // pre-ticked set to the current priority ∩ result selection so "filter to
+  // ERROR then 加入测试队列" enqueues exactly those cases.
+  let queueResultSel = document.getElementById("lm-queue-result");
+  if (!queueResultSel && queueDialog) {
+    const toolbar = queueDialog.querySelector(".lm-queue-toolbar");
+    if (toolbar) {
+      const wrap = document.createElement("label");
+      wrap.className = "lm-queue-result-pick";
+      queueResultSel = document.createElement("select");
+      queueResultSel.id = "lm-queue-result";
+      queueResultSel.title = "按结果筛选";
+      queueResultSel.innerHTML =
+        '<option value="">全部结果</option>'
+        + '<option value="nottested">未测试</option>'
+        + '<option value="passed">passed</option>'
+        + '<option value="failed">failed</option>'
+        + '<option value="error">error</option>'
+        + '<option value="cancelled">cancelled</option>'
+        + '<option value="other">其它</option>';
+      wrap.appendChild(queueResultSel);
+      // Place it right after the priority picker (or at the front otherwise).
+      const prioWrap = toolbar.querySelector(".lm-queue-prio-pick");
+      if (prioWrap && prioWrap.nextSibling) toolbar.insertBefore(wrap, prioWrap.nextSibling);
+      else if (prioWrap) toolbar.appendChild(wrap);
+      else toolbar.insertBefore(wrap, toolbar.firstChild);
+    }
+  }
+  if (queueResultSel) queueResultSel.addEventListener("change", () => {
+    queueResult = queueResultSel.value || "";
     queueSelectByPriority(queuePriority);
     renderQueueList();
   });

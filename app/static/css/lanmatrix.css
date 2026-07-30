@@ -240,6 +240,15 @@ select.lm-cell-control[multiple] { min-height: 46px; }
 .lm-queue-row input[type=checkbox] { margin-top: 3px; }
 .lm-queue-row .lm-queue-tid { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #1a3f7a; font-weight: 600; }
 .lm-queue-row .lm-queue-desc { color: #556; font-size: 13px; }
+.lm-queue-res { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 3px;
+  font-size: 11px; font-weight: 600; line-height: 18px; vertical-align: middle; color: #333; }
+.lm-queue-res-nottested { background: #eef1f5; color: #667; }
+.lm-queue-res-passed { background: #c6efce; }
+.lm-queue-res-failed { background: #ffc7ce; }
+.lm-queue-res-error { background: #ffd8a8; }
+.lm-queue-res-cancelled { background: #dcdcdc; }
+.lm-queue-res-other { background: #dbe9ff; }
+.lm-queue-result-pick select, .lm-queue-prio-pick select { padding: 4px 6px; }
 .lm-queue-empty { padding: 24px 12px; text-align: center; color: #889; }
 .lm-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
 .lm-batch-preview, .lm-import-summary { margin-top: 12px; max-height: 300px; overflow: auto; }
