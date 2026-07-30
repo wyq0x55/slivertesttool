@@ -78,10 +78,10 @@ class Config:
     # the LAN-friendly default targets a local PostgreSQL so a single-node pilot
     # works out of the box once the server is provisioned.
     #
-    #   DATABASE_URL=postgresql+psycopg://user:pass@dbhost:5432/silvetestapp
+    #   DATABASE_URL=postgresql+psycopg2://user:pass@dbhost:5432/silvetestapp
     #
     DEFAULT_DATABASE_URL = (
-        "postgresql+psycopg://silver:silver@localhost:5432/silvetestapp"
+        "postgresql+psycopg2://postgres:postgres@localhost:5432/silvetestapp"
     )
     SQLALCHEMY_DATABASE_URI = (
         os.environ.get("DATABASE_URL", "").strip() or DEFAULT_DATABASE_URL
