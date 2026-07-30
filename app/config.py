@@ -23,7 +23,17 @@ except Exception:  # noqa: BLE001
 def _as_bool(value: str | None, default: bool) -> bool:
     if value is None:
         return default
-    return value.strip().lower() in ("1", "true", "yes", "on")
+    token = value.strip().lower()
+    if token in ("1", "true", "yes", "on"):
+        return True
+    if token in ("0", "false", "no", "off", ""):
+        return False
+    # Accept any other numeric value (e.g. "4") as a truthy flag so a
+    # misconfig like SILVER_POOL_ENABLED=4 does not silently disable it.
+    try:
+        return int(token) != 0
+    except ValueError:
+        return default
 
 
 def _as_int(value: str | None, default: int) -> int:
@@ -68,10 +78,10 @@ class Config:
     # the LAN-friendly default targets a local PostgreSQL so a single-node pilot
     # works out of the box once the server is provisioned.
     #
-    #   DATABASE_URL=postgresql+psycopg2://user:pass@dbhost:5432/silvetestapp
+    #   DATABASE_URL=postgresql+psycopg://user:pass@dbhost:5432/silvetestapp
     #
     DEFAULT_DATABASE_URL = (
-        "postgresql+psycopg2://postgres:postgres@localhost:5432/silvetestapp"
+        "postgresql+psycopg://silver:silver@localhost:5432/silvetestapp"
     )
     SQLALCHEMY_DATABASE_URI = (
         os.environ.get("DATABASE_URL", "").strip() or DEFAULT_DATABASE_URL
