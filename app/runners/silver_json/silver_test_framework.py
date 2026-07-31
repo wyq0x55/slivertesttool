@@ -28,9 +28,16 @@ from typing import Any, List, Optional
 # --------------------------------------------------------------------------- #
 @dataclass
 class Assign:
-    """One input assignment:  Variable(var).Value = value"""
+    """One input assignment:  Variable(var).Value = value
+
+    ``param`` names the subroutine formal parameter (仮引数) this input binds to,
+    if any. When the subroutine is invoked with a caller argument for that
+    parameter, the argument overrides ``value`` (which is only the declared
+    default baked in at export time).
+    """
     var: str
     value: Any
+    param: Optional[str] = None
 
 
 @dataclass
@@ -52,6 +59,7 @@ class Check:
     exp_desc: str       # expected value human description
     timing: str = '任意'
     op: str = '=='      # comparison operator: == != > < >= <=
+    param: Optional[str] = None   # formal parameter this expected value binds to
 
 
 @dataclass
@@ -87,6 +95,7 @@ class SubCall:
     exactly where the legacy code did `gen = SubRoutine(); while next(gen): yield`.
     """
     name: str
+    args: List[Any] = field(default_factory=list)   # caller positional args (実引数)
 
 
 @dataclass
@@ -122,6 +131,11 @@ class TestContext:
         self._stepsize = stepsize          # Variable('modelStepSize'), for watch
         self._lib = lib or {}              # name -> callable (project lib)
         self._subs = {}                    # name -> List[Step] (JSON subroutines)
+        self._sub_params = {}              # name -> [param_name, ...] (仮引数 order)
+        # Stack of {param_name: value} bindings, one frame per active subroutine
+        # invocation. Inputs / checks that name a formal parameter read the
+        # caller's argument from the top frame instead of the baked default.
+        self._param_stack = []
         self._cache = {}
         self.results = {}                  # captured lib return values
         # Single-slot return channel: a subroutine (SubCall) writes its overall
@@ -144,14 +158,37 @@ class TestContext:
             raise KeyError('Unknown lib function referenced in test: %r' % name)
         return fn
 
-    def register_subroutine(self, name, steps):
+    def register_subroutine(self, name, steps, params=None):
         self._subs[name] = steps
+        self._sub_params[name] = list(params or [])
 
     def resolve_subroutine(self, name):
         steps = self._subs.get(name)
         if steps is None:
             raise KeyError('Unknown subroutine referenced in test: %r' % name)
         return steps
+
+    def subroutine_params(self, name):
+        """Ordered formal-parameter names (仮引数) declared by a subroutine."""
+        return self._sub_params.get(name, [])
+
+    # -- caller-argument binding (仮引数 <- 実引数) -------------------------- #
+    def push_params(self, binding):
+        self._param_stack.append(dict(binding or {}))
+
+    def pop_params(self):
+        if self._param_stack:
+            self._param_stack.pop()
+
+    def bind_arg(self, param, fallback):
+        """Caller argument bound to ``param`` for the current subroutine
+        invocation, or ``fallback`` (the baked default) when the parameter is
+        unbound or this step is not running inside a subroutine call."""
+        if param and self._param_stack:
+            frame = self._param_stack[-1]
+            if param in frame:
+                return frame[param]
+        return fallback
 
     # -- variable access with caching (judge creates them once) ------------- #
     def var(self, name):
@@ -206,7 +243,8 @@ def _emit_check_detail(ctx: TestContext, chk: Check) -> bool:
     """Print + log one判定 item exactly like judge.  Returns pass/fail."""
     log = ctx._log
     observed = ctx.var(chk.var).Value
-    ok = _compare(observed, chk.op, chk.exp_value)
+    expected = ctx.bind_arg(chk.param, chk.exp_value)
+    ok = _compare(observed, chk.op, expected)
 
     print(' ' + chk.var + ' = ' + str(observed))
     log.info('●' if ok else '▲')
@@ -215,7 +253,7 @@ def _emit_check_detail(ctx: TestContext, chk: Check) -> bool:
         exp_detail = ' ( exp in ' + chk.exp_name + ' ) '
     else:
         exp_detail = (' ( (exp' + chk.op + chk.exp_name +
-                      '(' + str(chk.exp_value) + ')) ) ')
+                      '(' + str(expected) + ')) ) ')
     log.info('    Expected Value:' + chk.exp_desc + exp_detail)
     log.info('    Observed Value:' + str(hex(int(observed))) +
              ' ( ' + str(observed) + ' ) ')
@@ -281,7 +319,7 @@ def _run_subcall(ctx: TestContext, sub: SubCall):
     back out-of-band via ``ctx.sub_ok``.
     """
     steps = ctx.resolve_subroutine(sub.name)
-    yield from run_subroutine(ctx, sub.name, steps)
+    yield from run_subroutine(ctx, sub.name, steps, sub.args)
 
 
 def _dispatch_action(ctx: TestContext, action):
@@ -294,7 +332,8 @@ def _dispatch_action(ctx: TestContext, action):
 def _checks_ok(ctx: TestContext, step: Step):
     is_ok = True
     for chk in step.checks:
-        if not _compare(ctx.var(chk.var).Value, chk.op, chk.exp_value):
+        expected = ctx.bind_arg(chk.param, chk.exp_value)
+        if not _compare(ctx.var(chk.var).Value, chk.op, expected):
             is_ok = False
     return is_ok
 
@@ -407,7 +446,7 @@ def run_test(ctx: TestContext, steps: List[Step]):
         yield
 
 
-def run_subroutine(ctx: TestContext, name, steps):
+def run_subroutine(ctx: TestContext, name, steps, args=None):
     """
     Run a JSON-defined subroutine, reproducing the legacy SetTrigger_* output
     flavor exactly:
@@ -423,6 +462,17 @@ def run_subroutine(ctx: TestContext, name, steps):
 
     ctx.test_python_over = -1
     ctx.test_step_no = -1
+
+    # Bind the caller's positional arguments (実引数) to this subroutine's formal
+    # parameters (仮引数) in declaration order, so its inputs / checks use the
+    # passed value instead of the parameter default.
+    _binding = {}
+    _pnames = ctx.subroutine_params(name)
+    _cargs = list(args or [])
+    for _i, _pname in enumerate(_pnames):
+        if _i < len(_cargs):
+            _binding[_pname] = _cargs[_i]
+    ctx.push_params(_binding)
 
     log.info(' Subroutine(%s) is started!' % name)
 
@@ -441,7 +491,7 @@ def run_subroutine(ctx: TestContext, name, steps):
             log.info(' Subroutine(%s) Step%d %s' % (name, step.no, step.comment))
 
         for asg in step.inputs:
-            ctx.var(asg.var).Value = asg.value
+            ctx.var(asg.var).Value = ctx.bind_arg(asg.param, asg.value)
 
         action_ok = True
         for action in step.actions:
@@ -474,6 +524,8 @@ def run_subroutine(ctx: TestContext, name, steps):
     else:
         print('Test is failed in Step%d!!!!' % test_result)
     print('Test is stoped at%ss.' % ctx.now())
+
+    ctx.pop_params()
 
     ctx.test_python_over = 0
     log.info(' Subroutine(%s) is ended!' % name)
@@ -521,7 +573,7 @@ def run_init_subroutine(ctx: TestContext, name, steps):
             log.info(' Subroutine(%s) Step%d %s' % (name, step.no, step.comment))
 
         for asg in step.inputs:
-            ctx.var(asg.var).Value = asg.value
+            ctx.var(asg.var).Value = ctx.bind_arg(asg.param, asg.value)
 
 
 def run_cleanup(ctx: TestContext, time):

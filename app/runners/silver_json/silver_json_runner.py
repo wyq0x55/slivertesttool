@@ -407,7 +407,7 @@ def _load_subroutines(spec, consts, script_dir, cli_lib=None):
         path = lib_ref if os.path.isabs(lib_ref) else os.path.join(script_dir, lib_ref)
         with open(path, encoding='UTF-8') as f:
             bundle = json.load(f)
-        return {name: build_steps(sub, consts)
+        return {name: (build_steps(sub, consts), _param_names(sub))
                 for name, sub in bundle.get('subroutines', {}).items()}
 
     names = set()
@@ -422,8 +422,14 @@ def _load_subroutines(spec, consts, script_dir, cli_lib=None):
         path = os.path.join(script_dir, name + '.json')
         with open(path, encoding='UTF-8') as f:
             sub_spec = json.load(f)
-        subs[name] = build_steps(sub_spec, consts)
+        subs[name] = (build_steps(sub_spec, consts), _param_names(sub_spec))
     return subs
+
+
+def _param_names(spec):
+    """Ordered formal-parameter names (仮引数) declared by a subroutine spec."""
+    return [p['name'] for p in spec.get('params', []) if isinstance(p, dict)
+            and p.get('name')]
 
 
 def _resolve_arg(raw, consts):
@@ -440,12 +446,16 @@ def build_steps(spec, consts):
     default_timeout = spec.get('default_timeout', 5)
     steps = []
     for s in spec['steps']:
-        inputs = [Assign(a['var'], _resolve_value(a['value'], consts))
+        inputs = [Assign(a['var'], _resolve_value(a['value'], consts),
+                         param=a.get('param'))
                   for a in s.get('inputs', [])]
         actions = []
         for a in s.get('actions', []):
             if 'subroutine' in a:
-                actions.append(SubCall(name=a['subroutine']))
+                actions.append(SubCall(
+                    name=a['subroutine'],
+                    args=[_resolve_value(x, consts) for x in a.get('args', [])],
+                ))
             else:
                 actions.append(Call(
                     func=a['call'],
@@ -483,6 +493,7 @@ def build_steps(spec, consts):
                 exp_desc=exp_desc,
                 timing=c.get('timing', '任意'),
                 op=op,
+                param=c.get('param'),
             ))
         steps.append(Step(
             no=s['no'],
@@ -530,8 +541,8 @@ digit = len(str(stepsize.Value).split('.')[1])
 
 _ctx = TestContext(Variable, logging, time, digit, DLL_OK,
                    stepsize=stepsize, lib=_LIB)
-for _sname, _ssteps in _SUBS.items():
-    _ctx.register_subroutine(_sname, _ssteps)
+for _sname, (_ssteps, _sparams) in _SUBS.items():
+    _ctx.register_subroutine(_sname, _ssteps, _sparams)
 
 _started = 'Test case ID.ID;;' + _SPEC.get('test_case_id', '') + ' is started!'
 print(datetime.datetime.today())
@@ -551,7 +562,7 @@ def pre_init(time):
     for line in _pre.get('logs', []):
         logging.info(line)
     for name in _pre.get('init_subroutines', []):
-        run_init_subroutine(_ctx, name, _SUBS[name])
+        run_init_subroutine(_ctx, name, _SUBS[name][0])
     return DLL_OK
 
 
