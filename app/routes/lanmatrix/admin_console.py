@@ -45,6 +45,7 @@ def admin_list_users():
         d = u.to_dict()
         d["is_active"] = u.is_active
         d["project_count"] = service.user_project_count(u.id)
+        d["projects"] = service.user_project_codes(u.id)
         out.append(d)
     return ok({"users": out})
 

@@ -188,6 +188,17 @@ def user_project_count(user_id: int) -> int:
     return ProjectMember.query.filter_by(user_id=user_id).count()
 
 
+def user_project_codes(user_id: int) -> list[str]:
+    ids = [m.project_id for m in
+           ProjectMember.query.filter_by(user_id=user_id).all()]
+    if not ids:
+        return []
+    projects = (Project.query
+                .filter(Project.id.in_(ids), Project.deleted_at.is_(None))
+                .order_by(Project.code.asc()).all())
+    return [p.code for p in projects]
+
+
 def admin_create_user(actor: LMUser, *, username: str, password: str,
                       display_name: str = "", email: str = "",
                       is_system_admin: bool = False,

@@ -13,6 +13,15 @@
     return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   }
+  // Deterministic gradient avatar (2-char label) — mirrors the design demo.
+  function avatar(label, i) {
+    const h1 = (i * 67) % 360, h2 = (i * 67 + 40) % 360;
+    return `<span class="avatar" style="width:30px;height:30px;font-size:11px;`
+      + `background:linear-gradient(135deg,hsl(${h1} 55% 62%),hsl(${h2} 55% 50%))">`
+      + `${esc(label)}</span>`;
+  }
+  const ICO_EDIT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
+  const ICO_DEL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>';
 
   // Merge execution ``status`` + judge ``result`` into one label, splitting a
   // failed run into a genuine ``failed`` (verdict FAIL) vs an ``error`` (ERROR).
@@ -78,34 +87,55 @@
       const data = await LMApi.adminListUsers();
       const users = data.users || [];
       const kUsers = $("lm-kpi-users"); if (kUsers) kUsers.textContent = users.length;
-      tb.innerHTML = users.map((u) => {
+      const admins = users.filter((u) => u.is_system_admin).length;
+      const kut = $("lm-kpi-users-trend");
+      if (kut) kut.textContent = admins ? admins + " 管理员" : "—";
+      tb.innerHTML = users.map((u, i) => {
         const active = u.status === "active";
-        const initial = esc((u.display_name || u.username || "?").slice(0, 1).toUpperCase());
-        const role = u.is_system_admin
-          ? '<span class="tag tag-role-admin">系统管理员</span>'
-          : '<span class="tag tag-role-reader">成员</span>';
+        const name = u.display_name || u.username || "?";
+        const projects = Array.isArray(u.projects) ? u.projects : [];
+        const chips = projects.length
+          ? `<div class="projchips">${projects.map((p) => `<span class="pchip">${esc(p)}</span>`).join("")}</div>`
+          : '<span class="muted">—</span>';
         return `
         <tr>
-          <td><div class="u-name"><span class="avatar" style="width:26px;height:26px;font-size:11px">${initial}</span><code>${esc(u.username)}</code></div></td>
-          <td>${esc(u.display_name || "")}</td>
-          <td>${esc(u.email || "")}</td>
+          <td><div class="u-name">${avatar(name.slice(0, 2), i)}<div><b>${esc(u.username)}</b><span class="sub">${esc(u.display_name || "")}</span></div></div></td>
+          <td class="mono">${esc(u.email || "")}</td>
           <td>${pill(active ? "on" : "off", active ? "启用" : "停用")}</td>
-          <td>${role}</td>
-          <td>${u.project_count || 0}</td>
+          <td><label class="sw"><input type="checkbox" class="lm-user-admin-sw" data-id="${u.id}" ${u.is_system_admin ? "checked" : ""}><span class="track"></span></label></td>
+          <td>${chips}</td>
           <td><div class="row-acts">
-            <button class="btn small lm-user-edit" data-id="${u.id}">编辑</button>
-            <button class="btn small danger lm-user-del" data-id="${u.id}">删除</button>
+            <button class="btn small btn-icon lm-user-edit" data-id="${u.id}" title="编辑">${ICO_EDIT}</button>
+            <button class="btn small btn-icon danger lm-user-del" data-id="${u.id}" title="删除">${ICO_DEL}</button>
           </div></td>
         </tr>`;
-      }).join("") || '<tr><td colspan="7" class="muted">暂无账号</td></tr>';
+      }).join("") || '<tr><td colspan="6" class="muted">暂无账号</td></tr>';
       window._lmUsers = users;
       tb.querySelectorAll(".lm-user-edit").forEach((b) =>
         b.addEventListener("click", () => openUser(Number(b.dataset.id))));
       tb.querySelectorAll(".lm-user-del").forEach((b) =>
         b.addEventListener("click", () => delUser(Number(b.dataset.id))));
+      tb.querySelectorAll(".lm-user-admin-sw").forEach((sw) =>
+        sw.addEventListener("change", () => toggleAdmin(Number(sw.dataset.id), sw.checked, sw)));
     } catch (ex) {
       if (ex.status === 401) { window.location = LM.urls.login; return; }
-      tb.innerHTML = `<tr><td colspan="7" class="lm-err">${esc(ex.message)}</td></tr>`;
+      tb.innerHTML = `<tr><td colspan="6" class="lm-err">${esc(ex.message)}</td></tr>`;
+    }
+  }
+
+  // Flip is_system_admin straight from the row switch; revert on failure.
+  async function toggleAdmin(id, value, sw) {
+    try {
+      await LMApi.adminUpdateUser(id, { is_system_admin: value });
+      const u = (window._lmUsers || []).find((x) => x.id === id);
+      if (u) u.is_system_admin = value;
+      const admins = (window._lmUsers || []).filter((x) => x.is_system_admin).length;
+      const kut = $("lm-kpi-users-trend");
+      if (kut) kut.textContent = admins ? admins + " 管理员" : "—";
+      toast(value ? "已设为系统管理员" : "已取消系统管理员", true);
+    } catch (ex) {
+      if (sw) sw.checked = !value;
+      toast(ex.message || "更新失败", false);
     }
   }
 
@@ -174,10 +204,35 @@
     const info = $("lm-license-info");
     if (info) info.textContent =
       `总量 ${total} · 使用中 ${inUse} · 空闲 ${l.available || 0} · 排队 ${l.queued_jobs || 0}`;
-    const kt = $("lm-kpi-total"); if (kt) kt.textContent = total;
     const ki = $("lm-kpi-inuse"); if (ki) ki.textContent = inUse;
-    const kq = $("lm-kpi-queued"); if (kq) kq.textContent = l.queued_jobs || 0;
+    const klt = $("lm-kpi-lic-trend");
+    if (klt) klt.textContent = total ? `${inUse}/${total}` : "—";
     const cnt = $("lm-license-count"); if (cnt) cnt.value = total || 1;
+  }
+
+  // Headline stats sourced independently of the tabs: running-task count and
+  // project totals. Failures degrade gracefully to a dash.
+  async function loadStats() {
+    try {
+      const data = await LMApi.adminListTasks();
+      const tasks = data.tasks || [];
+      const running = tasks.filter((t) =>
+        String(t.status || "").toLowerCase() === "running").length;
+      const kr = $("lm-kpi-running"); if (kr) kr.textContent = running;
+      const krt = $("lm-kpi-run-trend");
+      if (krt) {
+        krt.textContent = running ? "运行中" : "空闲";
+        krt.className = "trend " + (running ? "up" : "flat");
+      }
+    } catch (_e) { /* keep dash */ }
+    try {
+      const data = await LMApi.listProjects();
+      const projects = data.projects || [];
+      const active = projects.filter((p) => (p.status || "") === "active").length;
+      const kp = $("lm-kpi-projects"); if (kp) kp.textContent = projects.length;
+      const kpt = $("lm-kpi-proj-trend");
+      if (kpt) kpt.textContent = projects.length ? `活跃 ${active}` : "—";
+    } catch (_e) { /* keep dash */ }
   }
   async function loadLicense() {
     try {
@@ -205,6 +260,11 @@
     try {
       const data = await LMApi.adminListTasks();
       const tasks = data.tasks || [];
+      const running = tasks.filter((t) =>
+        String(t.status || "").toLowerCase() === "running").length;
+      const kr = $("lm-kpi-running"); if (kr) kr.textContent = running;
+      const krt = $("lm-kpi-run-trend");
+      if (krt) { krt.textContent = running ? "运行中" : "空闲"; krt.className = "trend " + (running ? "up" : "flat"); }
       tb.innerHTML = tasks.map((t) => {
         const cancel = FINAL.includes(t.status)
           ? "" : `<button class="btn small lm-atask-cancel" data-k="${esc(t.task_id)}">取消</button>`;
@@ -239,5 +299,5 @@
   }
   $("lm-admin-tasks-refresh").addEventListener("click", loadTasks);
 
-  (window.LMReady || Promise.resolve()).then(() => { loadUsers(); loadLicense(); });
+  (window.LMReady || Promise.resolve()).then(() => { loadUsers(); loadLicense(); loadStats(); });
 })();
