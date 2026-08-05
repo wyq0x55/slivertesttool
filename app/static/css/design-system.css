@@ -421,6 +421,9 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .jstep.fail > .jhead .jt{ color:var(--text); }
 .jbody{ margin:0; padding:12px 14px 14px 41px; background:var(--surface-2); border-top:1px solid var(--border);
   font-family:var(--mono); font-size:12px; line-height:1.65; color:var(--text-2); white-space:pre-wrap; overflow:auto; }
+.jbody .jck{ display:inline; border-radius:3px; }
+.jbody .jck-fail{ color:var(--danger); font-weight:600; background:var(--danger-soft); }
+.jbody .jck-pass{ color:var(--text-2); }
 .jempty{ padding:22px 14px; text-align:center; color:var(--text-3); font-size:13px;
   border:1px dashed var(--border); border-radius:var(--radius-sm); }
 .jraw{ margin:0; padding:14px 16px; background:#0c0d10; color:#c9cdd6; border-radius:var(--radius-sm);

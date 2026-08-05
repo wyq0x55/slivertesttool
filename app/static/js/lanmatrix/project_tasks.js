@@ -557,22 +557,46 @@
     loadJudge();
   }
 
-  // Parse jdgrslt.log into per-step groups. Each "Step.N" line opens a group;
-  // subsequent non-step lines (continuations / detail) attach to it. A group's
-  // verdict is fail if any of its lines matches FAIL_LINE, else pass if any
-  // matches PASS_LINE. Lines before the first Step.N are kept as a preamble.
+  // Strip a leading logging tag ("INFO:root:", "INFO Silver: ") so structural
+  // markers can be matched regardless of how the judge tagged the line.
+  function stripLogPrefix(s) {
+    return s.replace(/^\s*(?:INFO|DEBUG|WARNING|WARN|ERROR|CRITICAL)(?::[^:]*:|\s+\S+:)\s?/i, "");
+  }
+  // The main step divider "-------------------Step3-------------------". It must
+  // NOT match a subroutine sub-header
+  // "------------------- Subroutine(Foo) Step3-------------------", so we anchor
+  // "Step" right after the leading dashes (the subroutine form has a name there).
+  const STEP_DIVIDER = /^-{3,}\s*Step\.?(\d+)\s*-{3,}$/i;
+  // A *main* step verdict starts with "Step.N is …"; a subroutine verdict
+  // ("<Subroutine> Step.2 is …") does not, so anchoring excludes it.
+  const STEP_VERDICT = /^Step\.(\d+)\s+is\s+(passed|failed)/i;
+
+  // Parse jdgrslt.log into per-step groups. A step is opened by its main divider
+  // "-------------------StepN-------------------" (preferred) or, as a fallback,
+  // by its "Step.N is passed/failed" verdict line. Every line up to the next
+  // divider — the detail block (● / ▲ checks) and the verdict — attaches to that
+  // step, so a step's block no longer bleeds into the previous one. A group's
+  // result is fail if any of its lines matches FAIL_LINE, else pass if any
+  // matches PASS_LINE. Lines before the first step are kept as a preamble.
   function parseJudgeSteps(text) {
     const steps = [], byNum = new Map(), preamble = [];
     let cur = null;
+    const group = (n) => {
+      if (byNum.has(n)) return byNum.get(n);
+      const g = { n: n, lines: [], result: "" };
+      byNum.set(n, g); steps.push(g); return g;
+    };
     text.split(/\r?\n/).forEach((raw) => {
       const line = raw.replace(/\s+$/, "");
       if (line === "") return;
-      const m = line.match(/Step\.(\d+)/i);
-      if (m) {
-        const n = m[1];
-        if (byNum.has(n)) { cur = byNum.get(n); }
-        else { cur = { n: n, lines: [], result: "" }; byNum.set(n, cur); steps.push(cur); }
+      const bare = stripLogPrefix(line);
+      const md = bare.match(STEP_DIVIDER);
+      if (md && !/Subroutine/i.test(bare)) {
+        cur = group(md[1]);   // divider is structural — not part of the body
+        return;
       }
+      const mv = bare.match(STEP_VERDICT);
+      if (mv) { cur = group(mv[1]); }   // fallback / result anchor for this step
       if (cur) {
         cur.lines.push(line);
         if (FAIL_LINE.test(line)) cur.result = "fail";
@@ -583,13 +607,37 @@
     });
     return { steps: steps, preamble: preamble };
   }
-  // Best-effort short title for a step: first line, minus the "Step.N" prefix
-  // and any trailing "is passed/failed" verdict.
+  // Best-effort title for a step: the leading header lines that describe its
+  // purpose — the category ("前提条件の確認") and the comment ("Step2 …") that
+  // the runner logs right after the divider — joined together. Structural noise
+  // (dividers, subroutine headers, ● / ▲ check markers, detail lines, verdict)
+  // ends the header block.
   function stepTitle(s) {
-    let t = s.lines[0] || ("Step." + s.n);
-    t = t.replace(/^\s*Step\.\d+\s*[:：.\-)]*\s*/i, "");
-    t = t.replace(/\b(is\s+)?(passed|failed)\b\.?\s*$/i, "").trim();
-    return t || ("步骤 " + s.n);
+    const noise = /^(?:-{3,}|[●▲]$|Monitoring target|Expected Value|Observed Value|確認タイミング|Step\.\d+\s+is\s+)/i;
+    const parts = [];
+    for (const raw of s.lines) {
+      const t = stripLogPrefix(raw).trim();
+      if (!t) continue;
+      if (noise.test(t)) { if (parts.length) break; continue; }
+      parts.push(t);
+      if (parts.length >= 3) break;
+    }
+    return parts.length ? parts.join("　").slice(0, 120) : ("步骤 " + s.n);
+  }
+  // Render a step body, highlighting each failed check block (opened by "▲")
+  // in red and dimming passed ones (opened by "●"). A block runs until the next
+  // marker, divider or verdict line.
+  function bodyHtml(lines) {
+    let out = "", mode = "";
+    lines.forEach((raw) => {
+      const t = stripLogPrefix(raw).trim();
+      if (t === "▲") mode = "fail";
+      else if (t === "●") mode = "pass";
+      else if (STEP_DIVIDER.test(t) || /^Step\.\d+\s+is\s+(passed|failed)/i.test(t)) mode = "";
+      const cls = mode === "fail" ? "jck jck-fail" : (mode === "pass" ? "jck jck-pass" : "");
+      out += cls ? `<span class="${cls}">${esc(raw)}</span>\n` : (esc(raw) + "\n");
+    });
+    return out;
   }
   function stepBadge(r) {
     if (r === "fail") return '<span class="jbadge fail">✕ failed</span>';
@@ -624,7 +672,7 @@
            <span class="jt">${esc(stepTitle(s))}</span>
            ${stepBadge(s.result)}
          </div>
-         <pre class="jbody" hidden>${esc(s.lines.join("\n"))}</pre>
+         <pre class="jbody" hidden>${bodyHtml(s.lines)}</pre>
        </div>`).join("");
     el.querySelectorAll(".jstep .jhead").forEach((h) => {
       const step = h.parentElement;
