@@ -457,6 +457,23 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
   background:var(--brand-soft); color:var(--brand); border-color:transparent; }
 .dt .row-acts .btn-icon{ width:30px; height:30px; padding:0; justify-content:center; }
 .dt .row-acts .btn-icon svg{ width:15px; height:15px; }
+/* Keep TEST ID on one line so the freed action-column width isn't re-consumed. */
+.dt .lm-cell-testid{ white-space:nowrap; }
+/* Tasks table: fit the card width (no horizontal scroll).
+   1) Tighten per-cell padding. 2) Ellipsis-truncate the free-text columns
+   (模型 / 提交者) so long values don't widen the table. 3) The hover action
+   icons are an ABSOLUTE overlay — because opacity:0 still reserves layout
+   width, keeping them in-flow would permanently occupy a ~170px column and
+   defeat the space saving. As an overlay they cost the table zero width and
+   simply fade in over the row's right edge on hover. */
+.lm-tasks-table thead th, .lm-tasks-table tbody td{ padding:11px 12px; }
+.lm-tasks-table .lm-cell-ell{ max-width:150px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.lm-tasks-table tbody tr{ position:relative; }
+.lm-tasks-table .lm-row-actions{ width:0; padding:0 !important; border:0; }
+.lm-tasks-table .row-acts{ position:absolute; top:0; right:8px; height:100%;
+  align-items:center; padding-left:36px; pointer-events:none;
+  background:linear-gradient(to right, transparent, var(--surface-2) 36px); }
+.lm-tasks-table tbody tr:hover .row-acts{ pointer-events:auto; }
 
 .tabs{ display:flex; gap:4px; border-bottom:1px solid var(--border); margin-bottom:20px; }
 .tab{ border:none; background:transparent; color:var(--text-2); font:inherit; font-size:13.5px; font-weight:550;
@@ -741,3 +758,18 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
 .lm-db-tnav-btn.is-active{ background:var(--brand-soft); color:var(--brand); }
 .lm-drag-handle{ color:var(--text-3); }
 .lm-login-card{ border-radius:var(--radius-lg); box-shadow:var(--shadow-md); }
+
+/* テスト区分 pager docked in Univer's footer. lanmatrix.css hard-codes it light
+   and its only dark rule keys on the OS `prefers-color-scheme`, not the in-app
+   `data-theme` toggle — so it was the one editor module that stayed white while
+   Univer's footer darkened. Re-point it at the theme tokens (adaptive in BOTH
+   modes) so it tracks the in-app night switch. */
+.lm-univer-footerpager{ background:var(--surface); border-left-color:var(--border); color:var(--text); }
+/* テスト区分 pager control (#lm-pager renders a .lm-kubun segmented ◀ [区分] ▶).
+   Same story: hard-coded light in lanmatrix.css, so re-point at theme tokens. */
+.lm-kubun{ background:var(--surface); border-color:var(--border-strong); }
+.lm-kubun-arrow{ color:var(--text-2); }
+.lm-kubun-arrow:first-child{ border-right-color:var(--border); }
+.lm-kubun-arrow:last-child{ border-left-color:var(--border); }
+.lm-kubun-arrow:hover:not(:disabled){ background:var(--surface-2); color:var(--text); }
+.lm-kubun-cur{ color:var(--text); }

@@ -238,25 +238,35 @@
     updateSortIndicators();
     updateBatchBar();
   }
+  // Compact icon-button actions: the action column is now a fixed, narrow strip
+  // that only reveals on row hover (`.dt .row-acts{opacity:0}`), so TEST ID and
+  // the data columns reclaim the width the old text buttons used to consume.
+  const _ic = (p) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" `
+    + `stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+  const ICO_VIEW = _ic('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>');
+  const ICO_STEPS = _ic('<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>');
+  const ICO_DL = _ic('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>');
+  const ICO_CANCEL = _ic('<rect x="6" y="6" width="12" height="12" rx="2"/>');
+  const ICO_DEL = _ic('<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>');
   function rowHtml(t) {
     const checked = selected.has(t.task_id) ? " checked" : "";
     const p = t.progress || 0;
     const sel = `<td class="lm-col-check"><input type="checkbox" class="lm-task-sel" data-k="${esc(t.task_id)}"${checked}></td>`;
-    const view = `<button class="btn small lm-task-view" data-k="${esc(t.task_id)}">查看</button>`;
+    const view = `<button class="btn small btn-icon lm-task-view" data-k="${esc(t.task_id)}" title="查看">${ICO_VIEW}</button>`;
     const steps = t.test_id
-      ? `<button class="btn small lm-task-steps" data-k="${esc(t.task_id)}" data-tid="${esc(t.test_id)}">手顺</button>` : "";
+      ? `<button class="btn small btn-icon lm-task-steps" data-k="${esc(t.task_id)}" data-tid="${esc(t.test_id)}" title="手顺">${ICO_STEPS}</button>` : "";
     const dl = t.has_result
-      ? `<a class="btn small" href="${LMApi.projectTaskDownloadUrl(pid, t.task_id)}">下载</a>` : "";
+      ? `<a class="btn small btn-icon" href="${LMApi.projectTaskDownloadUrl(pid, t.task_id)}" title="下载结果">${ICO_DL}</a>` : "";
     const cancel = FINAL.includes(t.status)
-      ? "" : `<button class="btn small lm-task-cancel" data-k="${esc(t.task_id)}">取消</button>`;
+      ? "" : `<button class="btn small btn-icon lm-task-cancel" data-k="${esc(t.task_id)}" title="取消运行">${ICO_CANCEL}</button>`;
     const del = capabilities.delete
-      ? `<button class="btn small danger lm-task-del" data-k="${esc(t.task_id)}">删除</button>` : "";
+      ? `<button class="btn small btn-icon danger lm-task-del" data-k="${esc(t.task_id)}" title="删除">${ICO_DEL}</button>` : "";
     return `<tr data-k="${esc(t.task_id)}">
       ${sel}
       <td><a href="#" class="lm-task-open" data-k="${esc(t.task_id)}"><code>${esc(t.task_id)}</code></a></td>
-      <td>${esc(t.test_id)}</td>
-      <td>${esc(t.sil_name || "")}</td>
-      <td>${esc(t.submitter)}</td>
+      <td class="lm-cell-testid">${esc(t.test_id)}</td>
+      <td class="lm-cell-ell" title="${esc(t.sil_name || "")}">${esc(t.sil_name || "")}</td>
+      <td class="lm-cell-ell" title="${esc(t.submitter)}">${esc(t.submitter)}</td>
       <td class="lm-cell-status">${mergedBadge(t)}</td>
       <td class="lm-cell-progress">
         <div style="display:flex;align-items:center;gap:8px">
