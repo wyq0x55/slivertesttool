@@ -1486,12 +1486,19 @@
             `<span class="lm-muted">（${ers.length} 个）</span></li>`).join("");
         html += `<ul class="lm-import-errlist">${groups}</ul>`;
       }
+      const nothing = (s.distinct_signals || 0) === 0;
+      if (s.reason) {
+        html += `<p class="lm-import-reason" style="color:var(--danger,#c0392b)">` +
+          `${nothing ? "未抽取到入出力" : "注意"}：${esc(s.reason)}</p>`;
+      }
       document.getElementById("lm-import-summary").innerHTML = html;
       toast(
         rowErrors.length
           ? `抽取完成，但有 ${rowErrors.length} 个信号冲突，请查看说明`
-          : `抽取完成：新增 ${s.created || 0}，更新 ${s.updated || 0}`,
-        !rowErrors.length);
+          : nothing
+            ? `抽取失败：${s.reason || "未抽取到入出力信号"}`
+            : `抽取完成：新增 ${s.created || 0}，更新 ${s.updated || 0}`,
+        !(rowErrors.length || nothing));
     } catch (ex) {
       err.textContent = ex.message; err.hidden = false;
     } finally {

@@ -319,13 +319,25 @@ def extract_io_from_steps(user, project, *, sheets=("lib",), mode: str = "upsert
             code="VALIDATION_ERROR")
 
     bodies: list[Any] = []
+    parse_failed = 0
     for sheet in wanted:
         field_key = step_fields[sheet]
         rows = TestItemRow.query.filter_by(
             project_id=project.id, sheet=sheet, deleted_at=None
         ).order_by(TestItemRow.row_order).all()
         for row in rows:
-            bodies.append(_parse_json_field(row.get_field(field_key)))
+            raw = row.get_field(field_key)
+            body = _parse_json_field(raw)
+            # A non-blank step doc that collapses to an empty dict was malformed
+            # JSON: _parse_json_field swallows the error, so the signal harvest
+            # silently skips the row. Count these so we can report a real reason
+            # instead of an unexplained "0 signals" result.
+            if not body and isinstance(raw, str) and raw.strip():
+                try:
+                    json.loads(raw)
+                except (ValueError, TypeError):
+                    parse_failed += 1
+            bodies.append(body)
 
     collected = collect_io_signals(bodies)
     summary = _run_io_import(user, project, collected["items"], mode=mode,
@@ -333,7 +345,29 @@ def extract_io_from_steps(user, project, *, sheets=("lib",), mode: str = "upsert
     summary["scanned_rows"] = collected["scanned_rows"]
     summary["distinct_signals"] = collected["distinct_signals"]
     summary["skipped_nameless"] = collected["skipped_nameless"]
+    summary["parse_failed"] = parse_failed
     summary["sheets"] = wanted
+
+    # Explain a fruitless extraction so the UI never shows a silent "0 信号".
+    scanned = collected["scanned_rows"]
+    distinct = collected["distinct_signals"]
+    nameless = collected["skipped_nameless"]
+    reasons: list[str] = []
+    if parse_failed:
+        reasons.append(f"{parse_failed} 行手順内容解析失败（steps JSON 格式错误）")
+    if scanned == 0:
+        reasons.append("所选表（lib / 测试）没有任何手順行")
+    elif distinct == 0:
+        if nameless:
+            reasons.append(
+                f"扫描的 {scanned} 行手順中，信号声明仅有路径、缺少名称"
+                f"（跳过 {nameless} 个），无法写入以名称为主键的入出力池")
+        elif not parse_failed:
+            reasons.append(
+                f"扫描的 {scanned} 行手順均未声明入出力信号"
+                "（input_signals / expected_signals）")
+    if reasons:
+        summary["reason"] = "；".join(reasons) + "。"
     return summary
 
 
