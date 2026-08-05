@@ -3,7 +3,7 @@
 {% block crumb %}<a href="{{ url_for('lanmatrix_pages.projects') }}">项目</a><span class="sep">/</span><b>上传任务</b>{% endblock %}
 {% block content %}
 <div class="content lm-tasks" data-project="{{ project_id }}">
-  <div class="page-head">
+  <div class="page-head" id="lm-list-head">
     <div class="ttl">
       <h1>上传任务</h1>
       <p>提交测试用例到队列，跟踪运行进度与判定结果</p>
@@ -27,32 +27,40 @@
   </div>
 
   <div id="lm-tasks-body" hidden>
-    <div class="tablecard">
-      <div class="tc-head">
-        <select id="lm-f-status" class="selbox" title="按状态筛选">
-          <option value="">全部状态</option>
-          <option value="queued">排队中</option>
-          <option value="running">运行中</option>
-          <option value="passed">通过</option>
-          <option value="failed">失败</option>
-          <option value="cancelled">已取消</option>
-        </select>
-        <div class="search">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-          <input type="search" id="lm-f-submitter" placeholder="提交者…" style="width:150px">
-        </div>
-        <div class="search">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-          <input type="search" id="lm-f-text" placeholder="任务 / test id…" style="width:170px">
-        </div>
-        <button class="btn small" id="lm-f-clear" type="button">清除筛选</button>
-        <div class="spacer"></div>
-        <span id="lm-batch-status" class="muted" style="font-size:12.5px"></span>
-        <button class="btn small" id="lm-sel-all-tasks" type="button">全选</button>
-        <button class="btn small" id="lm-sel-none-tasks" type="button">清除选择</button>
-        <button class="btn small primary" id="lm-batch-download" type="button">下载所选</button>
-        <button class="btn small danger" id="lm-batch-delete" type="button" hidden>删除所选</button>
+    <div class="toolbar">
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>
+        <input type="search" id="lm-f-text" placeholder="搜索任务 / test id…" autocomplete="off">
       </div>
+      <select id="lm-f-submitter" class="selbox" title="按提交者筛选">
+        <option value="">全部提交者</option>
+      </select>
+      <input type="hidden" id="lm-f-status" value="">
+      <div class="segmented" id="lm-f-seg" role="tablist">
+        <button type="button" class="on" data-status="">全部</button>
+        <button type="button" data-status="running">运行中</button>
+        <button type="button" data-status="passed">已通过</button>
+        <button type="button" data-status="failed">失败</button>
+      </div>
+      <span style="flex:1"></span>
+      <div class="toolbar-batch">
+        <span id="lm-batch-status" class="muted" style="font-size:12.5px"></span>
+        <button class="btn ghost small" id="lm-batch-download" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          下载所选
+        </button>
+        <button class="btn ghost small" id="lm-batch-cancel" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+          取消运行
+        </button>
+        <button class="btn small danger" id="lm-batch-delete" type="button" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
+          删除所选
+        </button>
+      </div>
+    </div>
+
+    <div class="tablecard">
       <div style="overflow-x:auto">
         <table class="dt lm-tasks-table">
           <thead>
@@ -116,55 +124,67 @@
   </div>
 </dialog>
 
-<dialog id="lm-task-dialog" class="lm-dialog lm-task-dialog">
-  <div class="lm-card lm-detail" style="padding:22px;min-width:min(880px,92vw)">
-    <div class="lm-page-head" style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
-      <h3 id="lm-d-title" style="font-size:17px">任务详情</h3>
-      <div class="spacer" style="flex:1"></div>
-      <div class="lm-row-actions" style="display:flex;gap:8px">
-        <button class="btn small danger" id="lm-d-cancel">取消运行</button>
-        <a class="btn small" id="lm-d-download" target="_blank">下载报告</a>
-        <button class="btn small" id="lm-d-close">关闭</button>
+<section id="lm-task-detail" class="task-detail" hidden>
+  <div class="page-head">
+    <div class="ttl">
+      <button class="btn small ghost lm-d-back" id="lm-d-close" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+        返回列表
+      </button>
+      <div class="dtitle">
+        <h1 id="lm-d-title">任务</h1>
+        <span class="pill st-queued" id="lm-d-hstatus"><span class="dot"></span></span>
       </div>
+      <p id="lm-d-sub"></p>
     </div>
-
-    <div class="detail-grid">
-      <div class="panel">
-        <h4>概览</h4>
-        <dl class="meta">
-          <dt>状态</dt><dd><span class="pill st-queued" id="lm-d-status"></span></dd>
-          <dt>test id</dt><dd id="lm-d-testid"></dd>
-          <dt>提交者</dt><dd id="lm-d-submitter"></dd>
-          <dt>模型</dt><dd id="lm-d-model"></dd>
-          <dt>结论</dt><dd id="lm-d-verdict">—</dd>
-          <dt>创建时间</dt><dd id="lm-d-created"></dd>
-          <dt>消息</dt><dd id="lm-d-message"></dd>
-        </dl>
-        <div class="big-prog"><i id="lm-d-bar" style="width:0%"></i></div>
-        <div class="muted" style="font-size:12px"><span id="lm-d-progress">0</span>%</div>
-      </div>
-      <div class="panel">
-        <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
-          <h4 style="margin:0">实时日志</h4>
-          <div class="spacer" style="flex:1"></div>
-          <label class="lm-check" style="font-size:12.5px;color:var(--text-3)"><input type="checkbox" id="lm-d-autoscroll" checked> 自动滚动</label>
-        </div>
-        <pre id="lm-d-log" class="term"></pre>
-      </div>
-    </div>
-
-    <div class="panel" style="margin-top:16px">
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
-        <h4 style="margin:0">判定结果 <span class="muted" style="font-weight:400">(jdgrslt.log)</span></h4>
-        <div class="spacer" style="flex:1"></div>
-        <label class="lm-check" style="font-size:12.5px;color:var(--text-3)"><input type="checkbox" id="lm-d-failonly"> 仅显示失败步骤</label>
-        <button class="btn small" id="lm-d-refresh-judge">刷新</button>
-      </div>
-      <p class="judge-hint" id="lm-d-judge-hint">加载判定结果…</p>
-      <pre id="lm-d-judge" class="term" style="max-height:240px"></pre>
+    <div class="head-actions">
+      <button class="btn small danger" id="lm-d-cancel" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+        取消运行
+      </button>
+      <a class="btn small" id="lm-d-download" target="_blank">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+        下载报告
+      </a>
     </div>
   </div>
-</dialog>
+
+  <div class="detail-grid">
+    <div class="panel">
+      <h4>概览</h4>
+      <dl class="meta">
+        <dt>状态</dt><dd><span class="pill st-queued" id="lm-d-status"><span class="dot"></span></span></dd>
+        <dt>结论</dt><dd id="lm-d-verdict">—</dd>
+        <dt>test id</dt><dd id="lm-d-testid"></dd>
+        <dt>模型</dt><dd id="lm-d-model"></dd>
+        <dt>提交者</dt><dd id="lm-d-submitter"></dd>
+        <dt>创建时间</dt><dd id="lm-d-created"></dd>
+        <dt>消息</dt><dd id="lm-d-message"></dd>
+      </dl>
+      <div class="big-prog" style="margin-top:14px"><i id="lm-d-bar" style="width:0%"></i></div>
+      <div class="prog-lbl"><span>执行进度</span><span id="lm-d-progress">0%</span></div>
+    </div>
+    <div class="panel">
+      <div class="panel-bar">
+        <h4 style="margin:0">实时日志 <span class="submuted">· SSE</span></h4>
+        <div style="flex:1"></div>
+        <label class="jchk"><input type="checkbox" id="lm-d-autoscroll" checked><span>自动滚动</span></label>
+      </div>
+      <pre id="lm-d-log" class="term"></pre>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:20px">
+    <div class="panel-bar">
+      <h4 style="margin:0">判定结果 <span class="submuted">· jdgrslt.log</span></h4>
+      <div style="flex:1"></div>
+      <label class="jchk"><input type="checkbox" id="lm-d-failonly"><span>仅显示失败步骤</span></label>
+      <button class="btn small" id="lm-d-refresh-judge" type="button">刷新</button>
+    </div>
+    <p class="judge-hint" id="lm-d-judge-hint">加载判定结果…</p>
+    <div id="lm-d-judge" class="jsteps"></div>
+  </div>
+</section>
 
 <dialog id="lm-steps-dialog" class="lm-steps-drawer">
   <form method="dialog" class="lm-steps-drawer-card">

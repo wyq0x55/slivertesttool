@@ -258,6 +258,7 @@
           this.host.innerHTML = "";
           this.view = mgr.mount(this.host, {});
           this.engine = "univer";
+          try { this._syncDark(); } catch (_e) {}
         } catch (e) {
           console.warn("Univer steps mount failed, using built-in editor:", e);
           this.view = null;
@@ -266,9 +267,37 @@
       }
     }
 
+    // Sync the Univer steps sheet to the app's light|dark theme. Univer 0.25's
+    // univerAPI.toggleDarkMode(bool) darkens both the chrome (.univer-dark) and
+    // the canvas render theme; the app theme lives on <html data-theme>. Guarded
+    // so an older bundle without the facade just stays light. The observer is
+    // torn down in _destroyView so reopening the drawer never leaks listeners.
+    _syncDark() {
+      const view = this.view;
+      if (!view) return;
+      const apply = () => {
+        const dark = document.documentElement.getAttribute("data-theme") === "dark";
+        try {
+          const api = view.univerAPI;
+          if (api && typeof api.toggleDarkMode === "function") api.toggleDarkMode(dark);
+        } catch (_e) { /* facade missing → stay light */ }
+      };
+      apply();
+      setTimeout(apply, 300);
+      try {
+        this._darkObserver = new MutationObserver(apply);
+        this._darkObserver.observe(document.documentElement,
+          { attributes: true, attributeFilter: ["data-theme"] });
+      } catch (_e) { /* theme flips just won't live-update */ }
+    }
+
     // Dispose the current Univer workbook (if any) and clear the dialog body so
     // the next open() mounts a clean instance. No-op for the built-in tables.
     _destroyView() {
+      if (this._darkObserver) {
+        try { this._darkObserver.disconnect(); } catch (_e) { /* best-effort */ }
+        this._darkObserver = null;
+      }
       if (this.view) {
         try {
           if (typeof this.view.dispose === "function") this.view.dispose();

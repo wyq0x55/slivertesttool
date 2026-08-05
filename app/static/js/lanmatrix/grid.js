@@ -643,6 +643,31 @@
     host.parentNode ? host.parentNode.insertBefore(b, host) : host.appendChild(b);
   }
 
+  /* Sync the Univer canvas/UI to the app's light|dark theme. Univer 0.25 exposes
+   * univerAPI.toggleDarkMode(bool) (adds `.univer-dark` for the chrome AND swaps
+   * the canvas render theme). The app theme lives on <html data-theme>. We apply
+   * once and re-apply whenever the user flips the theme. All calls are guarded so
+   * an older bundle without the facade simply stays light instead of throwing. */
+  function attachUniverDark(adapter) {
+    if (!adapter || attachUniverDark._seen && attachUniverDark._seen.has(adapter)) return;
+    (attachUniverDark._seen || (attachUniverDark._seen = new WeakSet())).add(adapter);
+    const apply = () => {
+      const dark = document.documentElement.getAttribute("data-theme") === "dark";
+      try {
+        const api = adapter.univerAPI;
+        if (api && typeof api.toggleDarkMode === "function") api.toggleDarkMode(dark);
+      } catch (_e) { /* facade missing → stay light */ }
+    };
+    apply();
+    setTimeout(apply, 300);   // re-apply after first render settles
+    try {
+      const mo = new MutationObserver(apply);
+      mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+      adapter._darkObserver = mo;
+    } catch (_e) { /* no MutationObserver → theme flips just won't live-update */ }
+  }
+  global.LMUniverDark = attachUniverDark;
+
   const LMGrid = {
     /* Univer Sheets is the primary editing engine for the Test Matrix — it gives
      * spreadsheet-grade copy/paste, block paste and batch cell fill. The built-in
@@ -670,6 +695,7 @@
             return new FallbackGrid(opts);
           }
           g.engine = "univer";
+          try { attachUniverDark(g); } catch (_e) {}
           return g;
         } catch (e) {
           console.warn("Univer mount failed, using built-in grid:", e);

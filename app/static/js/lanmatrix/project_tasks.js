@@ -180,11 +180,22 @@
   }
 
   function getFilters() {
+    const st = $("lm-f-status"), sub = $("lm-f-submitter"), txt = $("lm-f-text");
     return {
-      status: $("lm-f-status").value,
-      submitter: $("lm-f-submitter").value.trim().toLowerCase(),
-      text: $("lm-f-text").value.trim().toLowerCase(),
+      status: st ? st.value : "",
+      submitter: sub ? sub.value.trim().toLowerCase() : "",
+      text: txt ? txt.value.trim().toLowerCase() : "",
     };
+  }
+  // Fill the "全部提交者" dropdown from the loaded tasks, preserving any current pick.
+  function populateSubmitters() {
+    const sel = $("lm-f-submitter");
+    if (!sel) return;
+    const cur = sel.value;
+    const names = Array.from(new Set(allTasks.map((t) => t.submitter).filter(Boolean))).sort();
+    sel.innerHTML = '<option value="">全部提交者</option>' +
+      names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("");
+    sel.value = names.includes(cur) ? cur : "";
   }
   function cmp(a, b, key) {
     if (key === "progress") return (+a.progress || 0) - (+b.progress || 0);
@@ -301,6 +312,20 @@
     if (!keys.length) { toast("所选任务均无可下载的报告", false); return; }
     window.location = LMApi.projectTasksDownloadBatchUrl(pid, keys);
   }
+  async function batchCancel() {
+    const keys = selectedKeys().filter((k) => {
+      const t = allTasks.find((x) => x.task_id === k);
+      return t && !FINAL.includes(t.status);
+    });
+    if (!keys.length) { toast("所选任务没有可取消的运行", false); return; }
+    if (!confirm(`确定取消所选 ${keys.length} 个运行中/排队中的任务？`)) return;
+    let ok = 0;
+    for (const k of keys) {
+      try { await LMApi.cancelProjectTask(pid, k); ok++; } catch (ex) { /* keep going */ }
+    }
+    toast(`已请求取消 ${ok} 个任务`, true);
+    load();
+  }
   async function batchDelete() {
     const keys = selectedKeys();
     if (!keys.length) { toast("请先选择任务", false); return; }
@@ -410,10 +435,18 @@
   // --- task detail modal (live log + judge result) ------------------------ //
   const FAIL_LINE = /Step\.\d+\s+is\s+failed|Test\s+is\s+failed/i;
   const PASS_LINE = /Step\.\d+\s+is\s+passed|Test\s+is\s+Passed|All\s+steps\s+are\s+verified/i;
-  const dlg = $("lm-task-dialog");
+  const detailView = $("lm-task-detail");
   let detailKey = null;
   let detailStream = null;
   let judgeContent = "";
+
+  // Task detail is an inline view (not a dialog): opening it hides the list
+  // (its head + body) and reveals the detail section; closing reverses that.
+  function showDetail(on) {
+    if (root) root.hidden = on;
+    if (detailView) detailView.hidden = !on;
+    if (on) window.scrollTo(0, 0);
+  }
 
   function classifyLine(line) {
     if (FAIL_LINE.test(line)) return "step-fail";
@@ -429,15 +462,17 @@
     if ($("lm-d-autoscroll").checked) el.scrollTop = el.scrollHeight;
   }
   function setDetailStatus(status) {
-    const b = $("lm-d-status");
-    b.className = "pill st-" + status;
-    b.innerHTML = '<span class="dot"></span>' + esc(STATUS_ZH[status] || status);
-    const isFinal = FINAL.includes(status);
-    $("lm-d-cancel").hidden = isFinal;
+    ["lm-d-status", "lm-d-hstatus"].forEach((id) => {
+      const b = $(id);
+      if (!b) return;
+      b.className = "pill st-" + status;
+      b.innerHTML = '<span class="dot"></span>' + esc(STATUS_ZH[status] || status);
+    });
+    $("lm-d-cancel").hidden = FINAL.includes(status);
   }
   function setDetailProgress(v) {
     $("lm-d-bar").style.width = v + "%";
-    $("lm-d-progress").textContent = v;
+    $("lm-d-progress").textContent = v + "%";
   }
 
   async function openDetail(key) {
@@ -446,8 +481,9 @@
     $("lm-d-judge").textContent = "";
     $("lm-d-judge-hint").textContent = "加载判定结果…";
     $("lm-d-download").href = LMApi.projectTaskDownloadUrl(pid, key);
-    $("lm-d-title").textContent = "任务 " + key;
-    if (typeof dlg.showModal === "function") dlg.showModal(); else dlg.setAttribute("open", "");
+    $("lm-d-title").textContent = key;
+    $("lm-d-sub").textContent = "";
+    showDetail(true);
     try {
       const data = await LMApi.projectTaskDetail(pid, key);
       const t = data.task;
@@ -455,8 +491,12 @@
       $("lm-d-submitter").textContent = t.submitter || "";
       $("lm-d-model").textContent = t.sil_name || t.sil_relpath || "";
       $("lm-d-verdict").textContent = t.result || "—";
-      $("lm-d-created").textContent = (t.created_at || "").replace("T", " ").replace("Z", "");
+      const created = (t.created_at || "").replace("T", " ").replace("Z", "");
+      $("lm-d-created").textContent = created;
       $("lm-d-message").textContent = t.message || "";
+      $("lm-d-sub").innerHTML = "test id <code>" + esc(t.test_id || "") + "</code>" +
+        (t.submitter ? " · 提交者 " + esc(t.submitter) : "") +
+        (created ? " · " + esc(created) : "");
       setDetailStatus(t.status);
       setDetailProgress(t.progress || 0);
       $("lm-d-download").hidden = !t.has_result;
@@ -507,22 +547,88 @@
     loadJudge();
   }
 
+  // Parse jdgrslt.log into per-step groups. Each "Step.N" line opens a group;
+  // subsequent non-step lines (continuations / detail) attach to it. A group's
+  // verdict is fail if any of its lines matches FAIL_LINE, else pass if any
+  // matches PASS_LINE. Lines before the first Step.N are kept as a preamble.
+  function parseJudgeSteps(text) {
+    const steps = [], byNum = new Map(), preamble = [];
+    let cur = null;
+    text.split(/\r?\n/).forEach((raw) => {
+      const line = raw.replace(/\s+$/, "");
+      if (line === "") return;
+      const m = line.match(/Step\.(\d+)/i);
+      if (m) {
+        const n = m[1];
+        if (byNum.has(n)) { cur = byNum.get(n); }
+        else { cur = { n: n, lines: [], result: "" }; byNum.set(n, cur); steps.push(cur); }
+      }
+      if (cur) {
+        cur.lines.push(line);
+        if (FAIL_LINE.test(line)) cur.result = "fail";
+        else if (PASS_LINE.test(line) && cur.result !== "fail") cur.result = "pass";
+      } else {
+        preamble.push(line);
+      }
+    });
+    return { steps: steps, preamble: preamble };
+  }
+  // Best-effort short title for a step: first line, minus the "Step.N" prefix
+  // and any trailing "is passed/failed" verdict.
+  function stepTitle(s) {
+    let t = s.lines[0] || ("Step." + s.n);
+    t = t.replace(/^\s*Step\.\d+\s*[:：.\-)]*\s*/i, "");
+    t = t.replace(/\b(is\s+)?(passed|failed)\b\.?\s*$/i, "").trim();
+    return t || ("步骤 " + s.n);
+  }
+  function stepBadge(r) {
+    if (r === "fail") return '<span class="jbadge fail">✕ failed</span>';
+    if (r === "pass") return '<span class="jbadge pass">✓ passed</span>';
+    return '<span class="jbadge none">— 待判定</span>';
+  }
+
   function renderJudge() {
     const el = $("lm-d-judge");
-    el.innerHTML = "";
     const failOnly = $("lm-d-failonly").checked;
-    let shown = 0;
-    judgeContent.split(/\r?\n/).forEach((line) => {
-      if (line === "") return;
-      const cls = classifyLine(line);
-      if (failOnly && cls !== "step-fail") return;
-      const span = document.createElement("span");
-      if (cls) span.className = cls;
-      span.textContent = line + "\n";
-      el.appendChild(span);
-      shown += 1;
+    if (!judgeContent || !judgeContent.trim()) {
+      el.innerHTML = '<div class="jempty">（空）</div>';
+      return;
+    }
+    const parsed = parseJudgeSteps(judgeContent);
+    // No recognizable steps → fall back to the raw log so nothing is hidden.
+    if (!parsed.steps.length) {
+      el.innerHTML = '<pre class="jraw"></pre>';
+      el.querySelector(".jraw").textContent = judgeContent;
+      return;
+    }
+    const rows = parsed.steps.filter((s) => !failOnly || s.result === "fail");
+    if (!rows.length) {
+      el.innerHTML = '<div class="jempty">无失败步骤。</div>';
+      return;
+    }
+    el.innerHTML = rows.map((s) =>
+      `<div class="jstep ${s.result || "none"}">
+         <div class="jhead" role="button" tabindex="0" aria-expanded="false">
+           <svg class="jchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+           <span class="ji">Step.${esc(s.n)}</span>
+           <span class="jt">${esc(stepTitle(s))}</span>
+           ${stepBadge(s.result)}
+         </div>
+         <pre class="jbody" hidden>${esc(s.lines.join("\n"))}</pre>
+       </div>`).join("");
+    el.querySelectorAll(".jstep .jhead").forEach((h) => {
+      const step = h.parentElement;
+      const toggle = () => {
+        const body = step.querySelector(".jbody");
+        body.hidden = !body.hidden;
+        step.classList.toggle("open", !body.hidden);
+        h.setAttribute("aria-expanded", body.hidden ? "false" : "true");
+      };
+      h.addEventListener("click", toggle);
+      h.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+      });
     });
-    if (!shown) el.textContent = failOnly ? "无失败步骤。" : "（空）";
   }
   async function loadJudge() {
     if (!detailKey) return;
@@ -653,10 +759,9 @@
   function closeDetail() {
     closeDetailStream();
     detailKey = null;
-    if (dlg.open) dlg.close();
+    showDetail(false);
   }
   $("lm-d-close").addEventListener("click", closeDetail);
-  dlg.addEventListener("close", closeDetailStream);
   $("lm-d-refresh-judge").addEventListener("click", loadJudge);
   $("lm-d-failonly").addEventListener("change", renderJudge);
   $("lm-d-cancel").addEventListener("click", async () => {
@@ -692,6 +797,7 @@
       allTasks = data.tasks || [];
       const present = new Set(allTasks.map((t) => t.task_id));
       Array.from(selected).forEach((k) => { if (!present.has(k)) selected.delete(k); });
+      populateSubmitters();
       renderTasks();
       $("lm-tasks-body").hidden = false;
       $("lm-tasks-denied").hidden = true;
@@ -734,22 +840,28 @@
   }
 
   // Filter + sort + batch selection.
-  ["lm-f-status", "lm-f-submitter", "lm-f-text"].forEach((id) =>
-    $(id).addEventListener("input", renderTasks));
-  $("lm-f-clear").addEventListener("click", () => {
-    $("lm-f-status").value = ""; $("lm-f-submitter").value = ""; $("lm-f-text").value = "";
-    renderTasks();
+  ["lm-f-submitter", "lm-f-text"].forEach((id) => {
+    const el = $(id); if (el) el.addEventListener("input", renderTasks);
   });
+  // Segmented status tabs write the (hidden) lm-f-status value read by getFilters.
+  const seg = $("lm-f-seg");
+  if (seg) {
+    seg.querySelectorAll("button[data-status]").forEach((b) => {
+      b.addEventListener("click", () => {
+        seg.querySelectorAll("button").forEach((x) => x.classList.remove("on"));
+        b.classList.add("on");
+        const st = $("lm-f-status"); if (st) st.value = b.dataset.status || "";
+        renderTasks();
+      });
+    });
+  }
   $("lm-check-all").addEventListener("change", () => {
     const on = $("lm-check-all").checked;
     visibleTasks().forEach((t) => { if (on) selected.add(t.task_id); else selected.delete(t.task_id); });
     renderTasks();
   });
-  $("lm-sel-all-tasks").addEventListener("click", () => {
-    visibleTasks().forEach((t) => selected.add(t.task_id)); renderTasks();
-  });
-  $("lm-sel-none-tasks").addEventListener("click", () => { selected.clear(); renderTasks(); });
   $("lm-batch-download").addEventListener("click", batchDownload);
+  $("lm-batch-cancel").addEventListener("click", batchCancel);
   $("lm-batch-delete").addEventListener("click", batchDelete);
   document.querySelectorAll(".lm-tasks-table thead th[data-sort]").forEach((th) => {
     th.style.cursor = "pointer";

@@ -358,7 +358,51 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .jline{ padding:2px 6px; border-radius:4px; }
 .jline.fail, .step-fail{ color:#fca5a5; background:rgba(229,72,77,.20); }
 .jline.pass, .step-pass{ color:#86efac; }
-.judge-hint{ font-size:12px; color:var(--text-3); margin-top:8px; }
+.judge-hint{ font-size:12px; color:var(--text-3); margin:2px 0 12px; }
+
+/* ---- redesigned task toolbar (search + submitter select + segmented) ---- */
+.toolbar{ display:flex; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:wrap; }
+.toolbar-batch{ display:inline-flex; align-items:center; gap:8px; flex-wrap:nowrap; }
+.toolbar .search{ flex:1 1 220px; max-width:420px; }
+.toolbar .search input{ width:100%; }
+
+/* ---- inline task detail view (replaces the old dialog) ---- */
+.task-detail{ width:100%; max-width:1160px; margin:0 auto; padding:40px 32px 64px; }
+.task-detail .ttl{ display:flex; flex-direction:column; gap:6px; }
+.dtitle{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.dtitle h1{ margin:0; }
+.panel-bar{ display:flex; align-items:center; gap:12px; margin-bottom:12px; }
+.panel-bar h4{ margin:0; }
+.submuted{ color:var(--text-3); font-weight:400; text-transform:none; letter-spacing:0; }
+.prog-lbl{ display:flex; justify-content:space-between; font-size:12px; color:var(--text-3); margin-top:8px; }
+.jchk{ display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:var(--text-2); cursor:pointer; user-select:none; }
+.jchk input{ accent-color:var(--brand); }
+
+/* ---- judge result: expandable Step.N rows parsed from jdgrslt.log ---- */
+.jsteps{ display:flex; flex-direction:column; border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden; }
+.jstep{ border-bottom:1px solid var(--border); }
+.jstep:last-child{ border-bottom:none; }
+.jhead{ display:flex; align-items:center; gap:12px; padding:11px 14px; cursor:pointer;
+  font-family:var(--mono); font-size:12.5px; transition:background var(--dur) var(--ease); }
+.jhead:hover{ background:var(--surface-2); }
+.jhead:focus-visible{ outline:2px solid var(--brand-ring); outline-offset:-2px; }
+.jchev{ width:15px; height:15px; color:var(--text-3); flex:0 0 15px; transition:transform var(--dur) var(--ease); }
+.jstep.open .jchev{ transform:rotate(90deg); }
+.jhead .ji{ flex:0 0 auto; color:var(--text-3); min-width:54px; }
+.jhead .jt{ flex:1; color:var(--text-2); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.jbadge{ flex:0 0 auto; font-weight:600; font-size:11.5px; }
+.jbadge.pass{ color:var(--ok); }
+.jbadge.fail{ color:var(--danger); }
+.jbadge.none{ color:var(--text-3); }
+.jstep.fail > .jhead{ background:var(--danger-soft); }
+.jstep.fail > .jhead .jt{ color:var(--text); }
+.jbody{ margin:0; padding:12px 14px 14px 41px; background:var(--surface-2); border-top:1px solid var(--border);
+  font-family:var(--mono); font-size:12px; line-height:1.65; color:var(--text-2); white-space:pre-wrap; overflow:auto; }
+.jempty{ padding:22px 14px; text-align:center; color:var(--text-3); font-size:13px;
+  border:1px dashed var(--border); border-radius:var(--radius-sm); }
+.jraw{ margin:0; padding:14px 16px; background:#0c0d10; color:#c9cdd6; border-radius:var(--radius-sm);
+  font-family:var(--mono); font-size:12.5px; line-height:1.6; white-space:pre-wrap; overflow:auto; max-height:440px; }
+@media (max-width:720px){ .task-detail{ padding:28px 18px 48px; } }
 
 /* ===== PART 8 · ADMIN ==================================================== */
 .kpis{ display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:16px; margin-bottom:22px; }
