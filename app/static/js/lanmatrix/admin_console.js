@@ -16,6 +16,12 @@
 
   // Merge execution ``status`` + judge ``result`` into one label, splitting a
   // failed run into a genuine ``failed`` (verdict FAIL) vs an ``error`` (ERROR).
+  const STATUS_ZH = { queued: "排队中", running: "运行中", passed: "通过",
+    failed: "失败", error: "异常", cancelled: "已取消", notask: "—" };
+  function pill(cls, label, tip) {
+    const c = cls || "notask";
+    return `<span class="pill st-${esc(c)}" title="${esc(tip || label)}"><span class="dot"></span>${esc(label)}</span>`;
+  }
   function mergedBadge(t) {
     const st = String(t.status || "").toLowerCase();
     let cls = st || "notask";
@@ -24,7 +30,13 @@
       const v = String(t.result || "").trim().toUpperCase();
       if (v.startsWith("ERROR")) { cls = "error"; label = "error"; }
     }
-    return `<span class="lm-badge lm-status-${esc(cls)}" title="${esc(t.result || t.status || "")}">${esc(label)}</span>`;
+    return pill(cls, STATUS_ZH[label] || label, t.result || t.status || "");
+  }
+  function progCell(p) {
+    p = p || 0;
+    return `<div style="display:flex;align-items:center;gap:8px">
+      <div class="prog" style="width:70px;flex:0 0 auto"><i style="width:${p}%"></i></div>
+      <span class="muted" style="font-size:12px">${p}%</span></div>`;
   }
   // Completion moment as ``YY/MM/DD HH:MM:SS`` local time, e.g. 26/07/20 11:18:15.
   function fmtFinished(t) {
@@ -46,12 +58,15 @@
 
   // --- tabs ---------------------------------------------------------------- //
   const loaders = { users: loadUsers, license: loadLicense, tasks: loadTasks };
-  root.querySelectorAll(".lm-tab").forEach((tab) => {
+  root.querySelectorAll(".tab").forEach((tab) => {
     tab.addEventListener("click", () => {
-      root.querySelectorAll(".lm-tab").forEach((t) => t.classList.remove("lm-active"));
-      tab.classList.add("lm-active");
+      root.querySelectorAll(".tab").forEach((t) => t.classList.toggle("on", t === tab));
       const name = tab.dataset.tab;
-      root.querySelectorAll(".lm-tabpane").forEach((p) => { p.hidden = p.dataset.pane !== name; });
+      root.querySelectorAll(".pane").forEach((p) => {
+        const on = p.dataset.pane === name;
+        p.classList.toggle("on", on);
+        p.hidden = !on;
+      });
       (loaders[name] || (() => {}))();
     });
   });
@@ -62,19 +77,27 @@
     try {
       const data = await LMApi.adminListUsers();
       const users = data.users || [];
-      tb.innerHTML = users.map((u) => `
+      const kUsers = $("lm-kpi-users"); if (kUsers) kUsers.textContent = users.length;
+      tb.innerHTML = users.map((u) => {
+        const active = u.status === "active";
+        const initial = esc((u.display_name || u.username || "?").slice(0, 1).toUpperCase());
+        const role = u.is_system_admin
+          ? '<span class="tag tag-role-admin">系统管理员</span>'
+          : '<span class="tag tag-role-reader">成员</span>';
+        return `
         <tr>
-          <td><code>${esc(u.username)}</code></td>
+          <td><div class="u-name"><span class="avatar" style="width:26px;height:26px;font-size:11px">${initial}</span><code>${esc(u.username)}</code></div></td>
           <td>${esc(u.display_name || "")}</td>
           <td>${esc(u.email || "")}</td>
-          <td><span class="lm-badge lm-status-${u.status === "active" ? "passed" : "cancelled"}">${esc(u.status)}</span></td>
-          <td>${u.is_system_admin ? "✔" : ""}</td>
+          <td>${pill(active ? "on" : "off", active ? "启用" : "停用")}</td>
+          <td>${role}</td>
           <td>${u.project_count || 0}</td>
-          <td class="lm-row-actions">
-            <button class="lm-btn lm-btn-sm lm-user-edit" data-id="${u.id}">编辑</button>
-            <button class="lm-btn lm-btn-sm lm-btn-danger lm-user-del" data-id="${u.id}">删除</button>
-          </td>
-        </tr>`).join("") || '<tr><td colspan="7" class="lm-muted">暂无账号</td></tr>';
+          <td><div class="row-acts">
+            <button class="btn small lm-user-edit" data-id="${u.id}">编辑</button>
+            <button class="btn small danger lm-user-del" data-id="${u.id}">删除</button>
+          </div></td>
+        </tr>`;
+      }).join("") || '<tr><td colspan="7" class="muted">暂无账号</td></tr>';
       window._lmUsers = users;
       tb.querySelectorAll(".lm-user-edit").forEach((b) =>
         b.addEventListener("click", () => openUser(Number(b.dataset.id))));
@@ -142,15 +165,32 @@
   // from the system console to avoid a duplicate, global surface.
 
   // --- license ------------------------------------------------------------- //
+  function paintLicense(l) {
+    l = l || {};
+    const total = l.total || 0, inUse = l.in_use || 0;
+    const pct = total > 0 ? Math.round((inUse / total) * 100) : 0;
+    const ring = $("lm-ring"); if (ring) ring.style.setProperty("--p", pct);
+    const rp = $("lm-ring-pct"); if (rp) rp.textContent = pct + "%";
+    const info = $("lm-license-info");
+    if (info) info.textContent =
+      `总量 ${total} · 使用中 ${inUse} · 空闲 ${l.available || 0} · 排队 ${l.queued_jobs || 0}`;
+    const kt = $("lm-kpi-total"); if (kt) kt.textContent = total;
+    const ki = $("lm-kpi-inuse"); if (ki) ki.textContent = inUse;
+    const kq = $("lm-kpi-queued"); if (kq) kq.textContent = l.queued_jobs || 0;
+    const cnt = $("lm-license-count"); if (cnt) cnt.value = total || 1;
+  }
   async function loadLicense() {
     try {
       const data = await LMApi.adminGetLicense();
-      const l = data.license || {};
-      $("lm-license-info").textContent =
-        `总量 ${l.total || 0}，使用中 ${l.in_use || 0}，空闲 ${l.available || 0}，排队 ${l.queued_jobs || 0}`;
-      $("lm-license-count").value = l.total || 1;
-    } catch (ex) { $("lm-license-info").textContent = ex.message; }
+      paintLicense(data.license || {});
+    } catch (ex) { const info = $("lm-license-info"); if (info) info.textContent = ex.message; }
   }
+  function stepLicense(d) {
+    const el = $("lm-license-count");
+    el.value = Math.max(1, (Number(el.value) || 1) + d);
+  }
+  const licDec = $("lm-lic-dec"); if (licDec) licDec.addEventListener("click", () => stepLicense(-1));
+  const licInc = $("lm-lic-inc"); if (licInc) licInc.addEventListener("click", () => stepLicense(1));
   $("lm-license-save").addEventListener("click", async () => {
     try {
       await LMApi.adminSetLicense(Number($("lm-license-count").value));
@@ -167,25 +207,25 @@
       const tasks = data.tasks || [];
       tb.innerHTML = tasks.map((t) => {
         const cancel = FINAL.includes(t.status)
-          ? "" : `<button class="lm-btn lm-btn-sm lm-atask-cancel" data-k="${esc(t.task_id)}">取消</button>`;
+          ? "" : `<button class="btn small lm-atask-cancel" data-k="${esc(t.task_id)}">取消</button>`;
         return `<tr>
           <td><code>${esc(t.task_id)}</code></td>
           <td>${esc(t.project_code || (t.project_id ? "#" + t.project_id : "（未归属）"))}</td>
           <td>${esc(t.test_id)}</td>
           <td>${esc(t.submitter)}</td>
           <td>${mergedBadge(t)}</td>
-          <td>${t.progress || 0}%</td>
-          <td class="lm-cell-time"><code>${esc(fmtFinished(t))}</code></td>
-          <td class="lm-row-actions">${cancel}
-            <button class="lm-btn lm-btn-sm lm-btn-danger lm-atask-del" data-k="${esc(t.task_id)}">删除</button></td>
+          <td>${progCell(t.progress || 0)}</td>
+          <td><code style="font-size:12px">${esc(fmtFinished(t))}</code></td>
+          <td><div class="row-acts">${cancel}
+            <button class="btn small danger lm-atask-del" data-k="${esc(t.task_id)}">删除</button></div></td>
         </tr>`;
-      }).join("") || '<tr><td colspan="8" class="lm-muted">暂无任务</td></tr>';
+      }).join("") || '<tr><td colspan="8" class="muted">暂无任务</td></tr>';
       tb.querySelectorAll(".lm-atask-cancel").forEach((b) =>
         b.addEventListener("click", () => cancelTask(b.dataset.k)));
       tb.querySelectorAll(".lm-atask-del").forEach((b) =>
         b.addEventListener("click", () => delTask(b.dataset.k)));
     } catch (ex) {
-      tb.innerHTML = `<tr><td colspan="8" class="lm-err">${esc(ex.message)}</td></tr>`;
+      tb.innerHTML = `<tr><td colspan="8" class="muted">${esc(ex.message)}</td></tr>`;
     }
   }
   async function cancelTask(key) {
@@ -199,5 +239,5 @@
   }
   $("lm-admin-tasks-refresh").addEventListener("click", loadTasks);
 
-  (window.LMReady || Promise.resolve()).then(loadUsers);
+  (window.LMReady || Promise.resolve()).then(() => { loadUsers(); loadLicense(); });
 })();

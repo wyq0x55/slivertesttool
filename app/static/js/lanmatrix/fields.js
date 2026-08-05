@@ -5,7 +5,7 @@
  * can be changed. */
 (function () {
   "use strict";
-  const page = document.querySelector(".lm-page");
+  const page = document.querySelector(".lm-fields") || document.querySelector("[data-project-id]");
   const pid = Number(page.dataset.projectId);
   const rows = document.getElementById("lm-fields-rows");
   const dialog = document.getElementById("lm-field-dialog");
@@ -46,27 +46,25 @@
       const data = await LMApi.listFields(pid);
       currentFields = data.fields;
       rows.innerHTML = data.fields.map((f) => `
-        <tr data-id="${f.id}">
-          <td class="lm-order">
-            <span class="lm-drag-handle" title="拖拽排序" aria-label="拖拽排序">⠿</span>
-          </td>
-          <td><span class="lm-badge">${esc(f.sheet || "test")}</span></td>
+        <tr data-id="${f.id}"${f.is_active ? "" : ' class="row-off"'}>
+          <td><span class="grip lm-drag-handle" title="拖拽排序" aria-label="拖拽排序">⠿</span></td>
+          <td><span class="tag">${esc(f.sheet || "test")}</span></td>
           <td><code>${esc(f.field_key)}</code></td>
           <td>${esc(f.display_name)}</td>
-          <td>${esc(f.data_type)}</td>
-          <td>${f.is_required ? "✓" : ""}</td>
-          <td>${f.is_readonly ? "✓" : ""}</td>
-          <td class="lm-muted">${esc((f.options || []).join(", ") || f.help_text || "")}</td>
-          <td class="lm-actions">
-            <button class="lm-btn lm-btn-sm lm-edit">编辑</button>
-            <button class="lm-btn lm-btn-sm lm-toggle" data-active="${f.is_active}">${f.is_active ? "停用" : "启用"}</button>
-            <button class="lm-btn lm-btn-sm lm-del">删除</button>
-          </td>
-        </tr>`).join("");
+          <td><span class="tag">${esc(f.data_type)}</span></td>
+          <td>${f.is_required ? '<span class="pill st-on"><span class="dot"></span>必填</span>' : '<span class="muted">—</span>'}</td>
+          <td>${f.is_readonly ? '<span class="tag">只读</span>' : '<span class="muted">—</span>'}</td>
+          <td class="muted" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((f.options || []).join(", ") || f.help_text || "")}</td>
+          <td><div class="row-acts">
+            <button class="btn small lm-edit">编辑</button>
+            <button class="btn small lm-toggle" data-active="${f.is_active}">${f.is_active ? "停用" : "启用"}</button>
+            <button class="btn small danger lm-del">删除</button>
+          </div></td>
+        </tr>`).join("") || '<tr><td colspan="9" class="muted">暂无字段，点击右上角新增</td></tr>';
       wire(data.fields);
     } catch (ex) {
       if (ex.status === 401) { window.location = LM.urls.login; return; }
-      rows.innerHTML = `<tr><td colspan="9" class="lm-err">${esc(ex.message)}</td></tr>`;
+      rows.innerHTML = `<tr><td colspan="9" class="muted">${esc(ex.message)}</td></tr>`;
     }
   }
 

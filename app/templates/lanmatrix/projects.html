@@ -1,35 +1,68 @@
 {% extends "lanmatrix/base_lm.html" %}
 {% block title %}项目列表{% endblock %}
+{% block crumb %}<b>项目</b>{% endblock %}
 {% block content %}
-<div class="lm-page">
-  <div class="lm-page-head">
-    <h1>项目管理</h1>
-    <div>
-      <button class="lm-btn" id="lm-import-new">导入 Excel 新建</button>
-      <button class="lm-btn lm-btn-primary" id="lm-new-project">新建空白项目</button>
+<div class="content">
+  <div class="page-head">
+    <div class="ttl">
+      <h1>项目</h1>
+      <p>管理你有权限访问的测试矩阵项目</p>
+    </div>
+    <div class="head-actions">
+      <button class="btn" id="lm-import-new">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+        导入 Excel
+      </button>
+      <button class="btn primary" id="lm-new-project">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        新建项目
+      </button>
     </div>
   </div>
   <input type="file" id="lm-import-file" accept=".xlsx" hidden>
-  <table class="lm-table lm-projects">
-    <thead>
-      <tr><th>编码</th><th>名称</th><th>状态</th><th>成员</th><th>更新时间</th><th></th></tr>
-    </thead>
-    <tbody id="lm-project-rows">
-      <tr><td colspan="6" class="lm-muted">加载中…</td></tr>
-    </tbody>
-  </table>
+
+  <div class="toolbar" style="display:flex;gap:12px;align-items:center;margin-bottom:20px;flex-wrap:wrap">
+    <div class="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <input id="lm-proj-search" type="search" placeholder="搜索项目编码或名称…">
+    </div>
+    <div class="segmented" id="lm-proj-seg">
+      <button data-s="all" class="on">全部</button>
+      <button data-s="active">进行中</button>
+      <button data-s="draft">草稿</button>
+      <button data-s="frozen">冻结</button>
+      <button data-s="archived">归档</button>
+    </div>
+  </div>
+
+  <div id="lm-project-skel" class="grid" aria-hidden="true"></div>
+  <div id="lm-project-rows" class="grid" hidden></div>
+
+  <div id="lm-project-empty" class="state" hidden>
+    <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span>
+    <h3>还没有项目</h3>
+    <p>创建你的第一个测试矩阵项目，或从 Excel 导入。</p>
+    <button class="btn primary" id="lm-empty-new">新建项目</button>
+  </div>
+
+  <div id="lm-project-err" class="state err" hidden>
+    <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></span>
+    <h3>加载失败</h3>
+    <p id="lm-project-err-msg">请稍后重试。</p>
+    <button class="btn" id="lm-proj-retry">重试</button>
+  </div>
 </div>
 
 <dialog id="lm-new-dialog" class="lm-dialog">
-  <form method="dialog" class="lm-card">
-    <h3>新建空白项目</h3>
-    <label>项目编码 <input id="lm-np-code" required placeholder="RWS"></label>
-    <label>项目名称 <input id="lm-np-name" placeholder="RWS MCU 资格测试"></label>
-    <label>描述 <textarea id="lm-np-desc" rows="2"></textarea></label>
-    <div class="lm-error" id="lm-np-error" hidden></div>
-    <menu>
-      <button value="cancel" class="lm-btn">取消</button>
-      <button value="ok" id="lm-np-ok" class="lm-btn lm-btn-primary">创建</button>
+  <form method="dialog" class="lm-card" style="padding:22px;min-width:380px;display:flex;flex-direction:column;gap:14px">
+    <h3 style="font-size:17px">新建空白项目</h3>
+    <div class="field"><label>项目编码</label><input id="lm-np-code" required placeholder="RWS"></div>
+    <div class="field"><label>项目名称</label><input id="lm-np-name" placeholder="RWS MCU 资格测试"></div>
+    <div class="field"><label>描述</label><textarea id="lm-np-desc" rows="2" placeholder="可选"></textarea></div>
+    <div class="login-err" id="lm-np-error" hidden></div>
+    <menu style="display:flex;gap:10px;justify-content:flex-end;margin:0;padding:0">
+      <button value="cancel" class="btn">取消</button>
+      <button value="ok" id="lm-np-ok" class="btn primary">创建</button>
     </menu>
   </form>
 </dialog>

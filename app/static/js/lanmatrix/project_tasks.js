@@ -137,7 +137,13 @@
 
   // --- task list ----------------------------------------------------------- //
   const FINAL = ["passed", "failed", "cancelled"];
-  function statusBadge(s) { return `<span class="lm-badge lm-status-${esc(s)}">${esc(s)}</span>`; }
+  const STATUS_ZH = { queued: "排队中", running: "运行中", passed: "通过",
+    failed: "失败", error: "异常", cancelled: "已取消", notask: "—" };
+  function pill(cls, label, tip) {
+    const c = cls || "notask";
+    return `<span class="pill st-${esc(c)}" title="${esc(tip || label)}"><span class="dot"></span>${esc(label)}</span>`;
+  }
+  function statusBadge(s) { return pill(s, STATUS_ZH[s] || s); }
 
   // Merge the execution ``status`` and the judge ``result`` (verdict) into a
   // single label. A finished-but-failing run carries status ``failed``; we
@@ -158,7 +164,7 @@
   function mergedBadge(t) {
     const m = mergedVerdict(t);
     const tip = String(t.result || t.status || "");
-    return `<span class="lm-badge lm-status-${esc(m.cls)}" title="${esc(tip)}">${esc(m.label)}</span>`;
+    return pill(m.cls, STATUS_ZH[m.label] || m.label, tip);
   }
 
   // Format a task's completion moment (``finished_at``, an ISO UTC string) as
@@ -223,16 +229,17 @@
   }
   function rowHtml(t) {
     const checked = selected.has(t.task_id) ? " checked" : "";
+    const p = t.progress || 0;
     const sel = `<td class="lm-col-check"><input type="checkbox" class="lm-task-sel" data-k="${esc(t.task_id)}"${checked}></td>`;
-    const view = `<button class="lm-btn lm-btn-sm lm-task-view" data-k="${esc(t.task_id)}">查看</button>`;
+    const view = `<button class="btn small lm-task-view" data-k="${esc(t.task_id)}">查看</button>`;
     const steps = t.test_id
-      ? `<button class="lm-btn lm-btn-sm lm-task-steps" data-k="${esc(t.task_id)}" data-tid="${esc(t.test_id)}">测试手顺</button>` : "";
+      ? `<button class="btn small lm-task-steps" data-k="${esc(t.task_id)}" data-tid="${esc(t.test_id)}">手顺</button>` : "";
     const dl = t.has_result
-      ? `<a class="lm-btn lm-btn-sm" href="${LMApi.projectTaskDownloadUrl(pid, t.task_id)}">下载</a>` : "";
+      ? `<a class="btn small" href="${LMApi.projectTaskDownloadUrl(pid, t.task_id)}">下载</a>` : "";
     const cancel = FINAL.includes(t.status)
-      ? "" : `<button class="lm-btn lm-btn-sm lm-task-cancel" data-k="${esc(t.task_id)}">取消</button>`;
+      ? "" : `<button class="btn small lm-task-cancel" data-k="${esc(t.task_id)}">取消</button>`;
     const del = capabilities.delete
-      ? `<button class="lm-btn lm-btn-sm lm-btn-danger lm-task-del" data-k="${esc(t.task_id)}">删除</button>` : "";
+      ? `<button class="btn small danger lm-task-del" data-k="${esc(t.task_id)}">删除</button>` : "";
     return `<tr data-k="${esc(t.task_id)}">
       ${sel}
       <td><a href="#" class="lm-task-open" data-k="${esc(t.task_id)}"><code>${esc(t.task_id)}</code></a></td>
@@ -240,9 +247,14 @@
       <td>${esc(t.sil_name || "")}</td>
       <td>${esc(t.submitter)}</td>
       <td class="lm-cell-status">${mergedBadge(t)}</td>
-      <td class="lm-cell-progress">${t.progress || 0}%</td>
+      <td class="lm-cell-progress">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div class="prog" style="width:70px;flex:0 0 auto"><i style="width:${p}%"></i></div>
+          <span class="muted" style="font-size:12px">${p}%</span>
+        </div>
+      </td>
       <td class="lm-cell-time"><code>${esc(fmtFinished(t))}</code></td>
-      <td class="lm-row-actions">${view} ${steps} ${cancel} ${dl} ${del}</td>
+      <td class="lm-row-actions"><span class="row-acts" style="display:flex;gap:4px;justify-content:flex-end">${view} ${steps} ${cancel} ${dl} ${del}</span></td>
     </tr>`;
   }
   function bindRowActions() {
@@ -418,8 +430,8 @@
   }
   function setDetailStatus(status) {
     const b = $("lm-d-status");
-    b.textContent = status;
-    b.className = "lm-badge lm-status-" + status;
+    b.className = "pill st-" + status;
+    b.innerHTML = '<span class="dot"></span>' + esc(STATUS_ZH[status] || status);
     const isFinal = FINAL.includes(status);
     $("lm-d-cancel").hidden = isFinal;
   }
@@ -683,11 +695,13 @@
       renderTasks();
       $("lm-tasks-body").hidden = false;
       $("lm-tasks-denied").hidden = true;
+      const acts = $("lm-tasks-actions"); if (acts) acts.hidden = false;
     } catch (ex) {
       if (ex.status === 401) { window.location = LM.urls.login; return; }
       if (ex.status === 403) {
         $("lm-tasks-denied").hidden = false;
         $("lm-tasks-body").hidden = true;
+        const acts = $("lm-tasks-actions"); if (acts) acts.hidden = true;
         return;
       }
       toast(ex.message, false);

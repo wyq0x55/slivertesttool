@@ -15,7 +15,9 @@ from flask import (
 )
 
 from ...extensions import db
-from ...models import DataJob, FieldDefinition, LMUser, Project, Task, TaskStatus
+from ...models import (
+    DataJob, FieldDefinition, LMUser, Project, ProjectMember, Task, TaskStatus,
+)
 from ...services import (
     event_service, license_service, project_model_service,
     report_service, task_service, upload_service,
@@ -61,11 +63,71 @@ def _collab_write_blocked(project_id) -> "Response | None":
         current_app.logger.debug("collab write-guard check failed", exc_info=True)
     return None
 
+def _initials(name: str) -> str:
+    name = (name or "").strip()
+    if not name:
+        return "?"
+    # CJK: first char; latin: first letter of first two words.
+    parts = name.split()
+    if len(parts) >= 2 and parts[0][:1].isascii() and parts[0][:1].isalpha():
+        return (parts[0][:1] + parts[1][:1]).upper()
+    return name[:1].upper()
+
+
+def _project_card_stats(project_ids: list[int]) -> dict[int, dict]:
+    """Aggregate per-project task counts + member initials for the card grid.
+
+    測試項 = total tasks, 通過率 = passed / total, 失敗 = failed count."""
+    stats = {pid: {"task_total": 0, "task_passed": 0, "task_failed": 0,
+                   "members": [], "member_extra": 0} for pid in project_ids}
+    if not project_ids:
+        return stats
+
+    rows = (
+        db.session.query(Task.project_id, Task.status, db.func.count(Task.id))
+        .filter(Task.project_id.in_(project_ids))
+        .group_by(Task.project_id, Task.status)
+        .all()
+    )
+    for pid, status, count in rows:
+        s = stats.get(pid)
+        if s is None:
+            continue
+        s["task_total"] += count
+        if status == TaskStatus.PASSED.value:
+            s["task_passed"] += count
+        elif status == TaskStatus.FAILED.value:
+            s["task_failed"] += count
+
+    members = (
+        db.session.query(ProjectMember.project_id, LMUser.display_name, LMUser.username)
+        .join(LMUser, LMUser.id == ProjectMember.user_id)
+        .filter(ProjectMember.project_id.in_(project_ids))
+        .order_by(ProjectMember.project_id, ProjectMember.id)
+        .all()
+    )
+    for pid, display_name, username in members:
+        s = stats.get(pid)
+        if s is None:
+            continue
+        if len(s["members"]) < 4:
+            s["members"].append(_initials(display_name or username))
+        else:
+            s["member_extra"] += 1
+    return stats
+
+
 @bp.get("/projects")
 @login_required
 def list_projects():
     projects = service.list_projects(g.user)
-    return ok({"projects": [p.to_dict() for p in projects]})
+    stats = _project_card_stats([p.id for p in projects])
+    payload = []
+    for p in projects:
+        d = p.to_dict()
+        d.update(stats.get(p.id, {}))
+        payload.append(d)
+    return ok({"projects": payload})
 
 @bp.post("/projects")
 @login_required

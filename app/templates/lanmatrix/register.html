@@ -1,33 +1,48 @@
 {% extends "lanmatrix/base_lm.html" %}
 {% block title %}注册{% endblock %}
 {% block content %}
-<div class="lm-login-wrap">
-  <form id="lm-register-form" class="lm-card lm-login-card" autocomplete="off">
-    <h2>注册新账号</h2>
-    <p class="lm-muted">局域网离线部署 · 创建平台账号</p>
-    <label>用户名
-      <input type="text" name="username" id="lm-username" required autofocus
-             pattern="[A-Za-z0-9_.\-]{3,64}" title="3-64 位，允许字母、数字、下划线、点、连字符">
-    </label>
-    <label>显示名称（可选）
-      <input type="text" name="display_name" id="lm-display-name" maxlength="120">
-    </label>
-    <label>邮箱（可选）
-      <input type="email" name="email" id="lm-email" maxlength="255">
-    </label>
-    <label>密码
-      <input type="password" name="password" id="lm-password" required
-             minlength="{{ password_min_len }}">
-    </label>
-    <label>确认密码
-      <input type="password" name="password2" id="lm-password2" required
-             minlength="{{ password_min_len }}">
-    </label>
-    <button type="submit" class="lm-btn lm-btn-primary">注册</button>
-    <div class="lm-error" id="lm-register-error" hidden></div>
-    <div class="lm-muted" id="lm-register-ok" hidden></div>
-    <p class="lm-muted lm-login-alt">已有账号？<a href="{{ url_for('lanmatrix_pages.login') }}">返回登录</a></p>
-  </form>
+<div class="login-wrap">
+  <aside class="login-aside">
+    <div class="la-brand">
+      <span class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6M10 3v6l-4.5 8A2 2 0 0 0 7.3 20h9.4a2 2 0 0 0 1.8-2.9L14 9V3"/></svg></span>
+      <span>Silver Test Platform</span>
+    </div>
+    <div class="la-mid">
+      <h2>加入团队<br>开启协同测试</h2>
+      <p>创建平台账号，参与测试矩阵的编辑、评审与自动化判定。</p>
+    </div>
+  </aside>
+  <main class="login-main">
+    <form id="lm-register-form" class="login-card" autocomplete="off">
+      <h1>注册新账号</h1>
+      <p class="sub">局域网离线部署 · 创建平台账号</p>
+      <div class="login-err" id="lm-register-error" hidden></div>
+      <div class="login-err" id="lm-register-ok" hidden style="background:var(--ok-soft);color:var(--ok)"></div>
+      <div class="field">
+        <label>用户名</label>
+        <input type="text" name="username" id="lm-username" required autofocus
+               pattern="[A-Za-z0-9_.\-]{3,64}" title="3-64 位，允许字母、数字、下划线、点、连字符" placeholder="3-64 位">
+      </div>
+      <div class="field">
+        <label>显示名称（可选）</label>
+        <input type="text" name="display_name" id="lm-display-name" maxlength="120" placeholder="张三">
+      </div>
+      <div class="field">
+        <label>邮箱（可选）</label>
+        <input type="email" name="email" id="lm-email" maxlength="255" placeholder="you@example.com">
+      </div>
+      <div class="field">
+        <label>密码</label>
+        <input type="password" name="password" id="lm-password" required minlength="{{ password_min_len }}" placeholder="至少 {{ password_min_len }} 位">
+      </div>
+      <div class="field">
+        <label>确认密码</label>
+        <input type="password" name="password2" id="lm-password2" required minlength="{{ password_min_len }}" placeholder="再次输入密码">
+      </div>
+      <button type="submit" class="btn primary">注册</button>
+      <p class="alt">已有账号？<a href="{{ url_for('lanmatrix_pages.login') }}">返回登录</a></p>
+    </form>
+  </main>
 </div>
 <script>
 const NEEDS_APPROVAL = {{ 'true' if needs_approval else 'false' }};
@@ -56,7 +71,6 @@ document.getElementById('lm-register-form').addEventListener('submit', async (e)
       e.target.querySelector('button[type=submit]').disabled = true;
       return;
     }
-    // Active account: session established — go straight to projects.
     window.location = LM.urls.projects;
   } catch (ex) {
     err.textContent = ex.message || '注册失败';
