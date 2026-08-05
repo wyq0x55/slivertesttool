@@ -777,7 +777,10 @@
       return;
     }
     sel.innerHTML = models.map((m) =>
-      `<option value="${esc(m.name)}">${esc(m.name)}${m.exists === false ? "（服务器缺失）" : ""}</option>`).join("");
+      `<option value="${esc(m.name)}"${m.is_current ? " selected" : ""}>${esc(m.name)}` +
+      `${m.is_current ? "（当前模型）" : ""}${m.exists === false ? "（服务器缺失）" : ""}</option>`).join("");
+    const cur = models.find((m) => m.is_current);
+    if (cur) sel.value = cur.name;
   }
   function renderLicense(lic) {
     if (!lic) { $("lm-license").textContent = ""; return; }

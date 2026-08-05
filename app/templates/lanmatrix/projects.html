@@ -66,6 +66,28 @@
     </menu>
   </form>
 </dialog>
+
+<dialog id="lm-edit-dialog" class="lm-dialog">
+  <form method="dialog" class="lm-card" style="padding:22px;min-width:380px;display:flex;flex-direction:column;gap:14px">
+    <h3 style="font-size:17px">编辑项目</h3>
+    <input type="hidden" id="lm-ep-id">
+    <div class="field"><label>项目名称</label><input id="lm-ep-name" placeholder="项目名称"></div>
+    <div class="field"><label>描述</label><textarea id="lm-ep-desc" rows="3" placeholder="可选"></textarea></div>
+    <div class="field"><label>状态</label>
+      <select id="lm-ep-status">
+        <option value="draft">草稿</option>
+        <option value="active">活跃</option>
+        <option value="frozen">冻结</option>
+        <option value="archived">归档</option>
+      </select>
+    </div>
+    <div class="login-err" id="lm-ep-error" hidden></div>
+    <menu style="display:flex;gap:10px;justify-content:flex-end;margin:0;padding:0">
+      <button value="cancel" class="btn">取消</button>
+      <button value="ok" id="lm-ep-ok" class="btn primary">保存</button>
+    </menu>
+  </form>
+</dialog>
 {% endblock %}
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/lanmatrix/projects.js') }}"></script>

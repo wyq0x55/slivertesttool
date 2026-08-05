@@ -271,6 +271,18 @@ def upload_project_model(project_id):
                "models": project_model_service.list_models(
                    project_id, include_path=True)}, status=201)
 
+@bp.post("/projects/<int:project_id>/models/current")
+@login_required
+def set_current_project_model(project_id):
+    _project_and_role(project_id, "model.manage")
+    body = request.get_json(silent=True) or {}
+    try:
+        models = project_model_service.set_current(
+            project_id, (body.get("name") or "").strip())
+    except project_model_service.ModelError as exc:
+        return err("VALIDATION_ERROR", str(exc), status=400)
+    return ok({"models": models})
+
 @bp.delete("/projects/<int:project_id>/models")
 @login_required
 def remove_project_model(project_id):

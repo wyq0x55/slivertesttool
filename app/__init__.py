@@ -252,6 +252,9 @@ def _migrate_schema() -> None:
         "lm_test_items": {
             "sheet": "VARCHAR(16) NOT NULL DEFAULT 'test'",
         },
+        "lm_project_models": {
+            "is_current": "BOOLEAN NOT NULL DEFAULT FALSE",
+        },
     }
     for table, columns in additions.items():
         if table not in existing_tables:

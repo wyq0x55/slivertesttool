@@ -74,26 +74,34 @@
     const passed = p.task_passed || 0;
     const failed = p.task_failed || 0;
     const rate = total ? Math.round((passed / total) * 100) : 0;
-    return `<div class="card" data-code="${esc(p.code)}" data-name="${esc(p.name)}" data-status="${st}">
-      <a class="card-link" href="/lanmatrix/projects/${p.id}" aria-label="打开 ${esc(p.name)}"></a>
-      <div class="card-top">
-        <span class="code-chip">${esc(p.code)}</span>
-        <span class="status"><span class="dot ${st}"></span>${esc(stZh)}</span>
-      </div>
-      <h3>${esc(p.name)}</h3>
-      <p class="desc">${esc(p.description) || "暂无描述"}</p>
-      <div class="metrics">
-        <div class="metric"><div class="v">${total}</div><div class="k">测试项</div></div>
-        <div class="metric"><div class="v ok">${total ? rate + "%" : "—"}</div><div class="k">通过率</div></div>
-        <div class="metric"><div class="v ${failed ? "warn" : ""}">${failed}</div><div class="k">失败</div></div>
-      </div>
-      <div class="card-foot">
-        <div class="stack">${avatarStack(p)}</div>
-        <span class="upd">更新于 ${fmtDate(p.updated_at)}</span>
-      </div>
+    const hasDesc = (p.description || "").trim().length > 0;
+    const desc = hasDesc ? esc(p.description) : "暂无描述 · 点击进入在线编辑";
+    return `<div class="card zoned" data-id="${p.id}" data-code="${esc(p.code)}"
+        data-name="${esc(p.name)}" data-status="${st}" data-desc="${esc(p.description || "")}">
+      <a class="zone zone-main" href="/lanmatrix/projects/${p.id}"
+        aria-label="打开 ${esc(p.name)} 在线编辑">
+        <div class="card-top">
+          <span class="code-chip">${esc(p.code)}</span>
+          <span class="status"><span class="dot ${st}"></span>${esc(stZh)}</span>
+        </div>
+        <h3>${esc(p.name)}</h3>
+        <p class="desc${hasDesc ? "" : " empty"}">${desc}</p>
+      </a>
+      <a class="zone zone-tasks" href="/lanmatrix/projects/${p.id}/tasks" aria-label="查看测试任务">
+        <div class="metrics">
+          <div class="metric"><div class="v">${total}</div><div class="k">测试项</div></div>
+          <div class="metric"><div class="v ok">${total ? rate + "%" : "—"}</div><div class="k">通过率</div></div>
+          <div class="metric"><div class="v ${failed ? "warn" : ""}">${failed}</div><div class="k">失败</div></div>
+        </div>
+      </a>
+      <a class="zone zone-members" href="/lanmatrix/projects/${p.id}/members" aria-label="项目成员管理">
+        <div class="card-foot">
+          <div class="stack">${avatarStack(p)}</div>
+          <span class="upd">更新于 ${fmtDate(p.updated_at)}</span>
+        </div>
+      </a>
       <div class="card-acts">
-        <a class="btn small" href="/lanmatrix/projects/${p.id}/tasks">任务</a>
-        <a class="btn small" href="/lanmatrix/projects/${p.id}/members">成员</a>
+        <button class="btn small" data-edit="${p.id}">编辑</button>
         <button class="btn small danger" data-del="${p.id}"
           data-code="${esc(p.code)}" data-name="${esc(p.name)}">删除</button>
       </div>
@@ -123,10 +131,25 @@
     show(gridEl, true);
     gridEl.innerHTML = list.map(cardHtml).join("");
     gridEl.querySelectorAll("button[data-del]").forEach((btn) => {
-      btn.addEventListener("click", () => onDelete(
-        btn.getAttribute("data-del"),
-        btn.getAttribute("data-code"),
-        btn.getAttribute("data-name")));
+      btn.addEventListener("click", (e) => {
+        e.preventDefault(); e.stopPropagation();
+        onDelete(btn.getAttribute("data-del"),
+          btn.getAttribute("data-code"),
+          btn.getAttribute("data-name"));
+      });
+    });
+    gridEl.querySelectorAll("button[data-edit]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.preventDefault(); e.stopPropagation();
+        const card = btn.closest(".card");
+        openEdit({
+          id: card.getAttribute("data-id"),
+          code: card.getAttribute("data-code"),
+          name: card.getAttribute("data-name"),
+          status: card.getAttribute("data-status"),
+          description: card.getAttribute("data-desc"),
+        });
+      });
     });
   }
 
@@ -194,6 +217,51 @@
       window.location = `/lanmatrix/projects/${data.project.id}`;
     } catch (ex) {
       err.textContent = ex.message;
+      err.hidden = false;
+    }
+  });
+
+  /* --- edit project dialog --- */
+  const editDialog = document.getElementById("lm-edit-dialog");
+  function openEdit(p) {
+    document.getElementById("lm-ep-id").value = p.id;
+    document.getElementById("lm-ep-name").value = p.name || "";
+    document.getElementById("lm-ep-desc").value = p.description || "";
+    document.getElementById("lm-ep-status").value = p.status || "draft";
+    const err = document.getElementById("lm-ep-error");
+    if (err) err.hidden = true;
+    editDialog.showModal();
+  }
+  const epOk = document.getElementById("lm-ep-ok");
+  if (epOk) epOk.addEventListener("click", async (e) => {
+    e.preventDefault();
+    const err = document.getElementById("lm-ep-error");
+    const id = document.getElementById("lm-ep-id").value;
+    const changes = {
+      name: document.getElementById("lm-ep-name").value.trim(),
+      description: document.getElementById("lm-ep-desc").value.trim(),
+      status: document.getElementById("lm-ep-status").value,
+    };
+    if (!changes.name) {
+      err.textContent = "项目名称不能为空";
+      err.hidden = false;
+      return;
+    }
+    try {
+      await LMApi.patchProject(id, changes);
+      editDialog.close();
+      const item = all.find((x) => String(x.id) === String(id));
+      if (item) {
+        item.name = changes.name;
+        item.description = changes.description;
+        item.status = changes.status;
+        item.updated_at = new Date().toISOString();
+      }
+      render();
+      toast("项目已更新", true);
+    } catch (ex) {
+      if (ex.status === 401) { window.location = LM.urls.login; return; }
+      err.textContent = ex.message || "更新失败";
       err.hidden = false;
     }
   });

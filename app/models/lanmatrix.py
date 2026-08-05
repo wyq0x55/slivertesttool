@@ -277,6 +277,9 @@ class ProjectModel(db.Model):
     # For ``bundle`` models: the server directory holding the generated ``.sil``
     # together with the uploaded dll + sbs (removed when the model is deleted).
     bundle_dir = db.Column(db.String(1024), nullable=True)
+    # The one model a project runs its tests with by default. At most one row per
+    # project is current; task submit/run fall back to it when no model is named.
+    is_current = db.Column(db.Boolean, nullable=False, default=False)
     created_by = db.Column(db.Integer, db.ForeignKey("lm_users.id"), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
 
@@ -287,6 +290,7 @@ class ProjectModel(db.Model):
             "name": self.name,
             "kind": self.kind,
             "exists": bool(self.sil_path) and os.path.isfile(self.sil_path),
+            "is_current": bool(self.is_current),
             "created_at": _iso(self.created_at),
         }
         if include_path:

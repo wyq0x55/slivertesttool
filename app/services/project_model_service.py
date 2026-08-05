@@ -167,8 +167,32 @@ def get_model_path(project_id: int, name: str) -> Optional[Path]:
 
 
 def default_model(project_id: int) -> Optional[dict]:
-    row = _query(project_id).order_by(ProjectModel.id.asc()).first()
+    """The model a project runs tests with by default.
+
+    The user-selected *current* model wins; if none is flagged (older data), the
+    oldest model is used so a project with any model always resolves a default.
+    """
+    row = (_query(project_id).filter_by(is_current=True)
+           .order_by(ProjectModel.id.asc()).first())
+    if row is None:
+        row = _query(project_id).order_by(ProjectModel.id.asc()).first()
     return {"name": row.name} if row is not None else None
+
+
+def set_current(project_id: int, name: str) -> List[dict]:
+    """Mark *name* as the project's current model (clearing any previous one).
+
+    Exactly one row per project ends up current. Raises :class:`ModelError` if no
+    model with that name exists in the project.
+    """
+    name = (name or "").strip()
+    target = _query(project_id).filter_by(name=name).first() if name else None
+    if target is None:
+        raise ModelError("未找到该模型，请刷新后重试。")
+    for row in _query(project_id).all():
+        row.is_current = (row.id == target.id)
+    db.session.commit()
+    return list_models(project_id, include_path=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -221,8 +245,10 @@ def add_path_model(project_id: int, name: str, path: str,
     if not name:
         name = Path(path).stem or Path(path).name
     _validate_name(project_id, name)
+    first = not has_models(project_id)
     row = ProjectModel(project_id=project_id, name=name, kind="path",
-                       sil_path=str(Path(path)), created_by=created_by)
+                       sil_path=str(Path(path)), created_by=created_by,
+                       is_current=first)
     db.session.add(row)
     db.session.commit()
     return row.to_dict(include_path=True)
@@ -281,9 +307,10 @@ def add_bundle_model(project_id: int, name: str, dll: FileStorage,
         shutil.rmtree(model_dir, ignore_errors=True)
         raise
 
+    first = not has_models(project_id)
     row = ProjectModel(project_id=project_id, name=name, kind="bundle",
                        sil_path=str(sil_path), bundle_dir=str(model_dir),
-                       created_by=created_by)
+                       created_by=created_by, is_current=first)
     db.session.add(row)
     db.session.commit()
     return row.to_dict(include_path=True)
@@ -294,8 +321,16 @@ def remove_model(project_id: int, name: str) -> bool:
     row = _query(project_id).filter_by(name=(name or "").strip()).first()
     if row is None:
         return False
+    was_current = bool(row.is_current)
     if row.kind == "bundle" and row.bundle_dir:
         shutil.rmtree(row.bundle_dir, ignore_errors=True)
     db.session.delete(row)
+    db.session.flush()
+    # Deleting the current model promotes the oldest survivor so the project
+    # keeps a well-defined model to run tests with.
+    if was_current:
+        nxt = _query(project_id).order_by(ProjectModel.id.asc()).first()
+        if nxt is not None:
+            nxt.is_current = True
     db.session.commit()
     return True

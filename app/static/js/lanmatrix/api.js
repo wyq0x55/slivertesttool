@@ -197,6 +197,7 @@
     addProjectModel(id, name, path) { return request("POST", `/projects/${id}/models`, { body: { name, path } }); },
     uploadProjectModel(id, formData) { return request("POST", `/projects/${id}/models/upload`, { body: formData }); },
     removeProjectModel(id, name) { return request("DELETE", `/projects/${id}/models`, { body: { name } }); },
+    setCurrentProjectModel(id, name) { return request("POST", `/projects/${id}/models/current`, { body: { name } }); },
     getModelSbs(id, name) { return request("GET", `/projects/${id}/models/sbs`, { query: { name } }); },
     saveModelSbs(id, body) { return request("PUT", `/projects/${id}/models/sbs`, { body }); },
     listModelSbsRevisions(id, name) { return request("GET", `/projects/${id}/models/sbs/revisions`, { query: { name } }); },

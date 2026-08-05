@@ -36,25 +36,36 @@
   const KIND_LABEL = { path: "服务器路径", bundle: "dll + sbs" };
   const CUBE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5M12 22V12"/></svg>';
 
+  const CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+
   function modelCard(m) {
     const kind = esc(KIND_LABEL[m.kind] || m.kind || "");
     const status = m.exists === false
       ? '<span class="tag tag-bad">服务器缺失</span>'
       : '<span class="tag tag-ok">正常</span>';
+    const cur = !!m.is_current;
+    const curBadge = cur ? `<span class="tag tag-cur">${CHECK}当前模型</span>` : "";
     let actions = "";
+    if (canManage && !cur) {
+      actions += `<button class="btn btn-sm btn-primary lm-model-cur" data-name="${esc(m.name)}">设为当前</button>`;
+    }
     if (canManage) {
       if (m.kind === "bundle") {
         actions += `<button class="btn btn-sm lm-model-sbs" data-name="${esc(m.name)}">编辑 SBS</button>`;
       }
       actions += `<button class="btn btn-sm btn-danger lm-model-del" data-name="${esc(m.name)}">删除</button>`;
     }
+    // Managers can click anywhere on a (non-current) card to make it current;
+    // the inner action buttons stop propagation so they keep their own intent.
+    const selectable = canManage && !cur;
     return `
-      <div class="mcard" data-name="${esc(m.name)}">
+      <div class="mcard${cur ? " current" : ""}${selectable ? " selectable" : ""}" data-name="${esc(m.name)}"
+           ${selectable ? 'role="button" tabindex="0" title="设为当前模型"' : ""}>
         <div class="top">
           <span class="mico">${CUBE}</span>
           <div class="who"><b>${esc(m.name)}</b><span>${kind}</span></div>
           <span style="flex:1"></span>
-          ${status}
+          ${curBadge}${status}
         </div>
         <div class="mpath">${esc(m.path || "—")}</div>
         <div class="foot">
@@ -73,11 +84,31 @@
     }
     rowsEl.innerHTML = models.map(modelCard).join("");
     rowsEl.querySelectorAll(".lm-model-del").forEach((b) =>
-      b.addEventListener("click", () => removeModel(b.dataset.name)));
+      b.addEventListener("click", (e) => { e.stopPropagation(); removeModel(b.dataset.name); }));
     rowsEl.querySelectorAll(".lm-model-sbs").forEach((b) =>
-      b.addEventListener("click", () => {
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
         if (window.LMSbsModal) { window.LMSbsModal.open(pid, b.dataset.name); }
       }));
+    rowsEl.querySelectorAll(".lm-model-cur").forEach((b) =>
+      b.addEventListener("click", (e) => { e.stopPropagation(); setCurrent(b.dataset.name); }));
+    // Whole-card selection for managers (buttons above stop propagation).
+    rowsEl.querySelectorAll(".mcard.selectable").forEach((c) => {
+      c.addEventListener("click", () => setCurrent(c.dataset.name));
+      c.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setCurrent(c.dataset.name); }
+      });
+    });
+  }
+
+  async function setCurrent(name) {
+    try {
+      const data = await LMApi.setCurrentProjectModel(pid, name);
+      render(data.models || []);
+      toast(`已将「${name}」设为当前模型`, true);
+    } catch (ex) {
+      toast(ex.message, false);
+    }
   }
 
   async function load() {
