@@ -1,11 +1,11 @@
 {% extends "lanmatrix/base_lm.html" %}
-{% block title %}上传任务{% endblock %}
-{% block crumb %}<a href="{{ url_for('lanmatrix_pages.projects') }}">项目</a><span class="sep">/</span><b>上传任务</b>{% endblock %}
+{% block title %}任务/运行{% endblock %}
+{% block crumb %}<a href="{{ url_for('lanmatrix_pages.projects') }}">项目</a><span class="sep">/</span><b>任务/运行</b>{% endblock %}
 {% block content %}
 <div class="content lm-tasks" data-project="{{ project_id }}">
   <div class="page-head" id="lm-list-head">
     <div class="ttl">
-      <h1>上传任务</h1>
+      <h1>任务/运行</h1>
       <p>提交测试用例到队列，跟踪运行进度与判定结果</p>
     </div>
     <div class="head-actions" id="lm-tasks-actions" hidden>

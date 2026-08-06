@@ -518,8 +518,61 @@
     $("lm-d-progress").textContent = v + "%";
   }
 
+  // --- live-log coalescing --------------------------------------------------
+  // A busy task can emit dozens of SSE events per second. Writing each one to
+  // the DOM immediately (createElement + appendChild + scrollTop) forces a
+  // reflow per line and janks the log pane. Instead we buffer log lines and
+  // keep only the latest progress/status, then flush everything once per frame:
+  // a single DocumentFragment append + a single scroll. Progress/status are
+  // idempotent "latest wins", so collapsing intermediate values loses nothing.
+  let _logBuf = [];
+  let _pendPct = null;
+  let _pendStatus = null;
+  let _flushHandle = 0;
+  function _scheduleFlush() {
+    if (_flushHandle) return;
+    const run = () => { _flushHandle = 0; _flushDetail(); };
+    _flushHandle = (typeof requestAnimationFrame === "function")
+      ? requestAnimationFrame(run)
+      : setTimeout(run, 16);
+  }
+  function _flushDetail() {
+    if (_logBuf.length) {
+      const el = $("lm-d-log");
+      if (el) {
+        const frag = document.createDocumentFragment();
+        for (const it of _logBuf) {
+          const span = document.createElement("span");
+          if (it.cls) span.className = it.cls;
+          span.textContent = it.text + "\n";
+          frag.appendChild(span);
+        }
+        el.appendChild(frag);
+        const as = $("lm-d-autoscroll");
+        if (as && as.checked) el.scrollTop = el.scrollHeight;
+      }
+      _logBuf.length = 0;
+    }
+    if (_pendPct !== null) { setDetailProgress(_pendPct); _pendPct = null; }
+    if (_pendStatus !== null) { setDetailStatus(_pendStatus); _pendStatus = null; }
+  }
+  function queueLog(text, cls) { _logBuf.push({ text: text, cls: cls || "" }); _scheduleFlush(); }
+  function queueProgress(v) { _pendPct = v; _scheduleFlush(); }
+  function queueStatus(s) { _pendStatus = s; _scheduleFlush(); }
+  function resetDetailBuffers() {
+    _logBuf.length = 0;
+    _pendPct = null;
+    _pendStatus = null;
+    if (_flushHandle) {
+      if (typeof requestAnimationFrame === "function") cancelAnimationFrame(_flushHandle);
+      else clearTimeout(_flushHandle);
+      _flushHandle = 0;
+    }
+  }
+
   async function openDetail(key) {
     detailKey = key;
+    resetDetailBuffers();
     $("lm-d-log").innerHTML = "";
     $("lm-d-judge").textContent = "";
     $("lm-d-judge-hint").textContent = "加载判定结果…";
@@ -544,9 +597,9 @@
       setDetailProgress(t.progress || 0);
       $("lm-d-download").hidden = !t.has_result;
       (t.events || []).forEach((ev) => {
-        if (ev.event_type === "warning") appendLog(ev.message, "warn");
-        else if (ev.event_type === "error") appendLog(ev.message, "err");
-        else if (ev.event_type === "log" || ev.event_type === "result") appendLog(ev.message);
+        if (ev.event_type === "warning") queueLog(ev.message, "warn");
+        else if (ev.event_type === "error") queueLog(ev.message, "err");
+        else if (ev.event_type === "log" || ev.event_type === "result") queueLog(ev.message);
       });
       if (!FINAL.includes(t.status)) startDetailStream(key);
     } catch (ex) {
@@ -560,20 +613,21 @@
     const es = new EventSource(LMApi.projectTaskStreamUrl(pid, key));
     detailStream = es;
     const j = (e) => { try { return JSON.parse(e.data); } catch (_) { return {}; } };
-    es.addEventListener("log", (e) => appendLog(j(e).message || ""));
-    es.addEventListener("warning", (e) => appendLog(j(e).message || "", "warn"));
-    es.addEventListener("error", (e) => { const d = j(e); if (d && d.message) appendLog(d.message, "err"); });
-    es.addEventListener("progress", (e) => { const d = j(e); if (typeof d.value === "number") setDetailProgress(d.value); });
-    es.addEventListener("status", (e) => { const d = j(e); if (d.status) setDetailStatus(d.status); });
+    es.addEventListener("log", (e) => queueLog(j(e).message || ""));
+    es.addEventListener("warning", (e) => queueLog(j(e).message || "", "warn"));
+    es.addEventListener("error", (e) => { const d = j(e); if (d && d.message) queueLog(d.message, "err"); });
+    es.addEventListener("progress", (e) => { const d = j(e); if (typeof d.value === "number") queueProgress(d.value); });
+    es.addEventListener("status", (e) => { const d = j(e); if (d.status) queueStatus(d.status); });
     es.addEventListener("result", (e) => {
       const d = j(e);
       if (d.status) $("lm-d-verdict").textContent = d.status;
-      if (d.message) { $("lm-d-message").textContent = d.message; appendLog(d.message); }
+      if (d.message) { $("lm-d-message").textContent = d.message; queueLog(d.message); }
     });
-    es.addEventListener("end", () => { closeDetailStream(); refreshDetailFinal(key); });
+    es.addEventListener("end", () => { _flushDetail(); closeDetailStream(); refreshDetailFinal(key); });
     es.onerror = () => { /* auto-retry */ };
   }
   function closeDetailStream() {
+    _flushDetail();
     if (detailStream) { detailStream.close(); detailStream = null; }
   }
   async function refreshDetailFinal(key) {

@@ -168,17 +168,25 @@
 </dialog>
 {% endblock %}
 {% block scripts %}
+{# The Univer UMD bundle is the single heaviest asset on this page. Loading it
+   (and the dependent editor scripts) with `defer` lets the browser finish
+   parsing the HTML and paint the toolbar/grid shell first, instead of blocking
+   first paint on the multi-MB bundle. `defer` preserves in-order execution, so
+   the univer → grid → … → editor dependency chain still runs top-to-bottom
+   after the DOM is ready; `rel="preload"` starts the bundle download early and
+   in parallel so deferring execution does not delay when it becomes usable. #}
 {% if univer_available %}
 <link rel="stylesheet" href="{{ url_for('static', filename='vendor/univer/univer.full.umd.css') }}">
-<script src="{{ url_for('static', filename='vendor/univer/univer.full.umd.js') }}"></script>
+<link rel="preload" as="script" href="{{ url_for('static', filename='vendor/univer/univer.full.umd.js') }}">
+<script defer src="{{ url_for('static', filename='vendor/univer/univer.full.umd.js') }}"></script>
 {% endif %}
 {% if collab_available %}
-<script src="{{ url_for('static', filename='vendor/collab/collab.umd.js') }}"></script>
+<script defer src="{{ url_for('static', filename='vendor/collab/collab.umd.js') }}"></script>
 {% endif %}
-<script src="{{ url_for('static', filename='js/lanmatrix/grid.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/steps_ref_panel.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/json_editor.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/steps_editor.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/collab.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/editor.js') }}"></script>
+<script defer src="{{ url_for('static', filename='js/lanmatrix/grid.js') }}"></script>
+<script defer src="{{ url_for('static', filename='js/lanmatrix/steps_ref_panel.js') }}"></script>
+<script defer src="{{ url_for('static', filename='js/lanmatrix/json_editor.js') }}"></script>
+<script defer src="{{ url_for('static', filename='js/lanmatrix/steps_editor.js') }}"></script>
+<script defer src="{{ url_for('static', filename='js/lanmatrix/collab.js') }}"></script>
+<script defer src="{{ url_for('static', filename='js/lanmatrix/editor.js') }}"></script>
 {% endblock %}

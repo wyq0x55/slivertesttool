@@ -7,6 +7,7 @@
   let fields = [];
   let grid = null;
   let collab = null;            // LMCollabController instance when real-time collab is active
+  let gridResizeObserver = null; // retained so page-unload teardown can disconnect it
   const collabAvailable = root.dataset.collab === "1";  // server shipped the collab bundle + flag
   const collabActive = () => !!(collab && collab.isActive());
   // Editor sheet catalogue + protocol constants. The SINGLE source of truth is
@@ -1824,6 +1825,7 @@
             window.dispatchEvent(new Event("resize"));
           });
         });
+        gridResizeObserver = ro;
         ro.observe(host);
       }
     } catch (_e) { /* resize sync is best-effort */ }
@@ -1929,6 +1931,35 @@
       setTimeout(() => waitIdle(30), 120);
     });
   }
+
+  // Free the heavy editor resources when navigating away (or when the page is
+  // frozen into the back/forward cache). Without this, the Univer engine, the
+  // collaboration WebSocket and the three background pollers would keep running
+  // after the user leaves the page — an open socket also makes the page
+  // ineligible for bfcache. `pagehide` fires on both real unload and bfcache
+  // freeze and, unlike `beforeunload`/`unload`, does not itself disqualify the
+  // page from bfcache.
+  let _tornDown = false;
+  function teardownEditor() {
+    if (_tornDown) return;
+    _tornDown = true;
+    try { stopPolling(); } catch (_e) {}
+    try { stopResultsPolling(); } catch (_e) {}
+    if (remoteRetryTimer) { clearInterval(remoteRetryTimer); remoteRetryTimer = null; }
+    if (gridResizeObserver) {
+      try { gridResizeObserver.disconnect(); } catch (_e) {}
+      gridResizeObserver = null;
+    }
+    if (collab) { try { collab.stop(); } catch (_e) {} collab = null; }
+    if (grid && typeof grid.dispose === "function") { try { grid.dispose(); } catch (_e) {} }
+    grid = null;
+  }
+  window.addEventListener("pagehide", teardownEditor);
+  // If the page is later restored from the bfcache after we tore everything
+  // down, the editor would be dead — rebuild it with a clean reload instead.
+  window.addEventListener("pageshow", (e) => {
+    if (e.persisted && _tornDown) window.location.reload();
+  });
 
   init();
 })();
