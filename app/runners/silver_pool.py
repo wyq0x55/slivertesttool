@@ -50,6 +50,17 @@ from .slots import SlotAllocator
 logger = logging.getLogger("silver.pool")
 
 
+class _PoolClosed(Exception):
+    """Raised internally when the pool is shut down mid-instance-creation.
+
+    A Silver instance is created *outside* the lock (it is slow and grabs a
+    license). If :meth:`SilverInstancePool.shutdown` runs during that window the
+    freshly created handle must be disposed immediately, otherwise it becomes an
+    orphan that shutdown never sees -- leaking the license/process. The creator
+    raises this so the borrow/pre-warm caller unwinds its slot reservation.
+    """
+
+
 # --------------------------------------------------------------------------- #
 # Drivers -- backend-specific lifecycle for one instance
 # --------------------------------------------------------------------------- #
@@ -255,14 +266,25 @@ class SilverInstancePool:
                 break
             try:
                 inst = self._make_instance(uid, Path(sil))
+            except _PoolClosed:
+                # Pool shut down during creation; handle already disposed.
+                self._slots.release(uid)
+                with self._cond:
+                    self._size = max(0, self._size - 1)
+                    self._cond.notify_all()
+                break
             except Exception:  # noqa: BLE001
                 logger.exception("Failed to pre-warm Silver instance %s", uid)
                 self._slots.release(uid)
                 with self._cond:
-                    self._size -= 1
+                    self._size = max(0, self._size - 1)
                     self._cond.notify_all()
                 break
             with self._cond:
+                if self._closed:
+                    # Disposed by shutdown() already; do not add it to the idle set.
+                    self._cond.notify_all()
+                    break
                 self._idle.append(inst)
                 self._cond.notify_all()
             created += 1
@@ -305,13 +327,27 @@ class SilverInstancePool:
             # Slow path: create a new instance outside the lock.
             try:
                 inst = self._make_instance(reserve_uid, Path(sil_path))
+            except _PoolClosed:
+                # Pool shut down during creation; _make_instance already disposed
+                # the handle. Undo our slot/size reservation and abandon the borrow.
+                self._slots.release(reserve_uid)
+                with self._cond:
+                    self._size = max(0, self._size - 1)
+                    self._cond.notify_all()
+                return None
             except Exception:  # noqa: BLE001
                 self._slots.release(reserve_uid)
                 with self._cond:
-                    self._size -= 1
+                    self._size = max(0, self._size - 1)
                     self._cond.notify_all()
                 raise
             with self._cond:
+                if self._closed:
+                    # shutdown() disposed this instance after we registered it but
+                    # before we marked it in-use. Do not hand back a dead handle;
+                    # shutdown already released its slot and zeroed the counters.
+                    self._cond.notify_all()
+                    return None
                 self._in_use += 1
             return inst
 
@@ -378,7 +414,24 @@ class SilverInstancePool:
         logger.info("Created Silver instance uid=%s (mock=%s)", uid, self._driver.is_mock)
         inst = PooledInstance(uid=uid, handle=handle, console_log=console_log)
         with self._cond:
-            self._live.add(inst)
+            if self._closed:
+                closed = True
+            else:
+                self._live.add(inst)
+                closed = False
+        if closed:
+            # The pool was shut down while we were creating this instance outside
+            # the lock. shutdown() already snapshotted _live, so registering the
+            # instance now would orphan it (leaking the license/process). Dispose
+            # the handle immediately and signal the caller to abandon the borrow.
+            logger.info(
+                "Discarding Silver instance uid=%s created during shutdown", uid)
+            try:
+                self._driver.dispose(handle)
+            except Exception:  # noqa: BLE001 - best effort cleanup
+                logger.exception(
+                    "Error disposing orphan Silver instance uid=%s", uid)
+            raise _PoolClosed()
         return inst
 
     def _dispose(self, inst: PooledInstance) -> None:

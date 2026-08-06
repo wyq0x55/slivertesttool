@@ -27,6 +27,23 @@ How it works
 3. The embedded sources are attached through a tiny :mod:`importlib` meta-path
    finder emitted at the top of the output, so ``from X import *`` and package
    imports keep working exactly as before.
+
+Trust boundary (READ BEFORE "fixing" the ``exec`` calls)
+--------------------------------------------------------
+:func:`discover_search_paths` runs the judge's prelude via ``exec`` and the
+generated bundle runs embedded modules via ``exec``. This is **by design**: a
+``judge.py`` *is* the user's own executable test logic — the same file is later
+handed to the Silver runner and executed with full privileges regardless. These
+``exec`` calls therefore add no new capability beyond running the test itself.
+
+Because arbitrary Python cannot be meaningfully sandboxed (``__builtins__``
+restriction is trivially bypassable via ``().__class__.__mro__`` gadget chains),
+we do NOT pretend to sandbox it. Instead the security control is at the
+*ingress*: judge files are trusted inputs authored/reviewed by the project's own
+testers, uploaded only by authenticated users, and must be treated with the same
+trust as any code committed to this repository. Do not expose this bundler to
+anonymous/untrusted upload paths. If that ever changes, the fix is process-level
+isolation (a locked-down subprocess / container), not a fake in-process sandbox.
 """
 
 from __future__ import annotations

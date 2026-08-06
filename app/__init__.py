@@ -31,6 +31,24 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     # Convenience handle for code that wants the raw config class (e.g. runners).
     app.config_obj = config_object
 
+    # Fail fast on an insecure signing key. SECRET_KEY signs BOTH the session
+    # cookie and the collab WebSocket tokens; shipping the known fallback value
+    # would let anyone forge admin sessions and project-room tokens. Refuse to
+    # boot unless the operator explicitly opts into the insecure key for a
+    # throwaway/dev run (LM_ALLOW_INSECURE_SECRET=1) or is running tests.
+    if (
+        app.config.get("SECRET_KEY") == getattr(
+            config_object, "INSECURE_SECRET_SENTINEL", None)
+        and not getattr(config_object, "ALLOW_INSECURE_SECRET", False)
+        and not app.config.get("TESTING")
+    ):
+        raise RuntimeError(
+            "Refusing to start: SECRET_KEY is unset and is using the insecure "
+            "built-in default. Set a strong random SECRET_KEY in the environment "
+            "(e.g. `python -c \"import secrets; print(secrets.token_hex(32))\"`). "
+            "For a disposable dev run only, set LM_ALLOW_INSECURE_SECRET=1."
+        )
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",

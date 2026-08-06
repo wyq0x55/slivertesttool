@@ -51,7 +51,14 @@ class Config:
     """Flask + platform configuration."""
 
     # --- Flask ---
-    SECRET_KEY = os.environ.get("SECRET_KEY", "change-me-internal-secret")
+    # Sentinel: the insecure fallback used only when SECRET_KEY is unset. The app
+    # factory refuses to start with this value unless explicitly allowed for a
+    # throwaway/dev run (LM_ALLOW_INSECURE_SECRET=1), because both the session
+    # cookie and the collab WebSocket tokens are signed with it — a known key
+    # means forgeable admin sessions and project-room tokens.
+    INSECURE_SECRET_SENTINEL = "change-me-internal-secret"
+    SECRET_KEY = os.environ.get("SECRET_KEY", INSECURE_SECRET_SENTINEL)
+    ALLOW_INSECURE_SECRET = _as_bool(os.environ.get("LM_ALLOW_INSECURE_SECRET"), False)
     # Session cookie hardening (LAN Test Matrix auth). HttpOnly blocks JS access;
     # SameSite=Lax mitigates CSRF; Secure stays off for plain-HTTP LAN unless a
     # TLS terminator is in front (set SESSION_COOKIE_SECURE=1 then).
@@ -289,6 +296,19 @@ class Config:
     SSE_POLL_SECONDS = float(os.environ.get("SSE_POLL_SECONDS", "0.5"))
     # Idle heartbeat interval to keep proxies from closing the stream.
     SSE_HEARTBEAT_SECONDS = float(os.environ.get("SSE_HEARTBEAT_SECONDS", "15"))
+    # Hard cap on a single SSE connection's lifetime (seconds). A sync WSGI worker
+    # is pinned for the whole stream, so an unbounded stream can starve workers
+    # and the DB pool. When the cap is hit the server ends the stream cleanly; the
+    # browser's EventSource auto-reconnects with Last-Event-ID and resumes with no
+    # gap. 0 disables the cap (only safe on an async worker, e.g. gevent).
+    SSE_MAX_STREAM_SECONDS = float(os.environ.get("SSE_MAX_STREAM_SECONDS", "1800"))
+
+    # Per-task ``TaskEvent`` retention: keep only this many of the newest events
+    # per task. A chatty run emits thousands of LOG rows and they were previously
+    # only ever removed when the whole project was deleted, so the table grows
+    # unbounded. A daily worker sweep (and an admin-console button) trims each
+    # task back to this many rows. Hot-reloadable via ``runtime_config``.
+    TASK_EVENT_RETENTION = int(os.environ.get("TASK_EVENT_RETENTION", "5000"))
 
     @classmethod
     def ensure_dirs(cls) -> None:

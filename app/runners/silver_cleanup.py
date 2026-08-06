@@ -51,8 +51,14 @@ def force_kill_silver_processes(image_names: list[str] | None = None) -> int:
         for name in names:
             base = name[:-4] if name.lower().endswith(".exe") else name
             try:
+                # Match the PROCESS NAME exactly (``-x``), NOT the full command
+                # line (``-f``). ``pkill -f silver`` would match ANY process whose
+                # cmdline merely contains "silver" -- including THIS application,
+                # which runs out of a ``slivertesttool`` path -- and kill the app
+                # (or worker) itself. ``-x`` against the short process name is the
+                # narrow, self-safe match.
                 subprocess.run(
-                    ["pkill", "-9", "-f", base],
+                    ["pkill", "-9", "-x", base],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     check=False,

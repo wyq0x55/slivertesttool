@@ -180,7 +180,9 @@ def _tail_console(app, task_pk: int, console_path: Path,
     began, so only this run's lines are streamed.
     """
     pos = start_offset
-    while not stop.is_set():
+
+    def _drain() -> None:
+        nonlocal pos
         try:
             if console_path.is_file():
                 with console_path.open("r", encoding="utf-8", errors="replace") as fh:
@@ -191,12 +193,22 @@ def _tail_console(app, task_pk: int, console_path: Path,
                     with app.app_context():
                         task = db.session.get(Task, task_pk)
                         if task is not None:
-                            for line in chunk.splitlines():
-                                if line.strip():
-                                    event_service.emit_log(task, line.rstrip())
+                            # Batch the whole chunk into one commit instead of
+                            # one INSERT+COMMIT per line (write amplification).
+                            lines = [ln.rstrip() for ln in chunk.splitlines()
+                                     if ln.strip()]
+                            if lines:
+                                event_service.emit_logs(task, lines)
         except Exception:  # noqa: BLE001 - tailing must never crash the run
             pass
+
+    while not stop.is_set():
+        _drain()
         time.sleep(_TAIL_POLL_SECONDS)
+    # Final drain AFTER stop is signalled: the run writes its last console lines
+    # (and the final verdict banner) between the last poll and finalisation. Read
+    # once more so the tail of the output is not silently dropped.
+    _drain()
 
 
 def execute(app, config, task: Task, pool=None, instance=None,
@@ -314,16 +326,21 @@ def execute(app, config, task: Task, pool=None, instance=None,
             # it so the pool recreates a clean replacement (re-grabbing the
             # license) on the next demand.
             pool.poison(instance)
-        _finalise(task, TaskStatus.CANCELLED, "Cancelled by user.", verdict="CANCELLED")
+        # Emit the terminal event BEFORE flipping the task to a final status: the
+        # SSE stream ends the moment it observes a final status, so the final
+        # status must always be the last thing committed or the client can miss
+        # this result frame.
         event_service.emit_result(task, "cancelled", "Cancelled by user.")
+        _finalise(task, TaskStatus.CANCELLED, "Cancelled by user.", verdict="CANCELLED")
         return
     except RunnerError as exc:
         stop_threads.set()
         if pooled and not pool.is_mock:
             pool.poison(instance)
-        _finalise(task, TaskStatus.FAILED, str(exc), verdict="ERROR")
+        # Terminal events before the final-status flip (see cancel path above).
         event_service.emit_error(task, str(exc))
         event_service.emit_result(task, "failed", str(exc))
+        _finalise(task, TaskStatus.FAILED, str(exc), verdict="ERROR")
         # An ERROR is an environment problem, not a test-logic failure: abort the
         # rest of THIS project's queue so it does not keep failing (other
         # projects are untouched).
@@ -334,9 +351,10 @@ def execute(app, config, task: Task, pool=None, instance=None,
         if pooled and not pool.is_mock:
             pool.poison(instance)
         logger.exception("Unexpected failure in task %s", task.task_key)
-        _finalise(task, TaskStatus.FAILED, f"Internal error: {exc}", verdict="ERROR")
+        # Terminal events before the final-status flip (see cancel path above).
         event_service.emit_error(task, f"Internal error: {exc}")
         event_service.emit_result(task, "failed", f"Internal error: {exc}")
+        _finalise(task, TaskStatus.FAILED, f"Internal error: {exc}", verdict="ERROR")
         _cancel_project_queue_on_error(task, f"Internal error: {exc}")
         return
     finally:
@@ -366,10 +384,13 @@ def execute(app, config, task: Task, pool=None, instance=None,
 
     passed = verdict.upper().startswith("PASS")
     status = TaskStatus.PASSED if passed else TaskStatus.FAILED
-    _finalise(task, status, f"Execution finished. Verdict: {verdict}.", verdict=verdict)
+    # Emit 100% + the result BEFORE flipping to a final status so the SSE stream
+    # (which ends as soon as it sees a final status) can never race ahead and
+    # drop these last frames.
     event_service.emit_progress(task, 100)
     event_service.emit_result(task, "pass" if passed else "fail",
                               f"Verdict: {verdict}")
+    _finalise(task, status, f"Execution finished. Verdict: {verdict}.", verdict=verdict)
 
 
 def _slice_console(source: Path, start_offset: int, dest: Path) -> None:

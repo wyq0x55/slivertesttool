@@ -62,10 +62,18 @@ def current_user() -> Optional[LMUser]:
     uid = session.get("lm_user_id")
     if uid is None:
         return None
+    # ``current_user`` is hit several times per request (login_required, each
+    # permission check, the route body). Cache the resolved row on ``g`` for the
+    # request so a single logical request does not fan out into N identical
+    # ``SELECT ... FROM lm_users`` round-trips. Keyed by uid so a mid-request
+    # session swap (rare) is not served a stale identity.
+    cached = getattr(g, "_lm_current_user", None)
+    if cached is not None and cached[0] == uid:
+        return cached[1]
     user = service.get_user(uid)
-    if user is None or not user.is_active:
-        return None
-    return user
+    resolved = user if (user is not None and user.is_active) else None
+    g._lm_current_user = (uid, resolved)
+    return resolved
 
 
 def login_required(fn):

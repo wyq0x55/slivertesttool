@@ -14,6 +14,8 @@ import logging
 import time
 from pathlib import Path
 
+from huey import crontab
+
 from .huey_app import huey
 
 logger = logging.getLogger("silvetestapp.tasks")
@@ -239,6 +241,35 @@ def _run_task_dedicated(app, config, task_pk: int) -> None:
         finally:
             dedicated_allocator().release(slot)
             license_service.release()
+
+
+@huey.periodic_task(crontab(hour="3", minute="0"))
+def prune_task_events_job() -> None:
+    """Daily off-peak sweep that bounds ``TaskEvent`` growth.
+
+    Runs on the Huey consumer's periodic scheduler (03:00 local). The retention
+    count is read live from ``runtime_config`` so an admin can retune it without a
+    restart; only terminal tasks are trimmed so a live run's stream is untouched.
+    """
+    app = _get_app()
+    from ..extensions import db
+    from ..services import event_service, runtime_config
+
+    with app.app_context():
+        try:
+            keep_last = runtime_config.get_int("task_event_retention")
+        except Exception:  # noqa: BLE001 - fall back to the static default
+            keep_last = int(getattr(app.config_obj, "TASK_EVENT_RETENTION", 5000))
+        try:
+            summary = event_service.prune_all_task_events(
+                keep_last=keep_last, only_final=True)
+        except Exception:  # noqa: BLE001 - maintenance must never crash the worker
+            db.session.rollback()
+            logger.exception("Task-event prune sweep failed")
+            return
+    logger.info(
+        "Task-event prune sweep: trimmed %s task(s), deleted %s row(s) "
+        "(keep_last=%s)", summary["tasks"], summary["deleted"], keep_last)
 
 
 def _mark_cancelled(db, task) -> None:

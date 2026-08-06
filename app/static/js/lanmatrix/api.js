@@ -237,6 +237,10 @@
     adminListTasks() { return request("GET", "/admin/tasks"); },
     adminCancelTask(key) { return request("POST", `/admin/tasks/${key}/cancel`, {}); },
     adminDeleteTask(key) { return request("DELETE", `/admin/tasks/${key}`); },
+    adminPruneTaskEvents(keepLast) {
+      const body = (keepLast != null) ? { keep_last: keepLast } : {};
+      return request("POST", "/admin/tasks/prune-events", { body });
+    },
   };
 
   global.LMApi = LMApi;

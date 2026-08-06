@@ -186,3 +186,27 @@ def admin_delete_task(task_key):
     task_service.delete_task(task)
     _remove_task_dirs(workspace, test_id)
     return ok({"deleted": True})
+
+@bp.post("/admin/tasks/prune-events")
+@system_admin_required
+def admin_prune_task_events():
+    """Trim every terminal task's event history to the retention limit.
+
+    Manual counterpart of the daily ``prune_task_events_job`` sweep. ``keep_last``
+    defaults to the hot-reloadable ``task_event_retention`` runtime-config value;
+    a request may override it (clamped to the same 100..1_000_000 bounds).
+    """
+    body = request.get_json(silent=True) or {}
+    try:
+        keep_last = runtime_config.get_int("task_event_retention")
+    except Exception:  # noqa: BLE001
+        keep_last = int(getattr(current_app.config_obj, "TASK_EVENT_RETENTION", 5000))
+    if "keep_last" in body:
+        try:
+            keep_last = int(body["keep_last"])
+        except (TypeError, ValueError):
+            return err("VALIDATION_ERROR", "keep_last 必须是整数", status=400)
+    keep_last = max(100, min(1_000_000, keep_last))
+    summary = event_service.prune_all_task_events(keep_last=keep_last, only_final=True)
+    return ok({"pruned_tasks": summary["tasks"], "deleted": summary["deleted"],
+               "keep_last": keep_last})

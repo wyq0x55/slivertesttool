@@ -278,6 +278,11 @@
       label: "Silver 图形界面",
       help: "以 GUI 方式启动 Silver；仅对新启动 / 专用实例生效",
     },
+    task_event_retention: {
+      label: "任务事件保留条数",
+      help: "每个任务最多保留的历史事件（日志/进度）条数；每日凌晨自动清理，也可在任务管理中手动清理",
+      unit: "条", step: 100,
+    },
   };
   // The last values fetched from the server, used to compute the dirty set.
   let _rtcServer = {};
@@ -403,6 +408,18 @@
     catch (ex) { toast(ex.message, false); }
   }
   $("lm-admin-tasks-refresh").addEventListener("click", loadTasks);
+  async function pruneEvents() {
+    if (!confirm("清理各任务的历史事件日志？将仅保留最近的记录（进行中的任务不受影响），操作不可撤销。")) return;
+    const btn = $("lm-admin-tasks-prune");
+    if (btn) btn.disabled = true;
+    try {
+      const r = await LMApi.adminPruneTaskEvents();
+      toast(`已清理 ${r.pruned_tasks || 0} 个任务，删除 ${r.deleted || 0} 条事件`, true);
+    } catch (ex) { toast(ex.message || "清理失败", false); }
+    finally { if (btn) btn.disabled = false; }
+  }
+  const pruneBtn = $("lm-admin-tasks-prune");
+  if (pruneBtn) pruneBtn.addEventListener("click", pruneEvents);
 
   (window.LMReady || Promise.resolve()).then(() => { loadUsers(); loadLicense(); loadStats(); });
 })();

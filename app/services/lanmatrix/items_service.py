@@ -259,8 +259,34 @@ def add_pool_entry(user: LMUser, project: Project, sheet: str,
 def update_item(user: LMUser, project: Project, item: TestItemRow,
                 version: int, changes: dict[str, Any],
                 *, commit: bool = True) -> TestItemRow:
+    # Fast pre-check for a friendly error without touching the DB when the caller
+    # is already known to be stale.
     if version != item.version:
         raise VersionConflict(version, item.version, item.to_dict())
+    # Atomically CLAIM the version with a single guarded UPDATE that only matches
+    # while the row is still at ``version``. This closes the check-then-write
+    # TOCTOU: two editors starting from the same version can no longer both
+    # succeed (previously the Python-level compare above let both pass, then both
+    # bumped to version+1 and the last writer silently clobbered the first). The
+    # matched row is also write-locked until commit, serialising the rest of this
+    # function; a losing caller matches 0 rows and is told to reload.
+    claimed = (
+        db.session.query(TestItemRow)
+        .filter(TestItemRow.id == item.id, TestItemRow.version == version)
+        .update({TestItemRow.version: version + 1}, synchronize_session=False)
+    )
+    if not claimed:
+        # Someone committed a newer version between our pre-check and the claim.
+        # Re-read the winning row (identity-mapped ``item`` still holds the stale
+        # value, so force a refresh) to report the true current version.
+        try:
+            db.session.refresh(item)
+        except Exception:  # noqa: BLE001 - row may have been deleted meanwhile
+            db.session.rollback()
+        raise VersionConflict(version, item.version, item.to_dict())
+    # Keep the in-session object consistent with the DB value we just wrote
+    # (synchronize_session=False does not update it for us).
+    item.version = version + 1
     specs = field_specs(project.id)
     spec_by_key = {s.field_key: s for s in specs}
     old = item.to_dict()
@@ -278,7 +304,7 @@ def update_item(user: LMUser, project: Project, item: TestItemRow,
         raise ServiceError("输入数据校验失败", code="VALIDATION_ERROR",
                            details=[e.to_dict() for e in errors])
     _apply_values(item, coerced, specs)
-    item.version += 1
+    # version was already claimed atomically above; do not bump again.
     item.updated_by = user.id
     item.updated_at = _utcnow()
     audit.record("item.update", actor_id=user.id, object_type="item",

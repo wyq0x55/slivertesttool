@@ -74,6 +74,10 @@ FIELDS: List[FieldSpec] = [
         min=1, max=86400, group="runner",
     ),
     FieldSpec("silver_gui", "bool", "SILVER_GUI", group="runner"),
+    FieldSpec(
+        "task_event_retention", "int", "TASK_EVENT_RETENTION",
+        min=100, max=1_000_000, group="maintenance",
+    ),
 ]
 
 _BY_KEY: Dict[str, FieldSpec] = {f.key: f for f in FIELDS}

@@ -357,6 +357,7 @@ def project_task_stream(project_id, task_key):
     cfg = current_app.config_obj
     poll = cfg.SSE_POLL_SECONDS
     heartbeat = cfg.SSE_HEARTBEAT_SECONDS
+    max_seconds = getattr(cfg, "SSE_MAX_STREAM_SECONDS", 1800) or 0
     try:
         last_id = int(request.headers.get("Last-Event-ID")
                       or request.args.get("last_id") or 0)
@@ -368,28 +369,51 @@ def project_task_stream(project_id, task_key):
         nonlocal last_id
         import time
         since_beat = 0.0
-        while True:
-            db.session.expire_all()
-            events = event_service.fetch_since(task_pk, last_id, limit=500)
-            if events:
-                for ev in events:
-                    last_id = ev.id
-                    yield event_service.format_sse(ev)
-                since_beat = 0.0
-            else:
-                time.sleep(poll)
-                since_beat += poll
-                if since_beat >= heartbeat:
+        started = time.monotonic()
+        try:
+            while True:
+                # Keep the DB touch in a short scope, then RELEASE the pooled
+                # connection with ``db.session.remove()`` so it is not held idle
+                # across the ``sleep`` below. On a sync WSGI worker each open SSE
+                # still pins one worker, so also cap the total stream lifetime;
+                # for real scale run this endpoint under an async worker
+                # (gevent/eventlet) and/or push events via Redis/LISTEN-NOTIFY.
+                events = event_service.fetch_since(task_pk, last_id, limit=500)
+                current = db.session.get(Task, task_pk)
+                is_final = (current is not None
+                            and TaskStatus(current.status).is_final)
+                db.session.remove()
+
+                if events:
+                    for ev in events:
+                        last_id = ev.id
+                        yield event_service.format_sse(ev)
                     since_beat = 0.0
-                    yield ": keep-alive\n\n"
-            current = db.session.get(Task, task_pk)
-            if current is not None and TaskStatus(current.status).is_final:
-                tail = event_service.fetch_since(task_pk, last_id, limit=500)
-                for ev in tail:
-                    last_id = ev.id
-                    yield event_service.format_sse(ev)
-                yield "event: end\ndata: {}\n\n"
-                return
+
+                if is_final:
+                    # Drain events emitted right around the status flip so the
+                    # client never misses the final progress/result frames.
+                    tail = event_service.fetch_since(task_pk, last_id, limit=500)
+                    db.session.remove()
+                    for ev in tail:
+                        last_id = ev.id
+                        yield event_service.format_sse(ev)
+                    yield "event: end\ndata: {}\n\n"
+                    return
+
+                if not events:
+                    time.sleep(poll)
+                    since_beat += poll
+                    if since_beat >= heartbeat:
+                        since_beat = 0.0
+                        yield ": keep-alive\n\n"
+
+                if max_seconds and (time.monotonic() - started) >= max_seconds:
+                    # Reconnect handoff: EventSource resumes from Last-Event-ID.
+                    yield 'event: end\ndata: {"reason":"stream-timeout"}\n\n'
+                    return
+        finally:
+            db.session.remove()
 
     return Response(generate(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

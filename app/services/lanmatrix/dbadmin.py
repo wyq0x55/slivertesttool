@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import decimal
+import os
 import time
 from typing import Any
 
@@ -31,6 +32,15 @@ from sqlalchemy.exc import SQLAlchemyError
 from ...extensions import db
 
 MAX_ROWS = 500
+
+# Hard server-side cap on how long a single console statement may run. Without
+# this an admin's `SELECT` over a huge table (or an accidental cartesian join)
+# pins a pooled connection and a worker indefinitely; PostgreSQL aborts the
+# statement itself once this elapses. Override via env for slow maintenance jobs.
+try:
+    STATEMENT_TIMEOUT_MS = max(0, int(os.environ.get("DBADMIN_STATEMENT_TIMEOUT_MS", "15000")))
+except (TypeError, ValueError):
+    STATEMENT_TIMEOUT_MS = 15000
 
 # Leading keywords considered "read-only" for the guarded console mode.
 _READ_KEYWORDS = {
@@ -169,6 +179,16 @@ def run_sql(sql: str, *, read_only: bool = True,
         with db.engine.connect() as conn:
             trans = conn.begin()
             try:
+                # Bound the statement server-side so a runaway query cannot pin a
+                # pooled connection/worker forever. SET LOCAL is scoped to this
+                # transaction and reset on commit/rollback.
+                if STATEMENT_TIMEOUT_MS:
+                    conn.execute(text(
+                        f"SET LOCAL statement_timeout = {int(STATEMENT_TIMEOUT_MS)}"))
+                # Enforce read-only at the DB level too, so even a query with a
+                # writable CTE / SELECT ... FOR UPDATE cannot mutate data.
+                if read_only:
+                    conn.execute(text("SET TRANSACTION READ ONLY"))
                 result = conn.execute(text(sql))
                 if result.returns_rows:
                     columns = list(result.keys())
