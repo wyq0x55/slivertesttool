@@ -21,6 +21,7 @@ from typing import Any, BinaryIO, Optional, Union
 from openpyxl import Workbook, load_workbook
 
 from . import matrix_excel as _mx
+from . import xlsx_style as _xs
 
 # field key -> set of accepted header labels (lower-cased, stripped). Exact
 # (not substring) match, so "データ名" never collides with "名".
@@ -107,6 +108,9 @@ def build_workbook(matrix: dict[str, Any]) -> Workbook:
     for i, width in enumerate(_EXPORT_WIDTHS):
         ws.column_dimensions[get_column_letter(i + 2)].width = width
     ws.freeze_panes = "A2"
+
+    # Borders on the whole table + green fill on the header row (row 1).
+    _xs.style_region(ws, 1, n + 1, 1, 1 + len(_EXPORT_COLUMNS), header_rows=(1,))
     return wb
 
 

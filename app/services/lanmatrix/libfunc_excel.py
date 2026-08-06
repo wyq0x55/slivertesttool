@@ -42,6 +42,7 @@ from typing import Any, BinaryIO, Optional, Union
 from openpyxl import Workbook, load_workbook
 
 from . import matrix_excel as _mx
+from . import xlsx_style as _xs
 
 _FIELD_KEYS = ("isinit", "lib_func", "lib_name", "lib_value", "lib_arg",
                "lib_para", "lib_note", "lib_stb")
@@ -415,4 +416,13 @@ def _write_lib_block(ws, header_row: int, no: int, item: dict) -> int:
             ws.cell(rr, _mx.COL_SIGNAL_START + n_in + i).value = (
                 expecteds[i] if i < len(expecteds) else None)
         ws.cell(rr, timing_col).value = st.get("timing")
+
+    # Borders across the whole step table; header rows (手順番号 row + the two
+    # signal-name rows) filled green up to the 入力値 columns and blue from the
+    # 期待値 columns through 確認タイミング, matching the reference workbook.
+    _xs.style_step_table(
+        ws, sh, last, _mx.COL_STEP_NO, timing_col,
+        header_rows=(sh, s1, s2),
+        expect_start_col=_mx.COL_SIGNAL_START + n_in,
+    )
     return last

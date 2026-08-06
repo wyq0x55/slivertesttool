@@ -25,6 +25,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from . import security
+from . import xlsx_style as _xs
 
 TEMPLATE_VERSION = "1.0"
 DATA_SHEET = "TestItems"
@@ -98,6 +99,13 @@ def build_template(project: dict[str, Any], specs: list[dict[str, Any]]) -> Work
     # Hide the machine field-key row.
     ws.row_dimensions[ROW_FIELD_KEY].hidden = True
     ws.freeze_panes = f"A{ROW_DATA_START}"
+
+    # Borders + green header fill on the title / field-key header block.
+    if active_specs:
+        _xs.style_region(
+            ws, ROW_TITLE, ROW_FIELD_KEY, 1, len(active_specs),
+            header_rows=(ROW_TITLE,),
+        )
 
     info = wb.create_sheet(INFO_SHEET)
     info["A1"] = "项目编码"
@@ -257,6 +265,14 @@ def build_export(
                 value = ";".join(str(v) for v in value)
             value = security.escape_formula(value)
             ws.cell(r, col, value)
+
+    # Borders across the whole exported table + green fill on the title header
+    # row (row 1); the hidden field-key row (row 2) just gets a border.
+    if order:
+        last_row = max(ROW_FIELD_KEY, ROW_DATA_START - 1 + len(rows))
+        _xs.style_region(
+            ws, ROW_TITLE, last_row, 1, len(order), header_rows=(ROW_TITLE,),
+        )
 
     info = wb.create_sheet(INFO_SHEET)
     info["A1"] = "项目编码"

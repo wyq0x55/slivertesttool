@@ -389,6 +389,12 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .toolbar .search{ flex:1 1 220px; max-width:420px; }
 .toolbar .search input{ width:100%; }
 
+/* task list: shorten search + submitter so the batch actions
+   (download / cancel / delete) stay on the same row */
+#lm-tasks-body .toolbar{ flex-wrap:nowrap; }
+#lm-tasks-body .toolbar .search{ flex:0 1 220px; max-width:220px; min-width:150px; }
+#lm-tasks-body .toolbar #lm-f-submitter{ max-width:150px; }
+
 /* ---- inline task detail view (replaces the old dialog) ---- */
 .task-detail{ width:100%; max-width:1160px; margin:0 auto; padding:40px 32px 64px; }
 .task-detail .ttl{ display:flex; flex-direction:column; gap:6px; }

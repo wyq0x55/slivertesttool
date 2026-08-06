@@ -54,6 +54,18 @@ def create_app(config_object: type[Config] = Config) -> Flask:
         except Exception as exc:  # noqa: BLE001 - never block startup
             logging.getLogger(__name__).warning(
                 "const/lib field backfill skipped: %s", exc)
+        # Migrate legacy ``instance/model/project_{id}`` bundle directories to
+        # code-based names (``instance/model/<CODE>``) so models are identified
+        # by the project rather than a numeric id. Idempotent; safe every start.
+        try:
+            from .services import project_model_service as _lm_models
+            _moved = _lm_models.migrate_model_dirs(config_object)
+            if _moved:
+                logging.getLogger(__name__).info(
+                    "model dirs migrated to project-code names: %d", _moved)
+        except Exception as exc:  # noqa: BLE001 - never block startup
+            logging.getLogger(__name__).warning(
+                "model dir migration skipped: %s", exc)
         license_service.init_defaults(config_object.LICENSE_LIMIT)
 
     from .routes.api_routes import api_bp

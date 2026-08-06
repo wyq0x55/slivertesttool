@@ -52,6 +52,20 @@ except ImportError:
     _spec.loader.exec_module(_config_mod)
     _Config = _config_mod.Config
 
+# Shared export cell styling. Under the standalone module loader used by
+# ``tests/test_matrix_excel.py`` the package-relative import cannot resolve, so
+# fall back to loading ``xlsx_style.py`` directly by file path (openpyxl-only).
+try:
+    from . import xlsx_style as _xs
+except ImportError:
+    import importlib.util as _ilu_xs
+    import pathlib as _pathlib_xs
+
+    _xs_path = _pathlib_xs.Path(__file__).resolve().parent / "xlsx_style.py"
+    _spec_xs = _ilu_xs.spec_from_file_location("_lm_pure_xlsx_style", _xs_path)
+    _xs = _ilu_xs.module_from_spec(_spec_xs)
+    _spec_xs.loader.exec_module(_xs)
+
 # --------------------------------------------------------------------------- #
 # Schema (single source of truth, shared by import + export)
 # --------------------------------------------------------------------------- #
@@ -756,6 +770,15 @@ def _write_detail_block(ws, header_row: int, item: dict) -> int:
                 expecteds[i] if i < len(expecteds) else None
             )
         ws.cell(rr, timing_col).value = st.get("timing")
+
+    # Borders on the whole procedure table; header rows (手順番号 row + the two
+    # signal-name rows) filled green up to the 入力値 columns and blue from the
+    # 期待値 columns through 確認タイミング, matching the reference workbook.
+    _xs.style_step_table(
+        ws, sh, last_row, COL_STEP_NO, timing_col,
+        header_rows=(sh, s1, s2),
+        expect_start_col=COL_SIGNAL_START + n_in,
+    )
     return last_row
 
 

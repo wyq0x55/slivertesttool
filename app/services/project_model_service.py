@@ -38,7 +38,7 @@ from werkzeug.datastructures import FileStorage
 
 from ..config import BASE_DIR
 from ..extensions import db
-from ..models import ProjectModel
+from ..models import Project, ProjectModel
 from . import model_service
 
 
@@ -79,9 +79,28 @@ def _query(project_id: int):
     return ProjectModel.query.filter_by(project_id=project_id)
 
 
+def _legacy_segment(project_id: int) -> str:
+    """The old id-based directory segment (``project_{id}``)."""
+    return f"project_{project_id}"
+
+
+def _project_segment(project_id: int) -> str:
+    """Directory segment for a project's model bundles.
+
+    Uses the project **code** (unique and immutable — it cannot be changed
+    after creation, unlike ``name``) so the folder is human-readable
+    (``instance/model/ISUZU/...`` rather than ``instance/model/project_2/...``)
+    while staying stable and collision-free. Falls back to the legacy
+    ``project_{id}`` segment when the project or its code is unavailable.
+    """
+    proj = Project.query.get(project_id) if project_id else None
+    code = getattr(proj, "code", None) if proj is not None else None
+    return _safe_segment(code or "", _legacy_segment(project_id))
+
+
 def _models_root(config, project_id: int) -> Path:
     """Server directory that holds a project's uploaded model bundles."""
-    return Path(config.MODEL_DIR) / f"project_{project_id}"
+    return Path(config.MODEL_DIR) / _project_segment(project_id)
 
 
 def _module_ref(file_path: Path) -> str:
@@ -334,3 +353,81 @@ def remove_model(project_id: int, name: str) -> bool:
             nxt.is_current = True
     db.session.commit()
     return True
+
+# --------------------------------------------------------------------------- #
+# One-time migration: legacy ``project_{id}`` dirs -> code-based dirs
+# --------------------------------------------------------------------------- #
+def _remap_segment(path_str, old_seg, new_seg):
+    """Replace the ``old_seg`` path component of *path_str* with *new_seg*."""
+    if not path_str:
+        return path_str
+    parts = list(Path(path_str).parts)
+    changed = False
+    for i, part in enumerate(parts):
+        if part == old_seg:
+            parts[i] = new_seg
+            changed = True
+    return str(Path(*parts)) if changed else path_str
+
+
+def _rewrite_sil_ref(sil_path, old_seg, new_seg):
+    """Rewrite the dll/sbs module-line paths inside a generated ``.sil``.
+
+    The module line carries the bundle paths relative to the Silver working
+    directory (e.g. ``instance/model/project_2/host/host.dll``); after the
+    directory is renamed the ``project_2`` component must become the code.
+    Both real (XML) and mock (text) ``.sil`` files are plain text.
+    """
+    try:
+        sp = Path(sil_path)
+        if not sp.is_file():
+            return
+        txt = sp.read_text(encoding="utf-8")
+        new = txt.replace("/" + old_seg + "/", "/" + new_seg + "/")
+        if new != txt:
+            sp.write_text(new, encoding="utf-8")
+    except Exception:  # noqa: BLE001 - never block startup on a stray .sil
+        pass
+
+
+def migrate_model_dirs(config) -> int:
+    """Rename legacy ``project_{id}`` model directories to code-based names.
+
+    For every project whose code yields a directory segment different from the
+    legacy ``project_{id}`` one, the on-disk bundle directory is moved and each
+    bundle model's stored ``sil_path`` / ``bundle_dir`` (plus the ``.sil``
+    module refs) are rewritten. Idempotent and defensive: safe to run on every
+    start, never raises.
+    """
+    moved = 0
+    try:
+        root = Path(config.MODEL_DIR)
+        projects = Project.query.all()
+    except Exception:  # noqa: BLE001 - DB not ready / no projects
+        return 0
+    for proj in projects:
+        old_seg = _legacy_segment(proj.id)
+        new_seg = _safe_segment(getattr(proj, "code", "") or "", old_seg)
+        if new_seg == old_seg:
+            continue
+        old_root = root / old_seg
+        new_root = root / new_seg
+        try:
+            if old_root.exists() and old_root.resolve() != new_root.resolve():
+                if new_root.exists():
+                    continue  # target already there - stay safe, skip
+                new_root.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(old_root), str(new_root))
+                moved += 1
+        except Exception:  # noqa: BLE001
+            continue
+        for m in ProjectModel.query.filter_by(
+                project_id=proj.id, kind="bundle").all():
+            m.bundle_dir = _remap_segment(m.bundle_dir, old_seg, new_seg)
+            m.sil_path = _remap_segment(m.sil_path, old_seg, new_seg)
+            _rewrite_sil_ref(m.sil_path, old_seg, new_seg)
+    try:
+        db.session.commit()
+    except Exception:  # noqa: BLE001
+        db.session.rollback()
+    return moved
