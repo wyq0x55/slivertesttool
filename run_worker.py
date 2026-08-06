@@ -49,22 +49,35 @@ def _sweep_silver(config) -> None:
 
 
 def _reconcile_loop(app, config, stop: threading.Event) -> None:
-    """Keep the pool sized to the (runtime-adjustable) license limit."""
+    """Keep the pool sized to the (runtime-adjustable) license limit.
+
+    The reconcile interval, eager pre-warm flag and pool enable switch are all
+    runtime-adjustable from the admin console (「授权 / 并发」); each is re-read on
+    every tick (with a safe fallback to the ``.env``-derived Config default) so
+    an admin's change is picked up live without restarting the worker. When the
+    pool is disabled live, the target is driven to 0 so the pooled instances are
+    disposed and their licenses released.
+    """
     from app.jobqueue.tasks import get_pool
-    from app.services import license_service
+    from app.services import license_service, runtime_config
 
     pool = get_pool(app, config)
-    interval = float(getattr(config, "SILVER_POOL_RECONCILE_SECONDS", 5) or 5)
+
     while not stop.is_set():
+        interval = 5.0
         try:
             with app.app_context():
                 limit = license_service.get_limit()
-            pool.set_target(limit)
-            if getattr(config, "SILVER_POOL_PREWARM", True):
+                pool_enabled = runtime_config.get_bool("silver_pool_enabled")
+                prewarm = runtime_config.get_bool("silver_pool_prewarm")
+                interval = runtime_config.get_float("silver_pool_reconcile_seconds")
+            pool.set_target(limit if pool_enabled else 0)
+            if pool_enabled and prewarm:
                 pool.prewarm()
         except Exception:  # noqa: BLE001 - reconciler must never die
             logger.exception("Pool reconcile iteration failed")
-        stop.wait(interval)
+            interval = float(getattr(config, "SILVER_POOL_RECONCILE_SECONDS", 5) or 5)
+        stop.wait(max(0.5, interval))
 
 
 def main() -> None:
@@ -76,11 +89,18 @@ def main() -> None:
     with app.app_context():
         license_service.reset_in_use()
 
-    pooling = tasks._pooling_enabled(config)
+    # Pool infrastructure is started whenever the runner backend supports it, so
+    # the reconcile loop is always present to honour a *live* enable/disable of
+    # ``SILVER_POOL_ENABLED`` from the admin console (it drives the pool target to
+    # 0 when disabled). The live flag -- not this start-up check -- decides
+    # whether instances are actually pre-warmed.
+    backend = (config.RUNNER_BACKEND or "").strip().lower()
+    pool_supported = backend in ("silver", "mock")
     stop_reconcile = threading.Event()
 
-    if pooling:
+    if pool_supported:
         from app.jobqueue.tasks import get_pool
+        from app.services import runtime_config
 
         pool = get_pool(app, config)
 
@@ -96,10 +116,14 @@ def main() -> None:
 
         atexit.register(_shutdown_pool)
 
-        # Eager pre-warm before consuming, then keep reconciling in background.
-        if getattr(config, "SILVER_POOL_PREWARM", True):
-            with app.app_context():
-                pool.set_target(license_service.get_limit())
+        # Read the live pool switches for the eager start-up pre-warm.
+        with app.app_context():
+            pool_enabled = runtime_config.get_bool("silver_pool_enabled")
+            prewarm = runtime_config.get_bool("silver_pool_prewarm")
+            limit = license_service.get_limit()
+
+        if pool_enabled and prewarm:
+            pool.set_target(limit)
             warmed = pool.prewarm()
             print(f"Pre-warmed {warmed} Silver instance(s); pool={pool.stats()}")
 
@@ -111,7 +135,7 @@ def main() -> None:
 
     print(f"Worker starting: {Config.HUEY_WORKERS} threads, "
           f"backend={Config.RUNNER_BACKEND}, "
-          f"pool={'on' if pooling else 'off'}")
+          f"pool={'supported' if pool_supported else 'off'}")
     consumer = huey.create_consumer(
         workers=Config.HUEY_WORKERS,
         worker_type="thread",

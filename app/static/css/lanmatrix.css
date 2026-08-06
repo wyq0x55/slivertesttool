@@ -3,7 +3,10 @@
 .lm-navbar { background: #1b2a4a; }
 .lm-navbar .brand, .lm-navbar .nav-links a { color: #eaf0fb; }
 .lm-user { color: #9fb3d8; margin-left: 12px; }
-.lm-main { max-width: 100%; padding: 0; }
+/* <main> landmark wrapper around the page content. display:contents keeps it
+   transparent to layout, so the editor / list pages lay out exactly as before
+   while still exposing a single main landmark for a11y. */
+.lm-main { display: contents; max-width: 100%; padding: 0; }
 
 /* Global shell: the left rail (base_lm.html) sits beside the page content. Only
    applied when logged in (login/register keep the plain centered layout). */

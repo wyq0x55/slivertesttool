@@ -8,7 +8,7 @@
        the right group on the right — and this .lm-toolbar shell is then hidden.
        With the built-in fallback grid (no Univer chrome) the shell stays visible
        as a slim top bar. Element ids are unchanged; editor.js drives them by id. -->
-  <div class="lm-toolbar" id="lm-toolbar">
+  <div class="lm-toolbar" id="lm-toolbar"{% if univer_available %} style="display:none"{% endif %}>
     <div class="lm-tb-left" id="lm-toolbar-left">
       <strong id="lm-proj-title">项目 #{{ project_id }}</strong>
       <span class="lm-badge" id="lm-proj-status"></span>

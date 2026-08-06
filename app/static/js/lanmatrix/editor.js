@@ -1802,6 +1802,10 @@
       if (grid && grid.engine !== "univer") {
         const fs = document.getElementById("lm-footer-slot");
         if (fs) { fs.hidden = false; fs.classList.add("lm-footer-slot--bottom"); }
+        // The shell starts hidden under Univer (template) to avoid a layout shift;
+        // the built-in fallback grid keeps its own top bar, so reveal it here.
+        const tb0 = document.getElementById("lm-toolbar");
+        if (tb0) tb0.style.display = "";
       }
     } catch (_e) { /* fallback reveal is best-effort */ }
     // Univer sizes its canvas to the host and only re-measures on window resize.
@@ -1840,17 +1844,19 @@
       }
     } catch (_e) { /* best-effort */ }
     // Toolbar merge: with the Univer engine the adapter adopts #lm-toolbar-left /
-    // #lm-toolbar-right into Univer's own ribbon row. Once that happened the
-    // groups no longer live inside #lm-toolbar, so hide the now-empty shell to
-    // reclaim the row. If adoption failed (groups still inside), keep the shell
-    // visible as the app's own top bar so the actions stay reachable.
+    // #lm-toolbar-right into Univer's own ribbon row. The shell now starts hidden
+    // (template), so adoption reclaims the row WITHOUT a layout shift — previously
+    // the shell was visible on first paint and hidden ~1.5s later, which shifted
+    // the grid + collaboration overlay up ~44px and dominated the page CLS.
+    // Only reveal the shell as a fallback if adoption did NOT happen, so the
+    // import / export / run actions never become unreachable.
     try {
       if (grid && grid.engine === "univer") {
         setTimeout(() => {
           const tb = document.getElementById("lm-toolbar");
           const left = document.getElementById("lm-toolbar-left");
           const adopted = left && tb && left.parentElement !== tb;
-          if (tb && adopted) tb.style.display = "none";
+          if (tb && !adopted) tb.style.display = "";
         }, 1500);
       }
     } catch (_e) { /* best-effort */ }

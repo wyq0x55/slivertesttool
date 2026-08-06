@@ -651,8 +651,10 @@ dialog.lm-dialog, .lm-dialog{ border:1px solid var(--border); border-radius:var(
 dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-filter:blur(2px); }
 .lm-modal-panel,.lm-modal-head,.lm-modal-foot{ background:var(--surface); color:var(--text); }
 .lm-modal-head,.lm-modal-foot{ border-color:var(--border); }
-.lm-toast{ border-radius:var(--radius-sm); box-shadow:var(--shadow-lg); font-weight:550; }
-.lm-toast.lm-ok{ background:var(--ok); } .lm-toast.lm-err{ background:var(--danger); }
+.lm-toast{ border-radius:var(--radius-sm); box-shadow:var(--shadow-lg); font-weight:550; color:#fff; }
+/* Darkened success / error backgrounds so the white toast text clears the
+   WCAG AA 4.5:1 contrast ratio (the brand --ok / --danger were too light). */
+.lm-toast.lm-ok{ background:#1f7a37; } .lm-toast.lm-err{ background:#c0392b; }
 
 /* ===== PART 13 · LOGIN / REGISTER ===================================== */
 .login-wrap{ min-height:100vh; display:grid; grid-template-columns:1fr 1fr; }
@@ -718,7 +720,7 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
    `height:100vh` therefore overflowed by 56px and — with body:has(.lm-editor)
    {overflow:hidden} — clipped the Univer sheet tabs + footer at the bottom.
    Make it flex to fill the remaining height under the topbar instead. */
-.main > .lm-editor{ height:auto; min-height:0; flex:1 1 auto; }
+.main .lm-editor{ height:auto; min-height:0; flex:1 1 auto; }
 .lm-card{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
   box-shadow:var(--shadow-sm); }
 .lm-btn{ display:inline-flex; align-items:center; gap:7px; border:1px solid var(--border-strong);
