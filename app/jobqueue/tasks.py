@@ -41,11 +41,25 @@ def _utcnow() -> _dt.datetime:
 # --------------------------------------------------------------------------- #
 # Pre-warmed Silver instance pool (worker-process singleton)
 # --------------------------------------------------------------------------- #
-def _pooling_enabled(config) -> bool:
-    return (
-        bool(getattr(config, "SILVER_POOL_ENABLED", True))
-        and (config.RUNNER_BACKEND or "").strip().lower() in ("silver", "mock")
-    )
+def _pooling_enabled(config, app=None) -> bool:
+    """Whether the pre-warmed pool path is used for a run.
+
+    ``SILVER_POOL_ENABLED`` is runtime-adjustable from the admin console; when an
+    ``app`` is supplied we read the live override (inside an app context), else we
+    fall back to the ``.env``-derived Config default. The runner backend still
+    gates pooling (only the ``silver``/``mock`` backends support it) and is fixed
+    at start-up.
+    """
+    enabled = bool(getattr(config, "SILVER_POOL_ENABLED", True))
+    if app is not None:
+        try:
+            from ..services import runtime_config
+
+            with app.app_context():
+                enabled = runtime_config.get_bool("silver_pool_enabled")
+        except Exception:  # noqa: BLE001 - defensive: fall back to the static default
+            pass
+    return enabled and (config.RUNNER_BACKEND or "").strip().lower() in ("silver", "mock")
 
 
 def get_pool(app, config):
@@ -87,7 +101,7 @@ def _current_limit(app) -> int:
 def run_task(task_pk: int) -> None:
     app = _get_app()
     config = app.config_obj
-    if _pooling_enabled(config):
+    if _pooling_enabled(config, app):
         _run_task_pooled(app, config, task_pk)
     else:
         _run_task_dedicated(app, config, task_pk)

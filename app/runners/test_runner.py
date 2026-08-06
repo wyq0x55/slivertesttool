@@ -24,7 +24,7 @@ from typing import Any
 
 from ..extensions import db
 from ..models import Task, TaskStatus, TestItemRow
-from ..services import event_service, report_service, task_service
+from ..services import event_service, report_service, runtime_config, task_service
 from . import run_layout
 from .silver_runner import (
     RunContext,
@@ -268,13 +268,23 @@ def execute(app, config, task: Task, pool=None, instance=None,
     def _on_start(handle: Any) -> None:
         handle_box["handle"] = handle
 
+    # Both knobs are runtime-adjustable from the admin console (「授权 / 并发」);
+    # fall back to the ``.env``-derived Config defaults if the override lookup
+    # fails for any reason (e.g. missing app context), so a run is never blocked.
+    try:
+        eff_gui = runtime_config.get_bool("silver_gui")
+        eff_timeout = runtime_config.get_int("execution_timeout")
+    except Exception:  # noqa: BLE001 - defensive: never break a run on config read
+        eff_gui = config.SILVER_GUI
+        eff_timeout = config.EXECUTION_TIMEOUT
+
     ctx = RunContext(
         test_id=task.test_id,
         run_dir=run_dir,
         log_dir=log_dir,
         sil_path=sil_path,
-        gui=config.SILVER_GUI,
-        timeout=config.EXECUTION_TIMEOUT,
+        gui=eff_gui,
+        timeout=eff_timeout,
         cancel_event=cancel_event,
         on_start=_on_start,
         reload_model=pooled,

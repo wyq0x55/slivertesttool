@@ -231,6 +231,8 @@
     adminRemoveModel(name) { return request("DELETE", "/admin/models", { body: { name } }); },
     adminGetLicense() { return request("GET", "/admin/license"); },
     adminSetLicense(count) { return request("POST", "/admin/license", { body: { count } }); },
+    adminGetRuntimeConfig() { return request("GET", "/admin/runtime-config"); },
+    adminSetRuntimeConfig(changes) { return request("POST", "/admin/runtime-config", { body: { changes } }); },
     adminListTasks() { return request("GET", "/admin/tasks"); },
     adminCancelTask(key) { return request("POST", `/admin/tasks/${key}/cancel`, {}); },
     adminDeleteTask(key) { return request("DELETE", `/admin/tasks/${key}`); },

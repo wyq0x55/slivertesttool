@@ -239,6 +239,7 @@
       const data = await LMApi.adminGetLicense();
       paintLicense(data.license || {});
     } catch (ex) { const info = $("lm-license-info"); if (info) info.textContent = ex.message; }
+    loadRuntimeConfig();
   }
   function stepLicense(d) {
     const el = $("lm-license-count");
@@ -253,6 +254,104 @@
       loadLicense();
     } catch (ex) { toast(ex.message, false); }
   });
+
+  // --- runtime config (hot-reloadable) ------------------------------------ //
+  // UI labels/help live here (the backend registry stays language-neutral and
+  // only carries type/min/max/default metadata).
+  const RTC_META = {
+    silver_pool_enabled: {
+      label: "Silver 实例池",
+      help: "启用预热实例池复用；关闭则每个任务单独启动 Silver 实例",
+    },
+    silver_pool_prewarm: {
+      label: "启动即预热",
+      help: "Worker 启动时立即预热并占用许可，否则首次需要时才创建",
+    },
+    silver_pool_reconcile_seconds: {
+      label: "实例池同步间隔",
+      help: "Worker 将池大小与并发上限对齐的周期",
+      unit: "秒", step: 0.5,
+    },
+    execution_timeout: {
+      label: "执行超时",
+      help: "单个测试的最长运行时间，超时判定为失败",
+      unit: "秒", step: 1,
+    },
+    silver_gui: {
+      label: "Silver 图形界面",
+      help: "以 GUI 方式启动 Silver；仅对新启动 / 专用实例生效",
+    },
+  };
+  // The last values fetched from the server, used to compute the dirty set.
+  let _rtcServer = {};
+
+  function rtcRow(field) {
+    const meta = RTC_META[field.key] || { label: field.key, help: "" };
+    const unit = meta.unit ? ` <span class="muted" style="font-size:12px">${esc(meta.unit)}</span>` : "";
+    let control;
+    if (field.type === "bool") {
+      control = `<label class="sw"><input type="checkbox" class="lm-rtc-input" data-key="${esc(field.key)}" data-type="bool" ${field.value ? "checked" : ""}><span class="track"></span></label>`;
+    } else {
+      const step = meta.step != null ? meta.step : (field.type === "int" ? 1 : "any");
+      const min = field.min != null ? ` min="${field.min}"` : "";
+      const max = field.max != null ? ` max="${field.max}"` : "";
+      control = `<input type="number" class="lm-rtc-input" data-key="${esc(field.key)}" data-type="${esc(field.type)}" value="${esc(field.value)}" step="${esc(step)}"${min}${max} style="width:120px">${unit}`;
+    }
+    return `<div class="ctrl-row">
+      <div class="cl"><b>${esc(meta.label)}</b><small>${esc(meta.help)}</small></div>
+      <div class="cr">${control}</div>
+    </div>`;
+  }
+
+  function paintRuntimeConfig(data) {
+    const fields = (data && data.fields) || [];
+    _rtcServer = (data && data.values) || {};
+    const host = $("lm-rtc-rows");
+    if (!host) return;
+    host.innerHTML = fields.length
+      ? fields.map(rtcRow).join("")
+      : '<div class="muted" style="padding:8px 0">暂无可调项</div>';
+  }
+
+  async function loadRuntimeConfig() {
+    const host = $("lm-rtc-rows");
+    try {
+      const data = await LMApi.adminGetRuntimeConfig();
+      paintRuntimeConfig(data);
+    } catch (ex) {
+      if (host) host.innerHTML = `<div class="lm-err">${esc(ex.message)}</div>`;
+    }
+  }
+
+  // Collect only the values that differ from what the server last returned.
+  function rtcChanges() {
+    const changes = {};
+    document.querySelectorAll(".lm-rtc-input").forEach((el) => {
+      const key = el.dataset.key;
+      let val;
+      if (el.dataset.type === "bool") {
+        val = el.checked;
+        if (Boolean(_rtcServer[key]) !== val) changes[key] = val;
+      } else {
+        val = el.dataset.type === "int" ? parseInt(el.value, 10) : parseFloat(el.value);
+        if (!Number.isNaN(val) && Number(_rtcServer[key]) !== val) changes[key] = val;
+      }
+    });
+    return changes;
+  }
+
+  const rtcSave = $("lm-rtc-save");
+  if (rtcSave) rtcSave.addEventListener("click", async () => {
+    const changes = rtcChanges();
+    if (!Object.keys(changes).length) { toast("没有需要保存的修改", true); return; }
+    try {
+      const data = await LMApi.adminSetRuntimeConfig(changes);
+      paintRuntimeConfig(data);
+      toast("运行时配置已保存并生效", true);
+    } catch (ex) { toast(ex.message || "保存失败", false); }
+  });
+  const rtcReset = $("lm-rtc-reset");
+  if (rtcReset) rtcReset.addEventListener("click", loadRuntimeConfig);
 
   // --- tasks --------------------------------------------------------------- //
   async function loadTasks() {

@@ -95,6 +95,18 @@
         </div>
       </div>
     </div>
+
+    <!-- Hot-reloadable runtime configuration (applied live, no restart) -->
+    <div class="ctrl-card" id="lm-rtc-card" style="margin-top:16px">
+      <div class="tc-head" style="padding:0 0 6px">
+        <h3 style="margin:0">运行时配置（热重载）</h3>
+        <span class="muted" style="font-size:12.5px">保存后无需重启即对 Web 与 Worker 生效</span>
+        <div class="spacer"></div>
+        <button class="btn small" id="lm-rtc-reset" title="放弃未保存的修改">还原</button>
+        <button class="btn small primary" id="lm-rtc-save">保存</button>
+      </div>
+      <div id="lm-rtc-rows"><div class="muted" style="padding:8px 0">加载中…</div></div>
+    </div>
   </section>
 
   <!-- Tasks -->
