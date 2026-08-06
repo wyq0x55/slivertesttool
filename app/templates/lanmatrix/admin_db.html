@@ -1,24 +1,30 @@
 {% extends "lanmatrix/base_lm.html" %}
 {% block title %}数据库管理{% endblock %}
+{% block crumb %}<b>数据库管理</b>{% endblock %}
 {% block content %}
-<div class="lm-dbadmin">
-  <div class="lm-toolbar">
-    <div class="lm-tb-left">
-      <strong>PostgreSQL 数据库管理</strong>
+<div class="content lm-dbadmin">
+  <div class="page-head">
+    <div class="ttl">
+      <h1>数据库管理</h1>
+      <p>直接浏览与维护 PostgreSQL 数据表，或在 SQL 控制台执行查询</p>
+    </div>
+    <div class="head-actions">
       <span class="lm-badge lm-badge-admin">系统管理员</span>
-      <div class="lm-db-tabs">
-        <button class="lm-db-tab is-active" data-tab="browser">表管理（无需 SQL）</button>
-        <button class="lm-db-tab" data-tab="console">SQL 控制台</button>
-      </div>
+      <button class="btn" id="lm-db-refresh">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/></svg>
+        刷新概览
+      </button>
     </div>
-    <div class="lm-tb-right">
-      <button class="lm-btn" id="lm-db-refresh">刷新概览</button>
-    </div>
+  </div>
+
+  <div class="tabs" role="tablist">
+    <button class="tab lm-db-tab is-active" data-tab="browser">表管理（无需 SQL）</button>
+    <button class="tab lm-db-tab" data-tab="console">SQL 控制台</button>
   </div>
 
   <!-- ============ 表管理（无需 SQL） ============ -->
   <div class="lm-db-pane" data-pane="browser">
-    <div class="lm-db-browser">
+    <div class="tablecard lm-db-browser">
       <aside class="lm-db-tablelist">
         <div class="lm-db-tablelist-head">数据表</div>
         <ul id="lm-db-tablenav"></ul>
@@ -44,40 +50,45 @@
 
   <!-- ============ SQL 控制台 ============ -->
   <div class="lm-db-body lm-db-pane" data-pane="console" hidden>
-    <section class="lm-db-overview">
-      <h3>连接概览</h3>
-      <div id="lm-db-info" class="lm-db-info lm-muted">加载中…</div>
+    <section class="tablecard lm-db-overview">
+      <div class="tc-head"><h3>连接概览</h3></div>
+      <div class="lm-db-section">
+        <div id="lm-db-info" class="lm-db-info lm-muted">加载中…</div>
 
-      <h3>数据表 <span class="lm-muted" id="lm-db-tblcount"></span></h3>
-      <div class="lm-db-tables-wrap">
-        <table class="lm-table lm-db-tables">
-          <thead><tr><th>模式</th><th>表名</th><th class="num">估计行数</th><th class="num">占用空间</th><th></th></tr></thead>
-          <tbody id="lm-db-tables"></tbody>
-        </table>
+        <h4 class="lm-db-subhead">数据表 <span class="lm-muted" id="lm-db-tblcount"></span></h4>
+        <div class="lm-db-tables-wrap">
+          <table class="lm-table lm-db-tables">
+            <thead><tr><th>模式</th><th>表名</th><th class="num">估计行数</th><th class="num">占用空间</th><th></th></tr></thead>
+            <tbody id="lm-db-tables"></tbody>
+          </table>
+        </div>
       </div>
     </section>
 
-    <section class="lm-db-console">
-      <h3>SQL 控制台</h3>
-      <div class="lm-db-console-tools">
+    <section class="tablecard lm-db-console">
+      <div class="tc-head">
+        <h3>SQL 控制台</h3>
+        <div class="spacer"></div>
+        <button class="btn small primary" id="lm-db-run">运行 (Ctrl+Enter)</button>
+      </div>
+      <div class="lm-db-section">
         <label class="lm-db-ro">
           <input type="checkbox" id="lm-db-readonly" checked>
           只读模式（仅允许 SELECT/WITH/SHOW/EXPLAIN，执行后回滚）
         </label>
-        <button class="lm-btn lm-btn-primary" id="lm-db-run">运行 (Ctrl+Enter)</button>
-      </div>
-      <textarea id="lm-db-sql" class="lm-db-sql" spellcheck="false"
-                placeholder="SELECT * FROM lm_project LIMIT 50;"></textarea>
-      <div class="lm-db-write-warn" id="lm-db-write-warn" hidden>
-        ⚠ 写模式已开启：语句将<strong>直接提交</strong>到数据库，请谨慎操作（建议先备份）。
-      </div>
-      <div class="lm-error" id="lm-db-error" hidden></div>
-      <div class="lm-db-result-meta lm-muted" id="lm-db-meta"></div>
-      <div class="lm-db-result-wrap">
-        <table class="lm-table lm-db-result">
-          <thead id="lm-db-result-head"></thead>
-          <tbody id="lm-db-result-body"></tbody>
-        </table>
+        <textarea id="lm-db-sql" class="lm-db-sql" spellcheck="false"
+                  placeholder="SELECT * FROM lm_project LIMIT 50;"></textarea>
+        <div class="lm-db-write-warn" id="lm-db-write-warn" hidden>
+          ⚠ 写模式已开启：语句将<strong>直接提交</strong>到数据库，请谨慎操作（建议先备份）。
+        </div>
+        <div class="lm-error" id="lm-db-error" hidden></div>
+        <div class="lm-db-result-meta lm-muted" id="lm-db-meta"></div>
+        <div class="lm-db-result-wrap">
+          <table class="lm-table lm-db-result">
+            <thead id="lm-db-result-head"></thead>
+            <tbody id="lm-db-result-body"></tbody>
+          </table>
+        </div>
       </div>
     </section>
   </div>

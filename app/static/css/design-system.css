@@ -787,3 +787,80 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
 .lm-kubun-arrow:last-child{ border-left-color:var(--border); }
 .lm-kubun-arrow:hover:not(:disabled){ background:var(--surface-2); color:var(--text); }
 .lm-kubun-cur{ color:var(--text); }
+
+/* ===== PART 12 · DB ADMIN (PostgreSQL 管理) ============================
+   The DB-admin page ships legacy hard-coded light colors in lanmatrix.css.
+   design-system.css loads AFTER it, so these rules re-point every surface at
+   the theme tokens (adaptive in BOTH light + dark) and align the layout with
+   the rest of the console (.content / .page-head / .tabs / .tablecard). */
+.lm-dbadmin{ height:auto; display:block; }
+/* Tabs: the JS toggles .is-active on .lm-db-tab; style it like the shared
+   .tabs underline instead of the old solid-blue pill (higher specificity than
+   lanmatrix's .lm-db-tab.is-active so it wins). */
+.lm-db-tab{ border-radius:0; }
+.lm-db-tab.is-active{ background:transparent; color:var(--brand);
+  border-color:transparent; border-bottom-color:var(--brand); font-weight:650; }
+.lm-db-tab:hover{ color:var(--text); background:transparent; }
+
+/* Panes flow in normal document flow now (no full-height flex parent). */
+.lm-db-pane{ display:block; flex:none; }
+.lm-db-pane[hidden]{ display:none; }
+/* Console pane: stack 连接概览 + SQL 控制台 VERTICALLY at full width instead of
+   the legacy 2-col grid. Side-by-side squeezed the SQL editor + the (often very
+   wide) result table into a narrow 1fr column, so wide rows were clipped —
+   "显示不全". Full-width stacking gives both cards the whole page width. */
+.lm-db-pane.lm-db-body{ padding:0; overflow:visible; }
+.lm-db-pane.lm-db-body:not([hidden]){ display:flex; flex-direction:column; gap:18px; }
+.lm-db-overview, .lm-db-console{ width:100%; margin:0; }
+
+/* 系统管理员 badge -> warn token pill. */
+.lm-badge-admin{ background:var(--warn-soft); color:var(--warn); }
+
+/* --- Table browser (left nav + grid) ------------------------------------ */
+.lm-db-browser{ height:calc(100vh - 300px); min-height:440px; }
+.lm-db-tablelist{ border-right:1px solid var(--border); background:var(--surface-2); }
+.lm-db-tablelist-head{ color:var(--text-2); border-bottom:1px solid var(--border);
+  background:var(--surface-2); }
+.lm-db-tnav-btn{ color:var(--text); border-bottom:1px solid var(--border); }
+.lm-db-tnav-btn:hover{ background:var(--brand-soft); }
+.lm-db-tnav-btn.is-active{ background:var(--brand-soft); font-weight:600; }
+.lm-db-tnav-rows{ color:var(--text-3); }
+.lm-db-tableview-head{ border-bottom:0; }
+.lm-db-grid-wrap{ border:1px solid var(--border); border-radius:var(--radius-sm);
+  background:var(--surface); }
+.lm-db-grid thead th{ background:var(--surface-2); }
+.lm-db-sortable:hover{ background:var(--brand-soft); }
+.lm-db-pk{ color:var(--warn); }
+.lm-db-tv-foot{ color:var(--text-3); }
+
+/* --- SQL console pane (2-col: overview | console) ----------------------- */
+.lm-db-overview, .lm-db-console{ background:var(--surface); border:1px solid var(--border);
+  border-radius:var(--radius); padding:0; }
+.lm-db-section{ padding:14px 16px; }
+.lm-db-subhead{ margin:16px 0 8px; font-size:13px; font-weight:600; color:var(--text-2); }
+.lm-db-info{ color:var(--text); }
+.lm-db-kv > span{ color:var(--text-3); }
+.lm-db-tables .lm-db-tname{ font-family:var(--mono); color:var(--text); }
+.lm-db-tables-wrap{ border:1px solid var(--border); border-radius:var(--radius-sm); }
+.lm-db-ro{ color:var(--text-2); }
+.lm-db-sql{ background:var(--surface); color:var(--text); border:1px solid var(--border-strong);
+  border-radius:var(--radius-sm); font-family:var(--mono); min-height:140px; }
+.lm-db-sql:focus{ outline:none; border-color:var(--brand); box-shadow:0 0 0 3px var(--brand-ring); }
+.lm-db-sql::placeholder{ color:var(--text-3); }
+.lm-db-write-warn{ background:var(--warn-soft); color:var(--warn); }
+.lm-db-result-meta{ color:var(--text-3); }
+.lm-db-result-wrap{ border:1px solid var(--border); border-radius:var(--radius-sm);
+  background:var(--surface); max-height:min(560px,60vh); }
+.lm-db-result thead th{ background:var(--surface-2); }
+/* 连接概览's 数据表 list: full width now, so give it more vertical room. */
+.lm-db-tables-wrap{ max-height:min(360px,45vh); }
+.lm-null{ color:var(--text-3); font-style:italic; }
+
+/* --- Row-edit dialog fields (scoped to beat legacy `.lm-card input[type]`) - */
+.lm-db-row-form .lm-db-field{ background:var(--surface); color:var(--text);
+  border:1px solid var(--border-strong); border-radius:var(--radius-sm);
+  font-family:var(--mono); padding:6px 8px; }
+.lm-db-row-form .lm-db-field:focus{ outline:none; border-color:var(--brand);
+  box-shadow:0 0 0 3px var(--brand-ring); }
+.lm-db-row-form .lm-db-field:disabled{ background:var(--surface-2); color:var(--text-3); }
+.lm-db-field-label em{ color:var(--text-3); }
