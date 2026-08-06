@@ -18,7 +18,7 @@ from ...extensions import db
 from ...models import DataJob, FieldDefinition, LMUser, Project, Task, TaskStatus
 from ...services import (
     event_service, license_service, model_service, report_service,
-    task_service, upload_service,
+    runtime_config, task_service, upload_service,
 )
 from ...services.upload_service import UploadError
 from ...services.lanmatrix import (
@@ -131,6 +131,26 @@ def admin_set_license():
     except ValueError as exc:
         return err("VALIDATION_ERROR", str(exc), status=400)
     return ok({"count": applied})
+
+@bp.get("/admin/runtime-config")
+@system_admin_required
+def admin_get_runtime_config():
+    """Hot-reloadable configuration overrides (「授权 / 并发」panel)."""
+    return ok({"fields": runtime_config.describe(),
+               "values": runtime_config.values()})
+
+@bp.post("/admin/runtime-config")
+@system_admin_required
+def admin_set_runtime_config():
+    body = request.get_json(silent=True) or {}
+    changes = body.get("changes", body)
+    if not isinstance(changes, dict):
+        return err("VALIDATION_ERROR", "changes 必须是对象", status=400)
+    try:
+        values = runtime_config.set_many(changes)
+    except ValueError as exc:
+        return err("VALIDATION_ERROR", str(exc), status=400)
+    return ok({"values": values, "fields": runtime_config.describe()})
 
 @bp.get("/admin/tasks")
 @system_admin_required
