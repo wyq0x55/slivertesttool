@@ -282,7 +282,6 @@ _EXPORT_META: list[tuple[str, str]] = [
     ("備考", "lib_note"),
 ]
 _EXPORT_BLANK_BETWEEN = 2
-_LIB_WIDTHS = {"A": 5, "B": 22, "C": 30, "D": 40, "E": 30, "F": 16}
 
 
 def build_workbook(matrix: dict[str, Any]) -> Workbook:
@@ -342,8 +341,8 @@ def _steps_doc(raw: Any) -> dict[str, Any]:
 
 
 def _write_lib_sheet(ws, items: list[dict]) -> None:
-    for letter, width in _LIB_WIDTHS.items():
-        ws.column_dimensions[letter].width = width
+    # Column widths are set by ``xlsx_style.style_step_table`` (reference-based),
+    # applied per block while the step tables are written below.
     ws.freeze_panes = "E1"
     row = 1
     for i, it in enumerate(items):
@@ -424,5 +423,11 @@ def _write_lib_block(ws, header_row: int, no: int, item: dict) -> int:
         ws, sh, last, _mx.COL_STEP_NO, timing_col,
         header_rows=(sh, s1, s2),
         expect_start_col=_mx.COL_SIGNAL_START + n_in,
+    )
+    # Description block above the table (lib-func + metadata label rows).
+    _xs.style_detail_meta(
+        ws, hr, hr + 1, hr + len(_EXPORT_META),
+        id_col=_COL_NO, title_col=_COL_TITLE,
+        label_col=_COL_NO, value_col=_COL_META_VAL,
     )
     return last

@@ -247,7 +247,12 @@
   const ICO_STEPS = _ic('<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>');
   const ICO_DL = _ic('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>');
   const ICO_CANCEL = _ic('<rect x="6" y="6" width="12" height="12" rx="2"/>');
+  const ICO_RETEST = _ic('<path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>');
   const ICO_DEL = _ic('<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>');
+  // A task is "in the queue" only while queued/running; anything else (finished,
+  // failed, error, cancelled) can be re-queued via 重新测试.
+  const LIVE_STATUS = ["queued", "running"];
+  const canRetest = (t) => t && !LIVE_STATUS.includes(t.status);
   function rowHtml(t) {
     const checked = selected.has(t.task_id) ? " checked" : "";
     const p = t.progress || 0;
@@ -259,6 +264,8 @@
       ? `<a class="btn small btn-icon" href="${LMApi.projectTaskDownloadUrl(pid, t.task_id)}" title="下载结果">${ICO_DL}</a>` : "";
     const cancel = FINAL.includes(t.status)
       ? "" : `<button class="btn small btn-icon lm-task-cancel" data-k="${esc(t.task_id)}" title="取消运行">${ICO_CANCEL}</button>`;
+    const retest = canRetest(t)
+      ? `<button class="btn small btn-icon lm-task-retest" data-k="${esc(t.task_id)}" title="重新测试">${ICO_RETEST}</button>` : "";
     const del = capabilities.delete
       ? `<button class="btn small btn-icon danger lm-task-del" data-k="${esc(t.task_id)}" title="删除">${ICO_DEL}</button>` : "";
     return `<tr data-k="${esc(t.task_id)}">
@@ -275,12 +282,14 @@
         </div>
       </td>
       <td class="lm-cell-time"><code>${esc(fmtFinished(t))}</code></td>
-      <td class="lm-row-actions"><span class="row-acts" style="display:flex;gap:4px;justify-content:flex-end">${view} ${steps} ${cancel} ${dl} ${del}</span></td>
+      <td class="lm-row-actions"><span class="row-acts" style="display:flex;gap:4px;justify-content:flex-end">${view} ${steps} ${cancel} ${retest} ${dl} ${del}</span></td>
     </tr>`;
   }
   function bindRowActions() {
     document.querySelectorAll(".lm-task-cancel").forEach((b) =>
       b.addEventListener("click", () => cancelTask(b.dataset.k)));
+    document.querySelectorAll(".lm-task-retest").forEach((b) =>
+      b.addEventListener("click", () => retestTasks([b.dataset.k])));
     document.querySelectorAll(".lm-task-del").forEach((b) =>
       b.addEventListener("click", () => deleteTask(b.dataset.k)));
     document.querySelectorAll(".lm-task-view").forEach((b) =>
@@ -348,6 +357,30 @@
       load();
     } catch (ex) { toast(ex.message, false); }
   }
+  async function retestTasks(keys) {
+    const eligible = keys.filter((k) => {
+      const t = allTasks.find((x) => x.task_id === k);
+      return canRetest(t);
+    });
+    if (!eligible.length) { toast("所选任务均已在队列中，无需重新测试", false); return; }
+    if (!confirm(`确定将所选 ${eligible.length} 个任务重新加入测试队列？（原有结果会被覆盖）`)) return;
+    try {
+      const data = await LMApi.rerunSelectedTasks(pid, eligible);
+      const n = (data.created || []).length;
+      const skipped = (data.skipped || []).length;
+      const missing = (data.missing || []).length;
+      const errs = (data.errors || []).length;
+      let msg = `已重新加入队列 ${n} 个任务`;
+      const extra = [];
+      if (skipped) extra.push(`跳过 ${skipped} 个（已在队列）`);
+      if (missing) extra.push(`${missing} 个 test id 已失效`);
+      if (errs) extra.push(`${errs} 个失败`);
+      if (extra.length) msg += `，${extra.join("，")}`;
+      toast(msg, n > 0);
+      load();
+    } catch (ex) { toast(ex.message, false); }
+  }
+  function batchRetest() { return retestTasks(selectedKeys()); }
 
   // Live progress for the whole LIST is delivered by ONE periodic poll of the
   // tasks endpoint — not one EventSource per running row. A browser caps
@@ -761,7 +794,7 @@
       const items = await fetchTestItems();
       const row = items.find((it) => String(it.test_id == null ? "" : it.test_id).trim() === tid);
       if (!row) {
-        toast(`在测试矩阵中未找到 test id「${tid}」对应的行`, false);
+        toast(`在测试表中未找到 test id「${tid}」对应的行`, false);
         return;
       }
       LMStepsEditor.open(row, {
@@ -923,6 +956,7 @@
   });
   $("lm-batch-download").addEventListener("click", batchDownload);
   $("lm-batch-cancel").addEventListener("click", batchCancel);
+  $("lm-batch-retest").addEventListener("click", batchRetest);
   $("lm-batch-delete").addEventListener("click", batchDelete);
   document.querySelectorAll(".lm-tasks-table thead th[data-sort]").forEach((th) => {
     th.style.cursor = "pointer";

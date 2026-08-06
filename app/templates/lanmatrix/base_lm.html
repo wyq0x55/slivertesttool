@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="{% block meta_description %}Silver 测试平台 · 局域网测试矩阵在线编辑与并发测试执行控制台，支持实时协作、导入导出与授权 / 并发管理。{% endblock %}">
-  <title>{% block title %}测试矩阵在线编辑{% endblock %} · Silver Test Platform</title>
+  <meta name="description" content="{% block meta_description %}Silver 测试平台 · 局域网测试在线编辑与并发测试执行控制台，支持实时协作、导入导出与授权 / 并发管理。{% endblock %}">
+  <title>{% block title %}测试在线编辑{% endblock %} · Silver Test Platform</title>
   <!-- Set the theme BEFORE any CSS/paint to avoid a flash of the wrong mode. -->
   <script>
     (function(){try{
@@ -26,9 +26,9 @@
 {% if user %}
   <div class="app" id="lm-app">
     <aside class="side" id="lm-side">
-      <a class="brand" href="{{ url_for('lanmatrix_pages.projects') }}" title="测试矩阵编辑器">
+      <a class="brand" href="{{ url_for('lanmatrix_pages.projects') }}" title="测试编辑器">
         <span class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6M10 3v6l-4.5 8A2 2 0 0 0 7.3 20h9.4a2 2 0 0 0 1.8-2.9L14 9V3"/></svg></span>
-        <span><b>测试矩阵</b><small>Silver Test Platform</small></span>
+        <span><b>测试平台</b><small>Silver Test Platform</small></span>
       </a>
       <nav class="nav">
         <div class="nav-cap">工作区</div>
@@ -98,7 +98,7 @@
         <button type="button" class="iconbtn menu-toggle" id="lm-menu-toggle" aria-label="收起 / 展开侧栏" title="收起 / 展开侧栏">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         </button>
-        <div class="crumb">{% block crumb %}<b>测试矩阵</b>{% endblock %}</div>
+        <div class="crumb">{% block crumb %}<b>测试平台</b>{% endblock %}</div>
         <div class="spacer"></div>
         {% block topbar_actions %}{% endblock %}
         <button type="button" id="lm-theme-toggle" class="iconbtn" aria-label="切换深色 / 浅色主题" title="切换主题">

@@ -235,6 +235,105 @@ def run_selected_tasks(project_id):
     return ok({"created": created, "missing": missing, "errors": errors},
               status=201)
 
+@bp.post("/projects/<int:project_id>/tasks/rerun-selected")
+@login_required
+def rerun_selected_tasks(project_id):
+    """Re-queue existing tasks by ``task_key`` ("重新测试" / retest).
+
+    Each chosen task is re-run with the model it was originally submitted with:
+    the JSON-runner inputs are regenerated from the current project ``test`` /
+    ``lib`` / ``const`` sheet rows and the task row is reset to QUEUED and
+    enqueued (the stored result is overwritten). Tasks already QUEUED/RUNNING
+    are skipped (they are still in the queue), and tasks whose ``test_id`` no
+    longer exists in the project sheets are reported as missing.
+    """
+    import shutil
+    from pathlib import Path
+
+    from ...models import TestItemRow
+    from ...runners import run_layout
+    from ...services.lanmatrix import silver_json_export as sje
+
+    project, _ = _project_and_role(project_id, "task.upload")
+    cfg = current_app.config_obj
+    if not project_model_service.effective_has(project_id):
+        return err("NO_MODEL", "该项目尚未添加 .sil 模型，请先在“模型管理”中添加", status=409)
+
+    body = request.get_json(silent=True) or {}
+    raw_keys = body.get("task_keys") or []
+    if not isinstance(raw_keys, list) or not raw_keys:
+        return err("VALIDATION_ERROR", "请至少选择一个任务重新测试", status=400)
+    keys = [str(k).strip() for k in raw_keys if str(k).strip()]
+
+    def _rows(sheet):
+        return (TestItemRow.query
+                .filter(TestItemRow.project_id == project.id,
+                        TestItemRow.sheet == sheet,
+                        TestItemRow.deleted_at.is_(None))
+                .order_by(TestItemRow.row_order.asc(), TestItemRow.id.asc())
+                .all())
+
+    const_rows = _rows("const")
+    lib_rows = _rows("lib")
+    test_rows = _rows("test")
+    by_test_id = {}
+    for row in test_rows:
+        tid = sje.row_test_id(row)
+        if tid:
+            by_test_id.setdefault(tid, row)
+
+    default = project_model_service.effective_default(project_id)
+    default_name = default["name"] if default else ""
+
+    submitter = g.user.username
+    created, skipped, missing, errors = [], [], [], []
+    for key in keys:
+        task = task_service.get_project_task(project_id, key)
+        if task is None:
+            missing.append({"task_id": key, "error": "任务不存在"})
+            continue
+        if TaskStatus(task.status) in (TaskStatus.QUEUED, TaskStatus.RUNNING):
+            skipped.append({"task_id": key, "test_id": task.test_id})
+            continue
+        test_id = task.test_id
+        row = by_test_id.get(test_id)
+        if row is None:
+            missing.append({"task_id": key, "test_id": test_id,
+                            "error": "test id 已不在项目表中"})
+            continue
+
+        model_name = (task.sil_name or "").strip() or default_name
+        model_path = project_model_service.effective_path(project_id, model_name)
+        if model_path is None and default_name:
+            model_name = default_name
+            model_path = project_model_service.effective_path(project_id, model_name)
+        if model_path is None:
+            errors.append({"task_id": key, "test_id": test_id,
+                           "error": "找不到该任务使用的 .sil 模型"})
+            continue
+        sil_ref = str(Path(model_path).resolve())
+
+        try:
+            task = task_service.upsert_task(
+                task_name=test_id, file_name="(json runner)",
+                submitter=submitter, test_id=test_id,
+                sil_relpath=sil_ref, sil_name=model_name, workspace="",
+                project_id=project.id, submitter_id=g.user.id)
+            proj_root = run_layout.project_root(cfg, project)
+            case_dir = run_layout.staging_dir(proj_root, test_id) / test_id
+            shutil.rmtree(case_dir.parent, ignore_errors=True)
+            sje.materialise_run_dir(case_dir, row, const_rows, lib_rows)
+            task.workspace = str(proj_root)
+            db.session.commit()
+            _enqueue_task(task)
+            created.append({"test_id": test_id, "task_id": task.task_key})
+        except Exception as exc:  # noqa: BLE001 - surface per-row failure
+            db.session.rollback()
+            errors.append({"task_id": key, "test_id": test_id, "error": str(exc)})
+
+    return ok({"created": created, "skipped": skipped,
+               "missing": missing, "errors": errors}, status=201)
+
 @bp.get("/projects/<int:project_id>/tasks/<task_key>")
 @login_required
 def project_task_status(project_id, task_key):

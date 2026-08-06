@@ -19,6 +19,9 @@ Reference spec (derived from ``LibFunc``'s ``状態遷移`` sheet):
 * **Alignment / wrap** — per column: the fixed label columns are top-aligned;
   手順番号 data is left/middle; 手順目的 / 操作手順 wrap; サブルーチン / 引数 are
   top-aligned; the signal value columns are centered and wrapped.
+* **Column widths** — margin column 4.125, 手順番号 6.625, 手順目的 46.0,
+  操作手順 40.625; every signal column (入力値 / 期待値 / 確認タイミング) is 22.
+  サブルーチン / 引数 keep Excel's default so wrapped text stays compact.
 
 Flask-independent (openpyxl only) so the exporter unit tests import it directly.
 """
@@ -27,6 +30,7 @@ from __future__ import annotations
 from typing import Iterable
 
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 
 # Header fills. Green = input side, blue = expected side.
 HEADER_FILL_RGB = "FFCCFFCC"          # light green — fixed columns + 入力値
@@ -45,6 +49,19 @@ THIN_BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
 # Step-table column offsets relative to the first column (手順番号).
 _OFF_NO, _OFF_PURPOSE, _OFF_OP, _OFF_SUB, _OFF_ARG = 0, 1, 2, 3, 4
 _FIRST_SIGNAL_OFFSET = 5  # 入力値 / 期待値 / 確認タイミング begin here
+
+# Column widths (reference ``状態遷移`` sheet). Only the columns the reference
+# gives an explicit custom width are set; the others keep Excel's default so long
+# サブルーチン / 引数 / signal values wrap instead of stretching the sheet — exactly
+# how the reference lays them out.
+_STEP_SPACER_WIDTH = 4.125          # the thin margin column left of 手順番号
+_STEP_COL_WIDTHS = {                # offset from 手順番号 -> column width
+    _OFF_NO: 6.625,       # 手順番号
+    _OFF_PURPOSE: 46.0,   # 手順目的
+    _OFF_OP: 40.625,      # 操作手順
+}
+# All signal columns (入力値 / 期待値 / 確認タイミング) share one width.
+_STEP_SIGNAL_WIDTH = 22
 
 
 # --------------------------------------------------------------------------- #
@@ -72,6 +89,46 @@ def _data_align(offset: int) -> Alignment:
     if offset == _OFF_SUB:
         return Alignment(vertical="top", wrap_text=True)
     return Alignment(vertical="top")  # 引数
+
+
+# Description ("说明") block above each step table: the test-id / title row and
+# the metadata label rows. Reference: Meiryo UI 8, left / vertical-center; the
+# test-id cell is bold, the title (テスト名) cell wraps; no borders, no fill.
+_META_FONT_BOLD = Font(name="Meiryo UI", size=8, bold=True)
+_META_ALIGN = Alignment(horizontal="left", vertical="center")
+_META_TITLE_ALIGN = Alignment(horizontal="left", vertical="center",
+                              wrap_text=True)
+
+
+def style_detail_meta(
+    ws,
+    id_row: int,
+    meta_first_row: int,
+    meta_last_row: int,
+    *,
+    id_col: int,
+    title_col: int,
+    label_col: int,
+    value_col: int,
+) -> None:
+    """Style the description block that sits above a step table.
+
+    ``id_row`` carries the test-id / lib-func in ``id_col`` (bold) and the test
+    name / title in ``title_col`` (wrapped). Rows ``meta_first_row`` ..
+    ``meta_last_row`` are label/value pairs (``label_col`` / ``value_col``).
+    All cells use the reference font; none get borders or fill.
+    """
+    idc = ws.cell(id_row, id_col)
+    idc.font = _META_FONT_BOLD
+    idc.alignment = _META_ALIGN
+    tc = ws.cell(id_row, title_col)
+    tc.font = CELL_FONT
+    tc.alignment = _META_TITLE_ALIGN
+    for r in range(meta_first_row, meta_last_row + 1):
+        for c in (label_col, value_col):
+            cell = ws.cell(r, c)
+            cell.font = CELL_FONT
+            cell.alignment = _META_ALIGN
 
 
 def _group_border(row: int, top_row: int, bottom_row: int) -> Border:
@@ -170,3 +227,14 @@ def style_step_table(
             else:
                 cell.alignment = _data_align(offset)
                 cell.border = THIN_BORDER
+
+    # Column widths — mirror the reference's explicit custom widths. Setting them
+    # here (once per block) is idempotent: repeated blocks on one sheet resolve to
+    # the same per-column value.
+    if min_col - 1 >= 1:
+        ws.column_dimensions[get_column_letter(min_col - 1)].width = \
+            _STEP_SPACER_WIDTH
+    for off, width in _STEP_COL_WIDTHS.items():
+        ws.column_dimensions[get_column_letter(min_col + off)].width = width
+    for c in range(signal_start, max_col + 1):
+        ws.column_dimensions[get_column_letter(c)].width = _STEP_SIGNAL_WIDTH

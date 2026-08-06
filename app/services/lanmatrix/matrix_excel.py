@@ -686,7 +686,8 @@ _A1_CATEGORY_FORMULA = (
 def _write_detail_sheet(ws, items: list[dict]) -> None:
     ws.cell(1, 1).value = _A1_CATEGORY_FORMULA
     ws.freeze_panes = "E1"
-    _apply_detail_widths(ws)
+    # Column widths are set by ``xlsx_style.style_step_table`` (reference-based),
+    # applied per block while the step tables are written below.
 
     row = _FIRST_BLOCK_ROW
     for it in items:
@@ -779,15 +780,13 @@ def _write_detail_block(ws, header_row: int, item: dict) -> int:
         header_rows=(sh, s1, s2),
         expect_start_col=COL_SIGNAL_START + n_in,
     )
+    # Description block above the table (test id + metadata label rows).
+    _xs.style_detail_meta(
+        ws, hr, hr + _OFF_FIRST_LABEL, hr + _OFF_FIRST_LABEL + _N_LABELS - 1,
+        id_col=COL_STEP_NO, title_col=COL_STEP_OP,
+        label_col=COL_STEP_NO, value_col=COL_STEP_PURPOSE,
+    )
     return last_row
-
-
-_DETAIL_WIDTHS = {"A": 3, "B": 9, "C": 26.5, "D": 47.8, "E": 33.6, "F": 17.2}
-
-
-def _apply_detail_widths(ws) -> None:
-    for letter, width in _DETAIL_WIDTHS.items():
-        ws.column_dimensions[letter].width = width
 
 
 def _reconstruct_test_id(item: dict) -> str:

@@ -1250,7 +1250,7 @@
   // the API call and the label shown in the confirmation prompt.
   const ONE_STEP = {
     test_matrix: { call: (id, f, m) => LMApi.importTestMatrix(id, f, m),
-                   label: "日文测试矩阵表头" },
+                   label: "日文测试表头" },
     libfunc: { call: (id, f, m) => LMApi.importLibFunc(id, f, m),
                label: "Lib 函数库 (lib_Func + 手順明细)" },
     const: { call: (id, f, m) => LMApi.importConst(id, f, m),

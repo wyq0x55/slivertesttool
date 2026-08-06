@@ -208,6 +208,7 @@
     listProjectTasks(id) { return request("GET", `/projects/${id}/tasks`); },
     uploadProjectTree(id, formData) { return request("POST", `/projects/${id}/tasks/upload-tree`, { body: formData }); },
     runSelectedTasks(id, payload) { return request("POST", `/projects/${id}/tasks/run-selected`, { body: payload || {} }); },
+    rerunSelectedTasks(id, keys) { return request("POST", `/projects/${id}/tasks/rerun-selected`, { body: { task_keys: keys } }); },
     projectTaskStatus(id, key) { return request("GET", `/projects/${id}/tasks/${key}`); },
     projectTaskDetail(id, key) { return request("GET", `/projects/${id}/tasks/${key}/detail`); },
     projectTaskStreamUrl(id, key) { return `${BASE}/projects/${id}/tasks/${key}/stream`; },

@@ -478,7 +478,7 @@ lightweight fake driver, so it runs without Flask or a real Silver install.
     待审核状态，由管理员激活后方可登录。`LM_ALLOW_REGISTRATION=0` 可整体关闭。
 
 ### 2.7.5
-- **将 LAN 测试矩阵从独立子包合并进 Silver 测试平台的常规分层.** 原先自成一体的
+- **将 LAN 测试平台从独立子包合并进 Silver 测试平台的常规分层.** 原先自成一体的
   `app/lanmatrix/` 被彻底拆解并入平台自身的代码分层，不再是“另一个项目”：
   - **模型** 迁移至 `app/models/lanmatrix.py`，并通过 `app/models/__init__.py`
     统一注册到平台唯一的 `db` 元数据（由主 `db.create_all()` 建表）。
@@ -497,7 +497,7 @@ lightweight fake driver, so it runs without Flask or a real Silver install.
 
 ### 2.7.4
 - **精简默认字段、支持删除行、单元格按字段类型渲染编辑器.**
-  - **默认字段只保留测试矩阵模板字段.** 新建项目仅初始化 17 个测试矩阵字段
+  - **默认字段只保留测试平台模板字段.** 新建项目仅初始化 17 个测试平台字段
     （`category`/`category_name`/`viewpoint`/`test_no`/`purpose`/`environment`/
     `env_version`/`data_flash`/`parameter`/`description`/`item_created`/`exec_date`/
     `executor`/`version_label`/`traceability_id`/`upper_req_id`/`steps`），不再额外
@@ -526,19 +526,19 @@ lightweight fake driver, so it runs without Flask or a real Silver install.
     列存字段（如 `case_id`/`title`）的底层列存储保持透明，改名或删除均安全。
 
 ### 2.7.2
-- **图形化步骤明细编辑器 + 日文测试矩阵导入/导出.**
+- **图形化步骤明细编辑器 + 日文测试平台导入/导出.**
   - **每个测试项可图形化编辑步骤.** 表格每行新增「步骤明细」按钮，弹出可视化编辑器
     分三段维护 `steps` JSON：输入信号 `input_signals`、期望信号 `expected_signals`
     （名称/路径，可增删），以及步骤表 `steps`（手順番号/目的/操作/サブルーチン/引数/
     各输入·期望列/確認タイミング，可增删行；信号增减时步骤列自动同步）。保存时序列化为
     JSON 并经乐观锁 `PATCH` 写入该行 `steps` 字段，与 Test Matrix 步骤结构完全一致。
     （`app/static/js/lanmatrix/steps_editor.js`）
-  - **按日文表头导入测试矩阵.** 导入对话框新增「格式」选择：`测试矩阵 (日文 VHILS 表头)`
+  - **按日文表头导入测试平台.** 导入对话框新增「格式」选择：`测试平台 (日文 VHILS 表头)`
     直接解析 `VHILS1_RWS_MCU_Qualification_Test_SYS.xlsx` 的汇总表与各分区明细表，
     按列映射到编辑器字段（`テスト名`→标题、`備考`→备注、`優先度` 高/中/低→High/Medium/Low、
     `結果` OK/NG→Pass/Fail，`手順` 明细→`steps` JSON），以 `case_id=前缀+区分+番号`
     做 upsert。`POST /projects/{id}/testmatrix/import`。
-  - **导出为日文测试矩阵.** 「导出测试矩阵(日文)」按字段反向映射重建与源文件字节兼容的
+  - **导出为日文测试平台.** 「导出测试平台(日文)」按字段反向映射重建与源文件字节兼容的
     工作簿（汇总 `DB` 表 + 每分区明细表）；导入时捕获的 `id_prefix`/汇总表名存于项目
     （新增 `lm_projects.tm_id_prefix`/`tm_summary_sheet`，含幂等 `ALTER TABLE` 迁移）
     以保证往返一致。`GET /projects/{id}/testmatrix/export`。
