@@ -102,12 +102,22 @@
       this.refToggleBtn = dialog.querySelector("#lm-steps-ref-toggle");
       this.loadRef = null;
       this._refLoaded = false;
-      // JSON code-editor drawer (right half-screen). Built lazily on first open.
+      // Unified Reference Panel: a collapsible, width-draggable right-side dock
+      // that hosts the 参考 lookup and the JSON editor as two tabs. Default
+      // collapsed; opened via the header 📚参考 / {}JSON buttons or its own tabs.
+      this.panelEl = dialog.querySelector("#lm-steps-refpanel");
+      this.panelTabs = this.panelEl
+        ? Array.prototype.slice.call(this.panelEl.querySelectorAll(".lm-refpanel-tab"))
+        : [];
+      this.panelCollapseBtn = dialog.querySelector("#lm-refpanel-collapse");
+      this.panelResizer = dialog.querySelector("#lm-refpanel-resizer");
+      this.activeTab = "ref";
+      this._panelWidth = this._readPanelWidth();
+      // JSON code editor, now the panel's JSON tab. Built lazily on first use.
       this.jsonToggleBtn = dialog.querySelector("#lm-steps-json-toggle");
       this.jsonDrawer = dialog.querySelector("#lm-steps-json");
       this.jsonHost = dialog.querySelector("#lm-steps-json-body");
       this.jsonErrEl = dialog.querySelector("#lm-steps-json-error");
-      this.jsonCloseBtn = dialog.querySelector("#lm-steps-json-close");
       this.jsonEditor = null;
       this._jsonTimer = null;      // polls the sheet -> refreshes JSON text
       this._jsonApplyTimer = null; // debounces JSON text -> sheet apply
@@ -123,6 +133,7 @@
       this._flushTimer = null;
       this._liveHostHandler = null;
       this._initRefPanel();
+      this._initPanel();
       this._wire();
       // The dialog is opened NON-modally (see open()). A native modal <dialog>
       // lives in the top layer, but Univer renders its cell editor / overlays in
@@ -132,8 +143,9 @@
       // context. We supply our own backdrop and hide it whenever the dialog closes.
       this.dialog.addEventListener("close", () => {
         this._hideBackdrop();
-        // The JSON drawer is a child of this dialog; close it with the dialog.
-        this._closeJson();
+        // Collapse the Reference Panel with the dialog (stops JSON polling and
+        // resets to the default-collapsed state for the next open()).
+        this._collapsePanel();
         // Flush a last pending live edit, then detach the steps CRDT observer.
         this._commitLive();
         this._unbindLive();
@@ -208,23 +220,143 @@
       this._loadRefData();
     }
 
-    _toggleRef() {
-      if (!this.refEl) return;
-      // Build the panel on demand so a first-use click always works even if the
-      // eager construction in the constructor was skipped or failed.
-      if (!this._ensureRefPanel()) return;
-      const show = this.refEl.hidden;
-      this.refEl.hidden = !show;
-      if (this.refToggleBtn) this.refToggleBtn.classList.toggle("is-on", show);
-      // The Univer canvas shares the flex row with the panel; nudge a relayout
-      // so it reflows to the width freed/taken by the panel.
+    // ---- Collapsible Reference Panel (参考 / JSON tabs) ---------------- //
+
+    _initPanel() {
+      const self = this;
+      this.panelTabs.forEach((btn) => {
+        btn.addEventListener("click", (e) => { e.preventDefault(); self._setTab(btn.dataset.tab); });
+      });
+      if (this.panelCollapseBtn) {
+        this.panelCollapseBtn.addEventListener("click",
+          (e) => { e.preventDefault(); self._collapsePanel(); });
+      }
+      this._initPanelResize();
+      // Start collapsed (the requirement: default folded).
+      if (this.panelEl) this.panelEl.hidden = true;
+    }
+
+    _readPanelWidth() {
+      let w = 320;
+      try {
+        const v = parseInt(localStorage.getItem("lm-refpanel-w"), 10);
+        if (v) w = v;
+      } catch (_e) { /* storage may be unavailable */ }
+      return Math.min(Math.max(w, 240), 900);
+    }
+
+    _applyPanelWidth() {
+      if (this.panelEl) this.panelEl.style.flexBasis = this._panelWidth + "px";
+    }
+
+    // Drag the panel's left edge to resize it. The panel is docked on the RIGHT,
+    // so dragging left widens it. Width is clamped to leave room for the grid and
+    // persisted to localStorage so it survives reopen / reload.
+    _initPanelResize() {
+      const rz = this.panelResizer, panel = this.panelEl;
+      if (!rz || !panel) return;
+      const self = this;
+      let startX = 0, startW = 0, main = null;
+      const onMove = (e) => {
+        const dx = e.clientX - startX;
+        let w = startW - dx;
+        const maxW = main ? Math.max(240, main.clientWidth - 200) : 900;
+        w = Math.min(Math.max(w, 240), maxW);
+        self._panelWidth = w;
+        panel.style.flexBasis = w + "px";
+        self._nudgeView();
+      };
+      const onUp = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        document.body.classList.remove("lm-refpanel-resizing");
+        try { localStorage.setItem("lm-refpanel-w", String(self._panelWidth)); }
+        catch (_e) { /* best-effort persist */ }
+      };
+      rz.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        startX = e.clientX;
+        startW = panel.getBoundingClientRect().width;
+        main = panel.parentElement;
+        document.body.classList.add("lm-refpanel-resizing");
+        document.addEventListener("mousemove", onMove);
+        document.addEventListener("mouseup", onUp);
+      });
+    }
+
+    _isPanelOpen() { return !!(this.panelEl && !this.panelEl.hidden); }
+
+    _openPanel(tab) {
+      if (!this.panelEl) return;
+      this.panelEl.hidden = false;
+      this._applyPanelWidth();
+      this._setTab(tab || this.activeTab || "ref");
+    }
+
+    _collapsePanel() {
+      this._stopJsonSync();
+      if (this.panelEl) this.panelEl.hidden = true;
+      this._syncPanelButtons();
+      this._nudgeView();
+    }
+
+    // Switch the active tab (also used to open a given tab). Only the active tab's
+    // pane is shown; the JSON poll runs solely while the JSON tab is visible.
+    _setTab(tab) {
+      if (!this.panelEl) return;
+      if (tab !== "ref" && tab !== "json") tab = "ref";
+      this.activeTab = tab;
+      this.panelTabs.forEach((b) => b.classList.toggle("is-on", b.dataset.tab === tab));
+      this.panelEl.querySelectorAll(".lm-refpanel-pane")
+        .forEach((p) => { p.hidden = p.dataset.pane !== tab; });
+      if (tab === "ref") {
+        this._stopJsonSync();
+        if (this._ensureRefPanel()) {
+          this._loadRefData();
+          if (typeof this.refPanel.focusSearch === "function") this.refPanel.focusSearch();
+        }
+      } else {
+        this._startJsonSync();
+      }
+      this._syncPanelButtons();
+      this._nudgeView();
+    }
+
+    // Reset to the default-collapsed state with the 参考 tab pre-selected, called
+    // on each open() so a freshly opened item never inherits the prior panel state.
+    _resetPanel() {
+      this._stopJsonSync();
+      this.activeTab = "ref";
+      if (this.panelEl) {
+        this.panelEl.hidden = true;
+        this.panelEl.querySelectorAll(".lm-refpanel-pane")
+          .forEach((p) => { p.hidden = p.dataset.pane !== "ref"; });
+      }
+      this.panelTabs.forEach((b) => b.classList.toggle("is-on", b.dataset.tab === "ref"));
+      this._syncPanelButtons();
+    }
+
+    _syncPanelButtons() {
+      const open = this._isPanelOpen();
+      if (this.refToggleBtn) {
+        this.refToggleBtn.classList.toggle("is-on", open && this.activeTab === "ref");
+      }
+      if (this.jsonToggleBtn) {
+        this.jsonToggleBtn.classList.toggle("is-on", open && this.activeTab === "json");
+      }
+    }
+
+    // The Univer canvas shares the flex row with the panel; nudge a relayout so it
+    // reflows to the width freed/taken when the panel opens, closes, or resizes.
+    _nudgeView() {
       if (this.view && typeof this.view.resize === "function") {
         requestAnimationFrame(() => { try { this.view.resize(); } catch (_e) { /* noop */ } });
       }
-      if (show) {
-        this._loadRefData();
-        this.refPanel.focusSearch();
-      }
+    }
+
+    _toggleRef() {
+      if (this._isPanelOpen() && this.activeTab === "ref") this._collapsePanel();
+      else this._openPanel("ref");
     }
 
     // Pull the current project's Lib/Const rows via the host-provided callback
@@ -411,9 +543,6 @@
       if (this.jsonToggleBtn) {
         this.jsonToggleBtn.addEventListener("click", (e) => { e.preventDefault(); self._toggleJson(); });
       }
-      if (this.jsonCloseBtn) {
-        this.jsonCloseBtn.addEventListener("click", (e) => { e.preventDefault(); self._closeJson(); });
-      }
       if (this.enqueueBtn) {
         this.enqueueBtn.addEventListener("click", (e) => { e.preventDefault(); self._enqueue(); });
       }
@@ -493,27 +622,22 @@
     }
 
     _toggleJson() {
-      if (this.jsonDrawer && !this.jsonDrawer.hidden) this._closeJson();
-      else this._openJson();
+      if (this._isPanelOpen() && this.activeTab === "json") this._collapsePanel();
+      else this._openPanel("json");
     }
 
-    _openJson() {
-      if (!this.jsonDrawer) return;
+    // Start mirroring the sheet into the JSON editor while the JSON tab is active.
+    // The Univer view has no change event, so we poll. Stopped on tab-switch/close.
+    _startJsonSync() {
       if (!this._ensureJsonEditor()) return;
-      this.jsonDrawer.hidden = false;
-      if (this.jsonToggleBtn) this.jsonToggleBtn.classList.add("is-on");
-      // Seed the editor from the current sheet state and keep it mirrored while
-      // the user edits the sheet (poll: the Univer view has no change event).
       this._jsonSyncFromView(true);
       if (this._jsonTimer) clearInterval(this._jsonTimer);
       this._jsonTimer = setInterval(() => this._jsonSyncFromView(false), 500);
     }
 
-    _closeJson() {
+    _stopJsonSync() {
       if (this._jsonTimer) { clearInterval(this._jsonTimer); this._jsonTimer = null; }
       if (this._jsonApplyTimer) { clearTimeout(this._jsonApplyTimer); this._jsonApplyTimer = null; }
-      if (this.jsonDrawer) this.jsonDrawer.hidden = true;
-      if (this.jsonToggleBtn) this.jsonToggleBtn.classList.remove("is-on");
     }
 
     // Read the authoritative doc out of the sheet, pretty-print it, and refresh
@@ -577,6 +701,8 @@
       // Re-fetch lib/const on each open so edits elsewhere are reflected; if the
       // panel is already visible, refresh it now, otherwise it loads on toggle.
       this._refLoaded = false;
+      // The Reference Panel always starts collapsed for a newly opened item.
+      this._resetPanel();
       this.testId = (opts && opts.testId != null) ? String(opts.testId).trim() : "";
       this.fieldKey = (opts && opts.fieldKey) || "steps";
       this.doc = parseDoc(item[this.fieldKey]);

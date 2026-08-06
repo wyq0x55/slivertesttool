@@ -78,7 +78,17 @@
         </div>
         <div class="muted" id="lm-license-info" style="text-align:center;font-size:12.5px">加载中…</div>
       </div>
-      <div class="ctrl-card">
+      <!-- 并发上限 + hot-reloadable runtime configuration share one card so the
+           related controls read as a single group (applied live, no restart).
+           A single 保存 / 还原 at the card head commits both. -->
+      <div class="ctrl-card" id="lm-rtc-card">
+        <div class="tc-head" style="padding:0 0 6px">
+          <h3 style="margin:0">运行时配置（热重载）</h3>
+          <span class="muted" style="font-size:12.5px">保存后无需重启即对 Web 与 Worker 生效</span>
+          <div class="spacer"></div>
+          <button class="btn small" id="lm-rtc-reset" title="放弃未保存的修改">还原</button>
+          <button class="btn small primary" id="lm-rtc-save">保存</button>
+        </div>
         <div class="ctrl-row">
           <div class="cl">
             <b>并发上限</b>
@@ -90,22 +100,10 @@
               <input type="number" id="lm-license-count" min="1" value="1">
               <button type="button" id="lm-lic-inc" aria-label="增加">+</button>
             </div>
-            <button class="btn small primary" id="lm-license-save">保存</button>
           </div>
         </div>
+        <div id="lm-rtc-rows"><div class="muted" style="padding:8px 0">加载中…</div></div>
       </div>
-    </div>
-
-    <!-- Hot-reloadable runtime configuration (applied live, no restart) -->
-    <div class="ctrl-card" id="lm-rtc-card" style="margin-top:16px">
-      <div class="tc-head" style="padding:0 0 6px">
-        <h3 style="margin:0">运行时配置（热重载）</h3>
-        <span class="muted" style="font-size:12.5px">保存后无需重启即对 Web 与 Worker 生效</span>
-        <div class="spacer"></div>
-        <button class="btn small" id="lm-rtc-reset" title="放弃未保存的修改">还原</button>
-        <button class="btn small primary" id="lm-rtc-save">保存</button>
-      </div>
-      <div id="lm-rtc-rows"><div class="muted" style="padding:8px 0">加载中…</div></div>
     </div>
   </section>
 

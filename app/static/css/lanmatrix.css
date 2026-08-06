@@ -315,19 +315,42 @@ select.lm-cell-control[multiple] { min-height: 46px; }
 .lm-steps-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35);
   z-index: 1000; }
 
-/* JSON code-editor drawer: a right half-screen panel over the steps drawer. */
+/* Collapsible Reference Panel: a width-draggable right dock in the steps drawer
+   that hosts the 参考 lookup and the JSON editor as two tabs (default collapsed). */
 #lm-steps-json-toggle.is-on { background: #dfe8ff; border-color: #9db6ff; }
-.lm-steps-json-drawer { position: fixed; top: 0; right: 0; bottom: 0;
-  width: 50vw; max-width: 820px; min-width: 360px; z-index: 1003;
-  display: flex; flex-direction: column; box-sizing: border-box;
-  background: #fff; border-left: 1px solid #cdd6e4;
-  box-shadow: -12px 0 40px rgba(0,0,0,.28); padding: 12px 14px; }
-.lm-steps-json-drawer[hidden] { display: none; }
-.lm-steps-json-head { display: flex; align-items: center; gap: 10px;
-  margin-bottom: 8px; }
-.lm-steps-json-head strong { font-size: 14px; }
+.lm-refpanel { position: relative; flex: 0 0 320px; min-width: 240px;
+  display: flex; min-height: 0; box-sizing: border-box; }
+.lm-refpanel[hidden] { display: none; }
+/* Left-edge drag handle (panel is docked right; drag left to widen). */
+.lm-refpanel-resizer { flex: 0 0 6px; margin-left: -6px; cursor: col-resize;
+  position: relative; z-index: 2; background: transparent; }
+.lm-refpanel-resizer::before { content: ""; position: absolute; left: 2px; top: 0;
+  bottom: 0; width: 1px; background: #cdd6e4; }
+.lm-refpanel-resizer:hover::before { background: #2f6fe4; width: 2px; }
+body.lm-refpanel-resizing { cursor: col-resize; user-select: none; }
+.lm-refpanel-inner { flex: 1; min-width: 0; min-height: 0; display: flex;
+  flex-direction: column; overflow: hidden; border: 1px solid #cdd6e4;
+  border-radius: 8px; background: #f7f9fc; }
+.lm-refpanel-tabbar { display: flex; align-items: center; gap: 6px; padding: 6px;
+  border-bottom: 1px solid #dde4f0; background: #eef2f8; }
+.lm-refpanel-tab { padding: 5px 10px; border: 1px solid #c6d0e0; border-radius: 6px;
+  background: #fff; cursor: pointer; font: inherit; font-size: 12px; }
+.lm-refpanel-tab.is-on { background: #2f6fe4; color: #fff; border-color: #2f6fe4; }
+.lm-refpanel-sp { flex: 1; }
+.lm-refpanel-collapse { width: 26px; height: 26px; line-height: 1; color: #556;
+  border: 1px solid #c6d0e0; border-radius: 6px; background: #fff; cursor: pointer;
+  font: inherit; font-size: 12px; }
+.lm-refpanel-collapse:hover { background: #f0f4ff; border-color: #9db6ff; }
+.lm-refpanel-panes { flex: 1; min-height: 0; display: flex; }
+.lm-refpanel-pane { flex: 1; min-width: 0; min-height: 0; display: flex;
+  flex-direction: column; overflow: hidden; }
+.lm-refpanel-pane[hidden] { display: none; }
+/* The ref search host drops its own frame inside the panel (the panel wraps it). */
+.lm-refpanel-pane.lm-ref-panel { flex: 1; border: none; border-radius: 0;
+  background: transparent; }
+.lm-refpanel-json { padding: 8px; gap: 6px; }
+.lm-steps-json-hintbar { flex: 0 0 auto; }
 .lm-steps-json-hint { font-size: 12px; }
-.lm-steps-json-head #lm-steps-json-close { margin-left: auto; }
 .lm-steps-json-body { flex: 1; min-height: 0; border: 1px solid #cdd6e4;
   border-radius: 8px; overflow: hidden; background: #1e1e1e; }
 
@@ -356,7 +379,7 @@ select.lm-cell-control[multiple] { min-height: 46px; }
 .lm-ce-punct { color: #d4d4d4; }
 #lm-steps-json-error { margin-top: 8px; }
 @media (max-width: 760px) {
-  .lm-steps-json-drawer { width: 100vw; max-width: none; }
+  .lm-refpanel { min-width: 200px; }
 }
 
 /* Lib/Const reference search panel (docked right of the steps grid). */

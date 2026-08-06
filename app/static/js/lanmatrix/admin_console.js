@@ -207,8 +207,12 @@
     const ki = $("lm-kpi-inuse"); if (ki) ki.textContent = inUse;
     const klt = $("lm-kpi-lic-trend");
     if (klt) klt.textContent = total ? `${inUse}/${total}` : "—";
-    const cnt = $("lm-license-count"); if (cnt) cnt.value = total || 1;
+    _licServer = total || 1;
+    const cnt = $("lm-license-count"); if (cnt) cnt.value = _licServer;
   }
+  // Last concurrency limit fetched from the server, used to compute the dirty set
+  // (the 并发上限 control now shares the runtime-config card's single 保存 button).
+  let _licServer = 1;
 
   // Headline stats sourced independently of the tabs: running-task count and
   // project totals. Failures degrade gracefully to a dash.
@@ -247,13 +251,6 @@
   }
   const licDec = $("lm-lic-dec"); if (licDec) licDec.addEventListener("click", () => stepLicense(-1));
   const licInc = $("lm-lic-inc"); if (licInc) licInc.addEventListener("click", () => stepLicense(1));
-  $("lm-license-save").addEventListener("click", async () => {
-    try {
-      await LMApi.adminSetLicense(Number($("lm-license-count").value));
-      toast("已保存", true);
-      loadLicense();
-    } catch (ex) { toast(ex.message, false); }
-  });
 
   // --- runtime config (hot-reloadable) ------------------------------------ //
   // UI labels/help live here (the backend registry stays language-neutral and
@@ -340,18 +337,27 @@
     return changes;
   }
 
+  // One 保存 commits both the concurrency limit (license) and the hot-reloadable
+  // runtime config, then reloads so the ring / stepper / rows reflect the server
+  // and the dirty state resets.
   const rtcSave = $("lm-rtc-save");
   if (rtcSave) rtcSave.addEventListener("click", async () => {
     const changes = rtcChanges();
-    if (!Object.keys(changes).length) { toast("没有需要保存的修改", true); return; }
+    const licEl = $("lm-license-count");
+    const licVal = licEl ? Math.max(1, Number(licEl.value) || 1) : null;
+    const licChanged = licVal != null && licVal !== _licServer;
+    if (!Object.keys(changes).length && !licChanged) {
+      toast("没有需要保存的修改", true); return;
+    }
     try {
-      const data = await LMApi.adminSetRuntimeConfig(changes);
-      paintRuntimeConfig(data);
-      toast("运行时配置已保存并生效", true);
+      if (licChanged) await LMApi.adminSetLicense(licVal);
+      if (Object.keys(changes).length) await LMApi.adminSetRuntimeConfig(changes);
+      await loadLicense();
+      toast("已保存并生效", true);
     } catch (ex) { toast(ex.message || "保存失败", false); }
   });
   const rtcReset = $("lm-rtc-reset");
-  if (rtcReset) rtcReset.addEventListener("click", loadRuntimeConfig);
+  if (rtcReset) rtcReset.addEventListener("click", loadLicense);
 
   // --- tasks --------------------------------------------------------------- //
   async function loadTasks() {

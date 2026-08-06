@@ -137,18 +137,33 @@
     </header>
     <div class="lm-steps-drawer-main">
       <div id="lm-steps-body" class="lm-steps-drawer-body"></div>
-      <aside id="lm-steps-ref" class="lm-ref-panel" hidden></aside>
+      <!-- Collapsible, width-draggable Reference Panel (default collapsed). Hosts
+           the Lib/Const 参考 lookup and the JSON code editor as two tabs so both
+           low-frequency tools share one right-side dock instead of two separate
+           overlapping panels — keeps the main editing area clear on open. -->
+      <div id="lm-steps-refpanel" class="lm-refpanel" hidden>
+        <div class="lm-refpanel-resizer" id="lm-refpanel-resizer" title="拖动调整宽度"></div>
+        <div class="lm-refpanel-inner">
+          <div class="lm-refpanel-tabbar" role="tablist">
+            <button type="button" class="lm-refpanel-tab is-on" data-tab="ref" role="tab">📚 参考</button>
+            <button type="button" class="lm-refpanel-tab" data-tab="json" role="tab">{ } JSON</button>
+            <span class="lm-refpanel-sp"></span>
+            <button type="button" class="lm-refpanel-collapse" id="lm-refpanel-collapse" title="折叠面板" aria-label="折叠面板">✕</button>
+          </div>
+          <div class="lm-refpanel-panes">
+            <aside id="lm-steps-ref" class="lm-ref-panel lm-refpanel-pane" data-pane="ref"></aside>
+            <section id="lm-steps-json" class="lm-refpanel-pane lm-refpanel-json" data-pane="json" hidden>
+              <div class="lm-steps-json-hintbar">
+                <span class="lm-muted lm-steps-json-hint">与表格实时双向同步</span>
+              </div>
+              <div id="lm-steps-json-body" class="lm-steps-json-body"></div>
+              <div class="lm-error" id="lm-steps-json-error" hidden></div>
+            </section>
+          </div>
+        </div>
+      </div>
     </div>
     <div class="lm-error" id="lm-steps-error" hidden></div>
-    <aside id="lm-steps-json" class="lm-steps-json-drawer" hidden>
-      <header class="lm-steps-json-head">
-        <strong>JSON 编辑</strong>
-        <span class="lm-muted lm-steps-json-hint">与表格实时双向同步</span>
-        <button type="button" class="lm-btn lm-btn-sm" id="lm-steps-json-close">✕ 关闭</button>
-      </header>
-      <div id="lm-steps-json-body" class="lm-steps-json-body"></div>
-      <div class="lm-error" id="lm-steps-json-error" hidden></div>
-    </aside>
   </form>
 </dialog>
 {% endblock %}
