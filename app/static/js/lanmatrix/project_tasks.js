@@ -916,20 +916,20 @@
   $("lm-sel-none").addEventListener("click", () => { checkboxes().forEach((c) => (c.checked = false)); updateCount(); });
   $("lm-refresh").addEventListener("click", load);
 
-  // Upload is now a modal dialog opened from the task-list header. Guard every
-  // node: if a cached/older template is served these must not throw and abort
-  // the rest of init (filters, sorting, list load) — that would break the page.
-  const uploadDlg = $("lm-upload-dialog");
+  // Upload is an inline collapsible panel (mirrors 模型管理's 添加模型 form), not a
+  // modal dialog — the header button toggles it open/closed. Guard every node:
+  // if a cached/older template is served these must not throw and abort the rest
+  // of init (filters, sorting, list load) — that would break the page.
+  const uploadPanel = $("lm-upload-panel");
   const openUpload = $("lm-open-upload");
-  const closeUpload = $("lm-upload-close");
-  if (openUpload && uploadDlg) {
+  if (openUpload && uploadPanel) {
     openUpload.addEventListener("click", () => {
-      if (uploadDlg.showModal) uploadDlg.showModal(); else uploadDlg.setAttribute("open", "");
-    });
-  }
-  if (closeUpload && uploadDlg) {
-    closeUpload.addEventListener("click", () => {
-      if (uploadDlg.close) uploadDlg.close(); else uploadDlg.removeAttribute("open");
+      uploadPanel.hidden = !uploadPanel.hidden;
+      openUpload.classList.toggle("active", !uploadPanel.hidden);
+      if (!uploadPanel.hidden) {
+        uploadPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        const m = $("lm-model"); if (m) m.focus();
+      }
     });
   }
 

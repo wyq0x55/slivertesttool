@@ -20,6 +20,39 @@
     </div>
   </div>
 
+  <div id="lm-upload-panel" class="addbar" hidden>
+    <div class="mforms">
+      <div>
+        <div class="mform-cap">选择模型与测试用例文件夹</div>
+        <p class="muted" style="margin:0 0 12px">选择包含测试用例的文件夹（每个含 <code>judge.py</code> 的子文件夹是一个 test id），
+          勾选要运行的 test id 后提交。提交者取自你的登录账户。</p>
+        <div class="row wrap">
+          <label class="uplbl">模型 (.sil) <select id="lm-model" class="selbox"></select></label>
+          <label class="filepick">测试用例文件夹<input type="file" id="lm-folder" webkitdirectory directory multiple></label>
+          <label class="filepick">lib 文件夹（可选）<input type="file" id="lm-lib" webkitdirectory directory multiple></label>
+          <label class="filepick">stdlib 文件夹（可选）<input type="file" id="lm-stdlib" webkitdirectory directory multiple></label>
+          <span id="lm-license" class="muted"></span>
+        </div>
+        <div id="lm-scan-status" class="muted" style="margin-top:8px"></div>
+      </div>
+
+      <div id="lm-step2" hidden>
+        <div class="mform-cap">选择要运行的 test id</div>
+        <div class="row" style="margin-bottom:10px">
+          <button class="btn small" id="lm-sel-all" type="button">全选</button>
+          <button class="btn small" id="lm-sel-none" type="button">清除</button>
+          <span id="lm-sel-count" class="muted"></span>
+        </div>
+        <div id="lm-testids" class="lm-checklist"></div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn primary" id="lm-submit" type="button">提交所选到队列</button>
+          <span id="lm-submit-status" class="muted"></span>
+        </div>
+        <div id="lm-submit-result"></div>
+      </div>
+    </div>
+  </div>
+
   <div id="lm-tasks-denied" class="state err" hidden>
     <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
     <h3>无访问权限</h3>
@@ -93,40 +126,6 @@
     </div>
   </div>
 </div>
-
-<dialog id="lm-upload-dialog" class="lm-dialog lm-upload-dialog">
-  <div class="lm-card lm-upload" style="padding:22px;min-width:520px">
-    <div class="lm-page-head" style="display:flex;align-items:center;gap:12px">
-      <h3 style="font-size:17px">提交测试</h3>
-      <div class="spacer" style="flex:1"></div>
-      <button class="btn small" id="lm-upload-close" type="button">关闭</button>
-    </div>
-    <p class="muted">选择包含测试用例的文件夹（每个含 <code>judge.py</code> 的子文件夹是一个 test id），
-      勾选要运行的 test id 后提交。提交者取自你的登录账户。</p>
-    <div class="lm-inline" style="display:flex;gap:12px;align-items:center;margin:12px 0">
-      <label>模型 (.sil) <select id="lm-model" class="selbox"></select></label>
-      <span id="lm-license" class="muted"></span>
-    </div>
-    <div class="lm-form-grid" style="display:grid;gap:12px">
-      <label>测试用例文件夹 <input type="file" id="lm-folder" webkitdirectory directory multiple></label>
-      <label>lib 文件夹 <span class="muted">(可选)</span> <input type="file" id="lm-lib" webkitdirectory directory multiple></label>
-      <label>stdlib 文件夹 <span class="muted">(可选)</span> <input type="file" id="lm-stdlib" webkitdirectory directory multiple></label>
-    </div>
-    <div id="lm-scan-status" class="muted"></div>
-
-    <div id="lm-step2" hidden>
-      <div class="lm-inline" style="display:flex;gap:10px;align-items:center;margin:12px 0">
-        <button class="btn small" id="lm-sel-all" type="button">全选</button>
-        <button class="btn small" id="lm-sel-none" type="button">清除</button>
-        <span id="lm-sel-count" class="muted"></span>
-      </div>
-      <div id="lm-testids" class="lm-checklist"></div>
-      <button class="btn primary" id="lm-submit" type="button" style="margin-top:12px">提交所选到队列</button>
-      <span id="lm-submit-status" class="muted"></span>
-      <div id="lm-submit-result"></div>
-    </div>
-  </div>
-</dialog>
 
 <section id="lm-task-detail" class="task-detail" hidden>
   <div class="page-head">
