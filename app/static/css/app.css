@@ -53,7 +53,7 @@ input[type=text], input[type=password], input[type=number], input[type=file], se
   padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px;
   font-size: .95rem; background: #fff; min-width: 220px;
 }
-select { min-width: 260px; }
+select { min-width: 120px; }
 
 .btn {
   display: inline-block; padding: 9px 16px; border: 1px solid var(--line);
