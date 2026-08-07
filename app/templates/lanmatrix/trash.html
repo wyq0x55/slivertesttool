@@ -1,11 +1,13 @@
 {% extends "lanmatrix/base_lm.html" %}
 {% from "lanmatrix/_crumb.html" import project_crumb %}
+{% from "lanmatrix/_settings_tabs.html" import settings_tabs %}
 {% block title %}回收站{% endblock %}
-{% block crumb %}{{ project_crumb(project_id, "回收站") }}{% endblock %}
+{% block crumb %}{{ project_crumb(project_id, "回收站", "设置") }}{% endblock %}
 {% block content %}
 <div class="lm-page" data-project-id="{{ project_id }}"
      data-can-restore="{{ 1 if can_restore else 0 }}"
      data-can-purge="{{ 1 if can_purge else 0 }}">
+  {{ settings_tabs(project_id, "trash") }}
   <div class="lm-page-head">
     <h1>回收站</h1>
   </div>

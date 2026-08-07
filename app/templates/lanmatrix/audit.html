@@ -1,9 +1,11 @@
 {% extends "lanmatrix/base_lm.html" %}
 {% from "lanmatrix/_crumb.html" import project_crumb %}
+{% from "lanmatrix/_settings_tabs.html" import settings_tabs %}
 {% block title %}审计日志{% endblock %}
-{% block crumb %}{{ project_crumb(project_id, "审计日志") }}{% endblock %}
+{% block crumb %}{{ project_crumb(project_id, "审计日志", "设置") }}{% endblock %}
 {% block content %}
 <div class="lm-page" data-project-id="{{ project_id }}">
+  {{ settings_tabs(project_id, "audit") }}
   <div class="lm-page-head">
     <h1>审计日志</h1>
     <!-- Export is a plain link, not a fetch: the browser's own download UI

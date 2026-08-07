@@ -1,9 +1,11 @@
 {% extends "lanmatrix/base_lm.html" %}
 {% from "lanmatrix/_crumb.html" import project_crumb %}
+{% from "lanmatrix/_settings_tabs.html" import settings_tabs %}
 {% block title %}模型管理{% endblock %}
-{% block crumb %}{{ project_crumb(project_id, "模型管理") }}{% endblock %}
+{% block crumb %}{{ project_crumb(project_id, "模型管理", "设置") }}{% endblock %}
 {% block content %}
 <div class="content lm-models" data-project-id="{{ project_id }}">
+  {{ settings_tabs(project_id, "models") }}
   <div class="page-head">
     <div class="ttl">
       <h1>模型管理</h1>

@@ -126,6 +126,9 @@ code{
 .brand .logo svg{ width:16px; height:16px; }
 .brand b{ font-size:14.5px; font-weight:650; color:var(--text); letter-spacing:-0.02em; }
 .brand small{ display:block; font-size:11px; color:var(--text-3); font-weight:500; letter-spacing:.02em; }
+/* The wordmark must be allowed to shrink, otherwise it overflows the brand box
+   and paints over the collapse button, swallowing clicks everywhere but the
+   button's outer edge. */
 .side-head .brand > span:last-child{ min-width:0; overflow:hidden; }
 .nav{ display:flex; flex-direction:column; gap:2px; overflow-y:auto; }
 .nav-cap{
@@ -506,6 +509,13 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .tab:hover{ color:var(--text); }
 .tab.on{ color:var(--brand); border-bottom-color:var(--brand); }
 .pane{ display:none; } .pane.on{ display:block; }
+/* The settings strip uses real links rather than the JS panes above, so it has
+   to opt out of the global anchor colour and sit flush with the page heading
+   that follows it. */
+.lm-settings-tabs{ margin-bottom:24px; flex-wrap:wrap; }
+.lm-settings-tabs .tab{ color:var(--text-2); text-decoration:none; display:block; }
+.lm-settings-tabs .tab:hover{ color:var(--text); }
+.lm-settings-tabs .tab.on{ color:var(--brand); }
 
 .dt{ width:100%; border-collapse:separate; border-spacing:0; font-size:13.5px; }
 .dt thead th{ background:var(--surface-2); color:var(--text-3); font-size:11.5px; font-weight:600;

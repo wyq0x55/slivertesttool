@@ -1,9 +1,11 @@
 {% extends "lanmatrix/base_lm.html" %}
 {% from "lanmatrix/_crumb.html" import project_crumb %}
+{% from "lanmatrix/_settings_tabs.html" import settings_tabs %}
 {% block title %}字段配置{% endblock %}
-{% block crumb %}{{ project_crumb(project_id, "字段配置") }}{% endblock %}
+{% block crumb %}{{ project_crumb(project_id, "字段配置", "设置") }}{% endblock %}
 {% block content %}
 <div class="content lm-fields" data-project-id="{{ project_id }}">
+  {{ settings_tabs(project_id, "fields") }}
   <div class="page-head">
     <div class="ttl">
       <h1>字段配置</h1>

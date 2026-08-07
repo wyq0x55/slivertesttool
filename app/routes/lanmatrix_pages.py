@@ -165,6 +165,21 @@ def project_tasks(project_id: int):
         univer_available=_univer_bundle_available())
 
 
+@pages_bp.get("/projects/<int:project_id>/settings")
+def project_settings(project_id: int):
+    """Entry point for the project settings area.
+
+    The sidebar links here rather than to a specific tab so that the rail
+    carries one 设置 destination instead of five siblings. There is no page of
+    its own: an empty landing screen whose only content is the tab strip would
+    cost every user an extra click, so this redirects to the first tab.
+    """
+    user = _current_user()
+    if user is None:
+        return redirect(url_for("lanmatrix_pages.login"))
+    return redirect(url_for("lanmatrix_pages.fields", project_id=project_id))
+
+
 @pages_bp.get("/projects/<int:project_id>/members")
 def members(project_id: int):
     user = _current_user()

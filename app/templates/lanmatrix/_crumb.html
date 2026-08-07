@@ -13,12 +13,19 @@
    Rendering the name server-side would mean duplicating that permission check
    in the page layer — a second place to get authorisation wrong. The <a> ships
    with the id as placeholder text so the crumb is never empty.
+
+   `parent` inserts one intermediate segment (used by the five settings pages,
+   which now sit under 设置 rather than directly under the project).
 --------------------------------------------------------------------------- #}
-{% macro project_crumb(project_id, label) -%}
+{% macro project_crumb(project_id, label, parent=None) -%}
 <a href="{{ url_for('lanmatrix_pages.projects') }}">项目</a>
 <span class="sep">/</span>
 <a href="{{ url_for('lanmatrix_pages.editor', project_id=project_id) }}"
    id="lm-crumb-project" data-project-id="{{ project_id }}">项目 #{{ project_id }}</a>
 <span class="sep">/</span>
+{%- if parent %}
+<a href="{{ url_for('lanmatrix_pages.project_settings', project_id=project_id) }}">{{ parent }}</a>
+<span class="sep">/</span>
+{%- endif %}
 <b>{{ label }}</b>
 {%- endmacro %}

@@ -1,0 +1,28 @@
+{# ---------------------------------------------------------------------------
+   Second-level navigation for the project settings area.
+
+   The sidebar used to list all six project pages as siblings, which gave
+   字段配置 (touched once a quarter) the same weight as 测试矩阵 (touched every
+   day). The rail now carries three first-class destinations — 测试矩阵 /
+   任务与运行 / 设置 — and the five administrative pages live behind this tab
+   strip instead.
+
+   These are real links, not JS panes: each page is a separate route with its
+   own permissions, and keeping the URLs unchanged means existing bookmarks,
+   deep links and tests all still resolve.
+--------------------------------------------------------------------------- #}
+{% macro settings_tabs(project_id, active) -%}
+{% set items = [
+  ("fields",  "字段配置", "/lanmatrix/projects/%d/fields"  % project_id),
+  ("models",  "模型管理", "/lanmatrix/projects/%d/models"  % project_id),
+  ("members", "成员管理", "/lanmatrix/projects/%d/members" % project_id),
+  ("audit",   "审计日志", "/lanmatrix/projects/%d/audit"   % project_id),
+  ("trash",   "回收站",   "/lanmatrix/projects/%d/trash"   % project_id)
+] %}
+<nav class="tabs lm-settings-tabs" aria-label="项目设置">
+  {% for key, label, href in items -%}
+  <a class="tab{% if key == active %} on{% endif %}" href="{{ href }}"
+     {% if key == active %}aria-current="page"{% endif %}>{{ label }}</a>
+  {% endfor -%}
+</nav>
+{%- endmacro %}
