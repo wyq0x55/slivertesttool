@@ -580,6 +580,40 @@ def materialize_create(user: LMUser, project: Project, state: dict[str, Any],
     return item
 
 
+def _materialize_apply(user: LMUser, project: Project, item: TestItemRow,
+                       changes: dict[str, Any]) -> bool:
+    """Apply Y.Map values to ``item``; return True only if something changed.
+
+    A debounced collab flush replays the WHOLE sheet, so on a typical flush all
+    but one row arrive byte-identical to what is already stored. Writing them
+    anyway is not merely wasteful — it corrupts the audit trail: one edited cell
+    in a 200-row sheet used to bump ``version`` on all 200 rows and emit 200
+    ``item.materialize`` entries, 199 of which render as an audit entry with an
+    EMPTY field-level diff (``diff_values`` filters version/updated_at out).
+
+    So the no-op rows are skipped entirely: no version bump, no ``updated_at``
+    churn, no audit record. ``db.session.is_modified`` compares column values
+    (JSON columns included, verified), so a genuine edit, a changed custom
+    field, or a pure reorder all still register.
+    """
+    old = item.to_dict()
+    # Clearing deleted_at BEFORE the dirty check is what makes a resurrect count
+    # as a change even when every other field matches. Keep it in this order.
+    if item.deleted_at is not None:
+        item.deleted_at = None
+        item.deleted_by = None
+    _apply_materialized_values(item, changes)
+    if not db.session.is_modified(item, include_collections=False):
+        return False
+    item.version += 1
+    item.updated_by = user.id
+    item.updated_at = _utcnow()
+    audit.record("item.materialize", actor_id=user.id, object_type="item",
+                 object_id=item.id, project_id=project.id,
+                 old_value=old, new_value=item.to_dict())
+    return True
+
+
 def materialize_update(user: LMUser, project: Project, item: TestItemRow,
                        changes: dict[str, Any], *,
                        commit: bool = False) -> TestItemRow:
@@ -587,20 +621,11 @@ def materialize_update(user: LMUser, project: Project, item: TestItemRow,
 
     Unlike :func:`update_item` this never raises :class:`VersionConflict` — the
     CRDT already merged concurrent edits — and it resurrects a row that had been
-    soft-deleted but has reappeared in the Y.Array. ``version`` is still bumped
-    so downstream consumers (SSE/export) can detect the change.
+    soft-deleted but has reappeared in the Y.Array. ``version`` is bumped so
+    downstream consumers (SSE/export) can detect the change, but only when the
+    row actually changed (see :func:`_materialize_apply`).
     """
-    old = item.to_dict()
-    if item.deleted_at is not None:
-        item.deleted_at = None
-        item.deleted_by = None
-    _apply_materialized_values(item, changes)
-    item.version += 1
-    item.updated_by = user.id
-    item.updated_at = _utcnow()
-    audit.record("item.materialize", actor_id=user.id, object_type="item",
-                 object_id=item.id, project_id=project.id,
-                 old_value=old, new_value=item.to_dict())
+    _materialize_apply(user, project, item, changes)
     if commit:
         db.session.commit()
     return item
@@ -615,6 +640,9 @@ def materialize_sheet(user: LMUser, project: Project, sheet: str,
     Ordering rules (single writer, whole reconcile is one transaction):
 
     * uuid present in DB   -> update fields, ``row_order`` = 1-based index
+                              (a row that is byte-identical to the stored one is
+                              left completely untouched and counted under
+                              ``unchanged``; see :func:`_materialize_apply`)
     * uuid absent in DB    -> create at that index
     * a soft-deleted uuid that reappears -> resurrected via ``materialize_update``
     * a live DB row whose uuid is absent from the snapshot -> soft delete
@@ -650,7 +678,7 @@ def materialize_sheet(user: LMUser, project: Project, sheet: str,
         r.uuid: r for r in TestItemRow.query.filter_by(
             project_id=project.id, sheet=row_sheet).all()}
     seen: set[str] = set()
-    created = updated = failed = 0
+    created = updated = failed = unchanged = 0
     errors: dict[str, dict[str, Any]] = {}
     for index, state in enumerate(rows, start=1):
         row_uuid = (state.get("uuid") or "").strip()
@@ -677,11 +705,10 @@ def materialize_sheet(user: LMUser, project: Project, sheet: str,
                     materialize_create(row_actor, project, state,
                                        sheet=row_sheet, row_order=index,
                                        commit=False)
-                    is_create = True
+                    is_create, changed = True, True
                 else:
                     item.row_order = index
-                    materialize_update(row_actor, project, item, state,
-                                       commit=False)
+                    changed = _materialize_apply(row_actor, project, item, state)
                     is_create = False
         except Exception as exc:  # noqa: BLE001 - one row must not poison others
             errors[row_uuid] = {
@@ -693,8 +720,10 @@ def materialize_sheet(user: LMUser, project: Project, sheet: str,
             continue
         if is_create:
             created += 1
-        else:
+        elif changed:
             updated += 1
+        else:
+            unchanged += 1
     now = _utcnow()
     removed = 0
     for row_uuid, item in existing.items():
@@ -708,7 +737,8 @@ def materialize_sheet(user: LMUser, project: Project, sheet: str,
     if commit:
         db.session.commit()
     return {"created": created, "updated": updated, "removed": removed,
-            "failed": failed, "total": len(rows), "errors": errors}
+            "failed": failed, "unchanged": unchanged, "total": len(rows),
+            "errors": errors}
 
 
 def sheet_uuid_index(project_id: int, sheet: str) -> dict[str, tuple[int, int]]:

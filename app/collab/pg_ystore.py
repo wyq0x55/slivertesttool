@@ -50,6 +50,13 @@ class PgYStore(BaseYStore):
         self.metadata_callback = metadata_callback
         self.log = log
         self.lock = anyio.Lock()
+        # Next seq to write, cached so the hot path is one INSERT instead of
+        # SELECT max(seq) + INSERT. Every mutation happens inside _write_sync,
+        # which only ever runs while ``self.lock`` is held, so this cannot race
+        # within the process. It is process-local BY DESIGN: this deployment is
+        # single-process. A second worker would need the DB to own the sequence
+        # -- do not reuse this class as-is behind multiple workers.
+        self._next_seq: int | None = None
 
     # ------------------------------------------------------------------ #
     # Abstract I/O required by BaseYStore
@@ -86,13 +93,23 @@ class PgYStore(BaseYStore):
         from ..extensions import db
         from ..models import CollabDoc
         with self._app.app_context():
-            next_seq = (db.session.query(db.func.max(CollabDoc.seq))
-                        .filter_by(project_id=self._pid).scalar() or 0) + 1
+            if self._next_seq is None:
+                self._next_seq = (db.session.query(db.func.max(CollabDoc.seq))
+                                  .filter_by(project_id=self._pid).scalar() or 0) + 1
+            seq = self._next_seq
             db.session.add(CollabDoc(
-                project_id=self._pid, seq=next_seq,
+                project_id=self._pid, seq=seq,
                 update=data, doc_metadata=metadata, ts=ts))
-            db.session.commit()
-            if next_seq >= COMPACT_THRESHOLD:
+            try:
+                db.session.commit()
+            except Exception:
+                # The cached seq may be why we failed (or may now be ahead of
+                # what actually landed). Drop it so the next write re-reads.
+                db.session.rollback()
+                self._next_seq = None
+                raise
+            self._next_seq = seq + 1
+            if seq >= COMPACT_THRESHOLD:
                 self._compact_locked()
 
     def _compact_locked(self) -> None:
@@ -117,6 +134,7 @@ class PgYStore(BaseYStore):
         db.session.add(CollabDoc(project_id=self._pid, seq=1,
                                  update=merged, doc_metadata=None, ts=latest_ts))
         db.session.commit()
+        self._next_seq = 2          # the whole log is now the single seq=1 row
 
 
 def _is_awaitable(obj: Any) -> bool:

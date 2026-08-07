@@ -422,6 +422,12 @@
   LMCollabController.prototype._teardown = function () {
     this._active = false;
     if (this._tokenTimer) { clearTimeout(this._tokenTimer); this._tokenTimer = null; }
+    // Drop the pending selection broadcast: the provider is going away, and a
+    // stale _selSig would suppress the first publish after a reconnect.
+    if (this._selTimer) { clearTimeout(this._selTimer); this._selTimer = null; }
+    this._selSig = null;
+    this._selPending = null;
+    this._selDirty = false;
     try {
       (this._subs || []).forEach(function (s) {
         try { s.arr.unobserveDeep(s.handler); } catch (_e) {}
@@ -509,13 +515,49 @@
   //   rows   : [ uuid... ]            -- selected rows (view-independent set)
   //   cols   : [ minCol, maxCol ] | null
   // A falsy anchor with an empty rows set clears the state.
+  // Awareness is broadcast to EVERY peer on every call, and the grid fires a
+  // selection change per pointer move -- so dragging across a sheet used to emit
+  // one full-payload broadcast per mouse event. Three limits, cheapest first:
+  //   1. dedupe  -- moving within one cell/row produces an identical payload
+  //   2. throttle -- leading edge (feels instant) + trailing edge (final
+  //                  position always lands, so a selection never ends stale)
+  //   3. cap     -- "select all" on a 1000-row sheet is a ~36 KB uuid array.
+  //                 Peers only draw a border, and the receiver already drops
+  //                 uuids missing from its view, so truncating just draws fewer
+  //                 borders. The anchor box (the part that matters) is intact.
+  var SELECTION_THROTTLE_MS = 120;
+  var MAX_SELECTION_ROWS = 200;
+
   LMCollabController.prototype.setLocalSelection = function (sheet, anchor, rows, cols) {
     if (!this.provider) return;
+    var has = (anchor && anchor.uuid) || (rows && rows.length);
+    var state = has ? {
+      sheet: sheet,
+      anchor: anchor || null,
+      rows: (rows || []).slice(0, MAX_SELECTION_ROWS),
+      cols: cols || null,
+    } : null;
+
+    var sig = state ? JSON.stringify(state) : "";
+    if (sig === this._selSig) return;          // nothing actually moved
+    this._selSig = sig;
+    this._selPending = state;
+    this._selDirty = true;
+
+    if (this._selTimer) return;                // window open; trailing edge sends
+    this._flushSelection();
+    var self = this;
+    this._selTimer = setTimeout(function () {
+      self._selTimer = null;
+      if (self._selDirty) self._flushSelection();
+    }, SELECTION_THROTTLE_MS);
+  };
+
+  LMCollabController.prototype._flushSelection = function () {
+    this._selDirty = false;
+    if (!this.provider) return;
     try {
-      var has = (anchor && anchor.uuid) || (rows && rows.length);
-      this.provider.awareness.setLocalStateField(
-        "selection",
-        has ? { sheet: sheet, anchor: anchor || null, rows: rows || [], cols: cols || null } : null);
+      this.provider.awareness.setLocalStateField("selection", this._selPending);
     } catch (_e) { /* awareness optional */ }
   };
 

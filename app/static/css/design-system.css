@@ -114,6 +114,9 @@ code{
   display:flex; flex-direction:column; padding:16px 12px 14px;
   transition:flex-basis var(--dur) var(--ease), padding var(--dur) var(--ease);
 }
+.side-head{ display:flex; align-items:center; gap:6px; padding:4px 6px 14px; }
+.side-head .brand{ flex:1 1 auto; min-width:0; padding:0; }
+.side-collapse{ flex:0 0 auto; position:relative; z-index:1; }
 .brand{ display:flex; align-items:center; gap:10px; padding:4px 6px 14px; }
 .brand .logo{
   width:28px; height:28px; border-radius:8px; flex:0 0 auto;
@@ -123,6 +126,7 @@ code{
 .brand .logo svg{ width:16px; height:16px; }
 .brand b{ font-size:14.5px; font-weight:650; color:var(--text); letter-spacing:-0.02em; }
 .brand small{ display:block; font-size:11px; color:var(--text-3); font-weight:500; letter-spacing:.02em; }
+.side-head .brand > span:last-child{ min-width:0; overflow:hidden; }
 .nav{ display:flex; flex-direction:column; gap:2px; overflow-y:auto; }
 .nav-cap{
   font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase;
@@ -715,9 +719,37 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
 /* On desktop the menu-toggle collapses the sidebar into an icon-only rail.
    State lives on <html class="side-collapsed"> (restored pre-paint). */
 @media (min-width:961px){
+  /* The topbar button is the mobile drawer opener only; on desktop the
+     sidebar carries its own control and two buttons doing the same thing in
+     two places is exactly the inconsistency this rail is meant to avoid. */
+  .menu-toggle{ display:none; }
+
   html.side-collapsed .side{ flex-basis:64px; padding-left:8px; padding-right:8px; }
   html.side-collapsed .brand{ justify-content:center; gap:0; padding-left:0; padding-right:0; }
   html.side-collapsed .brand > span:last-child{ display:none; }
+
+  /* Collapsed: logo and button occupy the same grid cell so the button can
+     take the logo's place on hover/focus without shifting anything. */
+  html.side-collapsed .side-head{
+    display:grid; place-items:center; gap:0;
+    padding-left:0; padding-right:0;
+  }
+  html.side-collapsed .side-head > *{ grid-area:1 / 1; }
+  html.side-collapsed .side-head .brand{ flex:0 0 auto; }
+  /* The logo is inert (not a link), so the button on top of it stays clickable
+     at all times and only its VISIBILITY is tied to hover/focus. Nothing has to
+     surrender pointer-events, which is what used to make the hit area flaky. */
+  html.side-collapsed .side-collapse{
+    opacity:0;
+    transition:opacity var(--dur) var(--ease);
+  }
+  html.side-collapsed .side-head:hover .brand .logo,
+  html.side-collapsed .side-head:focus-within .brand .logo{ opacity:0; }
+  html.side-collapsed .side-head:hover .side-collapse,
+  html.side-collapsed .side-head:focus-within .side-collapse{ opacity:1; }
+  /* Keyboard users must still be able to see it once focused. */
+  html.side-collapsed .side-collapse:focus-visible{ opacity:1; }
+  .brand .logo{ transition:opacity var(--dur) var(--ease); }
   html.side-collapsed .nav-cap{
     text-align:center; padding-left:0; padding-right:0;
     overflow:hidden; text-overflow:clip; font-size:0;
