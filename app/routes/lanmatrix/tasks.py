@@ -66,7 +66,7 @@ def list_project_tasks(project_id):
     tasks = task_service.list_tasks(project_id=project_id, limit=limit)
     total = task_service.count_tasks(project_id=project_id)
     status = license_service.get_status()
-    status["queued_jobs"] = Task.query.filter_by(
+    status["queued_jobs"] = task_service.live(Task.query).filter_by(
         project_id=project_id, status=TaskStatus.QUEUED.value).count()
     return ok({"tasks": [t.to_dict() for t in tasks],
                "total": total,
@@ -77,6 +77,28 @@ def list_project_tasks(project_id):
                "role": role,
                "can_delete": permissions.can("task.delete", role,
                                               is_system_admin=g.user.is_system_admin)})
+
+@bp.get("/projects/<int:project_id>/tasks/preflight")
+@login_required
+def task_preflight(project_id):
+    """Reference data the submit form needs to warn *before* an upload.
+
+    Only the module-name vocabulary lives here. The counts the preflight bar
+    also shows (models, licence) already ride along on ``list_project_tasks``,
+    so this endpoint deliberately adds no queries.
+
+    ``stdlib`` is served rather than hard-coded in JavaScript on purpose:
+    the authoritative set is ``sys.stdlib_module_names``, a *runtime* value that
+    differs between Python versions. A copy pinned in the front end would drift
+    from the interpreter that actually runs the judges, and the failure mode of
+    a stale copy is the worst kind -- a confident warning about a module that is
+    perfectly fine, which teaches people to ignore the warnings.
+    """
+    _project_and_role(project_id, "task.upload")
+    from ...runners.judge_bundler import _SILVER_ROOTS, _STDLIB_NAMES
+    return ok({"stdlib": sorted(_STDLIB_NAMES),
+               "silver_roots": sorted(_SILVER_ROOTS)})
+
 
 @bp.post("/projects/<int:project_id>/tasks/upload-tree")
 @login_required
@@ -463,24 +485,8 @@ def delete_project_task(project_id, task_key):
     _, task = _require_task(project_id, task_key, "task.delete")
     if not TaskStatus(task.status).is_final:
         task_service.request_cancel(task)
-    workspace, test_id = task.workspace, task.test_id
-    task_service.delete_task(task)
-    _remove_task_dirs(workspace, test_id)
+    task_service.delete_task(task, actor_id=g.user.id)
     return ok({"deleted": True})
-
-def _remove_task_dirs(workspace: str, test_id: str) -> None:
-    """Remove one test id's persistent results + any leftover staging.
-
-    ``workspace`` is the shared per-project root, so only the test id's subtree
-    is removed — never the whole project.
-    """
-    if not workspace or not test_id:
-        return
-    import shutil
-
-    from ...runners import run_layout
-    shutil.rmtree(run_layout.log_dir(workspace, test_id), ignore_errors=True)
-    shutil.rmtree(run_layout.staging_dir(workspace, test_id), ignore_errors=True)
 
 @bp.get("/projects/<int:project_id>/tasks/<task_key>/download")
 @login_required
@@ -525,9 +531,7 @@ def delete_project_tasks_batch(project_id):
             continue
         if not TaskStatus(task.status).is_final:
             task_service.request_cancel(task)
-        workspace, test_id = task.workspace, task.test_id
-        task_service.delete_task(task)
-        _remove_task_dirs(workspace, test_id)
+        task_service.delete_task(task, actor_id=g.user.id)
         results.append({"task_id": key, "result": "deleted"})
     return ok({"results": results})
 

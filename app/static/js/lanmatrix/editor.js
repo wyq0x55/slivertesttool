@@ -13,6 +13,11 @@
   let grid = null;
   let collab = null;            // LMCollabController instance when real-time collab is active
   let gridResizeObserver = null; // retained so page-unload teardown can disconnect it
+  // Drives the explicit row-operation toolbar (rowtools.js). Kept here rather
+  // than read from the grid on every render so the buttons have a defined state
+  // before the grid finishes mounting.
+  let selectedCount = 0;
+  let projectEditable = true;
   const collabAvailable = root.dataset.collab === "1";  // server shipped the collab bundle + flag
   const collabActive = () => !!(collab && collab.isActive());
   // Editor sheet catalogue + protocol constants. The SINGLE source of truth is
@@ -328,6 +333,11 @@
     document.getElementById("lm-proj-title").textContent = `${p.code} · ${p.name}`;
     const st = document.getElementById("lm-proj-status");
     LMPill.apply(st, p.status, LMPill.PROJECT_ZH[p.status]);
+    // A locked project rejects every structural write server-side, so the row
+    // buttons grey out rather than producing a toast on each click. Absent flag
+    // (older server) means "not told otherwise" -> stay enabled.
+    projectEditable = p.is_editable !== false;
+    renderRowTools();
   }
 
   async function loadFields() {
@@ -511,6 +521,13 @@
   // located by its stable ``uuid`` — never an absolute row number — so it maps
   // correctly even when peers are filtering/sorting. Falsy uuid clears it.
   function updateSelectionUI(ids) {
+    // Row-tool buttons enable/disable with the selection. Done before the
+    // collab early-return below, otherwise the toolbar would only track the
+    // selection while real-time collaboration happens to be active.
+    selectedCount = (ids && ids.length) ||
+      (grid && grid.getSelectedIds ? grid.getSelectedIds().length : 0);
+    renderRowTools();
+
     if (!collabActive() || !collab.setLocalSelection) return;
     const items = sheetItems[currentSheet] || [];
     const uuidOf = {};
@@ -649,6 +666,99 @@
     syncFallbackTabs();
     syncRunButton();
   }
+
+  // ---- 行操作工具栏 + 帮助面板 (#11) ---------------------------------------
+  // Row structure operations were previously reachable only through the built-in
+  // grid's right-click menu. That menu lives in FallbackGrid; under the primary
+  // Univer engine 上移/下移/复制所选 have NO entry point at all (adapter.ts
+  // declares onMove/onBulkDuplicate and never invokes them). These buttons are
+  // therefore the only path to those operations, not a convenience.
+  const rowToolsHost = document.getElementById("lm-rowtools");
+
+  function renderRowTools() {
+    if (!rowToolsHost || !global_LMRowTools()) return;
+    LMRowTools.render(rowToolsHost, LMRowTools.plan({
+      selected: selectedCount,
+      editable: projectEditable,
+    }));
+  }
+
+  // rowtools.js is a plain <script>; guard so a failed load degrades to "no
+  // toolbar" instead of throwing on every selection change.
+  function global_LMRowTools() { return typeof LMRowTools !== "undefined"; }
+
+  if (rowToolsHost) {
+    rowToolsHost.addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-act]");
+      if (!b || b.disabled) return;
+      const ids = grid ? grid.getSelectedIds() : [];
+      const act = b.dataset.act;
+      if (act === "insert-above") insertRowAt(null, "above");
+      else if (act === "insert-below") insertRowAt(null, "below");
+      else if (act === "duplicate") bulkDuplicate(ids);
+      else if (act === "delete") bulkDelete(ids);
+      else if (act === "move-up") moveRows(ids, "up");
+      else if (act === "move-down") moveRows(ids, "down");
+    });
+  }
+
+  const helpDialog = document.getElementById("lm-help-dialog");
+  const helpBtn = document.getElementById("lm-help");
+
+  function renderHelp() {
+    if (!helpDialog || !global_LMRowTools()) return;
+    const keys = document.getElementById("lm-help-keys");
+    const gestures = document.getElementById("lm-help-gestures");
+    if (keys) {
+      keys.innerHTML = "";
+      LMRowTools.shortcutRows().forEach((r) => {
+        const tr = document.createElement("tr");
+        const kt = document.createElement("td");
+        kt.className = "lm-help-keys";
+        r.keys.forEach((k, i) => {
+          if (i) kt.appendChild(document.createTextNode(" + "));
+          const kbd = document.createElement("kbd");
+          kbd.textContent = k;
+          kt.appendChild(kbd);
+        });
+        const sc = document.createElement("td");
+        sc.className = "lm-muted";
+        sc.textContent = r.scope;
+        const de = document.createElement("td");
+        de.textContent = r.desc;
+        tr.appendChild(kt); tr.appendChild(sc); tr.appendChild(de);
+        keys.appendChild(tr);
+      });
+    }
+    if (gestures) {
+      gestures.innerHTML = "";
+      LMRowTools.GESTURES.forEach((g) => {
+        const tr = document.createElement("tr");
+        const a = document.createElement("td");
+        a.textContent = g.what;
+        const b = document.createElement("td");
+        b.textContent = g.desc;
+        tr.appendChild(a); tr.appendChild(b);
+        gestures.appendChild(tr);
+      });
+    }
+  }
+
+  function toggleHelp() {
+    if (!helpDialog) return;
+    if (helpDialog.open) { helpDialog.close(); return; }
+    renderHelp();
+    helpDialog.showModal();
+  }
+
+  if (helpBtn) helpBtn.addEventListener("click", toggleHelp);
+  // "?" is an ordinary character inside the grid's cells, so LMRowTools.isHelpKey
+  // ignores the key while a text control has focus.
+  document.addEventListener("keydown", (e) => {
+    if (!global_LMRowTools() || !LMRowTools.isHelpKey(e)) return;
+    e.preventDefault();
+    toggleHelp();
+  });
 
   // The "队列测试" (run-selected) button only applies to the test sheet, whose
   // rows carry a ``test_id`` — the unique key used to enqueue JSON-runner jobs.

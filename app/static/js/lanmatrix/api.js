@@ -181,6 +181,11 @@
 
     listAudit(id, params) { return request("GET", `/projects/${id}/audit-logs`, { query: params }); },
     listAuditActions(id) { return request("GET", `/projects/${id}/audit-logs/actions`); },
+
+    listTrash(id, params) { return request("GET", `/projects/${id}/trash`, { query: params }); },
+    restoreFromTrash(id, kind, objId) { return request("POST", `/projects/${id}/trash/restore`, { body: { kind, id: objId } }); },
+    purgeFromTrash(id, kind, objId) { return request("POST", `/projects/${id}/trash/purge`, { body: { kind, id: objId } }); },
+
     health() { return request("GET", "/health"); },
 
     dbOverview() { return request("GET", "/admin/db/overview"); },
@@ -217,6 +222,7 @@
         limit ? { query: { limit: limit } } : undefined);
     },
     uploadProjectTree(id, formData) { return request("POST", `/projects/${id}/tasks/upload-tree`, { body: formData }); },
+    taskPreflight(id) { return request("GET", `/projects/${id}/tasks/preflight`); },
     runSelectedTasks(id, payload) { return request("POST", `/projects/${id}/tasks/run-selected`, { body: payload || {} }); },
     rerunSelectedTasks(id, keys) { return request("POST", `/projects/${id}/tasks/rerun-selected`, { body: { task_keys: keys } }); },
     projectTaskStatus(id, key) { return request("GET", `/projects/${id}/tasks/${key}`); },

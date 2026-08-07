@@ -449,7 +449,7 @@ def download_batch():
 @api_bp.get("/licenses")
 def licenses():
     status = license_service.get_status()
-    status["queued_jobs"] = Task.query.filter_by(
+    status["queued_jobs"] = task_service.live(Task.query).filter_by(
         status=TaskStatus.QUEUED.value
     ).count()
     return jsonify(status)
@@ -550,21 +550,14 @@ def admin_cancel_task(task_key: str):
 
 
 def _delete_task_and_workspace(task: Task) -> None:
-    """Cancel a task if still active, then remove its record + result dirs.
+    """Cancel a task if still active, then move it to the recycle bin.
 
-    ``task.workspace`` is a shared per-project root, so only this test id's
-    subtree is removed.
+    The log/staging directories stay on disk until the task is purged, so a
+    restore returns a task whose report still opens.
     """
     if not TaskStatus(task.status).is_final:
         task_service.request_cancel(task)
-    workspace, test_id = task.workspace, task.test_id
     task_service.delete_task(task)
-    if workspace and test_id:
-        import shutil
-
-        from ..runners import run_layout
-        shutil.rmtree(run_layout.log_dir(workspace, test_id), ignore_errors=True)
-        shutil.rmtree(run_layout.staging_dir(workspace, test_id), ignore_errors=True)
 
 
 @api_bp.delete("/admin/tasks/<task_key>")

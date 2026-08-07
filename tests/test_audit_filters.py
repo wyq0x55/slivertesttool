@@ -323,19 +323,44 @@ def _routes_src():
     return (root / "projects_items.py").read_text(encoding="utf-8")
 
 
-def _audit_route_body():
-    """Source of the audit route handler.
+def _route_body(anchor):
+    """Source of one route handler, bounded by the *next* handler.
 
     Fails with a clear message if the anchor stops matching -- a renamed
     handler must not silently turn every guard below into a no-op.
+
+    The window used to be a flat 2000 characters, which was quietly wrong the
+    moment a second route with the same filter block was added next door: the
+    window spilled into the neighbour, so deleting a filter from *this* handler
+    still left the substring visible and every guard below kept passing. The
+    end is now the next decorator or top-level def, so each handler is checked
+    against its own body and nobody else's.
     """
     src = _routes_src()
-    anchor = "def audit_logs(project_id):"
     assert anchor in src, (
-        "cannot find %r; the audit route was renamed and these guards are "
+        "cannot find %r; the route was renamed and these guards are "
         "no longer checking anything" % anchor)
     start = src.index(anchor)
-    return src[start:start + 2000]
+    rest = src[start + len(anchor):]
+    ends = [m.start() for m in re.finditer(r"\n@|\ndef ", rest)]
+    stop = start + len(anchor) + (ends[0] if ends else len(rest))
+    body = src[start:stop]
+    # A body that swallowed a neighbouring handler is not a valid window.
+    # Only top-level defs count: a handler may legitimately nest a helper
+    # (the CSV export nests its streaming generator).
+    tops = len(re.findall(r"(?:\A|\n)def ", body))
+    assert tops == 1, (
+        "the %r window spans more than one handler (%d found); the bound is "
+        "wrong and these guards cannot be trusted" % (anchor, tops))
+    return body
+
+
+def _audit_route_body():
+    return _route_body("def audit_logs(project_id):")
+
+
+def _audit_csv_route_body():
+    return _route_body("def audit_logs_csv(project_id):")
 
 
 def test_audit_route_passes_every_filter_through():
@@ -369,6 +394,41 @@ def test_audit_route_makes_date_to_inclusive():
 def test_audit_route_rejects_an_inverted_range():
     body = _audit_route_body()
     assert "date_from > date_to" in body
+
+
+# The CSV export takes the same filters as the JSON listing. Exporting more
+# rows than the screen showed is a data-leak shaped bug, not a cosmetic one,
+# so the export gets its own guards rather than borrowing the listing's.
+def test_audit_csv_route_passes_every_filter_through():
+    body = _audit_csv_route_body()
+    for kw in ("actor_id=", "action=", "object_type=", "result=",
+               "date_from=", "date_to=", "q="):
+        assert kw in body, "audit CSV export drops the %s filter" % kw
+
+
+def test_audit_csv_route_bounds_the_free_text_search():
+    body = _audit_csv_route_body()
+    m = re.search(r'q=arg_str\("q"[^)]*\)', body)
+    assert m, "could not find the q filter in the audit CSV route"
+    assert "max_length" in m.group(0), "the free-text search is unbounded"
+
+
+def test_audit_csv_route_validates_the_result_whitelist():
+    body = _audit_csv_route_body()
+    assert "AUDIT_RESULTS" in body, "result filter accepts arbitrary values"
+
+
+def test_audit_csv_route_makes_date_to_inclusive():
+    body = _audit_csv_route_body()
+    assert "end_of_day=True" in body, (
+        "date_to is exclusive; the export will miss the last day of the range")
+
+
+def test_audit_csv_export_is_itself_audited():
+    # Bulk-exporting who-did-what is exactly the kind of action an audit log
+    # exists to record.
+    body = _audit_csv_route_body()
+    assert 'audit.record("audit.export"' in body
 
 
 def test_is_filtered_false_for_project_scope_only():

@@ -33,6 +33,57 @@
     return s.length > limit ? s.slice(0, limit) + "…" : s;
   }
 
+  var KIND_LABEL = { added: "新增", removed: "移除", changed: "修改",
+                     truncated: "" };
+
+  /**
+   * Render the server-computed per-field changes.
+   *
+   * The diff is computed once on the server (comments_service.diff_values) and
+   * rendered here, rather than derived again in JavaScript: the CSV export must
+   * describe an entry in exactly the same words as the table, and two
+   * implementations would drift apart the first time either was touched.
+   */
+  function renderChanges(changes) {
+    if (!changes || !changes.length) {
+      return '<span class="lm-muted">—</span>';
+    }
+    return '<table class="lm-diff">' + changes.map(function (c) {
+      if (c.kind === "truncated") {
+        return '<tr><td colspan="3" class="lm-muted">' + esc(c.new) +
+          "</td></tr>";
+      }
+      var from = c.old === "" ? '<span class="lm-muted">（空）</span>'
+        : "<del>" + esc(c.old) + "</del>";
+      var to = c.new === "" ? '<span class="lm-muted">（空）</span>'
+        : "<ins>" + esc(c.new) + "</ins>";
+      return '<tr class="lm-diff-' + esc(c.kind) + '">' +
+        '<th scope="row">' + esc(c.label) +
+        (KIND_LABEL[c.kind]
+          ? ' <span class="pill st-' + esc(c.kind) + '">' +
+            esc(KIND_LABEL[c.kind]) + "</span>"
+          : "") +
+        "</th><td>" + from + "</td><td>" + to + "</td></tr>";
+    }).join("") + "</table>";
+  }
+
+  /**
+   * Build the CSV download URL for the *current* filters.
+   *
+   * Server-side by design: the table pages 50 rows at a time, so exporting what
+   * the browser holds would produce a file that looks complete and covers one
+   * page.
+   */
+  function exportUrl(projectId, filters) {
+    var qs = FILTER_KEYS.filter(function (k) {
+      return filters[k] != null && filters[k] !== "";
+    }).map(function (k) {
+      return encodeURIComponent(k) + "=" + encodeURIComponent(filters[k]);
+    }).join("&");
+    return "/api/v1/projects/" + encodeURIComponent(projectId) +
+      "/audit-logs.csv" + (qs ? "?" + qs : "");
+  }
+
   /** Render an ISO timestamp as local-ish "YYYY-MM-DD HH:MM:SS". */
   function stamp(iso) {
     return String(iso || "").replace("T", " ").replace("Z", "").split(".")[0];
@@ -99,8 +150,25 @@
     var rows = root.querySelector("#lm-audit-rows");
     var info = root.querySelector("#lm-audit-info");
     var more = root.querySelector("#lm-audit-more");
+    var exportLink = root.querySelector("#lm-audit-export");
     var page = 1;
     var loaded = 0;
+
+    /**
+     * Keep the export link pointing at the filters currently in the form.
+     * A stale href here would hand the reviewer a file that silently disagrees
+     * with the screen they were looking at when they clicked it.
+     */
+    function syncExport() {
+      if (!exportLink) return;
+      var filters = collect(form);
+      exportLink.href = exportUrl(pid, filters);
+      var n = Object.keys(filters).length;
+      exportLink.textContent = n ? "导出 CSV（已筛选）" : "导出 CSV";
+      exportLink.title = n
+        ? "按当前筛选条件导出全部匹配记录：" + describe(filters)
+        : "导出本项目全部审计日志";
+    }
 
     function setInfo(text, cls) {
       if (!info) return;
@@ -114,8 +182,7 @@
           "<td><code>" + esc(a.action) + "</code></td>" +
           "<td>" + esc(a.object_type) + " " + esc(a.object_id || "") + "</td>" +
           "<td>" + esc(a.actor_name || a.actor_id || "") + "</td>" +
-          '<td class="lm-muted">' + esc(brief(a.old_value)) + " → " +
-          esc(brief(a.new_value)) + "</td></tr>";
+          "<td>" + renderChanges(a.changes) + "</td></tr>";
       }).join("");
       if (append) rows.insertAdjacentHTML("beforeend", html);
       else rows.innerHTML = html;
@@ -128,6 +195,7 @@
         if (filters[k] != null) query[k] = filters[k];
       });
       if (!append) { page = 1; loaded = 0; }
+      syncExport();
       setInfo("加载中…");
       return api.listAudit(pid, query).then(function (data) {
         var items = data.items || [];
@@ -210,13 +278,15 @@
     }
 
     load(false);
-    return { load: load, apply: apply, collect: function () { return collect(form); } };
+    return { load: load, apply: apply, syncExport: syncExport,
+             collect: function () { return collect(form); } };
   }
 
   window.LMAudit = {
     init: init, esc: esc, brief: brief, stamp: stamp,
     collect: collect, restore: restore, describe: describe,
-    fillOptions: fillOptions,
+    fillOptions: fillOptions, renderChanges: renderChanges,
+    exportUrl: exportUrl,
     FILTER_KEYS: FILTER_KEYS, PAGE_SIZE: PAGE_SIZE
   };
 })(window, document);

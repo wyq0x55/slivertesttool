@@ -72,6 +72,11 @@ class Task(db.Model):
     started_at = db.Column(db.DateTime, nullable=True)
     finished_at = db.Column(db.DateTime, nullable=True)
 
+    # Soft delete: a deleted task takes its run history and report with it, and
+    # "I deleted the wrong run" is not a recoverable mistake without this.
+    deleted_at = db.Column(db.DateTime, nullable=True, index=True)
+    deleted_by = db.Column(db.Integer, nullable=True)
+
     events = db.relationship(
         "TaskEvent",
         backref="task",

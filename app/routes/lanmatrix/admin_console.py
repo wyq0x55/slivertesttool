@@ -31,7 +31,6 @@ from ._base import (
 )
 # ``admin_delete_task`` reuses the task-workspace cleanup helper that lives on
 # the tasks blueprint (both delete tasks + their on-disk staging/log dirs).
-from .tasks import _remove_task_dirs
 
 bp = Blueprint("lanmatrix_admin_console", __name__, url_prefix="/api/v1")
 register_common(bp)
@@ -114,7 +113,7 @@ def admin_remove_model():
 @system_admin_required
 def admin_get_license():
     status = license_service.get_status()
-    status["queued_jobs"] = Task.query.filter_by(
+    status["queued_jobs"] = task_service.live(Task.query).filter_by(
         status=TaskStatus.QUEUED.value).count()
     return ok({"license": status})
 
@@ -185,9 +184,7 @@ def admin_delete_task(task_key):
         return err("NOT_FOUND", "任务不存在", status=404)
     if not TaskStatus(task.status).is_final:
         task_service.request_cancel(task)
-    workspace, test_id = task.workspace, task.test_id
-    task_service.delete_task(task)
-    _remove_task_dirs(workspace, test_id)
+    task_service.delete_task(task, actor_id=g.user.id)
     return ok({"deleted": True})
 
 @bp.post("/admin/tasks/prune-events")

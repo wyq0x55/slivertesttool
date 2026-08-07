@@ -13,6 +13,8 @@
 
   let entries = [], testIds = [], libEntries = [], stdlibEntries = [];
   let capabilities = { delete: false };
+  // Last server snapshot of the facts the submit preflight bar reports on.
+  let lastModels = [], lastLicense = null, lastRole = "";
   const streams = {};   // task_id -> EventSource
   let allTasks = [];                        // latest snapshot from the server
   let sortKey = "task_id", sortDir = -1;    // -1 desc, 1 asc
@@ -71,6 +73,7 @@
   function selectedIds() { return checkboxes().filter((c) => c.checked).map((c) => c.value); }
   function updateCount() {
     $("lm-sel-count").textContent = `${selectedIds().length} / ${testIds.length} 已选`;
+    refreshPreflight();
   }
   function renderTestIds() {
     const box = $("lm-testids");
@@ -1069,8 +1072,12 @@
       testItemsCache = null;   // refresh: re-pull steps so edits show on next view
       const data = await LMApi.listProjectTasks(pid, windowSize);
       totalTasks = typeof data.total === "number" ? data.total : (data.tasks || []).length;
-      renderModels(data.models || []);
-      renderLicense(data.license);
+      lastModels = data.models || [];
+      lastLicense = data.license || null;
+      lastRole = data.role || "";
+      renderModels(lastModels);
+      renderLicense(lastLicense);
+      refreshPreflight();
       capabilities.delete = !!data.can_delete;
       $("lm-batch-delete").hidden = !capabilities.delete;
       Object.keys(streams).forEach(closeStream);
@@ -1094,9 +1101,80 @@
     }
   }
 
-  $("lm-folder").addEventListener("change", onFolder);
-  $("lm-lib").addEventListener("change", () => { libEntries = scanAux($("lm-lib").files); });
-  $("lm-stdlib").addEventListener("change", () => { stdlibEntries = scanAux($("lm-stdlib").files); });
+  // --- submit preflight ----------------------------------------------------- //
+  // Every precondition used to be discovered *after* the work: the "no model
+  // registered" case only appeared at the submit click, once the user had
+  // already picked a folder and ticked test ids. LMPreflight decides what to
+  // say; this block only collects state and re-runs it on every input.
+  let pfVocab = null;        // {stdlib, silver_roots} — fetched once, may stay null
+  let pfMissing = [];        // module names no uploaded file can satisfy
+  let pfScanned = false;     // have we actually read the judge sources yet?
+
+  function preflightState() {
+    return {
+      models: lastModels,
+      selectedModel: ($("lm-model") || {}).value || "",
+      license: lastLicense,
+      role: lastRole,
+      folderChosen: entries.length > 0,
+      testIdCount: testIds.length,
+      selectedCount: selectedIds().length,
+      libChosen: libEntries.length > 0 || stdlibEntries.length > 0,
+      scanned: pfScanned,
+      missingModules: pfMissing
+    };
+  }
+  function refreshPreflight() {
+    const host = $("lm-preflight");
+    if (!host || !window.LMPreflight) return;
+    window.LMPreflight.render(host, window.LMPreflight.evaluate(preflightState()));
+  }
+
+  function readText(file) {
+    return new Promise((resolve) => {
+      try {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result || ""));
+        r.onerror = () => resolve("");
+        r.readAsText(file);
+      } catch (_e) { resolve(""); }
+    });
+  }
+  /* Read the judge sources and ask LMPreflight which imports nothing in the
+   * upload can satisfy. Without the server's module vocabulary we skip the
+   * check entirely rather than guess: a wrong "missing module" warning is worse
+   * than no warning, because it trains people to dismiss the bar. */
+  async function rescanImports() {
+    if (!pfVocab || !window.LMPreflight) { pfScanned = false; pfMissing = []; return; }
+    const judges = entries.filter((e) => /(^|\/)judge\.py$/.test(e.rel));
+    if (!judges.length) { pfScanned = false; pfMissing = []; return; }
+    const texts = await Promise.all(judges.slice(0, 200).map((e) => readText(e.file)));
+    const paths = entries.map((e) => e.rel)
+      .concat(libEntries.map((e) => e.rel), stdlibEntries.map((e) => e.rel));
+    pfMissing = window.LMPreflight.unresolvedImports(
+      texts, paths, pfVocab.stdlib, pfVocab.silver_roots);
+    pfScanned = true;
+  }
+  async function rescanAndRender() {
+    try { await rescanImports(); } catch (_e) { pfScanned = false; pfMissing = []; }
+    refreshPreflight();
+  }
+
+  $("lm-folder").addEventListener("change", () => { onFolder(); rescanAndRender(); });
+  $("lm-lib").addEventListener("change", () => {
+    libEntries = scanAux($("lm-lib").files); rescanAndRender();
+  });
+  $("lm-stdlib").addEventListener("change", () => {
+    stdlibEntries = scanAux($("lm-stdlib").files); rescanAndRender();
+  });
+  const pfModelSel = $("lm-model");
+  if (pfModelSel) pfModelSel.addEventListener("change", refreshPreflight);
+  if (window.LMApi && typeof LMApi.taskPreflight === "function") {
+    LMApi.taskPreflight(pid).then((d) => {
+      pfVocab = { stdlib: d.stdlib || [], silver_roots: d.silver_roots || [] };
+      return rescanAndRender();
+    }).catch(() => { /* older server or no permission: bar still shows the rest */ });
+  }
   $("lm-submit").addEventListener("click", submit);
   $("lm-sel-all").addEventListener("click", () => { checkboxes().forEach((c) => (c.checked = true)); updateCount(); });
   $("lm-sel-none").addEventListener("click", () => { checkboxes().forEach((c) => (c.checked = false)); updateCount(); });

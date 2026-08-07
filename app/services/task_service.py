@@ -17,13 +17,29 @@ def next_task_key(task_id: int) -> str:
     return f"T{task_id:06d}"
 
 
-def get_by_key(task_key: str) -> Optional[Task]:
-    return Task.query.filter_by(task_key=task_key).first()
+def live(query):
+    """Restrict a task query to rows that are not in the recycle bin.
+
+    Kept as one helper so a new query path cannot quietly resurrect deleted
+    tasks into a list, a count or a duplicate check.
+    """
+    return query.filter(Task.deleted_at.is_(None))
 
 
-def get_project_task(project_id: int, task_key: str) -> Optional[Task]:
+def get_by_key(task_key: str, *, include_deleted: bool = False) -> Optional[Task]:
+    q = Task.query.filter_by(task_key=task_key)
+    if not include_deleted:
+        q = live(q)
+    return q.first()
+
+
+def get_project_task(project_id: int, task_key: str,
+                     *, include_deleted: bool = False) -> Optional[Task]:
     """Fetch a task by key only if it belongs to ``project_id``."""
-    return Task.query.filter_by(task_key=task_key, project_id=project_id).first()
+    q = Task.query.filter_by(task_key=task_key, project_id=project_id)
+    if not include_deleted:
+        q = live(q)
+    return q.first()
 
 
 DEFAULT_LIST_LIMIT = 200
@@ -57,7 +73,7 @@ def _scoped_query(submitter: Optional[str] = None,
     If these two ever disagreed, the UI would show "共 N 条" next to a list that
     was filtered differently -- a number the user has no way to reconcile.
     """
-    query = Task.query
+    query = live(Task.query)
     if submitter:
         query = query.filter_by(submitter=submitter)
     if project_id is not None:
@@ -90,7 +106,7 @@ def find_active_duplicate(submitter: str, test_id: str,
     is given the check is scoped to that project so the same test id can run
     independently in different projects.
     """
-    query = Task.query.filter(
+    query = live(Task.query).filter(
         Task.submitter == submitter,
         Task.test_id == test_id,
         Task.status.in_([TaskStatus.QUEUED.value, TaskStatus.RUNNING.value]),
@@ -139,7 +155,9 @@ def find_task_by_test_id(test_id: str, project_id: Optional[int] = None) -> Opti
     ``test_id`` is the unique identifier of a test case *within a project*, so
     this is the key used by :func:`upsert_task` to overwrite a prior run.
     """
-    query = Task.query.filter(Task.test_id == test_id)
+    # Deleted tasks are excluded so ``upsert_task`` starts a clean run instead of
+    # reviving a row the user had put in the recycle bin.
+    query = live(Task.query).filter(Task.test_id == test_id)
     if project_id is not None:
         query = query.filter(Task.project_id == project_id)
     return query.order_by(Task.id.desc()).first()
@@ -237,7 +255,7 @@ def cancel_project_queue(
     """
     if project_id is None:
         return []
-    query = Task.query.filter(
+    query = live(Task.query).filter(
         Task.project_id == project_id,
         Task.status == TaskStatus.QUEUED.value,
     )
@@ -257,6 +275,52 @@ def cancel_project_queue(
     return cancelled
 
 
-def delete_task(task: Task) -> None:
+def delete_task(task: Task, *, actor_id: Optional[int] = None,
+                commit: bool = True) -> None:
+    """Soft-delete a task: it leaves every list, but stays restorable.
+
+    A task carries its run history, log and report; "I deleted the wrong run"
+    used to be unrecoverable.
+    """
+    if task.deleted_at is not None:
+        return
+    task.deleted_at = _utcnow()
+    task.deleted_by = actor_id
+    if commit:
+        db.session.commit()
+
+
+def restore_task(task: Task, *, commit: bool = True) -> Task:
+    task.deleted_at = None
+    task.deleted_by = None
+    if commit:
+        db.session.commit()
+    return task
+
+
+def remove_task_artifacts(task: Task) -> None:
+    """Remove a task's log/staging directories from disk.
+
+    Deliberately *not* called on soft delete: a restore that hands back a row
+    whose report and log are gone is worse than no restore at all, because the
+    task still looks runnable. Artifacts go only when the task is purged.
+
+    ``task.workspace`` is a shared per-project root, so only this test id's
+    subtree is removed.
+    """
+    workspace, test_id = task.workspace, task.test_id
+    if not (workspace and test_id):
+        return
+    import shutil
+
+    from ..runners import run_layout
+    shutil.rmtree(run_layout.log_dir(workspace, test_id), ignore_errors=True)
+    shutil.rmtree(run_layout.staging_dir(workspace, test_id), ignore_errors=True)
+
+
+def purge_task(task: Task, *, commit: bool = True) -> None:
+    """Delete a task for real, taking its events and artifacts with it."""
+    remove_task_artifacts(task)
     db.session.delete(task)
-    db.session.commit()
+    if commit:
+        db.session.commit()

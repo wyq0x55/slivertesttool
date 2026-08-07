@@ -6,6 +6,12 @@
 <div class="lm-page" data-project-id="{{ project_id }}">
   <div class="lm-page-head">
     <h1>审计日志</h1>
+    <!-- Export is a plain link, not a fetch: the browser's own download UI
+         handles a streamed multi-megabyte file, and the href always carries the
+         filters currently in the form (kept in sync by audit.js). -->
+    <a class="btn" id="lm-audit-export" download
+       href="{{ url_for('lanmatrix_projects.audit_logs_csv', project_id=project_id) }}"
+       title="导出本项目全部审计日志">导出 CSV</a>
   </div>
 
   <form id="lm-audit-filters" class="lm-filters" role="search" aria-label="审计日志筛选">
@@ -47,7 +53,7 @@
 
   <table class="lm-table">
     <thead>
-      <tr><th>时间</th><th>操作</th><th>对象</th><th>操作人</th><th>原值 → 新值</th></tr>
+      <tr><th>时间</th><th>操作</th><th>对象</th><th>操作人</th><th>字段变更</th></tr>
     </thead>
     <tbody id="lm-audit-rows"><tr><td colspan="5" class="lm-muted">加载中…</td></tr></tbody>
   </table>

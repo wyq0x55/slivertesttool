@@ -23,6 +23,9 @@
 
   <div id="lm-upload-panel" class="addbar" hidden>
     <div class="mforms">
+      {# Preconditions belong before the effort, not behind the submit button.
+         aria-live so a screen reader hears a check flip without re-reading. #}
+      <div id="lm-preflight" class="lm-preflight" role="status" aria-live="polite" hidden></div>
       <div>
         <div class="mform-cap">选择模型与测试用例文件夹</div>
         <p class="muted" style="margin:0 0 12px">选择包含测试用例的文件夹（每个含 <code>judge.py</code> 的子文件夹是一个 test id），
@@ -206,5 +209,6 @@
 <script src="{{ url_for('static', filename='js/lanmatrix/steps_ref_panel.js') }}"></script>
 <script src="{{ url_for('static', filename='js/lanmatrix/json_editor.js') }}"></script>
 <script src="{{ url_for('static', filename='js/lanmatrix/steps_editor.js') }}"></script>
+<script src="{{ url_for('static', filename='js/lanmatrix/preflight.js') }}"></script>
 <script src="{{ url_for('static', filename='js/lanmatrix/project_tasks.js') }}"></script>
 {% endblock %}

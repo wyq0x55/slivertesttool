@@ -85,6 +85,21 @@ def create_app(config_object: type[Config] = Config) -> Flask:
             logging.getLogger(__name__).warning(
                 "model dir migration skipped: %s", exc)
         license_service.init_defaults(config_object.LICENSE_LIMIT)
+        # Retention sweep for the recycle bin. Driven entirely by ``deleted_at``
+        # rather than a cursor, so running it on every start is idempotent and
+        # needs no bookkeeping. This deployment is a LAN app restarted often
+        # enough that a startup hook is a better fit than a scheduler nobody
+        # would notice had died -- and a retention period that silently stops
+        # being enforced is worse than not offering one.
+        try:
+            from .services.lanmatrix import trash_service as _lm_trash
+            _swept = _lm_trash.purge_expired()
+            if sum(_swept.values()):
+                logging.getLogger(__name__).info(
+                    "recycle bin retention sweep: %s", _swept)
+        except Exception as exc:  # noqa: BLE001 - never block startup
+            logging.getLogger(__name__).warning(
+                "recycle bin retention sweep skipped: %s", exc)
 
     from .routes.api_routes import api_bp
     from .routes.lanmatrix import BLUEPRINTS as lanmatrix_api_blueprints
@@ -271,6 +286,8 @@ def _migrate_schema() -> None:
             "sil_name": "VARCHAR(128) NOT NULL DEFAULT ''",
             "project_id": "INTEGER",
             "submitter_id": "INTEGER",
+            "deleted_at": "TIMESTAMP",
+            "deleted_by": "INTEGER",
         },
         "lm_projects": {
             "tm_id_prefix": "VARCHAR(64)",
@@ -278,9 +295,12 @@ def _migrate_schema() -> None:
         },
         "lm_field_definitions": {
             "sheet": "VARCHAR(16) NOT NULL DEFAULT 'test'",
+            "deleted_at": "TIMESTAMP",
+            "deleted_by": "INTEGER",
         },
         "lm_test_items": {
             "sheet": "VARCHAR(16) NOT NULL DEFAULT 'test'",
+            "deleted_by": "INTEGER",
         },
         "lm_project_models": {
             "is_current": "BOOLEAN NOT NULL DEFAULT FALSE",
@@ -314,6 +334,21 @@ def _migrate_schema() -> None:
         except Exception as exc:  # noqa: BLE001
             logging.getLogger(__name__).warning(
                 "schema migration: could not index %s.sheet: %s", table, exc)
+
+    # Every recycle-bin listing and every "live rows only" query filters on
+    # deleted_at, so the freshly-added columns need the index the model declares
+    # (ADD COLUMN does not create one).
+    for table in ("tasks", "lm_field_definitions"):
+        if table not in existing_tables:
+            continue
+        try:
+            with db.engine.begin() as conn:
+                conn.execute(text(
+                    f"CREATE INDEX IF NOT EXISTS ix_{table}_deleted_at "
+                    f"ON {table} (deleted_at)"))
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger(__name__).warning(
+                "schema migration: could not index %s.deleted_at: %s", table, exc)
 
     _migrate_widen_testitem_uuid(existing_tables, inspector)
     _migrate_user_fk_ondelete(inspector)

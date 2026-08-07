@@ -12,7 +12,7 @@ import os
 from flask import (Blueprint, current_app, redirect, render_template, request,
                    session, url_for)
 
-from ..services.lanmatrix import service, settings
+from ..services.lanmatrix import permissions, service, settings
 
 pages_bp = Blueprint(
     "lanmatrix_pages", __name__, url_prefix="/lanmatrix",
@@ -199,3 +199,20 @@ def audit_page(project_id: int):
         return redirect(url_for("lanmatrix_pages.login"))
     return render_template(
         "lanmatrix/audit.html", user=user.to_dict(), project_id=project_id)
+
+
+@pages_bp.get("/projects/<int:project_id>/trash")
+def trash_page(project_id: int):
+    user = _current_user()
+    if user is None:
+        return redirect(url_for("lanmatrix_pages.login"))
+    # The capabilities are resolved here rather than guessed in JavaScript: the
+    # API enforces them regardless, and a "彻底删除" button that always 403s is
+    # worse than no button at all.
+    role = service.role_in_project(project_id, user)
+    admin = user.is_system_admin
+    return render_template(
+        "lanmatrix/trash.html", user=user.to_dict(), project_id=project_id,
+        can_restore=permissions.can("trash.restore", role,
+                                    is_system_admin=admin),
+        can_purge=permissions.can("trash.purge", role, is_system_admin=admin))

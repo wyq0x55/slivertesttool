@@ -181,6 +181,11 @@ class Project(db.Model):
             "name": self.name,
             "description": self.description,
             "status": self.status,
+            # Exposed so the editor can grey out structural controls instead of
+            # letting the user click them into a PROJECT_LOCKED error. Derived
+            # from status here rather than re-implemented in JS, so there is one
+            # definition of "editable".
+            "is_editable": self.is_editable,
             "owner_id": self.owner_id,
             "member_count": member_count if member_count is not None else len(self.members),
             "created_at": _iso(self.created_at),
@@ -219,6 +224,12 @@ class FieldDefinition(db.Model):
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
+    # Soft delete. Deleting a field used to wipe its value from every row on the
+    # spot, which made the single most destructive action in the product also
+    # the only irreversible one. The values now stay put until the recycle bin
+    # expires the field for real.
+    deleted_at = db.Column(db.DateTime, nullable=True, index=True)
+    deleted_by = db.Column(db.Integer, db.ForeignKey("lm_users.id"), nullable=True)
 
     @property
     def options(self) -> list:
@@ -387,6 +398,11 @@ class TestItemRow(db.Model):
     updated_by = db.Column(db.Integer, db.ForeignKey("lm_users.id"), nullable=True)
     updated_at = db.Column(db.DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
     deleted_at = db.Column(db.DateTime, nullable=True, index=True)
+    # Rows are by far the most frequently deleted thing in the product, so a
+    # recycle bin that cannot say who deleted one answers the question people
+    # actually arrive with ("was that me, or do I need to go ask someone?")
+    # for every kind except the common one.
+    deleted_by = db.Column(db.Integer, db.ForeignKey("lm_users.id"), nullable=True)
 
     # New unified ("identity") protocol field keys that alias onto an existing
     # first-class column, so the Test-Matrix editor vocabulary is stored in real

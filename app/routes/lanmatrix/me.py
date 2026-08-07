@@ -17,6 +17,7 @@ from flask import Blueprint, g, request
 
 from ...extensions import db
 from ...models import Task, TaskStatus
+from ...services import task_service
 from ...services.lanmatrix import service
 from ._base import ok, login_required, register_common
 
@@ -87,7 +88,7 @@ def me_overview():
     mine_open = 0
     if pids:
         mine_open = (
-            Task.query
+            task_service.live(Task.query)
             .filter(Task.project_id.in_(pids),
                     Task.submitter_id == g.user.id,
                     Task.status.in_([TaskStatus.QUEUED.value,
@@ -112,7 +113,7 @@ def me_tasks():
     if not pids:
         return ok({"tasks": [], "projects": [], "truncated": False})
 
-    q = Task.query.filter(Task.project_id.in_(pids))
+    q = task_service.live(Task.query).filter(Task.project_id.in_(pids))
 
     status = (request.args.get("status") or "").strip()
     if status:

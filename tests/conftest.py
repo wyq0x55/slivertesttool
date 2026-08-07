@@ -14,6 +14,7 @@ upload -> queue -> run -> result flow without a persistent queue.
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -62,12 +63,20 @@ def app_ctx(monkeypatch):
     # the tables and seed the license/admin defaults into an empty database.
     from app.extensions import db
 
-    reset_app = app_pkg.create_app(config_mod.Config)
-    with reset_app.app_context():
-        db.drop_all()
+    try:
+        reset_app = app_pkg.create_app(config_mod.Config)
+        with reset_app.app_context():
+            db.drop_all()
 
-    application = app_pkg.create_app(config_mod.Config)
-    yield application
+        application = app_pkg.create_app(config_mod.Config)
+        yield application
+    finally:
+        # Each test gets its own instance/uploads/reports/workspace tree under
+        # this directory. Without this the tree survives the run, so a suite
+        # that is executed often (CI, or a mutation runner that re-runs it once
+        # per mutation) quietly fills the disk -- 400+ orphans is enough to
+        # start failing unrelated tests with ENOSPC.
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 @pytest.fixture()

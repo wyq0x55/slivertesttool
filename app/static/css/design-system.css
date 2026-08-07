@@ -1008,3 +1008,154 @@ textarea.lmui-input{ resize:vertical; min-height:76px; }
   background:var(--surface-2); }
 .lm-list-footer[hidden]{ display:none; }
 .lm-list-footer .muted{ font-size:12px; }
+
+/* ==========================================================================
+   PART 21 . SUBMIT PREFLIGHT (提交前置检查条)
+   Preconditions shown above the submit form. Levels are colour-coded but never
+   colour-only: each row carries a glyph and a text label, so the state survives
+   greyscale printing and colour-blindness.
+   ========================================================================== */
+.lm-preflight{
+  border:1px solid var(--line); border-radius:8px; background:var(--surface-2);
+  margin:0 0 14px; overflow:hidden; }
+.lm-preflight[hidden]{ display:none; }
+.lm-preflight-head{
+  font-size:12px; font-weight:600; letter-spacing:.02em;
+  padding:8px 12px; border-bottom:1px solid var(--line);
+  background:var(--surface); color:var(--text-2); }
+.lm-preflight.is-blocked .lm-preflight-head{ color:var(--danger); }
+.lm-preflight-rows{ display:flex; flex-direction:column; }
+.lm-preflight-row{
+  display:grid; grid-template-columns:18px 72px 1fr; gap:8px; align-items:start;
+  padding:8px 12px; font-size:13px; }
+.lm-preflight-row + .lm-preflight-row{ border-top:1px dashed var(--line); }
+.lm-pf-mark{ font-weight:700; text-align:center; line-height:1.5; }
+.lm-pf-label{ color:var(--text-2); }
+.lm-pf-text{ display:flex; flex-direction:column; gap:2px; }
+.lm-pf-hint{ color:var(--text-3); font-size:12px; }
+.lm-pf-ok .lm-pf-mark{ color:var(--ok); }
+.lm-pf-warn .lm-pf-mark{ color:var(--warn); }
+.lm-pf-blocked .lm-pf-mark{ color:var(--danger); }
+.lm-pf-info .lm-pf-mark{ color:var(--text-3); }
+
+@media (max-width:640px){
+  .lm-preflight-row{ grid-template-columns:18px 1fr; }
+  .lm-pf-label{ grid-column:2; font-size:12px; }
+  .lm-pf-text{ grid-column:2; }
+}
+
+/* ========================================================================== */
+/* PART 22 - Row-operation toolbar + shortcut help (#11)                      */
+/* -------------------------------------------------------------------------- */
+/* The row buttons sit inside #lm-toolbar-right, which the Univer adapter      */
+/* adopts into Univer's own ribbon row. They must therefore survive being      */
+/* re-parented into foreign chrome: no positioning context is assumed and all  */
+/* spacing is local to the group.                                              */
+.lm-rowtools{
+  display:inline-flex; align-items:center; gap:4px;
+  padding-right:8px; margin-right:4px;
+  border-right:1px solid var(--line);
+}
+/* A disabled row button must still read as a button, not as body text: the    */
+/* point of greying out (rather than hiding) is that the control stays visible */
+/* and its tooltip explains what is missing.                                   */
+.lm-rowtools .btn[disabled]{ opacity:.45; cursor:not-allowed; }
+.lm-rowtools .btn[disabled]:hover{ background:transparent; border-color:var(--border); }
+
+/* Narrow viewports: the group wraps instead of pushing 导入/导出 off-screen. */
+@media (max-width: 900px){
+  .lm-rowtools{ flex-wrap:wrap; row-gap:4px; }
+}
+
+.lm-help-table{ width:100%; border-collapse:collapse; margin:4px 0 12px; }
+.lm-help-table td{
+  padding:6px 10px 6px 0; vertical-align:top;
+  font-size:13px; color:var(--text);
+  border-bottom:1px solid var(--line);
+}
+.lm-help-table tr:last-child td{ border-bottom:none; }
+.lm-help-table td.lm-help-keys{ white-space:nowrap; width:1%; }
+.lm-help-table td.lm-muted{ color:var(--text-3); white-space:nowrap; width:1%; }
+.lm-help-sub{ margin:14px 0 0; font-size:13px; color:var(--text-2); }
+
+.lm-help-table kbd{
+  display:inline-block; min-width:20px; text-align:center;
+  padding:2px 6px; border:1px solid var(--border); border-bottom-width:2px;
+  border-radius:5px; background:var(--surface-2); color:var(--text);
+  font:600 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* -------------------------------------------------------------------------- */
+/* PART 23 - Audit field-level diff (#12)                                     */
+/* -------------------------------------------------------------------------- */
+/* The audit log used to render two blobs of truncated JSON side by side. This */
+/* styles the per-field diff that replaced it. The `st-*` pills below are new: */
+/* the existing set covers run/project states only, so reusing one would have  */
+/* meant "已修改" borrowing the colour of "运行中".                            */
+.st-added{ background:var(--ok-soft); color:var(--ok); }
+.st-added .dot{ background:var(--ok); }
+.st-removed{ background:var(--danger-soft); color:var(--danger); }
+.st-removed .dot{ background:var(--danger); }
+.st-changed{ background:var(--warn-soft); color:var(--warn); }
+.st-changed .dot{ background:var(--warn); }
+
+.lm-diff{ width:100%; border-collapse:collapse; font-size:13px; }
+.lm-diff th, .lm-diff td{
+  padding:2px 8px 2px 0; text-align:left; vertical-align:top;
+  font-weight:400; word-break:break-word;
+}
+/* The field name column stays narrow so the values get the room; it must not
+   wrap mid-name or the eye loses the row it is following. */
+.lm-diff th{ color:var(--text-2); white-space:nowrap; width:1%; }
+.lm-diff th .pill{ padding:0 6px; font-size:11px; }
+/* Colour alone must not carry the added/removed distinction: del/ins keep the
+   strikethrough and underline so the diff still reads for a colour-blind
+   reviewer, and in a printed or pasted screenshot. */
+.lm-diff del{ color:var(--text-3); text-decoration:line-through; }
+.lm-diff ins{ color:var(--text); text-decoration:underline; background:none; }
+.lm-diff tr + tr th, .lm-diff tr + tr td{ border-top:1px solid var(--line); }
+
+/* Narrow viewports: the three diff columns stack rather than squeezing the
+   values into one character per line. */
+@media (max-width: 900px){
+  .lm-diff, .lm-diff tbody, .lm-diff tr, .lm-diff th, .lm-diff td{ display:block; }
+  .lm-diff th{ width:auto; padding-top:6px; }
+  .lm-diff tr + tr th{ border-top:1px solid var(--line); }
+  .lm-diff tr + tr td{ border-top:none; }
+}
+
+/* -------------------------------------------------------------------------- */
+/* PART 24 - Recycle bin (#10)                                                */
+/* -------------------------------------------------------------------------- */
+/* Deletion used to be silent and final. These styles carry the two things the */
+/* bin has to communicate: what kind of thing this was, and how long is left   */
+/* before it stops being recoverable.                                          */
+
+/* Kind pills. Neutral on purpose: the kind is a category, not a status, and   */
+/* borrowing the green/red status palette here would make a deleted field look */
+/* like it had passed or failed something.                                     */
+.st-item, .st-field, .st-task{ background:var(--n-100); color:var(--text-2); }
+[data-theme="dark"] .st-item,
+[data-theme="dark"] .st-field,
+[data-theme="dark"] .st-task{ background:var(--surface-2); }
+
+.lm-trash-table td{ vertical-align:top; }
+.lm-trash-title{ font-weight:600; color:var(--text); }
+.lm-trash-actions{ white-space:nowrap; }
+
+/* Remaining retention. The escalation is deliberate and small: most rows are  */
+/* ordinary text, and only the ones actually running out are coloured, so the  */
+/* warning still means something when it appears.                             */
+.lm-trash-soon{ color:var(--warn); font-weight:600; }
+.lm-trash-expired{ color:var(--danger); font-weight:600; }
+
+/* Page-level banner. Per-row colour is invisible once the bin is long enough  */
+/* to scroll -- which is exactly when something is most likely to lapse.       */
+.lm-banner{
+  padding:10px 14px; border-radius:8px; border:1px solid var(--border);
+  background:var(--surface-2); color:var(--text); font-size:13.5px;
+  margin:12px 0;
+}
+.lm-banner-warn{
+  background:var(--warn-soft); color:var(--warn); border-color:transparent;
+}

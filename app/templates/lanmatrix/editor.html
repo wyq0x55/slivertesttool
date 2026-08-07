@@ -21,6 +21,15 @@
       <span class="lm-collab-members" id="lm-collab-members" hidden></span>
     </div>
     <div class="lm-tb-right" id="lm-toolbar-right">
+      <!-- Explicit row-structure controls, filled by rowtools.js. Under the
+           Univer engine 上移/下移/复制所选 have NO other entry point (adapter.ts
+           declares onMove/onBulkDuplicate but never calls them), so these
+           buttons are the only way to reach them, not just a shortcut. This
+           group is adopted into Univer's own ribbon together with #lm-toolbar-
+           right, so one markup site serves both engines. -->
+      <span class="lm-rowtools" id="lm-rowtools" role="group" aria-label="行操作"></span>
+      <button class="btn btn-sm" id="lm-help" title="快捷键与操作帮助（快捷键 ?）"
+              aria-label="快捷键与操作帮助">?</button>
       <button class="btn" id="lm-import">导入</button>
       <button class="btn" id="lm-export">导出</button>
       <button class="btn btn-primary" id="lm-run-selected" hidden>队列测试</button>
@@ -124,6 +133,23 @@
     </menu>
   </form>
 </dialog>
+<!-- Keyboard/gesture help. Rows are rendered by rowtools.js from a single list
+     so the panel can never drift from what the code actually binds. -->
+<dialog id="lm-help-dialog" class="lm-dialog">
+  <form method="dialog" class="lm-card">
+    <h3>快捷键与操作帮助</h3>
+    <table class="lm-help-table">
+      <tbody id="lm-help-keys"></tbody>
+    </table>
+    <h4 class="lm-help-sub">其他操作方式</h4>
+    <table class="lm-help-table">
+      <tbody id="lm-help-gestures"></tbody>
+    </table>
+    <menu>
+      <button value="cancel" class="btn">关闭</button>
+    </menu>
+  </form>
+</dialog>
 {% include "lanmatrix/_steps_dialog.html" %}
 {% endblock %}
 {% block scripts %}
@@ -142,6 +168,7 @@
 {% if collab_available %}
 <script defer src="{{ url_for('static', filename='vendor/collab/collab.umd.js') }}"></script>
 {% endif %}
+<script defer src="{{ url_for('static', filename='js/lanmatrix/rowtools.js') }}"></script>
 <script defer src="{{ url_for('static', filename='js/lanmatrix/grid.js') }}"></script>
 <script defer src="{{ url_for('static', filename='js/lanmatrix/steps_ref_panel.js') }}"></script>
 <script defer src="{{ url_for('static', filename='js/lanmatrix/json_editor.js') }}"></script>

@@ -37,6 +37,13 @@ _MATRIX: dict[str, frozenset[str]] = {
     "task.cancel": frozenset({"project_admin", "editor", "reviewer", "reader"}),
     "task.download": frozenset({"project_admin", "editor", "reviewer", "reader"}),
     "task.delete": frozenset({"project_admin"}),
+    # Recycle bin. Whoever can delete a thing must be able to see and undo that
+    # deletion -- an undo gated behind an admin is an undo the person who made
+    # the mistake cannot reach. Purging for real stays with the project admin,
+    # because that is the step nobody can take back.
+    "trash.view": frozenset({"project_admin", "editor"}),
+    "trash.restore": frozenset({"project_admin", "editor"}),
+    "trash.purge": frozenset({"project_admin"}),
 }
 
 

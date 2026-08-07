@@ -344,6 +344,7 @@ def soft_delete_item(user: LMUser, project: Project, item: TestItemRow,
                      *, commit: bool = True) -> None:
     old = item.to_dict()
     item.deleted_at = _utcnow()
+    item.deleted_by = user.id
     audit.record("item.delete", actor_id=user.id, object_type="item",
                  object_id=item.id, project_id=project.id, old_value=old)
     if commit:
@@ -356,6 +357,10 @@ def restore_item(user: LMUser, project: Project, item_id: int,
     if item is None or item.deleted_at is None:
         raise ServiceError("回收站中无此记录", code="NOT_FOUND")
     item.deleted_at = None
+    # Cleared alongside the timestamp: a restored row that keeps its old
+    # deleter would name the wrong person if it is ever deleted again by
+    # someone else and the second delete happens to miss this field.
+    item.deleted_by = None
     audit.record("item.restore", actor_id=user.id, object_type="item",
                  object_id=item.id, project_id=project.id)
     if commit:
@@ -385,6 +390,7 @@ def bulk_soft_delete(user: LMUser, project: Project, ids: list[int],
     for item in rows:
         old = item.to_dict()
         item.deleted_at = now
+        item.deleted_by = user.id
         audit.record("item.delete", actor_id=user.id, object_type="item",
                      object_id=item.id, project_id=project.id, old_value=old)
     if commit:
@@ -415,34 +421,81 @@ def bulk_duplicate(user: LMUser, project: Project,
     return created
 
 
+class MixedSheetMove(ValueError):
+    """Raised when a reorder selection spans more than one editor sheet."""
+
+
+def plan_move(ordered: list[tuple], selected, direction: str) -> dict[int, int]:
+    """Pure reorder planner. Returns ``{row_id: new_row_order}`` for the rows
+    whose position actually changes; ``{}`` when the move is a no-op.
+
+    ``ordered`` is the project's live rows as ``(id, sheet, row_order)`` tuples
+    sorted by ``row_order``.
+
+    Reordering is scoped to a SINGLE sheet. ``row_order`` is project-wide (see
+    ``_max_row_order``, which does not filter by sheet), so rows belonging to
+    different sheets are interleaved in one sequence. Swapping raw neighbours
+    would therefore trade a row's slot with a row from another sheet, leaving
+    the visible order of *both* sheets unchanged — a move that silently does
+    nothing while still rewriting ``row_order`` and recording an audit entry.
+    Instead the selected sheet's rows are permuted among the slots that sheet
+    already occupies, so every other sheet keeps its positions untouched and the
+    global sequence stays gap-free.
+
+    Kept free of database access so the ordering rules can be tested directly.
+    """
+    if direction not in ("up", "down"):
+        raise ValueError("direction must be 'up' or 'down'")
+    sel = set(int(i) for i in (selected or []))
+    if not sel:
+        return {}
+    sheets = set(sheet for (rid, sheet, _o) in ordered if rid in sel)
+    if len(sheets) > 1:
+        raise MixedSheetMove("selection spans sheets: %s" % sorted(sheets))
+    if not sheets:
+        return {}
+    sheet = sheets.pop()
+    rows = [(rid, order) for (rid, s, order) in ordered if s == sheet]
+    ids = [rid for (rid, _o) in rows]
+    slots = [order for (_rid, order) in rows]
+    before = dict(rows)
+
+    idxs = [i for i, rid in enumerate(ids) if rid in sel]
+    if direction == "up":
+        for i in idxs:  # top-down so the block slides up as a unit
+            if i - 1 >= 0 and ids[i - 1] not in sel:
+                ids[i - 1], ids[i] = ids[i], ids[i - 1]
+    else:
+        for i in reversed(idxs):  # bottom-up for a downward slide
+            if i + 1 < len(ids) and ids[i + 1] not in sel:
+                ids[i + 1], ids[i] = ids[i], ids[i + 1]
+
+    return {rid: slots[pos] for pos, rid in enumerate(ids)
+            if before[rid] != slots[pos]}
+
+
 def move_items(user: LMUser, project: Project, ids: list[int],
                direction: str, *, commit: bool = True) -> int:
-    """Move the selected rows one position up or down (block move), then
-    normalize ``row_order`` to a gap-free 1..N sequence. Returns rows moved."""
+    """Move the selected rows one position up or down within their own sheet
+    (block move). Returns the number of rows the caller selected."""
     if direction not in ("up", "down"):
         raise ServiceError("方向无效", code="VALIDATION_ERROR")
-    ordered = TestItemRow.query.filter(
-        TestItemRow.project_id == project.id,
-        TestItemRow.deleted_at.is_(None),
-    ).order_by(TestItemRow.row_order.asc()).all()
     sel = set(int(i) for i in (ids or []))
     if not sel:
         return 0
-    idxs = [i for i, r in enumerate(ordered) if r.id in sel]
-    if direction == "up":
-        for i in idxs:  # top-down so the block slides up as a unit
-            if i - 1 >= 0 and ordered[i - 1].id not in sel:
-                ordered[i - 1], ordered[i] = ordered[i], ordered[i - 1]
-    else:
-        for i in reversed(idxs):  # bottom-up for a downward slide
-            if i + 1 < len(ordered) and ordered[i + 1].id not in sel:
-                ordered[i + 1], ordered[i] = ordered[i], ordered[i + 1]
-    moved = 0
-    for pos, r in enumerate(ordered, start=1):
-        if r.row_order != pos:
-            r.row_order = pos
-            moved += 1
-    if moved:
+    rows = TestItemRow.query.filter(
+        TestItemRow.project_id == project.id,
+        TestItemRow.deleted_at.is_(None),
+    ).order_by(TestItemRow.row_order.asc()).all()
+    try:
+        changes = plan_move(
+            [(r.id, r.sheet, r.row_order) for r in rows], sel, direction)
+    except MixedSheetMove:
+        raise ServiceError("不能跨 Sheet 移动行", code="VALIDATION_ERROR")
+    if changes:
+        for r in rows:
+            if r.id in changes:
+                r.row_order = changes[r.id]
         audit.record("item.reorder", actor_id=user.id, object_type="project",
                      object_id=project.id, project_id=project.id,
                      new_value={"moved": sorted(sel), "direction": direction})
@@ -540,6 +593,7 @@ def materialize_update(user: LMUser, project: Project, item: TestItemRow,
     old = item.to_dict()
     if item.deleted_at is not None:
         item.deleted_at = None
+        item.deleted_by = None
     _apply_materialized_values(item, changes)
     item.version += 1
     item.updated_by = user.id

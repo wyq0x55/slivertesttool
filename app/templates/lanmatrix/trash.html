@@ -1,0 +1,65 @@
+{% extends "lanmatrix/base_lm.html" %}
+{% from "lanmatrix/_crumb.html" import project_crumb %}
+{% block title %}回收站{% endblock %}
+{% block crumb %}{{ project_crumb(project_id, "回收站") }}{% endblock %}
+{% block content %}
+<div class="lm-page" data-project-id="{{ project_id }}"
+     data-can-restore="{{ 1 if can_restore else 0 }}"
+     data-can-purge="{{ 1 if can_purge else 0 }}">
+  <div class="lm-page-head">
+    <h1>回收站</h1>
+  </div>
+
+  <!-- The retention policy is stated on the page, not only per row: a user who
+       lands here needs to know the rules before scanning the list. Filled in
+       from the server's own RETENTION_DAYS so the copy cannot drift from the
+       sweep that actually deletes things. -->
+  <p class="lm-muted" id="lm-trash-retention">删除的内容会保留一段时间，之后自动彻底删除。</p>
+
+  <p class="lm-banner lm-banner-warn" id="lm-trash-notice" role="status"
+     aria-live="polite" hidden></p>
+
+  <form id="lm-trash-filters" class="lm-filters" role="search" aria-label="回收站筛选">
+    <div class="lm-filter">
+      <label for="lm-tf-kind">类型</label>
+      <select id="lm-tf-kind" name="kind">
+        <option value="">全部</option>
+        <option value="item">测试用例</option>
+        <option value="field">字段</option>
+        <option value="task">任务</option>
+      </select>
+    </div>
+  </form>
+
+  <p id="lm-trash-info" class="lm-muted" role="status" aria-live="polite">加载中…</p>
+
+  <table class="lm-table lm-trash-table">
+    <thead>
+      <tr>
+        <th>类型</th><th>名称</th><th>删除时间</th><th>删除人</th>
+        <th>剩余保留期</th><th>操作</th>
+      </tr>
+    </thead>
+    <tbody id="lm-trash-rows">
+      <tr><td colspan="6" class="lm-muted">加载中…</td></tr>
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/lanmatrix/trash.js') }}"></script>
+<script>
+(function () {
+  var root = document.querySelector(".lm-page");
+  LMTrash.init({
+    root: root,
+    api: LMApi,
+    url: window.LMUrl,
+    ui: window.LMUI,
+    projectId: Number(root.dataset.projectId),
+    canRestore: root.dataset.canRestore === "1",
+    canPurge: root.dataset.canPurge === "1"
+  });
+})();
+</script>
+{% endblock %}
