@@ -180,6 +180,7 @@
     },
 
     listAudit(id, params) { return request("GET", `/projects/${id}/audit-logs`, { query: params }); },
+    listAuditActions(id) { return request("GET", `/projects/${id}/audit-logs/actions`); },
     health() { return request("GET", "/health"); },
 
     dbOverview() { return request("GET", "/admin/db/overview"); },

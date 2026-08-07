@@ -754,17 +754,10 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
 .lm-table th,.lm-table td{ border-bottom:1px solid var(--border); padding:11px 12px; font-size:13.5px; }
 .lm-table tbody tr:hover{ background:var(--surface-2); }
 .lm-table tbody tr:last-child td{ border-bottom:none; }
-.lm-badge{ background:var(--surface-2); color:var(--text-2); border-radius:999px; padding:2px 9px; font-size:12px; font-weight:600; }
-.lm-status-queued{ background:var(--n-100); color:var(--text-2); }
-.lm-status-running{ background:var(--run-soft); color:var(--run); }
-.lm-status-passed{ background:var(--ok-soft); color:var(--ok); }
-.lm-status-failed{ background:var(--danger-soft); color:var(--danger); }
-.lm-status-error{ background:var(--warn-soft); color:var(--warn); }
-.lm-status-cancelled,.lm-status-notask{ background:var(--n-100); color:var(--text-3); }
-.lm-status-draft{ background:var(--n-100); color:var(--text-2); }
-.lm-status-active{ background:var(--ok-soft); color:var(--ok); }
-.lm-status-frozen{ background:var(--warn-soft); color:var(--warn); }
-.lm-status-archived{ background:var(--n-100); color:var(--text-3); }
+/* `.lm-badge` / `.lm-status-*` retired in favour of `.pill` / `.st-*` (PART 4).
+   All 11 status colours were already byte-identical to their `st-*` twins, so
+   the migration changed no colour -- but `.st-*` also carries the dark-theme
+   overrides and the `.dot` indicator that this dialect never had. */
 .verdict-pass{ background:var(--ok-soft); color:var(--ok); }
 .verdict-fail{ background:var(--danger-soft); color:var(--danger); }
 .verdict-error{ background:var(--warn-soft); color:var(--warn); }

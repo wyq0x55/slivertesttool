@@ -554,8 +554,9 @@
       if (!this.statusEl) return;
       const s = status ? String(status) : "";
       this.statusEl.hidden = false;
-      this.statusEl.className = "lm-badge " + (s ? "lm-status-" + s : "lm-status-notask");
-      this.statusEl.textContent = s || "noTask";
+      // LMPill also supplies the zh label; this used to render the raw
+      // English `passed` beside a task list rendering `通过`.
+      LMPill.apply(this.statusEl, s);
     }
 
     async _refreshStatus() {

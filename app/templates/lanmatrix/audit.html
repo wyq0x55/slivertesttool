@@ -7,32 +7,66 @@
   <div class="lm-page-head">
     <h1>审计日志</h1>
   </div>
+
+  <form id="lm-audit-filters" class="lm-filters" role="search" aria-label="审计日志筛选">
+    <div class="lm-filter">
+      <label for="lm-af-q">关键字</label>
+      <input id="lm-af-q" name="q" type="search" placeholder="对象 / 操作 / 错误" maxlength="128">
+    </div>
+    <div class="lm-filter">
+      <label for="lm-af-action">操作</label>
+      <select id="lm-af-action" name="action"><option value="">全部</option></select>
+    </div>
+    <div class="lm-filter">
+      <label for="lm-af-result">结果</label>
+      <select id="lm-af-result" name="result">
+        <option value="">全部</option>
+        <option value="success">成功</option>
+        <option value="failure">失败</option>
+      </select>
+    </div>
+    <div class="lm-filter">
+      <label for="lm-af-actor">操作人</label>
+      <select id="lm-af-actor" name="actor_id"><option value="">全部</option></select>
+    </div>
+    <div class="lm-filter">
+      <label for="lm-af-from">起始日期</label>
+      <input id="lm-af-from" name="date_from" type="date">
+    </div>
+    <div class="lm-filter">
+      <label for="lm-af-to">结束日期</label>
+      <input id="lm-af-to" name="date_to" type="date">
+    </div>
+    <div class="lm-filter lm-filter-actions">
+      <button type="submit" class="btn btn-primary">筛选</button>
+      <button type="button" class="btn" id="lm-audit-reset">重置</button>
+    </div>
+  </form>
+
+  <p id="lm-audit-info" class="lm-muted" role="status" aria-live="polite">加载中…</p>
+
   <table class="lm-table">
     <thead>
       <tr><th>时间</th><th>操作</th><th>对象</th><th>操作人</th><th>原值 → 新值</th></tr>
     </thead>
     <tbody id="lm-audit-rows"><tr><td colspan="5" class="lm-muted">加载中…</td></tr></tbody>
   </table>
+
+  <div class="lm-more-wrap">
+    <button type="button" class="btn" id="lm-audit-more" hidden>加载更多</button>
+  </div>
 </div>
 {% endblock %}
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/lanmatrix/audit.js') }}"></script>
 <script>
 (function () {
-  const pid = Number(document.querySelector(".lm-page").dataset.projectId);
-  const rows = document.getElementById("lm-audit-rows");
-  function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
-  function j(v){ if(v==null) return ""; try { return esc(JSON.stringify(v)).slice(0,120);} catch(e){return "";} }
-  LMApi.listAudit(pid, { page: 1, page_size: 200 }).then((data) => {
-    rows.innerHTML = data.items.map((a) => `
-      <tr><td class="lm-muted">${esc((a.created_at||"").replace("T"," ").replace("Z",""))}</td>
-      <td><code>${esc(a.action)}</code></td>
-      <td>${esc(a.object_type)} ${esc(a.object_id||"")}</td>
-      <td>${a.actor_id||""}</td>
-      <td class="lm-muted">${j(a.old_value)} → ${j(a.new_value)}</td></tr>`).join("")
-      || '<tr><td colspan="5" class="lm-muted">暂无日志</td></tr>';
-  }).catch((ex) => {
-    if (ex.status === 401) { window.location = LM.urls.login; return; }
-    rows.innerHTML = `<tr><td colspan="5" class="lm-err">${esc(ex.message)}</td></tr>`;
+  var root = document.querySelector(".lm-page");
+  LMAudit.init({
+    root: root,
+    api: LMApi,
+    url: window.LMUrl,
+    projectId: Number(root.dataset.projectId)
   });
 })();
 </script>

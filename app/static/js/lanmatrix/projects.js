@@ -14,7 +14,7 @@
   let all = [];
   let filter = { q: "", s: "all" };
 
-  const STATUS_ZH = { draft: "草稿", active: "活跃", frozen: "冻结", archived: "归档" };
+  const STATUS_ZH = LMPill.PROJECT_ZH;
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>

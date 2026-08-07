@@ -25,7 +25,7 @@ from ...services.lanmatrix import (
     dbadmin, excel_service, permissions, service, settings,
 )
 from ._base import (
-    ok, err, current_user, login_required, bootstrap_admin_required,
+    ok, err, arg_int, current_user, login_required, bootstrap_admin_required,
     register_common, _project_and_role, _client_ip,
     _LOCK_THRESHOLD, _LOCK_MINUTES,
 )
@@ -77,8 +77,8 @@ def admin_db_table_rows(table):
     try:
         result = dbadmin.read_rows(
             table,
-            page=int(request.args.get("page", 1)),
-            page_size=int(request.args.get("page_size", 50)),
+            page=arg_int("page", 1, minimum=1),
+            page_size=arg_int("page_size", 50, minimum=1, maximum=dbadmin.MAX_ROWS),
             order_by=request.args.get("order_by") or None,
             descending=request.args.get("desc") in ("1", "true", "True"),
         )

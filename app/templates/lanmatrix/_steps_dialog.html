@@ -6,17 +6,16 @@
    and the project_tasks copy was missing the 关闭 button entirely — a dialog the
    user could only leave via Esc or by saving.
 
-   Class vocabulary note: the status pill is written by
-   steps_editor.js:557 as `lm-badge lm-status-<status>`, so the initial markup
-   uses the same vocabulary. The project_tasks copy said `pill st-queued`, which
-   the first render overwrote — dead markup that only made the duplication look
-   intentional. Migrating steps_editor.js to the `pill`/`st-*` vocabulary is a
-   separate change with its own risk; it is deliberately not bundled here.
+   Class vocabulary note: the status pill is written in place by
+   steps_editor.js via LMPill.apply(), which emits `pill st-<status>` plus the
+   `.dot` child. The initial markup below states the same vocabulary so the
+   pre-render and post-render states agree; the two page copies of this dialog
+   used to disagree, and the losing one was silently overwritten.
 --------------------------------------------------------------------------- #}
 <dialog id="lm-steps-dialog" class="lm-steps-drawer">
   <form method="dialog" class="lm-steps-drawer-card">
     <header class="lm-steps-drawer-head">
-      <h3>步骤明细编辑 · <span id="lm-steps-title" class="muted"></span><span id="lm-steps-task-status" class="lm-badge lm-status-notask" hidden></span></h3>
+      <h3>步骤明细编辑 · <span id="lm-steps-title" class="muted"></span><span id="lm-steps-task-status" class="pill st-notask" hidden></span></h3>
       <div class="lm-steps-tools">
         <button type="button" class="btn small" id="lm-steps-ref-toggle" title="Lib / Const 参考查询">参考</button>
         <button type="button" class="btn small" id="lm-steps-json-toggle" title="以 JSON 代码编辑，与表格实时同步">{ } JSON</button>

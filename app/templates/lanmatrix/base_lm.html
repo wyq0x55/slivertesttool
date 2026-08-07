@@ -190,6 +190,10 @@
      After api.js (it calls LMApi.getProject) and it no-ops on pages without a
      #lm-crumb-project element, so it is safe to load everywhere. #}
   <script src="{{ url_for('static', filename='js/lanmatrix/crumb.js') }}"></script>
+  {# pill.js defines window.LMPill: the single status-badge vocabulary and its
+     zh labels. Must load before page scripts, which render pills during their
+     first paint, and before steps_editor.js, which drives a pill in place. #}
+  <script src="{{ url_for('static', filename='js/lanmatrix/pill.js') }}"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -23,13 +23,9 @@
   // --- status vocabulary --------------------------------------------------
   // Deliberately identical to project_tasks.js: a task that reads "运行中" on
   // the project page must not read "running" here.
-  const STATUS_ZH = { queued: "排队中", running: "运行中", passed: "通过",
-    failed: "失败", error: "异常", cancelled: "已取消", notask: "—" };
+  const STATUS_ZH = LMPill.TASK_ZH;
 
-  function pill(cls, label, tip) {
-    const c = cls || "notask";
-    return `<span class="pill st-${esc(c)}" title="${esc(tip || label)}"><span class="dot"></span>${esc(label)}</span>`;
-  }
+  const pill = LMPill.html;
   // A finished-but-failing run carries status "failed"; split a genuine test
   // failure (verdict FAIL) from an execution/judge error (verdict ERROR).
   function mergedBadge(t) {

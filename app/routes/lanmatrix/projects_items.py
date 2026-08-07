@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import datetime as _dt
 import io
-import json
 import secrets
 import zipfile
 from pathlib import Path
@@ -29,7 +28,8 @@ from ...services.lanmatrix import (
 from ...services.lanmatrix.permissions import PermissionDenied
 from ...services.lanmatrix.service import ServiceError, VersionConflict
 from ._base import (
-    ok, err, current_user, login_required, system_admin_required,
+    ok, err, arg_int, arg_json, arg_str, arg_date,
+    current_user, login_required, system_admin_required,
     register_common, _project_and_role, _client_ip,
     _LOCK_THRESHOLD, _LOCK_MINUTES,
 )
@@ -351,13 +351,12 @@ def restore_model_sbs_revision(project_id, revision_id):
 @login_required
 def list_items(project_id):
     _project_and_role(project_id, "item.view")
-    filters = request.args.get("filter")
-    import json
-    parsed_filters = json.loads(filters) if filters else []
+    parsed_filters = arg_json("filter", [])
     result = service.list_items(
         project_id,
-        page=int(request.args.get("page", 1)),
-        page_size=int(request.args.get("page_size", settings.PAGE_SIZE)),
+        page=arg_int("page", 1, minimum=1),
+        page_size=arg_int("page_size", settings.PAGE_SIZE,
+                          minimum=1, maximum=settings.PAGE_SIZE_MAX),
         sort=request.args.get("sort"),
         filters=parsed_filters,
         combinator=request.args.get("combinator", "and"),
@@ -816,10 +815,30 @@ def create_export(project_id):
 @login_required
 def audit_logs(project_id):
     _project_and_role(project_id, "audit.view")
+    date_from = arg_date("date_from")
+    date_to = arg_date("date_to", end_of_day=True)
+    if date_from and date_to and date_from > date_to:
+        return err("VALIDATION_ERROR", "date_from 不能晚于 date_to", status=400)
     result = service.list_audit(
-        project_id, page=int(request.args.get("page", 1)),
-        page_size=int(request.args.get("page_size", settings.PAGE_SIZE)))
+        project_id, page=arg_int("page", 1, minimum=1),
+        page_size=arg_int("page_size", settings.PAGE_SIZE,
+                          minimum=1, maximum=settings.PAGE_SIZE_MAX),
+        actor_id=arg_int("actor_id", None, minimum=1),
+        action=arg_str("action", max_length=48),
+        object_type=arg_str("object_type", max_length=32),
+        result=arg_str("result", allowed=service.AUDIT_RESULTS),
+        date_from=date_from, date_to=date_to,
+        q=arg_str("q", max_length=128))
     return ok(result)
+
+
+@bp.get("/projects/<int:project_id>/audit-logs/actions")
+@login_required
+def audit_log_actions(project_id):
+    """Distinct actions and actors, so the filter dropdowns reflect real data."""
+    _project_and_role(project_id, "audit.view")
+    return ok({"actions": service.audit_actions(project_id),
+               "actors": service.audit_actors(project_id)})
 
 @bp.get("/projects/<int:project_id>/members")
 @login_required

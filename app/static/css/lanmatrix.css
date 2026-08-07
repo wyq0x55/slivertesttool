@@ -25,13 +25,15 @@
 }
 .lm-card label.lm-inline input { width: auto; margin-right: 6px; }
 
-/* .btn / .lm-input / .lm-muted / .lm-err / .lm-badge / .lm-status-* / .lm-table
+/* .btn / .lm-input / .lm-muted / .lm-err / .lm-table
    used to be defined here as well. They are now owned solely by design-system.css
    (PART 16 + PART 16b), which loads after this file and already overrode every one
    of them. The copies removed here were not just dead — they encoded a botched
    token remap that painted neutral borders and secondary text in the BRAND colour
    (`.lm-muted{color:var(--brand)}`), gave `.lm-table` invisible `var(--surface)`
-   borders, and defined no-op hovers. Do not re-add them here. */
+   borders, and defined no-op hovers. Do not re-add them here. The badge pair
+   (lm-badge / lm-status-*) went further and was retired outright in Phase 8;
+   the surviving vocabulary is .pill / .st-* (design-system.css PART 4). */
 .lm-inline-note { font-size: 12px; color: var(--text-3); }
 
 /* Login */
@@ -149,7 +151,7 @@ footer:has(> .lm-univer-footerpager) > section {
 /* Shrink the adopted controls to fit the slim tab row. */
 .lm-univer-tbslot .btn { padding: 3px 10px; font-size: 12px; line-height: 1.4; }
 .lm-univer-tbslot #lm-proj-title { font-size: 13px; }
-.lm-univer-tbslot .lm-badge { font-size: 11px; padding: 1px 6px; }
+.lm-univer-tbslot .pill { font-size: 11px; padding: 1px 6px; }
 .lm-univer-tbslot .lm-muted { font-size: 12px; }
 
 /* Compact テスト区分 control: ◀ [区分] ▶ (crosshair-toolbar style). Prev/next are
@@ -442,7 +444,7 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
 
 /* --- Database management console (system_admin, v2.10.0) -------------- */
 .lm-dbadmin { display: flex; flex-direction: column; height: 100%; }
-.lm-badge-admin { background: var(--warn-soft); color: var(--warn); }
+/* .lm-badge-admin lives in design-system.css (it is a token pill variant). */
 .lm-db-body { flex: 1; overflow: auto; padding: 16px; display: grid;
   grid-template-columns: minmax(320px, 420px) 1fr; gap: 18px; align-items: start; }
 .lm-db-body h3 { margin: 4px 0 8px; font-size: 15px; }
@@ -539,15 +541,9 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
 .lm-row-actions { white-space: nowrap; }
 .lm-row-actions .btn { margin: 0 2px; }
 
-/* Task-status badges (execution lifecycle). */
-.lm-status-queued { background: var(--surface); color: var(--brand); }
-.lm-status-running { background: var(--brand-soft); color: var(--brand); }
-.lm-status-passed { background: var(--ok-soft); color: var(--ok); }
-.lm-status-failed { background: var(--danger-soft); color: var(--danger); }
-/* Execution/judge error is distinct from a genuine test failure. */
-.lm-status-error { background: var(--warn-soft); color: var(--warn); }
-.lm-status-cancelled { background: var(--surface-2); color: var(--text-2); }
-.lm-status-notask { background: var(--surface); color: var(--brand); }
+/* Task-status badges retired -> `.st-*` in design-system.css. This block was
+   already dead: design-system.css loads later at equal specificity, so these
+   colours never reached the screen. */
 .lm-cell-time code { font-size: 12px; color: var(--text-2); white-space: nowrap; }
 
 /* Console tabs. */
@@ -563,16 +559,26 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
   gap: 8px 12px; padding: 10px 12px; }
 .lm-filters, .lm-batch-actions { display: flex; flex-wrap: wrap;
   align-items: center; gap: 8px; }
-.lm-filters select, .lm-filters input[type="text"] {
+/* Matches every text-ish input, not just [type=text]: the audit filter bar uses
+   search/number/date, which the old selector skipped, leaving them unstyled. */
+.lm-filters select, .lm-filters input:not([type="checkbox"]):not([type="radio"]) {
   height: 30px; padding: 2px 8px; font-size: 13px; border: 1px solid var(--border);
-  border-radius: 6px; background: var(--surface); }
-.lm-filters input[type="text"] { width: 150px; }
+  border-radius: 6px; background: var(--surface); color: var(--text); }
+.lm-filters input:not([type="checkbox"]):not([type="radio"]) { width: 150px; }
+.lm-filters input[type="number"] { width: 100px; }
+.lm-filters input[type="date"] { width: 140px; }
 .lm-filters select { max-width: 140px; }
+/* Label-above-control grouping used by the audit filter bar. */
+.lm-filter { display: flex; flex-direction: column; gap: 3px; }
+.lm-filter > label { font-size: 12px; color: var(--text-muted, #6b7280); }
+.lm-filter-actions { flex-direction: row; align-items: flex-end; gap: 8px; }
+.lm-more-wrap { display: flex; justify-content: center; padding: 12px 0; }
 .lm-toolbar-sep { flex: 1 1 auto; min-width: 0; }
 .lm-batch-actions { justify-content: flex-end; }
 @media (max-width: 720px) {
   .lm-toolbar-sep { flex-basis: 100%; height: 0; }
-  .lm-filters input[type="text"] { width: 100%; }
+  .lm-filters input:not([type="checkbox"]):not([type="radio"]) { width: 100%; }
+  .lm-filter { flex: 1 1 140px; }
 }
 
 /* Upload dialog is wider than the default modal and scrolls internally. */

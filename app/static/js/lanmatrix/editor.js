@@ -327,8 +327,7 @@
     const p = data.project;
     document.getElementById("lm-proj-title").textContent = `${p.code} · ${p.name}`;
     const st = document.getElementById("lm-proj-status");
-    st.textContent = p.status;
-    st.className = "lm-badge lm-status-" + p.status;
+    LMPill.apply(st, p.status, LMPill.PROJECT_ZH[p.status]);
   }
 
   async function loadFields() {
@@ -1547,7 +1546,7 @@
       cls = "lm-collab-off";
     }
     el.textContent = text;
-    el.className = "lm-badge lm-collab-badge " + cls;
+    el.className = "pill lm-collab-badge " + cls;
     el.hidden = false;
   }
   function setCollabStatus(text) {

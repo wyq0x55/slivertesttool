@@ -149,12 +149,8 @@
 
   // --- task list ----------------------------------------------------------- //
   const FINAL = ["passed", "failed", "cancelled"];
-  const STATUS_ZH = { queued: "排队中", running: "运行中", passed: "通过",
-    failed: "失败", error: "异常", cancelled: "已取消", notask: "—" };
-  function pill(cls, label, tip) {
-    const c = cls || "notask";
-    return `<span class="pill st-${esc(c)}" title="${esc(tip || label)}"><span class="dot"></span>${esc(label)}</span>`;
-  }
+  const STATUS_ZH = LMPill.TASK_ZH;
+  const pill = LMPill.html;
   function statusBadge(s) { return pill(s, STATUS_ZH[s] || s); }
 
   // Merge the execution ``status`` and the judge ``result`` (verdict) into a
