@@ -946,3 +946,64 @@ textarea.lmui-input{ resize:vertical; min-height:76px; }
   .lmui-foot{ flex-direction:column-reverse; }
   .lmui-foot .btn{ width:100%; justify-content:center; }
 }
+
+/* =======================================================================
+   PART 17 · WORKSPACE (工作台 — see templates/lanmatrix/home.html)
+   The cross-project landing page. Everything here is scoped under .lm-home
+   or a lm-/kpi- prefix so it cannot leak into the per-project pages.
+   ======================================================================= */
+
+/* KPI band. Tiles are <button>s because they act as filters for the task list
+   below; the one non-actionable tile (可见项目) is disabled rather than rendered
+   as a <div>, so the row keeps one consistent box model. */
+.lm-kpi{ display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+  gap:12px; margin-bottom:26px; }
+.kpi-tile{ display:flex; flex-direction:column; align-items:flex-start; gap:6px;
+  padding:14px 16px; text-align:left; font:inherit; cursor:pointer;
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+  transition:border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease); }
+.kpi-tile:hover:not(:disabled){ border-color:var(--border-strong); box-shadow:var(--shadow-sm); }
+.kpi-tile:disabled{ cursor:default; }
+.kpi-tile .k{ font-size:12px; color:var(--text-3); }
+.kpi-tile .v{ font-size:24px; font-weight:650; letter-spacing:-0.02em; line-height:1;
+  font-variant-numeric:tabular-nums; color:var(--text); }
+.kpi-tile .v.ok{ color:var(--ok); }
+.kpi-tile .v.bad{ color:var(--danger); }
+.kpi-tile .v.run{ color:var(--run); }
+.kpi-tile .v.brand{ color:var(--brand); }
+/* Selected tile mirrors the segmented control's active state, so "this filter
+   is on" looks the same wherever the user turned it on. */
+.kpi-tile.on{ border-color:var(--brand); box-shadow:inset 0 0 0 1px var(--brand); }
+
+/* Section heading — lighter than .page-head, for stacked sections on one page. */
+.lm-sec-head{ display:flex; align-items:center; justify-content:space-between;
+  gap:12px; margin:0 0 14px; }
+.lm-sec-head h2{ font-size:15.5px; font-weight:600; letter-spacing:-0.015em; }
+
+/* Checkbox that sits inline in a .toolbar next to inputs and buttons. */
+.lm-check-inline{ display:inline-flex; align-items:center; gap:7px; font-size:13px;
+  color:var(--text-2); white-space:nowrap; cursor:pointer; }
+.lm-check-inline input{ margin:0; }
+
+/* Compact project tile for the 我的项目 strip. Denser than the full .card on the
+   projects page: this is a jump-off point, not the management surface. */
+.lm-home .grid{ grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:14px; }
+.proj-mini{ position:relative; display:block; padding:14px 16px; color:inherit;
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+  transition:border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease); }
+.proj-mini:hover{ border-color:var(--border-strong); box-shadow:var(--shadow-sm); }
+.proj-mini .pm-top{ display:flex; align-items:center; gap:8px; margin-bottom:4px; }
+.proj-mini .pm-code{ font-size:11.5px; font-weight:600; color:var(--text-3);
+  font-variant-numeric:tabular-nums; }
+.proj-mini h3{ font-size:14px; font-weight:600; letter-spacing:-0.01em;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.proj-mini .pm-nums{ display:flex; gap:14px; margin-top:12px; font-size:12px;
+  color:var(--text-3); font-variant-numeric:tabular-nums; }
+.proj-mini .pm-nums b{ font-weight:600; color:var(--text-2); }
+.proj-mini .pm-nums .ok b{ color:var(--ok); }
+.proj-mini .pm-nums .bad b{ color:var(--danger); }
+.proj-mini .pm-nums .run b{ color:var(--run); }
+
+/* Project column in the cross-project task table. */
+.lm-home .dt .proj-cell{ display:inline-flex; align-items:center; gap:6px;
+  font-size:12px; font-weight:600; color:var(--text-2); }

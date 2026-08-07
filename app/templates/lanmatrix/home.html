@@ -1,0 +1,127 @@
+{% extends "lanmatrix/base_lm.html" %}
+{% block title %}工作台{% endblock %}
+{% block crumb %}<b>工作台</b>{% endblock %}
+{% block content %}
+<div class="content lm-home">
+  <div class="page-head">
+    <div class="ttl">
+      <h1>工作台</h1>
+      <p>跨项目查看正在运行和需要处理的测试任务</p>
+    </div>
+    <div class="head-actions">
+      <button class="btn" id="lm-home-refresh" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/></svg>
+        刷新
+      </button>
+      <a class="btn primary" href="{{ url_for('lanmatrix_pages.projects') }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        全部项目
+      </a>
+    </div>
+  </div>
+
+  {# KPI tiles double as filters: clicking 运行中 filters the list below rather
+     than dead-ending on a number the user then has to go hunt down. #}
+  <div class="lm-kpi" id="lm-kpi" role="group" aria-label="任务概览">
+    <button class="kpi-tile" type="button" data-kpi="projects" disabled>
+      <span class="k">可见项目</span><span class="v" data-v="projects">–</span>
+    </button>
+    <button class="kpi-tile" type="button" data-kpi="mine_open" data-filter="mine">
+      <span class="k">我的进行中</span><span class="v brand" data-v="mine_open">–</span>
+    </button>
+    <button class="kpi-tile" type="button" data-kpi="running" data-filter="running">
+      <span class="k">运行中</span><span class="v run" data-v="running">–</span>
+    </button>
+    <button class="kpi-tile" type="button" data-kpi="queued" data-filter="queued">
+      <span class="k">排队中</span><span class="v" data-v="queued">–</span>
+    </button>
+    <button class="kpi-tile" type="button" data-kpi="failed" data-filter="failed">
+      <span class="k">失败</span><span class="v bad" data-v="failed">–</span>
+    </button>
+    <button class="kpi-tile" type="button" data-kpi="passed" data-filter="passed">
+      <span class="k">通过</span><span class="v ok" data-v="passed">–</span>
+    </button>
+  </div>
+
+  <div id="lm-home-err" class="state err" hidden>
+    <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></span>
+    <h3>加载失败</h3>
+    <p id="lm-home-err-msg">请稍后重试。</p>
+    <button class="btn" id="lm-home-retry" type="button">重试</button>
+  </div>
+
+  <div id="lm-home-empty" class="state" hidden>
+    <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span>
+    <h3>你还没有加入任何项目</h3>
+    <p>创建一个项目，或联系项目管理员把你加入成员。</p>
+    <a class="btn primary" href="{{ url_for('lanmatrix_pages.projects') }}">前往项目列表</a>
+  </div>
+
+  <section id="lm-home-body" hidden>
+    <div class="lm-sec-head">
+      <h2>最近任务</h2>
+      <span class="muted" id="lm-home-count"></span>
+    </div>
+
+    <div class="toolbar">
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>
+        <input type="search" id="lm-h-text" placeholder="搜索任务 / test id…" autocomplete="off">
+      </div>
+      <select id="lm-h-project" class="selbox" title="按项目筛选">
+        <option value="">全部项目</option>
+      </select>
+      <input type="hidden" id="lm-h-status" value="">
+      <div class="segmented" id="lm-h-seg" role="tablist" aria-label="按状态筛选">
+        <button type="button" class="on" data-status="">全部</button>
+        <button type="button" data-status="running">运行中</button>
+        <button type="button" data-status="queued">排队中</button>
+        <button type="button" data-status="failed">失败</button>
+        <button type="button" data-status="passed">通过</button>
+      </div>
+      <label class="lm-check-inline">
+        <input type="checkbox" id="lm-h-mine"> 只看我提交的
+      </label>
+    </div>
+
+    <div class="tablecard">
+      <div style="overflow-x:auto">
+        <table class="dt">
+          <thead>
+            <tr>
+              <th>项目</th>
+              <th>任务</th>
+              <th>test id</th>
+              <th>提交者</th>
+              <th>状态 / 结果</th>
+              <th>完成时间</th>
+              <th style="width:1%"></th>
+            </tr>
+          </thead>
+          <tbody id="lm-h-rows">
+            <tr><td colspan="7" class="muted">加载中…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <p class="muted" id="lm-h-more" hidden style="margin-top:10px">
+      结果较多，仅显示最近的部分任务。请用搜索或筛选缩小范围。
+    </p>
+
+    <div class="state" id="lm-h-empty" hidden style="margin-top:16px">
+      <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></span>
+      <h3>没有符合条件的任务</h3>
+      <p>调整筛选条件，或前往项目上传新的测试任务。</p>
+    </div>
+
+    <div class="lm-sec-head" style="margin-top:34px">
+      <h2>我的项目</h2>
+      <a class="btn ghost small" href="{{ url_for('lanmatrix_pages.projects') }}">查看全部</a>
+    </div>
+    <div class="grid" id="lm-h-projects"></div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/lanmatrix/home.js') }}"></script>
+{% endblock %}

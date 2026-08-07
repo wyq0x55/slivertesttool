@@ -7,7 +7,7 @@ out-tsc
 *.tsbuildinfo
 .expo
 .expo-shared
-
+_review
 # dependencies
 node_modules
 instance

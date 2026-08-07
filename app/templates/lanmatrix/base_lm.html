@@ -37,6 +37,10 @@
       </a>
       <nav class="nav">
         <div class="nav-cap">工作区</div>
+        <a href="{{ url_for('lanmatrix_pages.workspace') }}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.8V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.8"/><path d="M9.5 21v-6h5v6"/></svg>
+          <span>工作台</span>
+        </a>
         <a href="{{ url_for('lanmatrix_pages.projects') }}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
           <span>项目</span>
@@ -124,7 +128,8 @@
       urls: {
         login: "{{ url_for('lanmatrix_pages.login') }}",
         register: "{{ url_for('lanmatrix_pages.register') }}",
-        projects: "{{ url_for('lanmatrix_pages.projects') }}"
+        projects: "{{ url_for('lanmatrix_pages.projects') }}",
+        home: "{{ url_for('lanmatrix_pages.workspace') }}"
       }
     };
   </script>

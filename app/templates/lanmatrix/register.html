@@ -71,7 +71,7 @@ document.getElementById('lm-register-form').addEventListener('submit', async (e)
       e.target.querySelector('button[type=submit]').disabled = true;
       return;
     }
-    window.location = LM.urls.projects;
+    window.location = LM.urls.home || LM.urls.projects;
   } catch (ex) {
     err.textContent = ex.message || '注册失败';
     err.hidden = false;

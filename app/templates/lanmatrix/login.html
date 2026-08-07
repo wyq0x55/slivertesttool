@@ -49,7 +49,9 @@ document.getElementById('lm-login-form').addEventListener('submit', async (e) =>
     const params = new URLSearchParams(window.location.search);
     let next = params.get('next');
     if (!next || !next.startsWith('/') || next.startsWith('//') || next.indexOf('/lanmatrix/login') === 0) {
-      next = LM.urls.projects;
+      // Land on the cross-project workspace, not the project list: the first
+      // question after logging in is "what needs me", not "what exists".
+      next = LM.urls.home || LM.urls.projects;
     }
     window.location = next;
   } catch (ex) {

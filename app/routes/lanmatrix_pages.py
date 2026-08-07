@@ -61,7 +61,22 @@ def logout():
 def home():
     if _current_user() is None:
         return redirect(url_for("lanmatrix_pages.login"))
-    return redirect(url_for("lanmatrix_pages.projects"))
+    return redirect(url_for("lanmatrix_pages.workspace"))
+
+
+@pages_bp.get("/home")
+def workspace():
+    """Cross-project workspace — the post-login landing page.
+
+    Previously login dropped straight into the project *list*, which answers
+    "what projects exist" but not "what needs my attention", so the user had to
+    pick a project and drill in before seeing anything actionable. This page
+    aggregates across every project the user can see.
+    """
+    user = _current_user()
+    if user is None:
+        return redirect(url_for("lanmatrix_pages.login"))
+    return render_template("lanmatrix/home.html", user=user.to_dict())
 
 
 @pages_bp.get("/admin/db")

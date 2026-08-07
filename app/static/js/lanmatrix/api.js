@@ -73,6 +73,12 @@
       return data.user;
     },
 
+    // --- workspace (cross-project) ---------------------------------------
+    // Scoped server-side to the projects the caller can already see; the
+    // client never sends a project list of its own.
+    meOverview() { return request("GET", "/me/overview"); },
+    meTasks(params) { return request("GET", "/me/tasks", { query: params }); },
+
     listProjects() { return request("GET", "/projects"); },
     createProject(payload) { return request("POST", "/projects", { body: payload }); },
     getProject(id) { return request("GET", `/projects/${id}`); },
