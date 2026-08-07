@@ -14,42 +14,25 @@
 .lm-has-side .lm-main { flex: 1; min-width: 0; }
 
 .lm-page { max-width: 1180px; margin: 24px auto; padding: 0 16px; }
-.lm-page-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-.lm-page-head h1 { font-size: 22px; margin: 0; }
-
-.lm-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; box-shadow: 0 2px 8px rgba(20,40,80,.06); }
+/* .lm-page-head and the .lm-card box itself are owned by design-system.css
+   (PART 15 / 15b). Only .lm-card's INNER form layout stays here. */
 .lm-card label { display: block; margin: 10px 0; font-size: 14px; font-weight: 600; }
 .lm-card label.lm-inline { font-weight: 500; }
 .lm-card input[type=text], .lm-card input[type=password], .lm-card input:not([type]),
 .lm-card input[type=search], .lm-card select, .lm-card textarea {
-  width: 100%; padding: 8px 10px; margin-top: 4px; border: 1px solid var(--brand);
+  width: 100%; padding: 8px 10px; margin-top: 4px; border: 1px solid var(--border-strong);
   border-radius: 6px; font: inherit; box-sizing: border-box;
 }
 .lm-card label.lm-inline input { width: auto; margin-right: 6px; }
 
-.lm-btn { display: inline-block; padding: 7px 14px; border: 1px solid var(--brand); background: var(--surface);
-  border-radius: 6px; cursor: pointer; font: inherit; color: var(--text); text-decoration: none; }
-.lm-btn:hover { background: var(--surface); }
-.lm-btn-primary { background: var(--brand); border-color: var(--brand); color: var(--surface); }
-.lm-btn-primary:hover { background: var(--brand); }
-.lm-btn-sm { padding: 3px 8px; font-size: 12px; }
-.lm-btn:disabled { opacity: .5; cursor: not-allowed; }
-.lm-input { padding: 7px 10px; border: 1px solid var(--brand); border-radius: 6px; font: inherit; }
-
-.lm-muted { color: var(--brand); }
-.lm-err, .lm-error { color: var(--danger); }
-.lm-error { margin-top: 8px; font-size: 13px; }
-.lm-req { color: var(--danger); margin-left: 2px; }
-
-.lm-badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; background: var(--surface); }
-.lm-status-draft { background: var(--surface); }
-.lm-status-active { background: var(--ok-soft); color: var(--ok); }
-.lm-status-frozen { background: var(--warn-soft); color: var(--warn); }
-.lm-status-archived { background: var(--surface-2); color: var(--text-2); }
-
-.lm-table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.lm-table th, .lm-table td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--surface); font-size: 14px; }
-.lm-table thead th { background: var(--surface); font-weight: 600; }
+/* .lm-btn / .lm-input / .lm-muted / .lm-err / .lm-badge / .lm-status-* / .lm-table
+   used to be defined here as well. They are now owned solely by design-system.css
+   (PART 15 + PART 15b), which loads after this file and already overrode every one
+   of them. The copies removed here were not just dead — they encoded a botched
+   token remap that painted neutral borders and secondary text in the BRAND colour
+   (`.lm-muted{color:var(--brand)}`), gave `.lm-table` invisible `var(--surface)`
+   borders, and defined no-op hovers. Do not re-add them here. */
+.lm-inline-note { font-size: 12px; color: var(--text-3); }
 
 /* Login */
 .lm-login-wrap { display: flex; justify-content: center; align-items: center; min-height: 70vh; }
@@ -264,7 +247,7 @@ select.lm-cell-control[multiple] { min-height: 46px; }
 /* --- Row operations toolbar + context menu (v2.9.0) ------------------- */
 .lm-toolbar-rowops { padding: 6px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
 .lm-toolbar-rowops .lm-hint { font-size: 12px; }
-.lm-btn[disabled] { opacity: .5; cursor: not-allowed; }
+/* .lm-btn[disabled] now lives with the rest of .lm-btn in design-system.css. */
 #lm-sel-info { margin-left: 6px; font-weight: 600; color: var(--brand); }
 
 .lm-ctxmenu { position: fixed; z-index: 1000; margin: 0; padding: 4px 0; list-style: none;
@@ -326,12 +309,12 @@ body.lm-refpanel-resizing { cursor: col-resize; user-select: none; }
   border-radius: 8px; background: var(--surface); }
 .lm-refpanel-tabbar { display: flex; align-items: center; gap: 6px; padding: 6px;
   border-bottom: 1px solid var(--border); background: var(--surface); }
-.lm-refpanel-tab { padding: 5px 10px; color: var(--text-2); border: 1px solid var(--brand); border-radius: 6px;
+.lm-refpanel-tab { padding: 5px 10px; color: var(--text-2); border: 1px solid var(--border-strong); border-radius: 6px;
   background: var(--surface); cursor: pointer; font: inherit; font-size: 12px; }
 .lm-refpanel-tab.is-on { background: var(--brand); color: #fff; border-color: var(--brand); }
 .lm-refpanel-sp { flex: 1; }
 .lm-refpanel-collapse { width: 26px; height: 26px; line-height: 1; color: var(--text-2);
-  border: 1px solid var(--brand); border-radius: 6px; background: var(--surface); cursor: pointer;
+  border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); cursor: pointer;
   font: inherit; font-size: 12px; }
 .lm-refpanel-collapse:hover { background: var(--brand-soft); border-color: var(--brand); }
 .lm-refpanel-panes { flex: 1; min-height: 0; display: flex; }
@@ -383,7 +366,7 @@ body.lm-refpanel-resizing { cursor: col-resize; user-select: none; }
 .lm-ref-panel[hidden] { display: none; }
 .lm-ref-head { padding: 8px; border-bottom: 1px solid var(--border); }
 .lm-ref-tabs { display: flex; gap: 6px; margin-bottom: 6px; }
-.lm-ref-tab { flex: 1; color: var(--text-2); padding: 5px 8px; border: 1px solid var(--brand);
+.lm-ref-tab { flex: 1; color: var(--text-2); padding: 5px 8px; border: 1px solid var(--border-strong);
   border-radius: 6px; background: var(--surface); cursor: pointer; font: inherit;
   font-size: 12px; }
 .lm-ref-tab.is-on { background: var(--brand); color: #fff; border-color: var(--brand); }
@@ -394,7 +377,7 @@ body.lm-refpanel-resizing { cursor: col-resize; user-select: none; }
 .lm-ref-addbtn { flex: 0 0 auto; }
 .lm-ref-addbtn.is-on { background: var(--brand); color: #fff; border-color: var(--brand); }
 .lm-ref-add { display: flex; flex-direction: column; gap: 5px; margin-top: 6px;
-  padding: 8px; border: 1px solid var(--brand); border-radius: 4px; background: var(--brand-soft); }
+  padding: 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--brand-soft); }
 .lm-ref-add[hidden] { display: none; }
 .lm-ref-addrow { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .lm-ref-addrow > span { flex: 0 0 56px; color: var(--text-2); }

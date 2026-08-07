@@ -103,7 +103,14 @@
     err.hidden = true;
     if (!sql) { err.textContent = "请输入 SQL 语句"; err.hidden = false; return; }
     const readOnly = document.getElementById("lm-db-readonly").checked;
-    if (!readOnly && !confirm("写模式将直接提交到数据库，确定执行？")) return;
+    // Raw SQL against production in write mode: no undo, no scope limit.
+    if (!readOnly && !(await LMUI.confirm({
+      level: "critical",
+      title: "以写模式执行 SQL",
+      body: "语句将直接提交到数据库，可能影响任意数据且无法回滚。请确认语句无误。",
+      requireText: "WRITE",
+      confirmText: "执行并提交",
+    }))) return;
     running = true;
     const btn = document.getElementById("lm-db-run");
     btn.disabled = true;
@@ -134,16 +141,31 @@
   });
 
   // --- Tabs ------------------------------------------------------------- #
-  document.querySelectorAll(".lm-db-tab").forEach((tab) => {
-    tab.addEventListener("click", () => {
-      document.querySelectorAll(".lm-db-tab").forEach((t) => t.classList.remove("is-active"));
-      tab.classList.add("is-active");
-      const which = tab.dataset.tab;
-      document.querySelectorAll(".lm-db-pane").forEach((p) => {
-        p.hidden = p.dataset.pane !== which;
-      });
+  // Mirrors the 管理台 pattern: active pane lives in `?tab=`, so the SQL console
+  // is directly linkable and Back returns to 数据表 instead of leaving the page.
+  const DB_TABS = ["tables", "sql"];
+  const DB_DEFAULT_TAB = DB_TABS[0];
+
+  function activateDbTab(which, opts) {
+    if (!DB_TABS.includes(which)) which = DB_DEFAULT_TAB;
+    document.querySelectorAll(".lm-db-tab").forEach((t) =>
+      t.classList.toggle("is-active", t.dataset.tab === which));
+    document.querySelectorAll(".lm-db-pane").forEach((p) => {
+      p.hidden = p.dataset.pane !== which;
     });
+    if (opts && opts.push && window.LMUrl) {
+      LMUrl.set({ tab: which === DB_DEFAULT_TAB ? null : which });
+    }
+  }
+
+  document.querySelectorAll(".lm-db-tab").forEach((tab) => {
+    tab.addEventListener("click", () => activateDbTab(tab.dataset.tab, { push: true }));
   });
+
+  if (window.LMUrl) {
+    activateDbTab(LMUrl.get("tab", DB_DEFAULT_TAB));
+    LMUrl.onPop((q) => activateDbTab(q.tab || DB_DEFAULT_TAB));
+  }
 
   // --- Table browser + no-SQL CRUD -------------------------------------- #
   let currentTable = null;
@@ -365,7 +387,12 @@
   });
 
   async function deleteRow(pk) {
-    if (!confirm("确定删除该行？此操作不可撤销。")) return;
+    if (!(await LMUI.confirm({
+      level: "danger",
+      title: "删除该行",
+      body: "将从数据库中直接删除这一行，此操作不可撤销。",
+      confirmText: "删除",
+    }))) return;
     try {
       await LMApi.dbDeleteRow(currentTable, pk);
       toast("已删除", true);

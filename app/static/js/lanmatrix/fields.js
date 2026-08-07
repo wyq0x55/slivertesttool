@@ -178,7 +178,14 @@
       b.addEventListener("click", async () => {
         const id = Number(b.closest("tr").dataset.id);
         const f = byId[id];
-        if (!confirm(`确定删除字段「${f.display_name || f.field_key}」？该字段在所有测试项中的数据将被清除。`)) return;
+        // Schema-level change: wipes a column across every test item.
+        if (!(await LMUI.confirm({
+          level: "critical",
+          title: `删除字段「${f.display_name || f.field_key}」`,
+          body: "该字段在所有测试项中的数据将被永久清除，且无法恢复。",
+          requireText: f.field_key,
+          confirmText: "永久删除字段",
+        }))) return;
         try {
           await LMApi.deleteField(pid, id);
           await load();

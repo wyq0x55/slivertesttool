@@ -70,6 +70,10 @@
   const state = {
     pid: null, name: null, editor: null, baseVersion: "",
     filename: "", dirty: false, historyOpen: false,
+    // True while the "discard unsaved changes?" dialog is open. close() is
+    // bound to both the close button and Esc, and Esc still reaches document
+    // while a <dialog> is open, so without this a second prompt would stack.
+    closing: false,
   };
 
   function setStatus(msg, kind) {
@@ -123,8 +127,27 @@
     state.editor.focus();
   }
 
-  function close() {
-    if (state.dirty && !confirm("有未保存的修改，确定关闭？")) { return; }
+  async function close() {
+    // Re-entrancy guard: close() is bound to both the button and the Esc key,
+    // and it now awaits a dialog. Without this, Esc pressed while the "unsaved
+    // changes" prompt is up would stack a second identical prompt.
+    if (state.closing) { return; }
+    if (state.dirty) {
+      state.closing = true;
+      let ok;
+      try {
+        ok = await LMUI.confirm({
+          level: "danger",
+          title: "放弃未保存的修改？",
+          body: "关闭编辑器将丢失当前未保存的内容。",
+          confirmText: "放弃并关闭",
+          cancelText: "继续编辑",
+        });
+      } finally {
+        state.closing = false;
+      }
+      if (!ok) { return; }
+    }
     const modal = $("lm-sbs-modal");
     if (modal) { modal.hidden = true; }
     if (state.editor) { try { state.editor.destroy(); } catch (e) { /* ignore */ } }
@@ -233,7 +256,12 @@
   }
 
   async function restoreRevision(revId) {
-    if (!confirm("确认把 SBS 恢复到历史版本 #" + revId + "？当前内容会先备份并记入历史。")) {
+    if (!(await LMUI.confirm({
+      level: "danger",
+      title: "恢复到历史版本 #" + revId,
+      body: "当前内容会先备份并记入历史，随后被该版本覆盖。",
+      confirmText: "恢复此版本",
+    }))) {
       return;
     }
     try {
@@ -269,8 +297,14 @@
     if (saveBtn) { saveBtn.addEventListener("click", () => save()); }
     const reload = $("lm-sbs-reload");
     if (reload) {
-      reload.addEventListener("click", () => {
-        if (state.dirty && !confirm("重新载入将丢弃未保存的修改，继续？")) { return; }
+      reload.addEventListener("click", async () => {
+        if (state.dirty && !(await LMUI.confirm({
+          level: "danger",
+          title: "重新载入并丢弃修改？",
+          body: "未保存的内容将被服务器上的最新版本覆盖。",
+          confirmText: "丢弃并重载",
+          cancelText: "继续编辑",
+        }))) { return; }
         open(state.pid, state.name);
       });
     }

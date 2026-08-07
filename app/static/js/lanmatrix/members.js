@@ -151,7 +151,12 @@
     } catch (ex) { toast(ex.message, false); load(); }
   }
   async function removeMember(id) {
-    if (!confirm("确定移除该成员？")) return;
+    if (!(await LMUI.confirm({
+      level: "danger",
+      title: "移除该成员",
+      body: "该成员将失去此项目的访问权限，可稍后重新添加。",
+      confirmText: "移除",
+    }))) return;
     try {
       await LMApi.removeMember(pid, id);
       toast("成员已移除", true);

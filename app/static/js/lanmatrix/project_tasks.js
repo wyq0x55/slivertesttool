@@ -187,11 +187,61 @@
       text: txt ? txt.value.trim().toLowerCase() : "",
     };
   }
+  // --- filters/sort <-> URL ------------------------------------------------ //
+  // Filters use replaceState, not pushState: a filter is a refinement of the
+  // current view, and pushing would add one history entry per keystroke, so
+  // Back would walk the user letter-by-letter out of their own search.
+  const DEFAULT_SORT = "task_id";
+  const DEFAULT_DIR = -1;
+  // A <select> cannot hold a value whose <option> does not exist yet, and the
+  // submitter list is built from the task payload. Park the URL value here and
+  // let populateSubmitters() apply it once the options are in the DOM.
+  let pendingSubmitter = "";
+
+  function syncFilterUrl() {
+    if (!window.LMUrl) return;
+    const st = $("lm-f-status"), sub = $("lm-f-submitter"), txt = $("lm-f-text");
+    LMUrl.replace({
+      status: st ? st.value : null,
+      submitter: sub ? sub.value : null,
+      // `q` rather than `text`: shorter, and matches the search convention
+      // used by GitHub/Jira, so the URL stays readable when shared.
+      q: txt ? txt.value.trim() : null,
+      sort: sortKey === DEFAULT_SORT ? null : sortKey,
+      dir: sortDir === DEFAULT_DIR ? null : (sortDir === 1 ? "asc" : "desc"),
+    });
+  }
+
+  function applyUrlFilters() {
+    if (!window.LMUrl) return;
+    const q = LMUrl.all();
+    const st = $("lm-f-status");
+    if (st) st.value = q.status || "";
+    // Keep the segmented control in step with the hidden input it feeds.
+    const segEl = $("lm-f-seg");
+    if (segEl) {
+      segEl.querySelectorAll("button[data-status]").forEach((b) =>
+        b.classList.toggle("on", (b.dataset.status || "") === (q.status || "")));
+    }
+    const txt = $("lm-f-text");
+    if (txt) txt.value = q.q || "";
+    const sub = $("lm-f-submitter");
+    pendingSubmitter = q.submitter || "";
+    if (sub) {
+      // Only sticks if the option already exists; populateSubmitters() retries.
+      sub.value = pendingSubmitter;
+      if (sub.value === pendingSubmitter) pendingSubmitter = "";
+    }
+    sortKey = q.sort || DEFAULT_SORT;
+    sortDir = q.dir === "asc" ? 1 : q.dir === "desc" ? -1 : DEFAULT_DIR;
+  }
+
   // Fill the "全部提交者" dropdown from the loaded tasks, preserving any current pick.
   function populateSubmitters() {
     const sel = $("lm-f-submitter");
     if (!sel) return;
-    const cur = sel.value;
+    const cur = sel.value || pendingSubmitter;
+    pendingSubmitter = "";
     const names = Array.from(new Set(allTasks.map((t) => t.submitter).filter(Boolean))).sort();
     sel.innerHTML = '<option value="">全部提交者</option>' +
       names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("");
@@ -337,7 +387,13 @@
       return t && !FINAL.includes(t.status);
     });
     if (!keys.length) { toast("所选任务没有可取消的运行", false); return; }
-    if (!confirm(`确定取消所选 ${keys.length} 个运行中/排队中的任务？`)) return;
+    if (!(await LMUI.confirm({
+      level: "danger",
+      title: `取消 ${keys.length} 个任务`,
+      body: "所选运行中/排队中的任务将立即停止，已产生的部分结果会保留。",
+      confirmText: "取消任务",
+      cancelText: "返回",
+    }))) return;
     let ok = 0;
     for (const k of keys) {
       try { await LMApi.cancelProjectTask(pid, k); ok++; } catch (ex) { /* keep going */ }
@@ -348,7 +404,13 @@
   async function batchDelete() {
     const keys = selectedKeys();
     if (!keys.length) { toast("请先选择任务", false); return; }
-    if (!confirm(`确定删除所选 ${keys.length} 个任务及其工作区与报告？此操作不可撤销。`)) return;
+    if (!(await LMUI.confirm({
+      level: "critical",
+      title: `删除 ${keys.length} 个任务`,
+      body: "任务及其工作区与报告将一并删除，此操作不可撤销。",
+      requireText: String(keys.length),
+      confirmText: "永久删除",
+    }))) return;
     try {
       const data = await LMApi.deleteProjectTasksBatch(pid, keys);
       const n = (data.results || []).filter((r) => r.result === "deleted").length;
@@ -363,7 +425,12 @@
       return canRetest(t);
     });
     if (!eligible.length) { toast("所选任务均已在队列中，无需重新测试", false); return; }
-    if (!confirm(`确定将所选 ${eligible.length} 个任务重新加入测试队列？（原有结果会被覆盖）`)) return;
+    if (!(await LMUI.confirm({
+      level: "danger",
+      title: `重测 ${eligible.length} 个任务`,
+      body: "任务将重新加入测试队列，原有结果会被覆盖。",
+      confirmText: "重新测试",
+    }))) return;
     try {
       const data = await LMApi.rerunSelectedTasks(pid, eligible);
       const n = (data.created || []).length;
@@ -466,7 +533,12 @@
     catch (ex) { toast(ex.message, false); }
   }
   async function deleteTask(key) {
-    if (!confirm("确定删除该任务及其工作区？")) return;
+    if (!(await LMUI.confirm({
+      level: "danger",
+      title: "删除该任务",
+      body: `任务 ${key} 及其工作区与报告将被删除，此操作不可撤销。`,
+      confirmText: "删除",
+    }))) return;
     try {
       await LMApi.deleteProjectTask(pid, key);
       closeStream(key);
@@ -570,7 +642,11 @@
     }
   }
 
-  async function openDetail(key) {
+  // `push` is false when we are REACTING to history (popstate) or restoring on
+  // first paint — writing to history there would either loop or bury the entry
+  // the user is trying to go back to.
+  async function openDetail(key, opts) {
+    if ((opts || {}).push !== false && window.LMUrl) LMUrl.set({ task: key });
     detailKey = key;
     resetDetailBuffers();
     $("lm-d-log").innerHTML = "";
@@ -901,12 +977,29 @@
     }
   }
 
-  function closeDetail() {
+  function closeDetail(opts) {
     closeDetailStream();
     detailKey = null;
     showDetail(false);
+    if ((opts || {}).push !== false && window.LMUrl) LMUrl.set({ task: null });
   }
-  $("lm-d-close").addEventListener("click", closeDetail);
+  // Deliberately NOT history.back(): if the user landed directly on ?task=…
+  // (the whole point of a shareable link) back() would leave the site entirely.
+  // Pushing the list view instead is always safe.
+  $("lm-d-close").addEventListener("click", () => closeDetail());
+
+  // Back/Forward moves between the list and whichever task was open, and also
+  // restores that entry's filters — history entries carry the whole view, so
+  // reinstating only the task would silently drop the user's search.
+  if (window.LMUrl) {
+    LMUrl.onPop((q) => {
+      applyUrlFilters();
+      renderTasks();
+      const want = q.task || null;
+      if (want && want !== detailKey) openDetail(want, { push: false });
+      else if (!want && detailKey) closeDetail({ push: false });
+    });
+  }
   $("lm-d-refresh-judge").addEventListener("click", loadJudge);
   $("lm-d-failonly").addEventListener("change", renderJudge);
   $("lm-d-cancel").addEventListener("click", async () => {
@@ -988,8 +1081,13 @@
   }
 
   // Filter + sort + batch selection.
+  // renderFromUser = "the user changed something", i.e. also mirror it to the
+  // URL. Internal re-renders (polling, row patches, load) call renderTasks
+  // directly so they never touch history.
+  function renderFromUser() { syncFilterUrl(); renderTasks(); }
+
   ["lm-f-submitter", "lm-f-text"].forEach((id) => {
-    const el = $(id); if (el) el.addEventListener("input", renderTasks);
+    const el = $(id); if (el) el.addEventListener("input", renderFromUser);
   });
   // Segmented status tabs write the (hidden) lm-f-status value read by getFilters.
   const seg = $("lm-f-seg");
@@ -999,7 +1097,7 @@
         seg.querySelectorAll("button").forEach((x) => x.classList.remove("on"));
         b.classList.add("on");
         const st = $("lm-f-status"); if (st) st.value = b.dataset.status || "";
-        renderTasks();
+        renderFromUser();
       });
     });
   }
@@ -1017,11 +1115,22 @@
     th.addEventListener("click", () => {
       const key = th.getAttribute("data-sort");
       if (key === sortKey) sortDir = -sortDir; else { sortKey = key; sortDir = 1; }
-      renderTasks();
+      renderFromUser();
     });
   });
 
   window.addEventListener("beforeunload", () => Object.keys(streams).forEach(closeStream));
 
-  (window.LMReady || Promise.resolve()).then(load);
+  // Read the URL BEFORE the first fetch so load()'s render already reflects the
+  // linked-to filters — no flash of the unfiltered list.
+  applyUrlFilters();
+
+  (window.LMReady || Promise.resolve()).then(async () => {
+    await load();
+    // Detail is self-contained (it fetches its own payload), so it can open as
+    // soon as the list settles. Restoring without pushing keeps the entry the
+    // user actually arrived on at the top of the stack.
+    const deepTask = window.LMUrl ? LMUrl.get("task") : "";
+    if (deepTask) openDetail(deepTask, { push: false });
+  });
 })();

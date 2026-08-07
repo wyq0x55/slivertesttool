@@ -170,12 +170,18 @@
 
   async function onDelete(id, code, name) {
     const label = `${code}${name ? " / " + name : ""}`;
-    if (!window.confirm(
-        `确定要删除项目「${label}」吗？\n\n` +
-        `这将永久删除该项目及其所有关联数据（测试项、字段、评论、` +
-        `任务、审计日志等），且无法恢复。`)) {
-      return;
-    }
+    // Widest blast radius in the product: this cascades to every test item,
+    // field, comment, task and audit record. Require the code to be retyped.
+    const ok = await LMUI.confirm({
+      level: "critical",
+      title: `删除项目「${label}」`,
+      body:
+        "这将永久删除该项目及其所有关联数据（测试项、字段、评论、" +
+        "任务、审计日志等），且无法恢复。",
+      requireText: code,
+      confirmText: "永久删除项目",
+    });
+    if (!ok) return;
     try {
       await LMApi.deleteProject(id);
       toast("项目已删除", true);

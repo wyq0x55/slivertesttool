@@ -380,6 +380,9 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .term .warn, pre.log .warn{ color:#fbbf24; } .term .err, pre.log .err{ color:#f87171; }
 .jline{ padding:2px 6px; border-radius:4px; }
 .jline.fail, .step-fail{ color:#fca5a5; background:rgba(229,72,77,.20); }
+/* appendLog() emits one <span class="step-fail"> per line inside <pre class="term">,
+   so make the whole failing line read as a block-level highlight. */
+.term .step-fail, pre.log .step-fail{ display:block; font-weight:700; }
 .jline.pass, .step-pass{ color:#86efac; }
 .judge-hint{ font-size:12px; color:var(--text-3); margin:2px 0 12px; }
 
@@ -731,19 +734,23 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
    Make it flex to fill the remaining height under the topbar instead. */
 .main .lm-editor{ height:auto; min-height:0; flex:1 1 auto; }
 .lm-card{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
-  box-shadow:var(--shadow-sm); }
+  box-shadow:var(--shadow-sm); padding:20px; }
 .lm-btn{ display:inline-flex; align-items:center; gap:7px; border:1px solid var(--border-strong);
   background:var(--surface); color:var(--text); border-radius:var(--radius-sm); font-weight:550; padding:7px 14px;
+  font-family:inherit; font-size:13.5px; line-height:1.4; cursor:pointer; text-decoration:none;
   transition:background var(--dur) var(--ease), border-color var(--dur) var(--ease), transform var(--dur) var(--ease), color var(--dur) var(--ease); }
-.lm-btn:hover{ background:var(--surface-2); border-color:var(--n-400); }
+.lm-btn:hover{ background:var(--surface-2); border-color:var(--n-400); text-decoration:none; }
 .lm-btn:active{ transform:scale(.98); }
+.lm-btn:disabled,.lm-btn[disabled]{ opacity:.5; cursor:not-allowed; }
+.lm-btn:disabled:hover,.lm-btn[disabled]:hover{ background:var(--surface); border-color:var(--border-strong); }
 .lm-btn-primary{ background:var(--brand); border-color:var(--brand); color:#fff; }
 .lm-btn-primary:hover{ background:var(--brand-hover); border-color:var(--brand-hover); }
 .lm-btn-danger{ color:var(--danger); }
 .lm-btn-danger:hover{ background:var(--danger-soft); border-color:var(--danger); }
 .lm-btn-sm{ padding:4px 10px; font-size:12.5px; }
-.lm-table{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+.lm-table{ width:100%; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
   border-collapse:separate; border-spacing:0; overflow:hidden; }
+.lm-table th{ text-align:left; }
 .lm-table thead th{ background:var(--surface-2); color:var(--text-3); font-size:11.5px; font-weight:600;
   letter-spacing:.03em; text-transform:uppercase; border-bottom:1px solid var(--border); padding:11px 12px; }
 .lm-table th,.lm-table td{ border-bottom:1px solid var(--border); padding:11px 12px; font-size:13.5px; }
@@ -787,6 +794,24 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
 .lm-kubun-arrow:last-child{ border-left-color:var(--border); }
 .lm-kubun-arrow:hover:not(:disabled){ background:var(--surface-2); color:var(--text); }
 .lm-kubun-cur{ color:var(--text); }
+
+/* ----- PART 15b · VOCABULARY ALIASES ----------------------------------
+   The codebase carries two parallel class dialects for the same component
+   (`lm-btn`/`btn`, `lm-muted`/`muted`, `lm-error`/`login-err`, `lm-page-head`/
+   `page-head`). Until the markup is migrated onto one dialect, pair every
+   alias with its canonical selector here so the two ALWAYS render identically
+   and no page can drift. Add new markup using the canonical (non-`lm-`) name.
+   NOTE: keep these grouped — splitting them re-opens the drift this fixes. */
+.lm-err,.lm-error,.login-err{ color:var(--danger); font-size:13px; }
+.lm-error,.login-err{ margin-top:8px; }
+.lm-req{ color:var(--danger); margin-left:2px; }
+.lm-page-head,.page-head{ display:flex; align-items:flex-end; justify-content:space-between;
+  gap:24px; margin-bottom:24px; }
+.lm-page-head h1,.page-head h1{ font-size:23px; margin:0; }
+.lm-btn-sm,.lm-btn.small{ padding:4px 10px; font-size:12.5px; }
+.lm-input{ padding:7px 10px; border:1px solid var(--border-strong); border-radius:var(--radius-sm);
+  background:var(--surface); color:var(--text); font:inherit; }
+.lm-input:focus-visible{ outline:2px solid var(--brand-ring); outline-offset:1px; border-color:var(--brand); }
 
 /* ===== PART 12 · DB ADMIN (PostgreSQL 管理) ============================
    The DB-admin page ships legacy hard-coded light colors in lanmatrix.css.
@@ -864,3 +889,60 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
   box-shadow:0 0 0 3px var(--brand-ring); }
 .lm-db-row-form .lm-db-field:disabled{ background:var(--surface-2); color:var(--text-3); }
 .lm-db-field-label em{ color:var(--text-3); }
+
+
+/* =====================================================================
+   PART 16 · LMUI MODALS  (confirm / prompt / alert — see js/lanmatrix/ui.js)
+   ---------------------------------------------------------------------
+   Replaces the native confirm()/prompt() boxes. The whole point of this
+   component is that DESTRUCTION MUST LOOK DESTRUCTIVE, so the level
+   modifiers below are load-bearing, not decoration:
+     .lmui--normal    neutral, brand-coloured primary button
+     .lmui--danger    warning icon + solid red action button
+     .lmui--critical  same, plus a type-to-confirm field in the markup
+   ===================================================================== */
+.lmui{
+  border:1px solid var(--border); border-radius:var(--radius-lg);
+  background:var(--surface); color:var(--text);
+  box-shadow:var(--shadow-lg); padding:0;
+  width:min(440px, calc(100vw - 32px)); max-height:calc(100vh - 64px);
+}
+.lmui::backdrop{ background:rgba(16,18,24,.45); backdrop-filter:blur(2px); }
+:root[data-theme="dark"] .lmui::backdrop{ background:rgba(0,0,0,.62); }
+
+.lmui-form{ display:flex; flex-direction:column; gap:12px; padding:20px; margin:0; }
+.lmui-head{ display:flex; align-items:flex-start; gap:10px; }
+.lmui-title{ margin:0; font-size:16px; font-weight:650; line-height:1.4; color:var(--text); }
+.lmui-body{ margin:0; font-size:13px; line-height:1.65; color:var(--text-2); }
+
+/* Warning glyph. Sized to align with the first line of the title. */
+.lmui-icon{ flex:0 0 auto; display:grid; place-items:center;
+  width:22px; height:22px; margin-top:1px; color:var(--danger); }
+.lmui-icon svg{ width:20px; height:20px; }
+
+.lmui-label{ font-size:12px; font-weight:600; color:var(--text-2); margin-bottom:-6px; }
+.lmui-label code{ font-family:var(--mono); font-size:12px; padding:1px 5px;
+  border-radius:4px; background:var(--surface-2); color:var(--text);
+  border:1px solid var(--border); }
+
+.lmui-input{ width:100%; box-sizing:border-box; font:inherit; font-size:13px;
+  padding:8px 10px; border-radius:var(--radius-sm);
+  border:1px solid var(--border-strong); background:var(--surface); color:var(--text); }
+.lmui-input:focus{ outline:none; border-color:var(--brand); box-shadow:0 0 0 3px var(--brand-ring); }
+textarea.lmui-input{ resize:vertical; min-height:76px; }
+
+.lmui-foot{ display:flex; justify-content:flex-end; gap:8px;
+  margin:4px 0 0; padding:0; list-style:none; }
+
+/* Solid red. `.btn.danger` in PART 4 is the low-emphasis (text-only) variant
+   used in toolbars; a modal's confirming action needs full weight. */
+.lmui-danger{ background:var(--danger); border-color:var(--danger); color:#fff;
+  box-shadow:var(--shadow-sm); }
+.lmui-danger:hover{ filter:brightness(.93); background:var(--danger);
+  border-color:var(--danger); color:#fff; }
+.lmui-danger:disabled{ opacity:.45; cursor:not-allowed; filter:none; }
+
+@media (max-width:480px){
+  .lmui-foot{ flex-direction:column-reverse; }
+  .lmui-foot .btn{ width:100%; justify-content:center; }
+}

@@ -166,7 +166,12 @@
   }
 
   async function removeModel(name) {
-    if (!confirm(`确认删除模型 "${name}"？`)) { return; }
+    if (!(await LMUI.confirm({
+      level: "danger",
+      title: `删除模型「${name}」`,
+      body: "该模型文件将从项目中移除，引用它的任务将无法运行。",
+      confirmText: "删除",
+    }))) { return; }
     try {
       const data = await LMApi.removeProjectModel(pid, name);
       render(data.models || []);

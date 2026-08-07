@@ -66,19 +66,39 @@
   }
 
   // --- tabs ---------------------------------------------------------------- //
+  // The active tab lives in `?tab=`, so an admin can link straight to 授权 or
+  // 任务 and Back steps between tabs instead of leaving the page.
   const loaders = { users: loadUsers, license: loadLicense, tasks: loadTasks };
-  root.querySelectorAll(".tab").forEach((tab) => {
-    tab.addEventListener("click", () => {
-      root.querySelectorAll(".tab").forEach((t) => t.classList.toggle("on", t === tab));
-      const name = tab.dataset.tab;
-      root.querySelectorAll(".pane").forEach((p) => {
-        const on = p.dataset.pane === name;
-        p.classList.toggle("on", on);
-        p.hidden = !on;
-      });
-      (loaders[name] || (() => {}))();
+  const TABS = Object.keys(loaders);
+  const DEFAULT_TAB = TABS[0];
+
+  // Single source of truth for "show tab X": both the click handler and the
+  // URL restore path go through here, so they can never drift apart.
+  function activateTab(name, opts) {
+    opts = opts || {};
+    if (!TABS.includes(name)) name = DEFAULT_TAB;
+    root.querySelectorAll(".tab").forEach((t) =>
+      t.classList.toggle("on", t.dataset.tab === name));
+    root.querySelectorAll(".pane").forEach((p) => {
+      const on = p.dataset.pane === name;
+      p.classList.toggle("on", on);
+      p.hidden = !on;
     });
+    if (opts.load !== false) (loaders[name] || (() => {}))();
+    if (opts && opts.push && window.LMUrl) {
+      // Default tab writes no param, keeping /admin clean rather than
+      // /admin?tab=users for the view you get by just clicking the nav link.
+      LMUrl.set({ tab: name === DEFAULT_TAB ? null : name });
+    }
+  }
+
+  root.querySelectorAll(".tab").forEach((tab) => {
+    tab.addEventListener("click", () => activateTab(tab.dataset.tab, { push: true }));
   });
+
+  if (window.LMUrl) {
+    LMUrl.onPop((q) => activateTab(q.tab || DEFAULT_TAB));
+  }
 
   // --- accounts ------------------------------------------------------------ //
   async function loadUsers() {
@@ -186,7 +206,13 @@
     } catch (ex) { err.textContent = ex.message; err.hidden = false; }
   });
   async function delUser(id) {
-    if (!confirm("确定删除该账号？该操作会移除其所有项目成员身份。")) return;
+    if (!(await LMUI.confirm({
+      level: "critical",
+      title: "删除该账号",
+      body: "该操作会同时移除此账号在所有项目中的成员身份，且不可撤销。",
+      requireText: "DELETE",
+      confirmText: "永久删除账号",
+    }))) return;
     try { await LMApi.adminDeleteUser(id); toast("账号已删除", true); loadUsers(); }
     catch (ex) { toast(ex.message, false); }
   }
@@ -403,13 +429,23 @@
     catch (ex) { toast(ex.message, false); }
   }
   async function delTask(key) {
-    if (!confirm("确定删除该任务及其工作区？")) return;
+    if (!(await LMUI.confirm({
+      level: "danger",
+      title: "删除该任务",
+      body: `任务 ${key} 及其工作区将被删除，此操作不可撤销。`,
+      confirmText: "删除",
+    }))) return;
     try { await LMApi.adminDeleteTask(key); toast("任务已删除", true); loadTasks(); }
     catch (ex) { toast(ex.message, false); }
   }
   $("lm-admin-tasks-refresh").addEventListener("click", loadTasks);
   async function pruneEvents() {
-    if (!confirm("清理各任务的历史事件日志？将仅保留最近的记录（进行中的任务不受影响），操作不可撤销。")) return;
+    if (!(await LMUI.confirm({
+      level: "danger",
+      title: "清理历史事件日志",
+      body: "将仅保留各任务最近的记录，进行中的任务不受影响。操作不可撤销。",
+      confirmText: "清理",
+    }))) return;
     const btn = $("lm-admin-tasks-prune");
     if (btn) btn.disabled = true;
     try {
@@ -421,5 +457,16 @@
   const pruneBtn = $("lm-admin-tasks-prune");
   if (pruneBtn) pruneBtn.addEventListener("click", pruneEvents);
 
-  (window.LMReady || Promise.resolve()).then(() => { loadUsers(); loadLicense(); loadStats(); });
+  (window.LMReady || Promise.resolve()).then(() => {
+    // The header KPIs are derived from the users and license payloads, so both
+    // are fetched on every load regardless of which tab is showing.
+    loadUsers();
+    loadLicense();
+    loadStats();
+    const initial = window.LMUrl ? LMUrl.get("tab", DEFAULT_TAB) : DEFAULT_TAB;
+    if (initial !== DEFAULT_TAB) {
+      // users/license just fetched above; only 任务 needs a load of its own.
+      activateTab(initial, { load: initial === "tasks" });
+    }
+  });
 })();

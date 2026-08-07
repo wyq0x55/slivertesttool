@@ -472,7 +472,12 @@
   async function bulkDelete(ids) {
     const list = ids && ids.length ? ids : grid.getSelectedIds();
     if (!list.length) { toast("请先勾选要删除的行", false); return; }
-    if (!confirm(`确定删除所选 ${list.length} 行？`)) return;
+    if (!(await LMUI.confirm({
+      level: "danger",
+      title: `删除所选 ${list.length} 行`,
+      body: "选中的测试项将被删除，此操作不可撤销。",
+      confirmText: "删除",
+    }))) return;
     try {
       let deleted;
       if (collabActive()) deleted = collab.deleteRows(currentSheet, list);
@@ -1687,14 +1692,24 @@
       onBulkDelete: (ids) => bulkDelete(ids),
       onMove: (ids, dir) => moveRows(ids, dir),
       onComment: async (item, key) => {
-        const text = prompt("为该单元格添加评论：");
-        if (text) {
+        const text = await LMUI.prompt({
+          title: "添加评论",
+          body: `针对单元格「${key}」的评论将对项目成员可见。`,
+          input: { label: "评论内容", multiline: true, placeholder: "描述问题或补充说明…" },
+          confirmText: "添加评论",
+        });
+        if (text && text.trim()) {
           try { await LMApi.addComment(pid, item.id, key, text); toast("已添加评论", true); }
           catch (ex) { toast(ex.message, false); }
         }
       },
       onDelete: async (item) => {
-        if (!confirm(`确定删除该行（${item.case_id || "#" + item.id}）？`)) return;
+        if (!(await LMUI.confirm({
+          level: "danger",
+          title: "删除该行",
+          body: `测试项「${item.case_id || "#" + item.id}」将被删除。`,
+          confirmText: "删除",
+        }))) return;
         try {
           if (collabActive()) collab.deleteRows(currentSheet, [item.id]);
           else await LMApi.deleteItem(pid, item.id);
