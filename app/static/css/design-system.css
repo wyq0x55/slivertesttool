@@ -181,11 +181,14 @@ code{
   display:inline-flex; align-items:center; gap:7px; border:1px solid var(--border-strong);
   background:var(--surface); color:var(--text); border-radius:var(--radius-sm);
   font:inherit; font-weight:550; font-size:13.5px; padding:7px 14px; cursor:pointer; white-space:nowrap;
+  /* Self-contained rather than leaning on the global `a{}` reset: .btn is used
+     on <a> as well as <button>, and must not depend on rule ordering. */
+  text-decoration:none; line-height:1.4;
   transition:background var(--dur) var(--ease), border-color var(--dur) var(--ease),
     transform var(--dur) var(--ease), color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
 .btn svg{ width:15px; height:15px; }
-.btn:hover{ background:var(--surface-2); border-color:var(--n-400); }
+.btn:hover{ background:var(--surface-2); border-color:var(--n-400); text-decoration:none; }
 .btn:active{ transform:scale(.98); }
 .btn.primary,.btn-primary{ background:var(--brand); border-color:var(--brand); color:#fff; box-shadow:var(--shadow-sm); }
 .btn.primary:hover,.btn-primary:hover{ background:var(--brand-hover); border-color:var(--brand-hover); }
@@ -197,6 +200,11 @@ code{
 .btn.small,.btn-sm{ height:30px; padding:0 11px; font-size:12.5px; }
 .btn-sm svg{ width:14px; height:14px; }
 .btn:disabled,.btn[disabled]{ opacity:.5; cursor:not-allowed; }
+/* Without this, :hover above still repaints a disabled button, so it reads as
+   clickable. The retired .lm-btn dialect had the reset and .btn did not; it is
+   kept here so the merged primitive is a strict superset of both. */
+.btn:disabled:hover,.btn[disabled]:hover{ background:var(--surface); border-color:var(--border-strong); }
+.btn.primary:disabled:hover,.btn-primary:disabled:hover{ background:var(--brand); border-color:var(--brand); }
 
 .search{ position:relative; display:inline-flex; align-items:center; }
 .search svg{ position:absolute; left:11px; width:15px; height:15px; color:var(--text-3); pointer-events:none; }
@@ -703,7 +711,7 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
   .app.side-open .side{ transform:none; }
   .detail-grid{ grid-template-columns:1fr; } .lic-grid{ grid-template-columns:1fr; }
 }
-/* ===== PART 16 · COLLAPSIBLE SIDEBAR (desktop rail) =================== */
+/* ===== PART 15 · COLLAPSIBLE SIDEBAR (desktop rail) =================== */
 /* On desktop the menu-toggle collapses the sidebar into an icon-only rail.
    State lives on <html class="side-collapsed"> (restored pre-paint). */
 @media (min-width:961px){
@@ -723,7 +731,7 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
 }
 
 
-/* ===== PART 15 · LEGACY lm-* BRIDGE (non-redesigned pages) ============= */
+/* ===== PART 16 · LEGACY lm-* BRIDGE (non-redesigned pages) ============= */
 /* editor / db-admin / models / audit / register-body keep lm-* markup. */
 .lm-page{ max-width:1160px; margin:0 auto; padding:32px 24px 64px; }
 .lm-page-head h1{ font-size:23px; }
@@ -735,19 +743,9 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
 .main .lm-editor{ height:auto; min-height:0; flex:1 1 auto; }
 .lm-card{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
   box-shadow:var(--shadow-sm); padding:20px; }
-.lm-btn{ display:inline-flex; align-items:center; gap:7px; border:1px solid var(--border-strong);
-  background:var(--surface); color:var(--text); border-radius:var(--radius-sm); font-weight:550; padding:7px 14px;
-  font-family:inherit; font-size:13.5px; line-height:1.4; cursor:pointer; text-decoration:none;
-  transition:background var(--dur) var(--ease), border-color var(--dur) var(--ease), transform var(--dur) var(--ease), color var(--dur) var(--ease); }
-.lm-btn:hover{ background:var(--surface-2); border-color:var(--n-400); text-decoration:none; }
-.lm-btn:active{ transform:scale(.98); }
-.lm-btn:disabled,.lm-btn[disabled]{ opacity:.5; cursor:not-allowed; }
-.lm-btn:disabled:hover,.lm-btn[disabled]:hover{ background:var(--surface); border-color:var(--border-strong); }
-.lm-btn-primary{ background:var(--brand); border-color:var(--brand); color:#fff; }
-.lm-btn-primary:hover{ background:var(--brand-hover); border-color:var(--brand-hover); }
-.lm-btn-danger{ color:var(--danger); }
-.lm-btn-danger:hover{ background:var(--danger-soft); border-color:var(--danger); }
-.lm-btn-sm{ padding:4px 10px; font-size:12.5px; }
+/* The `.lm-btn` dialect was merged into `.btn` (PART 4). Its two behaviours
+   that `.btn` lacked -- the disabled-hover reset and `text-decoration:none` --
+   were folded into `.btn` first, so this deletion is not a downgrade. */
 .lm-table{ width:100%; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
   border-collapse:separate; border-spacing:0; overflow:hidden; }
 .lm-table th{ text-align:left; }
@@ -795,9 +793,9 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
 .lm-kubun-arrow:hover:not(:disabled){ background:var(--surface-2); color:var(--text); }
 .lm-kubun-cur{ color:var(--text); }
 
-/* ----- PART 15b · VOCABULARY ALIASES ----------------------------------
+/* ----- PART 16b · VOCABULARY ALIASES ----------------------------------
    The codebase carries two parallel class dialects for the same component
-   (`lm-btn`/`btn`, `lm-muted`/`muted`, `lm-error`/`login-err`, `lm-page-head`/
+   (`lm-muted`/`muted`, `lm-error`/`login-err`, `lm-page-head`/
    `page-head`). Until the markup is migrated onto one dialect, pair every
    alias with its canonical selector here so the two ALWAYS render identically
    and no page can drift. Add new markup using the canonical (non-`lm-`) name.
@@ -808,12 +806,11 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
 .lm-page-head,.page-head{ display:flex; align-items:flex-end; justify-content:space-between;
   gap:24px; margin-bottom:24px; }
 .lm-page-head h1,.page-head h1{ font-size:23px; margin:0; }
-.lm-btn-sm,.lm-btn.small{ padding:4px 10px; font-size:12.5px; }
 .lm-input{ padding:7px 10px; border:1px solid var(--border-strong); border-radius:var(--radius-sm);
   background:var(--surface); color:var(--text); font:inherit; }
 .lm-input:focus-visible{ outline:2px solid var(--brand-ring); outline-offset:1px; border-color:var(--brand); }
 
-/* ===== PART 12 · DB ADMIN (PostgreSQL 管理) ============================
+/* ===== PART 17 · DB ADMIN (PostgreSQL 管理) ============================
    The DB-admin page ships legacy hard-coded light colors in lanmatrix.css.
    design-system.css loads AFTER it, so these rules re-point every surface at
    the theme tokens (adaptive in BOTH light + dark) and align the layout with
@@ -892,7 +889,7 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
 
 
 /* =====================================================================
-   PART 16 · LMUI MODALS  (confirm / prompt / alert — see js/lanmatrix/ui.js)
+   PART 18 · LMUI MODALS  (confirm / prompt / alert — see js/lanmatrix/ui.js)
    ---------------------------------------------------------------------
    Replaces the native confirm()/prompt() boxes. The whole point of this
    component is that DESTRUCTION MUST LOOK DESTRUCTIVE, so the level
@@ -948,7 +945,7 @@ textarea.lmui-input{ resize:vertical; min-height:76px; }
 }
 
 /* =======================================================================
-   PART 17 · WORKSPACE (工作台 — see templates/lanmatrix/home.html)
+   PART 19 · WORKSPACE (工作台 — see templates/lanmatrix/home.html)
    The cross-project landing page. Everything here is scoped under .lm-home
    or a lm-/kpi- prefix so it cannot leak into the per-project pages.
    ======================================================================= */
@@ -1007,3 +1004,14 @@ textarea.lmui-input{ resize:vertical; min-height:76px; }
 /* Project column in the cross-project task table. */
 .lm-home .dt .proj-cell{ display:inline-flex; align-items:center; gap:6px;
   font-size:12px; font-weight:600; color:var(--text-2); }
+
+/* ============================================================
+   PART 20 · LIST FOOTER (truncation notice + 加载更多)
+   Sits directly under a .tablecard. Hidden unless the server
+   actually clipped the result set, so short lists show nothing.
+   ============================================================ */
+.lm-list-footer{ display:flex; align-items:center; justify-content:center;
+  gap:12px; padding:12px 14px; border-top:1px solid var(--line);
+  background:var(--surface-2); }
+.lm-list-footer[hidden]{ display:none; }
+.lm-list-footer .muted{ font-size:12px; }

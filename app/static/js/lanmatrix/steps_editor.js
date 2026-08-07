@@ -893,7 +893,7 @@
         <tr>
           <td class="lm-se-idx">${i + 1}</td>
           <td><input class="lm-input lm-se-cell" data-kind="${kind}" data-i="${i}" value="${esc(joinSig(sig))}" placeholder="名称(路径)"></td>
-          <td><button class="lm-btn lm-btn-sm lm-se-del" data-kind="${kind}" data-i="${i}">删除</button></td>
+          <td><button class="btn btn-sm lm-se-del" data-kind="${kind}" data-i="${i}">删除</button></td>
         </tr>`).join("");
       return `<div class="lm-se-block">
         <h4>${label}</h4>
@@ -902,7 +902,7 @@
           <tbody>${rows || `<tr><td colspan="3" class="lm-muted">无</td></tr>`}</tbody>
         </table>
         <div class="lm-se-actions">
-          <button class="lm-btn lm-btn-sm lm-se-add" data-kind="${kind}">+ 添加信号</button>
+          <button class="btn btn-sm lm-se-add" data-kind="${kind}">+ 添加信号</button>
         </div></div>`;
     }
 
@@ -928,7 +928,7 @@
           <td><input class="lm-input lm-st-cell" data-i="${i}" data-f="args" value="${esc(s.args)}"></td>
           ${inCells}${exCells}
           <td><input class="lm-input lm-st-cell" data-i="${i}" data-f="timing" value="${esc(s.timing)}"></td>
-          <td><button class="lm-btn lm-btn-sm lm-st-del" data-i="${i}">删除</button></td>
+          <td><button class="btn btn-sm lm-st-del" data-i="${i}">删除</button></td>
         </tr>`;
       }).join("");
       const colspan = 7 + inNames.length + exNames.length;
@@ -940,7 +940,7 @@
           <tbody>${rows || `<tr><td colspan="${colspan}" class="lm-muted">暂无步骤。</td></tr>`}</tbody>
         </table></div>
         <div class="lm-st-actions">
-          <button class="lm-btn lm-btn-sm lm-st-add">+ 添加步骤</button>
+          <button class="btn btn-sm lm-st-add">+ 添加步骤</button>
         </div></div>`;
     }
 

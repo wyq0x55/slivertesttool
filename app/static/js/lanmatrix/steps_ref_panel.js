@@ -137,7 +137,7 @@
       '  <input type="search" class="lm-ref-search lm-input" placeholder="搜索名称 / 路径 / 值 / 备注…">' +
       '  <div class="lm-ref-toolbar">' +
       '    <div class="lm-ref-count lm-muted"></div>' +
-      '    <button type="button" class="lm-ref-addbtn lm-btn lm-btn-sm" hidden>+ 新增</button>' +
+      '    <button type="button" class="lm-ref-addbtn btn btn-sm" hidden>+ 新增</button>' +
       '  </div>' +
       '  <div class="lm-ref-add" hidden></div>' +
       '</div>' +
@@ -224,8 +224,8 @@
     this.addForm.innerHTML = fields +
       '<div class="lm-ref-adderr lm-err" hidden></div>' +
       '<div class="lm-ref-addactions">' +
-      '  <button type="button" class="lm-btn lm-btn-sm lm-btn-primary lm-ref-addsave">保存</button>' +
-      '  <button type="button" class="lm-btn lm-btn-sm lm-ref-addcancel">取消</button>' +
+      '  <button type="button" class="btn btn-sm btn-primary lm-ref-addsave">保存</button>' +
+      '  <button type="button" class="btn btn-sm lm-ref-addcancel">取消</button>' +
       '</div>';
     this.addForm.hidden = false;
     if (this.addBtn) this.addBtn.classList.add("is-on");

@@ -155,7 +155,9 @@ def admin_set_runtime_config():
 @bp.get("/admin/tasks")
 @system_admin_required
 def admin_list_tasks():
-    tasks = task_service.list_tasks(limit=1000)
+    limit = task_service.clamp_limit(request.args.get("limit"))
+    tasks = task_service.list_tasks(limit=limit)
+    total = task_service.count_tasks()
     # Attach project code for the console table.
     proj_codes = {p.id: p.code for p in Project.query.all()}
     out = []
@@ -163,7 +165,8 @@ def admin_list_tasks():
         d = t.to_dict()
         d["project_code"] = proj_codes.get(t.project_id)
         out.append(d)
-    return ok({"tasks": out})
+    return ok({"tasks": out, "total": total, "limit": limit,
+               "truncated": total > len(out)})
 
 @bp.post("/admin/tasks/<task_key>/cancel")
 @system_admin_required

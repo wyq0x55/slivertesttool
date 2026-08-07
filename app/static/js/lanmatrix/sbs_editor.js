@@ -163,9 +163,9 @@
     bar.innerHTML =
       '<span>该 SBS 已被其他人修改（服务器版本 ' +
       esc((server.version || "").slice(0, 8)) + '）。</span>' +
-      '<button class="lm-btn lm-btn-sm" id="lm-sbs-loadsrv">载入服务器版本</button>' +
-      '<button class="lm-btn lm-btn-sm lm-btn-danger" id="lm-sbs-force">仍然覆盖</button>' +
-      '<button class="lm-btn lm-btn-sm" id="lm-sbs-conflict-x">关闭</button>';
+      '<button class="btn btn-sm" id="lm-sbs-loadsrv">载入服务器版本</button>' +
+      '<button class="btn btn-sm btn-danger" id="lm-sbs-force">仍然覆盖</button>' +
+      '<button class="btn btn-sm" id="lm-sbs-conflict-x">关闭</button>';
     $("lm-sbs-loadsrv").addEventListener("click", () => {
       state.editor.setValue(server.content || "");
       state.baseVersion = server.version || "";
@@ -234,8 +234,8 @@
       '<span class="lm-sbs-rev-size">' + esc(fmtSize(r.size)) + "</span>" +
       "</div>" +
       '<div class="lm-sbs-rev-act">' +
-      '<button class="lm-btn lm-btn-sm lm-sbs-rev-load" data-id="' + r.id + '">载入</button>' +
-      '<button class="lm-btn lm-btn-sm lm-sbs-rev-restore" data-id="' + r.id + '">恢复</button>' +
+      '<button class="btn btn-sm lm-sbs-rev-load" data-id="' + r.id + '">载入</button>' +
+      '<button class="btn btn-sm lm-sbs-rev-restore" data-id="' + r.id + '">恢复</button>' +
       "</div></li>").join("");
     list.querySelectorAll(".lm-sbs-rev-load").forEach((b) =>
       b.addEventListener("click", () => loadRevision(Number(b.dataset.id))));

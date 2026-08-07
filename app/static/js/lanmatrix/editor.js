@@ -4,6 +4,11 @@
   "use strict";
   const root = document.querySelector(".lm-editor");
   const pid = Number(root.dataset.projectId);
+  // Mirrors task_service.MAX_LIST_LIMIT. Both uses below search run history for
+  // a specific test_id, so they must ask for the widest window the server
+  // allows -- the list default is far smaller and would report a test as
+  // "never run" once its last run fell outside it.
+  const MAX_LOOKUP = 2000;
   let fields = [];
   let grid = null;
   let collab = null;            // LMCollabController instance when real-time collab is active
@@ -883,7 +888,7 @@
     if (document.hidden) return;
     let tasks;
     try {
-      const resp = await LMApi.listProjectTasks(pid);
+      const resp = await LMApi.listProjectTasks(pid, MAX_LOOKUP);
       tasks = (resp && resp.tasks) || [];
     } catch (_e) { return; }  // silent: transient network error
     const map = {};
@@ -1801,7 +1806,7 @@
             return res;
           }) : null,
           getStatus: testId ? (async (tid) => {
-            const res = await LMApi.listProjectTasks(pid);
+            const res = await LMApi.listProjectTasks(pid, MAX_LOOKUP);
             const tasks = (res && res.tasks) || [];
             const mine = tasks.filter((t) => String(t.test_id) === String(tid));
             if (!mine.length) return null;

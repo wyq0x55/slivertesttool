@@ -15,7 +15,7 @@
 
 .lm-page { max-width: 1180px; margin: 24px auto; padding: 0 16px; }
 /* .lm-page-head and the .lm-card box itself are owned by design-system.css
-   (PART 15 / 15b). Only .lm-card's INNER form layout stays here. */
+   (PART 16 / 16b). Only .lm-card's INNER form layout stays here. */
 .lm-card label { display: block; margin: 10px 0; font-size: 14px; font-weight: 600; }
 .lm-card label.lm-inline { font-weight: 500; }
 .lm-card input[type=text], .lm-card input[type=password], .lm-card input:not([type]),
@@ -25,9 +25,9 @@
 }
 .lm-card label.lm-inline input { width: auto; margin-right: 6px; }
 
-/* .lm-btn / .lm-input / .lm-muted / .lm-err / .lm-badge / .lm-status-* / .lm-table
+/* .btn / .lm-input / .lm-muted / .lm-err / .lm-badge / .lm-status-* / .lm-table
    used to be defined here as well. They are now owned solely by design-system.css
-   (PART 15 + PART 15b), which loads after this file and already overrode every one
+   (PART 16 + PART 16b), which loads after this file and already overrode every one
    of them. The copies removed here were not just dead — they encoded a botched
    token remap that painted neutral borders and secondary text in the BRAND colour
    (`.lm-muted{color:var(--brand)}`), gave `.lm-table` invisible `var(--surface)`
@@ -147,7 +147,7 @@ footer:has(> .lm-univer-footerpager) > section {
 .lm-univer-tbslot .lm-tb-left,
 .lm-univer-tbslot .lm-tb-right { flex: 0 0 auto; }
 /* Shrink the adopted controls to fit the slim tab row. */
-.lm-univer-tbslot .lm-btn { padding: 3px 10px; font-size: 12px; line-height: 1.4; }
+.lm-univer-tbslot .btn { padding: 3px 10px; font-size: 12px; line-height: 1.4; }
 .lm-univer-tbslot #lm-proj-title { font-size: 13px; }
 .lm-univer-tbslot .lm-badge { font-size: 11px; padding: 1px 6px; }
 .lm-univer-tbslot .lm-muted { font-size: 12px; }
@@ -242,12 +242,12 @@ select.lm-cell-control[multiple] { min-height: 46px; }
   padding: 10px 18px; border-radius: 8px; color: var(--surface); z-index: 50; box-shadow: 0 6px 20px rgba(0,0,0,.2); }
 .lm-toast.lm-ok { background: var(--ok); }
 .lm-toast.lm-err { background: var(--danger); }
-.lm-toast .lm-btn { margin-left: 10px; background: rgba(255,255,255,.2); color: var(--surface); border-color: rgba(255,255,255,.5); }
+.lm-toast .btn { margin-left: 10px; background: rgba(255,255,255,.2); color: var(--surface); border-color: rgba(255,255,255,.5); }
 
 /* --- Row operations toolbar + context menu (v2.9.0) ------------------- */
 .lm-toolbar-rowops { padding: 6px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
 .lm-toolbar-rowops .lm-hint { font-size: 12px; }
-/* .lm-btn[disabled] now lives with the rest of .lm-btn in design-system.css. */
+/* .btn[disabled] now lives with the rest of .btn in design-system.css. */
 #lm-sel-info { margin-left: 6px; font-weight: 600; color: var(--brand); }
 
 .lm-ctxmenu { position: fixed; z-index: 1000; margin: 0; padding: 4px 0; list-style: none;
@@ -259,7 +259,7 @@ select.lm-cell-control[multiple] { min-height: 46px; }
 
 /* --- Per-row actions + step-table editor (v2.7.2) --------------------- */
 .lm-actcol { white-space: nowrap; text-align: center; }
-.lm-actcol .lm-btn { margin: 0 2px; }
+.lm-actcol .btn { margin: 0 2px; }
 .lm-steps-btn { padding: 1px 8px; }
 .lm-del-btn { padding: 1px 8px; color: var(--danger); border-color: var(--danger-soft); }
 .lm-del-btn:hover { background: var(--danger-soft); }
@@ -430,7 +430,7 @@ body.lm-refpanel-resizing { cursor: col-resize; user-select: none; }
 
 /* Field-config order column (move up/down) */
 .lm-order { white-space: nowrap; text-align: center; width: 48px; }
-.lm-order .lm-btn { padding: 1px 7px; margin: 0 1px; }
+.lm-order .btn { padding: 1px 7px; margin: 0 1px; }
 .lm-drag-handle {
   display: inline-block; cursor: grab; user-select: none;
   padding: 2px 6px; color: var(--border-strong); font-size: 15px; line-height: 1;
@@ -517,7 +517,7 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
 .lm-db-sortable:hover { background: var(--brand-soft); }
 .lm-db-pk { color: var(--warn); }
 .lm-db-opcol { white-space: nowrap; text-align: center; font-family: inherit; }
-.lm-db-opcol .lm-btn { margin: 0 2px; }
+.lm-db-opcol .btn { margin: 0 2px; }
 .lm-db-tv-foot { display: flex; gap: 16px; align-items: center; padding-top: 8px; }
 
 .lm-db-row-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 18px;
@@ -534,10 +534,10 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
 .lm-subnav { display: inline-flex; gap: 6px; }
 .lm-inline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
 .lm-grow { flex: 1; min-width: 200px; }
-.lm-btn-danger { border-color: var(--danger-soft); color: var(--danger); }
-.lm-btn-danger:hover { background: var(--danger-soft); }
+.btn-danger { border-color: var(--danger-soft); color: var(--danger); }
+.btn-danger:hover { background: var(--danger-soft); }
 .lm-row-actions { white-space: nowrap; }
-.lm-row-actions .lm-btn { margin: 0 2px; }
+.lm-row-actions .btn { margin: 0 2px; }
 
 /* Task-status badges (execution lifecycle). */
 .lm-status-queued { background: var(--surface); color: var(--brand); }

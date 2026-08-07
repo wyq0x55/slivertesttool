@@ -58,11 +58,20 @@ def _require_task(project_id: int, task_key: str, capability: str):
 @login_required
 def list_project_tasks(project_id):
     _, role = _project_and_role(project_id, "task.view")
-    tasks = task_service.list_tasks(project_id=project_id, limit=1000)
+    # A growing window ("show more"), not offset pagination. Tasks are inserted
+    # at the head continuously, so page 2 of an offset query would repeat rows
+    # that page 1 already pushed down -- and skip others entirely. Always
+    # returning "the newest N" keeps the client's diffing and select-all sane.
+    limit = task_service.clamp_limit(request.args.get("limit"))
+    tasks = task_service.list_tasks(project_id=project_id, limit=limit)
+    total = task_service.count_tasks(project_id=project_id)
     status = license_service.get_status()
     status["queued_jobs"] = Task.query.filter_by(
         project_id=project_id, status=TaskStatus.QUEUED.value).count()
     return ok({"tasks": [t.to_dict() for t in tasks],
+               "total": total,
+               "limit": limit,
+               "truncated": total > len(tasks),
                "models": project_model_service.effective_models(project_id),
                "license": status,
                "role": role,

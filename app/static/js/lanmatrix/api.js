@@ -211,7 +211,10 @@
     restoreModelSbsRevision(id, name, rev) { return request("POST", `/projects/${id}/models/sbs/revisions/${rev}/restore`, { body: { name } }); },
 
     // --- Project Upload Tasks (test execution) --------------------------- //
-    listProjectTasks(id) { return request("GET", `/projects/${id}/tasks`); },
+    listProjectTasks(id, limit) {
+      return request("GET", `/projects/${id}/tasks`,
+        limit ? { query: { limit: limit } } : undefined);
+    },
     uploadProjectTree(id, formData) { return request("POST", `/projects/${id}/tasks/upload-tree`, { body: formData }); },
     runSelectedTasks(id, payload) { return request("POST", `/projects/${id}/tasks/run-selected`, { body: payload || {} }); },
     rerunSelectedTasks(id, keys) { return request("POST", `/projects/${id}/tasks/rerun-selected`, { body: { task_keys: keys } }); },

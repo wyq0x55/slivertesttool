@@ -1,5 +1,7 @@
 {% extends "lanmatrix/base_lm.html" %}
+{% from "lanmatrix/_crumb.html" import project_crumb %}
 {% block title %}审计日志{% endblock %}
+{% block crumb %}{{ project_crumb(project_id, "审计日志") }}{% endblock %}
 {% block content %}
 <div class="lm-page" data-project-id="{{ project_id }}">
   <div class="lm-page-head">

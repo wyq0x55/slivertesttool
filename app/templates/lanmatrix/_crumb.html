@@ -1,0 +1,24 @@
+{# ---------------------------------------------------------------------------
+   Breadcrumb macro for the six project-scoped pages.
+
+   Before this, the crumbs read 项目 / 成员管理 — which tells you what kind of
+   page you are on but not *which project*, the one thing you actually need
+   when six pages share one layout. editor.html and audit.html had no crumb
+   block at all and fell through to base's <b>测试平台</b>, so the two pages
+   where you are deepest in the hierarchy were the two that told you nothing.
+
+   The project name is filled in by crumb.js, not by the server: these routes
+   are deliberately thin shells and the API (`GET /projects/<id>`, guarded by
+   `_project_and_role(..., "project.view")`) is what enforces membership.
+   Rendering the name server-side would mean duplicating that permission check
+   in the page layer — a second place to get authorisation wrong. The <a> ships
+   with the id as placeholder text so the crumb is never empty.
+--------------------------------------------------------------------------- #}
+{% macro project_crumb(project_id, label) -%}
+<a href="{{ url_for('lanmatrix_pages.projects') }}">项目</a>
+<span class="sep">/</span>
+<a href="{{ url_for('lanmatrix_pages.editor', project_id=project_id) }}"
+   id="lm-crumb-project" data-project-id="{{ project_id }}">项目 #{{ project_id }}</a>
+<span class="sep">/</span>
+<b>{{ label }}</b>
+{%- endmacro %}

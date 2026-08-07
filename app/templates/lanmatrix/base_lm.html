@@ -186,6 +186,10 @@
      Must load before page scripts: they read the URL during init to restore
      the tab / open task / filters. #}
   <script src="{{ url_for('static', filename='js/lanmatrix/urlstate.js') }}"></script>
+  {# crumb.js upgrades the breadcrumb's `项目 #<id>` to the real project name.
+     After api.js (it calls LMApi.getProject) and it no-ops on pages without a
+     #lm-crumb-project element, so it is safe to load everywhere. #}
+  <script src="{{ url_for('static', filename='js/lanmatrix/crumb.js') }}"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

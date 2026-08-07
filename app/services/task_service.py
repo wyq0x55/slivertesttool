@@ -26,14 +26,60 @@ def get_project_task(project_id: int, task_key: str) -> Optional[Task]:
     return Task.query.filter_by(task_key=task_key, project_id=project_id).first()
 
 
-def list_tasks(limit: int = 200, submitter: Optional[str] = None,
-               project_id: Optional[int] = None) -> List[Task]:
+DEFAULT_LIST_LIMIT = 200
+# Hard ceiling on one response. The callers used to pass 1000 and silently drop
+# everything beyond it; the number matters less than the fact that the caller
+# now learns it was clipped (see ``count_tasks``).
+MAX_LIST_LIMIT = 2000
+
+
+def clamp_limit(raw, default: int = DEFAULT_LIST_LIMIT) -> int:
+    """Coerce a caller-supplied limit into [1, MAX_LIST_LIMIT].
+
+    Anything unparseable -- or non-positive -- falls back to ``default`` rather
+    than raising or clamping up to 1: a bad ``?limit=`` in a URL someone pasted
+    should not 500 the task list, and honouring ``limit=0`` literally would
+    show an empty list beside a non-zero total, which reads as data loss.
+    """
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return default
+    if n < 1:
+        return default
+    return min(n, MAX_LIST_LIMIT)
+
+
+def _scoped_query(submitter: Optional[str] = None,
+                  project_id: Optional[int] = None):
+    """Shared filter chain so ``list_tasks`` and ``count_tasks`` cannot drift.
+
+    If these two ever disagreed, the UI would show "共 N 条" next to a list that
+    was filtered differently -- a number the user has no way to reconcile.
+    """
     query = Task.query
     if submitter:
         query = query.filter_by(submitter=submitter)
     if project_id is not None:
         query = query.filter_by(project_id=project_id)
-    return query.order_by(Task.id.desc()).limit(limit).all()
+    return query
+
+
+def list_tasks(limit: int = DEFAULT_LIST_LIMIT, submitter: Optional[str] = None,
+               project_id: Optional[int] = None) -> List[Task]:
+    return (_scoped_query(submitter, project_id)
+            .order_by(Task.id.desc()).limit(limit).all())
+
+
+def count_tasks(submitter: Optional[str] = None,
+                project_id: Optional[int] = None) -> int:
+    """Total matching rows, ignoring any limit.
+
+    Needed so the UI can say "showing 200 of 4,317" instead of implying that
+    200 is all there is. Truncation the user cannot see is indistinguishable
+    from data loss.
+    """
+    return _scoped_query(submitter, project_id).count()
 
 
 def find_active_duplicate(submitter: str, test_id: str,

@@ -1,6 +1,7 @@
 {% extends "lanmatrix/base_lm.html" %}
+{% from "lanmatrix/_crumb.html" import project_crumb %}
 {% block title %}任务/运行{% endblock %}
-{% block crumb %}<a href="{{ url_for('lanmatrix_pages.projects') }}">项目</a><span class="sep">/</span><b>任务/运行</b>{% endblock %}
+{% block crumb %}{{ project_crumb(project_id, "任务 / 运行") }}{% endblock %}
 {% block content %}
 <div class="content lm-tasks" data-project="{{ project_id }}">
   <div class="page-head" id="lm-list-head">
@@ -118,6 +119,12 @@
           </tbody>
         </table>
       </div>
+      {# Shown only when the server clipped the result set. Silent truncation is
+         indistinguishable from missing data, so the count is always spelled out. #}
+      <div class="lm-list-footer" id="lm-tasks-more" hidden>
+        <span class="muted" id="lm-tasks-count"></span>
+        <button type="button" class="btn small" id="lm-tasks-more-btn">加载更多</button>
+      </div>
     </div>
     <div class="state" id="lm-tasks-empty" hidden style="margin-top:16px">
       <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></span>
@@ -189,47 +196,7 @@
   </div>
 </section>
 
-<dialog id="lm-steps-dialog" class="lm-steps-drawer">
-  <form method="dialog" class="lm-steps-drawer-card">
-    <header class="lm-steps-drawer-head">
-      <h3>步骤明细编辑 · <span id="lm-steps-title" class="muted"></span><span id="lm-steps-task-status" class="pill st-queued" hidden></span></h3>
-      <div class="lm-steps-tools">
-        <button type="button" class="btn small" id="lm-steps-ref-toggle" title="Lib / Const 参考查询">参考</button>
-        <button type="button" class="btn small" id="lm-steps-json-toggle" title="以 JSON 代码编辑，与表格实时同步">{ } JSON</button>
-        <button type="button" class="btn small" id="lm-steps-fullscreen">全屏</button>
-        <button type="button" class="btn small" id="lm-steps-enqueue" hidden>入队测试</button>
-        <button value="save" id="lm-steps-save" class="btn small primary">保存步骤</button>
-      </div>
-    </header>
-    <div class="lm-steps-drawer-main">
-      <div id="lm-steps-body" class="lm-steps-drawer-body"></div>
-      <!-- Collapsible, width-draggable Reference Panel (default collapsed): the
-           Lib/Const 参考 lookup and the JSON editor share one dock as two tabs. -->
-      <div id="lm-steps-refpanel" class="lm-refpanel" hidden>
-        <div class="lm-refpanel-resizer" id="lm-refpanel-resizer" title="拖动调整宽度"></div>
-        <div class="lm-refpanel-inner">
-          <div class="lm-refpanel-tabbar" role="tablist">
-            <button type="button" class="lm-refpanel-tab is-on" data-tab="ref" role="tab">📚 参考</button>
-            <button type="button" class="lm-refpanel-tab" data-tab="json" role="tab">{ } JSON</button>
-            <span class="lm-refpanel-sp"></span>
-            <button type="button" class="lm-refpanel-collapse" id="lm-refpanel-collapse" title="折叠面板" aria-label="折叠面板">✕</button>
-          </div>
-          <div class="lm-refpanel-panes">
-            <aside id="lm-steps-ref" class="lm-ref-panel lm-refpanel-pane" data-pane="ref"></aside>
-            <section id="lm-steps-json" class="lm-refpanel-pane lm-refpanel-json" data-pane="json" hidden>
-              <div class="lm-steps-json-hintbar">
-                <span class="muted lm-steps-json-hint">与表格实时双向同步</span>
-              </div>
-              <div id="lm-steps-json-body" class="lm-steps-json-body"></div>
-              <div class="login-err" id="lm-steps-json-error" hidden></div>
-            </section>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div class="login-err" id="lm-steps-error" hidden></div>
-  </form>
-</dialog>
+{% include "lanmatrix/_steps_dialog.html" %}
 {% endblock %}
 {% block scripts %}
 {% if univer_available %}

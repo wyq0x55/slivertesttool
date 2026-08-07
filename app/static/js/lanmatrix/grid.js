@@ -310,10 +310,10 @@
       let act = "";
       if (this._hasActions()) {
         const steps = (this.onSteps && this._hasStepsField())
-          ? `<button class="lm-btn lm-btn-sm lm-steps-btn" data-id="${it.id}">步骤明细</button>`
+          ? `<button class="btn btn-sm lm-steps-btn" data-id="${it.id}">步骤明细</button>`
           : "";
         const del = this.onDelete
-          ? `<button class="lm-btn lm-btn-sm lm-del-btn" data-id="${it.id}">删除行</button>`
+          ? `<button class="btn btn-sm lm-del-btn" data-id="${it.id}">删除行</button>`
           : "";
         act = `<td class="lm-actcol">${steps}${del}</td>`;
       }

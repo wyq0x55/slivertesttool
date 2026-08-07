@@ -18,6 +18,18 @@
   let sortKey = "task_id", sortDir = -1;    // -1 desc, 1 asc
   const selected = new Set();               // selected task_ids (persist across refresh)
 
+  // How many of the newest tasks we ask for. This is a growing window, not a
+  // page cursor: the server always returns "the newest N", so rows that arrive
+  // while the user is reading never shift the window out from under them the
+  // way an offset would. "Load more" widens N; polling reuses the same N so a
+  // refresh never silently shrinks what is already on screen.
+  const PAGE_STEP = 200;
+  let windowSize = PAGE_STEP;
+  let totalTasks = 0;
+  // Mirrors task_service.MAX_LIST_LIMIT; used by history lookups that must not
+  // be affected by how far the user has scrolled the list.
+  const MAX_LOOKUP = 2000;
+
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -287,6 +299,31 @@
     bindRowActions();
     updateSortIndicators();
     updateBatchBar();
+    renderMore();
+  }
+
+  /* Truncation notice. Only appears when the server actually clipped the list,
+     so a project with 12 tasks never sees paging furniture it doesn't need. */
+  function renderMore() {
+    const bar = $("lm-tasks-more");
+    if (!bar) return;
+    const loaded = allTasks.length;
+    const more = totalTasks > loaded;
+    bar.hidden = !more;
+    if (!more) return;
+    const label = $("lm-tasks-count");
+    // The filter count is stated separately: with a filter on, the visible row
+    // count and the loaded count differ, and conflating them makes the number
+    // look wrong to the user.
+    const shown = visibleTasks().length;
+    const filtered = shown !== loaded ? `（当前筛选显示 ${shown} 条）` : "";
+    if (label) label.textContent = `已加载最近 ${loaded} / 共 ${totalTasks} 条${filtered}`;
+    const btn = $("lm-tasks-more-btn");
+    if (btn) btn.disabled = loaded >= MAX_LOOKUP;
+    if (btn && loaded >= MAX_LOOKUP && label) {
+      label.textContent = `已加载最近 ${loaded} / 共 ${totalTasks} 条，`
+        + `已达单次上限，请用筛选缩小范围${filtered}`;
+    }
   }
   // Compact icon-button actions: the action column is now a fixed, narrow strip
   // that only reveals on row hover (`.dt .row-acts{opacity:0}`), so TEST ID and
@@ -484,9 +521,10 @@
   async function pollList() {
     if (document.hidden) return;
     let data;
-    try { data = await LMApi.listProjectTasks(pid); }
+    try { data = await LMApi.listProjectTasks(pid, windowSize); }
     catch (_e) { return; }   // transient: keep the last snapshot, try again next tick
     const tasks = data.tasks || [];
+    if (typeof data.total === "number") { totalTasks = data.total; renderMore(); }
     const oldIds = allTasks.map((t) => t.task_id).join(",");
     const newIds = tasks.map((t) => t.task_id).join(",");
     allTasks = tasks;
@@ -964,7 +1002,11 @@
           return res;
         },
         getStatus: async (id) => {
-          const res = await LMApi.listProjectTasks(pid);
+          // Deliberately NOT windowSize: this searches history for one test id,
+          // so a narrow window would report "never run" for a test whose last
+          // run has scrolled past it. Asks for the server maximum instead.
+          // (Proper fix is a dedicated per-test status endpoint -- see PLAN.md.)
+          const res = await LMApi.listProjectTasks(pid, MAX_LOOKUP);
           const tasks = (res && res.tasks) || [];
           const mine = tasks.filter((t) => String(t.test_id) === String(id));
           if (!mine.length) return null;
@@ -1029,7 +1071,8 @@
   async function load() {
     try {
       testItemsCache = null;   // refresh: re-pull steps so edits show on next view
-      const data = await LMApi.listProjectTasks(pid);
+      const data = await LMApi.listProjectTasks(pid, windowSize);
+      totalTasks = typeof data.total === "number" ? data.total : (data.tasks || []).length;
       renderModels(data.models || []);
       renderLicense(data.license);
       capabilities.delete = !!data.can_delete;
@@ -1106,6 +1149,22 @@
     visibleTasks().forEach((t) => { if (on) selected.add(t.task_id); else selected.delete(t.task_id); });
     renderTasks();
   });
+  const moreBtn = $("lm-tasks-more-btn");
+  if (moreBtn) {
+    moreBtn.addEventListener("click", async () => {
+      moreBtn.disabled = true;
+      const prev = moreBtn.textContent;
+      moreBtn.textContent = "加载中…";
+      windowSize = Math.min(windowSize + PAGE_STEP, MAX_LOOKUP);
+      try {
+        await load();
+      } finally {
+        // renderMore() owns `disabled` from here; only the label is restored.
+        moreBtn.textContent = prev;
+        renderMore();
+      }
+    });
+  }
   $("lm-batch-download").addEventListener("click", batchDownload);
   $("lm-batch-cancel").addEventListener("click", batchCancel);
   $("lm-batch-retest").addEventListener("click", batchRetest);

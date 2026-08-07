@@ -1,6 +1,7 @@
 {% extends "lanmatrix/base_lm.html" %}
+{% from "lanmatrix/_crumb.html" import project_crumb %}
 {% block title %}字段配置{% endblock %}
-{% block crumb %}<a href="{{ url_for('lanmatrix_pages.projects') }}">项目</a><span class="sep">/</span><b>字段配置</b>{% endblock %}
+{% block crumb %}{{ project_crumb(project_id, "字段配置") }}{% endblock %}
 {% block content %}
 <div class="content lm-fields" data-project-id="{{ project_id }}">
   <div class="page-head">

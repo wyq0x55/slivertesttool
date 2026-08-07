@@ -53,7 +53,7 @@
           <td class="lm-db-tname">${esc(t.name)}</td>
           <td class="num">${fmtInt(t.est_rows)}</td>
           <td class="num">${esc(t.size_pretty)}</td>
-          <td><button class="lm-btn lm-btn-sm lm-db-peek" data-t="${esc(t.schema)}.${esc(t.name)}">预览</button></td>
+          <td><button class="btn btn-sm lm-db-peek" data-t="${esc(t.schema)}.${esc(t.name)}">预览</button></td>
         </tr>`).join("") ||
         `<tr><td colspan="5" class="lm-muted">无用户表</td></tr>`;
       tbody.querySelectorAll(".lm-db-peek").forEach((b) => {
@@ -217,7 +217,7 @@
       <strong class="lm-db-tv-name">${esc(currentTable)}</strong>
       <span class="lm-muted">${(currentSchema.columns || []).length} 列 · 主键：${pk.length ? esc(pk.join(", ")) : "无"}</span>
       <span class="lm-db-tv-actions">
-        <button class="lm-btn lm-btn-sm lm-btn-primary" id="lm-db-add-row"${canInsert ? "" : " disabled"}>＋ 新增行</button>
+        <button class="btn btn-sm btn-primary" id="lm-db-add-row"${canInsert ? "" : " disabled"}>＋ 新增行</button>
       </span>`;
     document.getElementById("lm-db-add-row").addEventListener("click", () => openRowDialog(null));
   }
@@ -268,8 +268,8 @@
       const pkAttr = esc(JSON.stringify(pkObj));
       const rowAttr = esc(JSON.stringify(row));
       const ops = hasPk
-        ? `<button class="lm-btn lm-btn-sm lm-db-edit" data-pk='${pkAttr}' data-row='${rowAttr}'>编辑</button>
-           <button class="lm-btn lm-btn-sm lm-db-del" data-pk='${pkAttr}'>删除</button>`
+        ? `<button class="btn btn-sm lm-db-edit" data-pk='${pkAttr}' data-row='${rowAttr}'>编辑</button>
+           <button class="btn btn-sm lm-db-del" data-pk='${pkAttr}'>删除</button>`
         : `<span class="lm-muted" title="无主键，无法定位单行">—</span>`;
       return `<tr>${cells}<td class="lm-db-opcol">${ops}</td></tr>`;
     }).join("") || `<tr><td colspan="${cols.length + 1}" class="lm-muted">（无数据）</td></tr>`;
@@ -302,7 +302,7 @@
     if (pages <= 1) return;
     const mk = (label, target, disabled) => {
       const b = document.createElement("button");
-      b.className = "lm-btn lm-btn-sm";
+      b.className = "btn btn-sm";
       b.textContent = label;
       b.disabled = disabled;
       b.addEventListener("click", () => { tvPage = target; loadTableRows(); });

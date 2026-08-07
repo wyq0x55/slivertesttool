@@ -217,8 +217,13 @@ def upload_tree():
 @api_bp.get("/tasks")
 def list_tasks():
     submitter = request.args.get("submitter")
-    tasks = task_service.list_tasks(submitter=submitter, limit=1000)
-    return jsonify(tasks=[t.to_dict() for t in tasks])
+    limit = task_service.clamp_limit(request.args.get("limit"))
+    tasks = task_service.list_tasks(submitter=submitter, limit=limit)
+    total = task_service.count_tasks(submitter=submitter)
+    # `tasks` stays first and unchanged so existing scripted consumers keep
+    # working; the new keys tell them when they are seeing a partial answer.
+    return jsonify(tasks=[t.to_dict() for t in tasks],
+                   total=total, limit=limit, truncated=total > len(tasks))
 
 
 @api_bp.get("/tasks/<task_key>")

@@ -1,6 +1,7 @@
 {% extends "lanmatrix/base_lm.html" %}
+{% from "lanmatrix/_crumb.html" import project_crumb %}
 {% block title %}模型管理{% endblock %}
-{% block crumb %}<a href="{{ url_for('lanmatrix_pages.projects') }}">项目</a><span class="sep">/</span><b>模型管理</b>{% endblock %}
+{% block crumb %}{{ project_crumb(project_id, "模型管理") }}{% endblock %}
 {% block content %}
 <div class="content lm-models" data-project-id="{{ project_id }}">
   <div class="page-head">
@@ -51,7 +52,7 @@
     <div class="lm-modal-panel lm-sbs-panel">
       <div class="lm-modal-head">
         <h3>编辑 SBS<span id="lm-sbs-title"></span></h3>
-        <button class="lm-btn lm-btn-sm" data-sbs-close title="关闭">✕</button>
+        <button class="btn btn-sm" data-sbs-close title="关闭">✕</button>
       </div>
       <div class="lm-sbs-conflict" id="lm-sbs-conflict" hidden></div>
       <div class="lm-sbs-body">
@@ -65,10 +66,10 @@
         </div>
       </div>
       <div class="lm-modal-foot">
-        <button class="lm-btn lm-btn-sm" id="lm-sbs-history-toggle">历史版本</button>
+        <button class="btn btn-sm" id="lm-sbs-history-toggle">历史版本</button>
         <span class="lm-grow"></span>
-        <button class="lm-btn lm-btn-sm" id="lm-sbs-reload">重新载入</button>
-        <button class="lm-btn lm-btn-primary lm-btn-sm" id="lm-sbs-save" disabled>保存</button>
+        <button class="btn btn-sm" id="lm-sbs-reload">重新载入</button>
+        <button class="btn btn-primary btn-sm" id="lm-sbs-save" disabled>保存</button>
       </div>
     </div>
   </div>
