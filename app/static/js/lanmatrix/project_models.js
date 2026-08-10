@@ -45,11 +45,21 @@
       : '<span class="tag tag-ok">正常</span>';
     const cur = !!m.is_current;
     const curBadge = cur ? `<span class="tag tag-cur">${CHECK}当前模型</span>` : "";
+    // An unversioned model is called out rather than left blank: its results
+    // land in the dashboard's "(未标注)" bucket, which is easy to miss until the
+    // per-version comparison looks wrong.
+    const verBadge = m.version
+      ? `<span class="tag tag-ver" title="模型版本">${esc(m.version)}</span>`
+      : '<span class="tag tag-nover" title="未标注版本，结果会归入“(未标注)”">未标版本</span>';
+    const note = m.version_note
+      ? `<div class="mnote" title="版本说明">${esc(m.version_note)}</div>` : "";
     let actions = "";
     if (canManage && !cur) {
       actions += `<button class="btn btn-sm btn-primary lm-model-cur" data-name="${esc(m.name)}">设为当前</button>`;
     }
     if (canManage) {
+      actions += `<button class="btn btn-sm lm-model-ver" data-name="${esc(m.name)}">${
+        m.version ? "改版本" : "设版本"}</button>`;
       if (m.kind === "bundle") {
         actions += `<button class="btn btn-sm lm-model-sbs" data-name="${esc(m.name)}">编辑 SBS</button>`;
       }
@@ -65,9 +75,10 @@
           <span class="mico">${CUBE}</span>
           <div class="who"><b>${esc(m.name)}</b><span>${kind}</span></div>
           <span style="flex:1"></span>
-          ${curBadge}${status}
+          ${verBadge}${curBadge}${status}
         </div>
         <div class="mpath">${esc(m.path || "—")}</div>
+        ${note}
         <div class="foot">
           <span class="tag tag-kind">${kind}</span>
           <span class="mact">${actions}</span>
@@ -89,6 +100,11 @@
       b.addEventListener("click", (e) => {
         e.stopPropagation();
         if (window.LMSbsModal) { window.LMSbsModal.open(pid, b.dataset.name); }
+      }));
+    rowsEl.querySelectorAll(".lm-model-ver").forEach((b) =>
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openVersion(models.find((m) => m.name === b.dataset.name));
       }));
     rowsEl.querySelectorAll(".lm-model-cur").forEach((b) =>
       b.addEventListener("click", (e) => { e.stopPropagation(); setCurrent(b.dataset.name); }));
@@ -128,9 +144,12 @@
     showError("");
     const name = $("lm-model-name").value.trim();
     const path = $("lm-model-path").value.trim();
+    const verEl = $("lm-model-version");
+    const version = verEl ? verEl.value.trim() : "";
     try {
-      const data = await LMApi.addProjectModel(pid, name, path);
+      const data = await LMApi.addProjectModel(pid, name, path, version);
       $("lm-model-name").value = ""; $("lm-model-path").value = "";
+      if (verEl) { verEl.value = ""; }
       render(data.models || []);
       toast("已添加模型", true);
     } catch (ex) {
@@ -145,8 +164,10 @@
     const sbs = $("lm-bundle-sbs").files[0];
     const pdb = $("lm-bundle-pdb").files[0];
     if (!dll || !sbs || !pdb) { showError("请同时选择 dll、sbs 与 pdb 文件"); return; }
+    const bVerEl = $("lm-bundle-version");
     const fd = new FormData();
     if (name) { fd.append("name", name); }
+    if (bVerEl && bVerEl.value.trim()) { fd.append("version", bVerEl.value.trim()); }
     fd.append("dll", dll, dll.name);
     fd.append("sbs", sbs, sbs.name);
     fd.append("pdb", pdb, pdb.name);
@@ -156,6 +177,7 @@
       const data = await LMApi.uploadProjectModel(pid, fd);
       $("lm-bundle-name").value = "";
       $("lm-bundle-dll").value = ""; $("lm-bundle-sbs").value = ""; $("lm-bundle-pdb").value = "";
+      if (bVerEl) { bVerEl.value = ""; }
       render(data.models || []);
       toast("已上传并生成 .sil", true);
     } catch (ex) {
@@ -179,6 +201,77 @@
     } catch (ex) {
       toast(ex.message, false);
     }
+  }
+
+
+  /* ----------------------------------------------------------------------- *
+   * Version relabelling modal.
+   *
+   * The label is validated server-side against LM_MODEL_VERSION_PATTERN, so the
+   * error is surfaced inline in the dialog and the dialog STAYS OPEN — the user
+   * would otherwise lose the release note they just typed to a rejected token.
+   * ----------------------------------------------------------------------- */
+  const verModal = $("lm-ver-modal");
+  let verTarget = null;
+
+  function verError(msg) {
+    const box = $("lm-ver-err");
+    if (!box) { return; }
+    box.textContent = msg || "";
+    box.hidden = !msg;
+  }
+
+  function closeVersion() {
+    verTarget = null;
+    if (verModal) { verModal.hidden = true; }
+    verError("");
+  }
+
+  function openVersion(model) {
+    if (!model || !verModal) { return; }
+    verTarget = model.name;
+    $("lm-ver-title").textContent = ` — ${model.name}`;
+    $("lm-ver-input").value = model.version || "";
+    $("lm-ver-note").value = model.version_note || "";
+    verError("");
+    verModal.hidden = false;
+    const input = $("lm-ver-input");
+    input.focus();
+    input.select();
+  }
+
+  async function saveVersion() {
+    if (!verTarget) { return; }
+    const btn = $("lm-ver-save");
+    const version = $("lm-ver-input").value.trim();
+    const note = $("lm-ver-note").value.trim();
+    verError("");
+    btn.disabled = true;
+    try {
+      const data = await LMApi.updateProjectModelVersion(pid, verTarget, version, note);
+      const name = verTarget;
+      closeVersion();
+      render(data.models || []);
+      toast(version ? `「${name}」版本已设为 ${version}` : `已清除「${name}」的版本号`, true);
+    } catch (ex) {
+      verError(ex.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  if (verModal) {
+    verModal.querySelectorAll("[data-ver-close]").forEach((el) =>
+      el.addEventListener("click", closeVersion));
+    $("lm-ver-save").addEventListener("click", saveVersion);
+    // Enter commits from the single-line label field; the note is multi-line so
+    // it keeps Enter for newlines.
+    $("lm-ver-input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); saveVersion(); }
+    });
+    verModal.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { e.stopPropagation(); closeVersion(); }
+    });
   }
 
   const addBtn = $("lm-model-add-btn");

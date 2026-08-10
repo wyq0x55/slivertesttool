@@ -78,6 +78,59 @@
     // client never sends a project list of its own.
     meOverview() { return request("GET", "/me/overview"); },
     meTasks(params) { return request("GET", "/me/tasks", { query: params }); },
+    meReviews(params) { return request("GET", "/me/reviews", { query: params }); },
+
+    // --- notifications ----------------------------------------------------
+    // `unreadCount` is deliberately separate from `list`: the badge polls every
+    // 30s and only needs one integer, so it must not drag the whole dropdown
+    // payload across the wire on every tick.
+    meNotifications(params) {
+      return request("GET", "/me/notifications", { query: params });
+    },
+    meNotificationsUnread() {
+      return request("GET", "/me/notifications/unread_count");
+    },
+    markNotificationsRead(ids) {
+      return request("POST", "/me/notifications/read",
+        { body: ids ? { ids } : {} });
+    },
+    // Archive != delete. Filing an item away is a claim the user can make
+    // ("handled"); deleting it is not one we may make for them.
+    archiveNotifications(ids) {
+      return request("POST", "/me/notifications/archive",
+        { body: ids ? { ids } : {} });
+    },
+    // Clears read/archived rows only -- unread items are outstanding work.
+    clearNotificationHistory() {
+      return request("POST", "/me/notifications/clear_history", { body: {} });
+    },
+
+    // --- dashboard ---------------------------------------------------------
+    // One bundled call on purpose: separate requests would let the page show a
+    // progress ring and a review funnel computed at different moments.
+    projectDashboard(pid) {
+      return request("GET", `/projects/${pid}/dashboard`);
+    },
+
+    // --- review sign-off ---------------------------------------------------
+    listProjectReviews(pid, params) {
+      return request("GET", `/projects/${pid}/reviews`, { query: params });
+    },
+    reviewItem(pid, uuid, action, note) {
+      return request("POST", `/projects/${pid}/items/${encodeURIComponent(uuid)}/review`,
+        { body: { action, note: note || "" } });
+    },
+    reviewItemsBulk(pid, uuids, action, note) {
+      return request("POST", `/projects/${pid}/reviews/bulk`,
+        { body: { uuids, action, note: note || "" } });
+    },
+    assignItemReviewer(pid, uuid, reviewerId) {
+      return request("POST", `/projects/${pid}/items/${encodeURIComponent(uuid)}/reviewer`,
+        { body: { reviewer_id: reviewerId } });
+    },
+    setReviewPolicy(pid, policy) {
+      return request("PUT", `/projects/${pid}/review_policy`, { body: policy });
+    },
 
     listProjects() { return request("GET", "/projects"); },
     createProject(payload) { return request("POST", "/projects", { body: payload }); },
@@ -206,10 +259,20 @@
 
     // --- Per-project plant models ---------------------------------------- //
     listProjectModels(id) { return request("GET", `/projects/${id}/models`); },
-    addProjectModel(id, name, path) { return request("POST", `/projects/${id}/models`, { body: { name, path } }); },
+    addProjectModel(id, name, path, version, versionNote) {
+        return request("POST", `/projects/${id}/models`,
+            { body: { name, path, version: version || "", version_note: versionNote || "" } });
+    },
     uploadProjectModel(id, formData) { return request("POST", `/projects/${id}/models/upload`, { body: formData }); },
     removeProjectModel(id, name) { return request("DELETE", `/projects/${id}/models`, { body: { name } }); },
     setCurrentProjectModel(id, name) { return request("POST", `/projects/${id}/models/current`, { body: { name } }); },
+    // Version labels are usually decided *after* a model has been uploaded and
+    // smoke-tested, so relabelling is its own audited call rather than a
+    // re-upload. Sending "" clears the label back to unversioned.
+    updateProjectModelVersion(id, name, version, versionNote) {
+        return request("PATCH", `/projects/${id}/models/version`,
+            { body: { name, version: version || "", version_note: versionNote || "" } });
+    },
     getModelSbs(id, name) { return request("GET", `/projects/${id}/models/sbs`, { query: { name } }); },
     saveModelSbs(id, body) { return request("PUT", `/projects/${id}/models/sbs`, { body }); },
     listModelSbsRevisions(id, name) { return request("GET", `/projects/${id}/models/sbs/revisions`, { query: { name } }); },

@@ -160,6 +160,43 @@ class Project(db.Model):
     tm_id_prefix = db.Column(db.String(64), nullable=True)
     tm_summary_sheet = db.Column(db.String(120), nullable=True)
 
+    # Which verdicts require a reviewer's sign-off before they count as final.
+    # Stored per project because the answer is a team policy, not a product
+    # decision: a safety-critical project reviews every PASS, an exploratory one
+    # reviews nothing. Shape: ``{"pass": bool, "untestable": bool}``; a missing
+    # key means "not required", so an untouched project keeps its old behaviour.
+    review_required_on = db.Column(JSONType, nullable=True)
+
+    # The single person reviews are routed to when a row has no reviewer of its
+    # own. Deliberately ONE reviewer rather than a pool: with a pool, every
+    # request is addressed to everybody and therefore owned by nobody, and the
+    # queue only gets cleared when two people happen to do it at once. One named
+    # reviewer who can reassign is the accountable version.
+    #
+    # ``use_alter`` + an explicit name because ``lm_users`` and ``lm_projects``
+    # already reference each other (owner_id / created_by); without it the two
+    # CREATE TABLEs cannot be ordered.
+    default_reviewer_id = db.Column(
+        db.Integer,
+        db.ForeignKey("lm_users.id", ondelete="SET NULL",
+                      use_alter=True, name="fk_project_default_reviewer"),
+        nullable=True,
+    )
+
+    # Review policy defaults, applied when ``review_required_on`` is unset.
+    # ``Untestable`` defaults to ON: "this cannot be tested" is a claim that
+    # silently removes a case from the evidence base, which is exactly the claim
+    # that deserves a second pair of eyes.
+    REVIEW_DEFAULTS = {"pass": False, "untestable": True}
+
+    def review_policy(self) -> dict:
+        """Effective ``{verdict_bucket: required}`` review policy."""
+        policy = dict(self.REVIEW_DEFAULTS)
+        policy.update({k: bool(v)
+                       for k, v in (self.review_required_on or {}).items()
+                       if k in policy})
+        return policy
+
     members = db.relationship(
         "ProjectMember", backref="project",
         cascade="all, delete-orphan", passive_deletes=True,
@@ -187,6 +224,7 @@ class Project(db.Model):
             # definition of "editable".
             "is_editable": self.is_editable,
             "owner_id": self.owner_id,
+            "default_reviewer_id": self.default_reviewer_id,
             "member_count": member_count if member_count is not None else len(self.members),
             "created_at": _iso(self.created_at),
             "updated_at": _iso(self.updated_at),
@@ -280,6 +318,19 @@ class ProjectModel(db.Model):
         nullable=False, index=True,
     )
     name = db.Column(db.String(120), nullable=False)
+    # Free-form but *validated* release label of the plant model (e.g. "v1.2.0",
+    # "RC3_20260810"). It is stamped onto every test row this model produces a
+    # verdict for (``version_label`` / バージョン) and is the grouping key of the
+    # dashboard's per-version charts, so it must stay a clean token: the service
+    # layer enforces ``LM_MODEL_VERSION_PATTERN`` and records every change in the
+    # audit log. Nullable so pre-existing models keep working un-versioned.
+    version = db.Column(db.String(64), nullable=True)
+    # Human note describing what changed in this version (release note).
+    version_note = db.Column(db.Text, nullable=False, default="")
+    # Retiring a model must not orphan the history that references it, so an
+    # obsolete model is *deprecated* (hidden from the pickers, still resolvable)
+    # rather than deleted.
+    deprecated_at = db.Column(db.DateTime, nullable=True)
     # path | bundle
     kind = db.Column(db.String(16), nullable=False, default="path")
     # Absolute path to the ``.sil`` Silver opens (the registered path, or the
@@ -296,9 +347,24 @@ class ProjectModel(db.Model):
 
     def to_dict(self, *, include_path: bool = False) -> dict:
         import os
+
+        from ..services import project_model_service as _pms
+
+        version = self.version or ""
         entry = {
             "id": self.id,
             "name": self.name,
+            "version": version,
+            # ``name@version`` is the identity every other surface should show
+            # and submit. Precomputed here so a call site cannot assemble it
+            # differently (and pin the wrong build) by hand.
+            "ref": _pms.format_ref(self.name, version),
+            "ref_short": _pms.format_ref(self.name, version, short=True),
+            "version_short": _pms.short_version(version),
+            "is_git_sha": _pms.is_git_sha(version),
+            "version_note": self.version_note or "",
+            "deprecated": self.deprecated_at is not None,
+            "deprecated_at": _iso(self.deprecated_at),
             "kind": self.kind,
             "exists": bool(self.sil_path) and os.path.isfile(self.sil_path),
             "is_current": bool(self.is_current),
@@ -392,6 +458,27 @@ class TestItemRow(db.Model):
     custom_values = db.Column(JSONType, nullable=True)  # {field_key: value}
     workflow_status = db.Column(db.String(24), nullable=False, default="Draft", index=True)
 
+    # --- Review sign-off ---------------------------------------------------
+    # A verdict is a claim; review is what turns it into an accepted result.
+    # Kept in dedicated columns rather than reusing ``workflow_status`` (whose
+    # "Draft" default means something else entirely) so the two state machines
+    # cannot corrupt each other.
+    #
+    # States: "" (no review needed / not requested) -> pending -> approved
+    #         | rejected. A rejected row goes back to pending on the next run.
+    review_status = db.Column(db.String(16), nullable=False, default="", index=True)
+    reviewer_id = db.Column(db.Integer, db.ForeignKey("lm_users.id"), nullable=True,
+                            index=True)
+    # Why the reviewer approved or (especially) rejected. Mandatory for a
+    # rejection and for anything touching ``Untestable``.
+    review_note = db.Column(db.Text, nullable=False, default="")
+    review_requested_at = db.Column(db.DateTime, nullable=True)
+    reviewed_at = db.Column(db.DateTime, nullable=True)
+    # The verdict that was under review when the request was raised. The row's
+    # ``result`` can be overwritten by a later run, so without this a reviewer
+    # could unknowingly approve a verdict that no longer exists.
+    review_verdict = db.Column(db.String(24), nullable=False, default="")
+
     version = db.Column(db.Integer, nullable=False, default=1)
     created_by = db.Column(db.Integer, db.ForeignKey("lm_users.id"), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
@@ -480,6 +567,191 @@ class TestItemRow(db.Model):
             data[alias] = getattr(self, col)
         data.update(self.custom_values or {})
         return data
+
+
+# --------------------------------------------------------------------------- #
+# Test run records (append-only execution history)
+# --------------------------------------------------------------------------- #
+# A test row's ``result`` / ``executor`` / ``exec_date`` columns only ever hold
+# the LAST run, which is all a spreadsheet can express. Every question the
+# project dashboard asks -- "how did v1.2 compare with v1.1?", "how fast are we
+# burning through the plan?", "when did this case last pass?" -- needs the runs
+# that came before, so each finished run also appends one immutable row here.
+#
+# This table is the single source of truth for the dashboard; the daily metrics
+# table is only a cache derived from it and can be rebuilt at any time.
+class TestRunRecord(db.Model):
+    __tablename__ = "lm_test_run_records"
+    __table_args__ = (
+        db.Index("ix_runrec_project_time", "project_id", "executed_at"),
+        db.Index("ix_runrec_project_test", "project_id", "test_id"),
+        db.Index("ix_runrec_project_version", "project_id", "model_version"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(
+        db.Integer, db.ForeignKey("lm_projects.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    # Row identity is kept BOTH ways on purpose: ``row_uuid`` survives a row
+    # being renamed, ``test_id`` survives a row being deleted and re-created.
+    row_uuid = db.Column(db.String(64), nullable=True, index=True)
+    test_id = db.Column(db.String(128), nullable=False, default="", index=True)
+    # The Task that produced this record (``task_key``, e.g. "T000123").
+    task_key = db.Column(db.String(16), nullable=False, default="")
+    # Judge verdict exactly as mirrored onto the row (PASS/FAIL/ERROR/...).
+    verdict = db.Column(db.String(24), nullable=False, default="")
+    # Normalised bucket used by every aggregate, so the dashboard never has to
+    # re-implement verdict parsing: pass | fail | error | untestable | cancelled.
+    outcome = db.Column(db.String(16), nullable=False, default="", index=True)
+    # Model identity at execution time. Denormalised (copied, not FK'd) so
+    # renaming or deleting a model can never rewrite history.
+    model_name = db.Column(db.String(120), nullable=False, default="")
+    model_version = db.Column(db.String(64), nullable=False, default="")
+    executor_id = db.Column(db.Integer, db.ForeignKey("lm_users.id"), nullable=True)
+    # Display name captured at execution time (a user may be renamed later).
+    executor_name = db.Column(db.String(120), nullable=False, default="")
+    executed_at = db.Column(db.DateTime, nullable=False, default=_utcnow, index=True)
+    # Local calendar date (LM_DISPLAY_TZ) the run is reported under -- the same
+    # value written into the row's 実施日 column, kept here so the burn-up chart
+    # buckets by the date the user sees rather than by UTC.
+    executed_on = db.Column(db.String(10), nullable=False, default="", index=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "row_uuid": self.row_uuid,
+            "test_id": self.test_id,
+            "task_key": self.task_key,
+            "verdict": self.verdict,
+            "outcome": self.outcome,
+            "model_name": self.model_name,
+            "model_version": self.model_version,
+            "executor_id": self.executor_id,
+            "executor_name": self.executor_name,
+            "executed_at": _iso(self.executed_at),
+            "executed_on": self.executed_on,
+        }
+
+
+# --------------------------------------------------------------------------- #
+# In-app notifications
+# --------------------------------------------------------------------------- #
+# Two events genuinely need to reach a person who is not looking at the page:
+# "the run you submitted finished" and "you have been asked to review this".
+# Without them a reviewer only discovers assigned work by chance.
+#
+# Deliberately in-app only (no email/WebSocket): on a LAN tool a bell with a
+# count and a 30s poll is the whole requirement, and it has no SMTP dependency,
+# no delivery failures and no extra process.
+class Notification(db.Model):
+    __tablename__ = "lm_notifications"
+    __table_args__ = (
+        # The unread badge and the dropdown are the only two queries.
+        db.Index("ix_notif_user_unread", "user_id", "is_read", "created_at"),
+        db.Index("ix_notif_group", "user_id", "group_key", "is_read"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer, db.ForeignKey("lm_users.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    # task.finished | review.assigned | review.approved | review.rejected
+    type = db.Column(db.String(32), nullable=False, default="", index=True)
+    title = db.Column(db.String(200), nullable=False, default="")
+    body = db.Column(db.Text, nullable=False, default="")
+    project_id = db.Column(db.Integer, nullable=True, index=True)
+    # Where clicking the notification takes the user.
+    link_url = db.Column(db.String(500), nullable=False, default="")
+    ref_type = db.Column(db.String(32), nullable=False, default="")
+    ref_id = db.Column(db.String(64), nullable=False, default="")
+
+    # Collapsing key, defaulting to ``type:project:ref_id`` -- unique per
+    # referenced object. Events sharing a key inside LM_NOTIFY_GROUP_SECONDS
+    # (0 by default, i.e. never) merge into the newest unread row and ``count``
+    # is incremented. Merging is off by default because a merged row carries a
+    # single ``link_url``: "×50" announced 50 events and opened one of them.
+    group_key = db.Column(db.String(120), nullable=False, default="", index=True)
+    count = db.Column(db.Integer, nullable=False, default=1)
+
+    is_read = db.Column(db.Boolean, nullable=False, default=False, index=True)
+    # When the row was read. The retention sweep ages rows by THIS, not by
+    # ``created_at``: ageing by creation time makes an old notification vanish
+    # the instant it is finally read.
+    read_at = db.Column(db.DateTime, nullable=True, index=True)
+    # Explicitly filed away by the user. Archived rows leave the unread list and
+    # the collapsing window, but stay readable in history until the retention
+    # window (or an explicit "clear history") removes them.
+    archived_at = db.Column(db.DateTime, nullable=True, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=_utcnow, index=True)
+    updated_at = db.Column(db.DateTime, nullable=False, default=_utcnow,
+                           onupdate=_utcnow)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "type": self.type,
+            "title": self.title,
+            "body": self.body,
+            "project_id": self.project_id,
+            "link_url": self.link_url,
+            "ref_type": self.ref_type,
+            "ref_id": self.ref_id,
+            "count": self.count or 1,
+            "is_read": bool(self.is_read),
+            "archived": self.archived_at is not None,
+            "read_at": _iso(self.read_at),
+            "archived_at": _iso(self.archived_at),
+            "created_at": _iso(self.created_at),
+            "updated_at": _iso(self.updated_at),
+        }
+
+
+# --------------------------------------------------------------------------- #
+# Server -> CRDT row write-back queue
+# --------------------------------------------------------------------------- #
+# The worker process finalises a run and needs to publish the verdict onto the
+# matching row. When the project is in collaborative mode the ``Y.Doc`` -- not
+# the database -- is the authoritative copy of a row, and the materializer
+# reconciles Doc -> DB in one direction only. A direct DB write would therefore
+# be silently reverted by the next flush.
+#
+# The worker cannot touch the Y.Doc itself (it lives in the separate collab
+# process), so it leaves the intent here instead. The collab server drains this
+# queue for its live rooms and applies each payload into the Y.Doc inside the
+# materializer's ``suppressed()`` block. Rows for projects that are not
+# collaborative are never queued at all -- the worker writes them straight to
+# the database.
+class RowWriteback(db.Model):
+    __tablename__ = "lm_row_writebacks"
+    __table_args__ = (
+        db.Index("ix_writeback_pending", "project_id", "applied_at"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(
+        db.Integer, db.ForeignKey("lm_projects.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    sheet = db.Column(db.String(16), nullable=False, default="test")
+    row_uuid = db.Column(db.String(64), nullable=False, default="")
+    # {field_key: value} -- always primitives, never nested structures.
+    payload = db.Column(JSONType, nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=_utcnow, index=True)
+    # NULL while pending; set once the collab server has applied it to the Doc.
+    applied_at = db.Column(db.DateTime, nullable=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "sheet": self.sheet,
+            "row_uuid": self.row_uuid,
+            "payload": dict(self.payload or {}),
+            "created_at": _iso(self.created_at),
+            "applied_at": _iso(self.applied_at),
+        }
 
 
 # --------------------------------------------------------------------------- #

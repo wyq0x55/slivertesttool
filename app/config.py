@@ -228,6 +228,58 @@ class Config:
     LM_TM_ID_PREFIX = os.environ.get("LM_TM_ID_PREFIX", "ID;;")
     LM_TM_SUMMARY_SHEET = os.environ.get("LM_TM_SUMMARY_SHEET", "4.TestRequirement")
 
+    # --- Plant-model versioning ---------------------------------------------
+    # A model's version label is stamped onto every row it produces a verdict
+    # for and is the grouping key of the dashboard's per-version charts, so it
+    # is validated rather than accepted as free text (spaces / CJK / slashes are
+    # what turn "v1.0" and "v1.0 " into two different releases). Widen the
+    # pattern here if your release names need more.
+    LM_MODEL_VERSION_PATTERN = os.environ.get(
+        "LM_MODEL_VERSION_PATTERN", r"^[A-Za-z0-9._\-+]{1,64}$"
+    )
+
+    # --- Result write-back (task -> test matrix row) -------------------------
+    # Timezone the 実施日 (exec_date) column and the dashboard's daily buckets
+    # are reported in. Everything is stored in UTC; this only decides which
+    # calendar day a run is filed under, so a run finished at 23:30 local time
+    # is not reported as "the next day".
+    LM_DISPLAY_TZ = os.environ.get("LM_DISPLAY_TZ", "Asia/Shanghai").strip()
+    # Mirror the originating task key into the row's ログ (log) column so a
+    # verdict on the sheet can be traced back to the run that produced it.
+    LM_WRITEBACK_LOG_COLUMN = _as_bool(
+        os.environ.get("LM_WRITEBACK_LOG_COLUMN"), True)
+    # How often (seconds) the collab server drains queued row write-backs into
+    # its live Y.Docs. Keep it well below the materializer debounce (3s) so a
+    # verdict lands in the Doc before the next reconcile.
+    COLLAB_WRITEBACK_POLL_SECONDS = float(
+        os.environ.get("COLLAB_WRITEBACK_POLL_SECONDS", "2.0"))
+    # Queued write-backs older than this are dropped by the drain loop: they
+    # belong to a room that never came back, and the database already holds the
+    # authoritative value, so replaying them onto a much later Doc would undo
+    # newer manual edits.
+    COLLAB_WRITEBACK_TTL_SECONDS = _as_int(
+        os.environ.get("COLLAB_WRITEBACK_TTL_SECONDS"), 900)
+
+    # --- In-app notifications ------------------------------------------------
+    # Collapsing window, in seconds. 0 (the default) = every event gets its own
+    # row. A merged row can carry only ONE link, so a "×50" entry announced 50
+    # events and opened exactly one of them; the rest were unreachable. Group
+    # keys are per referenced object, so a non-zero window now only folds the
+    # very same event delivered twice.
+    LM_NOTIFY_GROUP_SECONDS = _as_int(
+        os.environ.get("LM_NOTIFY_GROUP_SECONDS"), 0)
+    # Read notifications are purged this many days after they were READ (not
+    # after they were created -- ageing by creation time deletes an old
+    # notification the moment it is finally opened). Unread rows are never aged
+    # out: an unread notification is outstanding work.
+    LM_NOTIFY_RETENTION_DAYS = _as_int(
+        os.environ.get("LM_NOTIFY_RETENTION_DAYS"), 30)
+    # Browser poll interval (seconds) for the unread badge.
+    LM_NOTIFY_POLL_SECONDS = _as_int(
+        os.environ.get("LM_NOTIFY_POLL_SECONDS"), 30)
+    # Max notifications returned by one dropdown fetch.
+    LM_NOTIFY_PAGE_SIZE = _as_int(os.environ.get("LM_NOTIFY_PAGE_SIZE"), 30)
+
     # --- Self-service registration (LAN users) ------------------------------
     # Lets users on the internal network create their own account from the login
     # page. A freshly registered account carries no project membership and is

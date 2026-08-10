@@ -6,6 +6,13 @@
 <div class="content lm-tasks" data-project="{{ project_id }}">
   <div class="page-head" id="lm-list-head">
     <div class="ttl">
+      {# Shown only when this page was opened from the personal workspace, so
+         the user returns to the queue they were working through instead of
+         being stranded in a project they may not otherwise visit. #}
+      <a id="lm-back-workspace" class="lm-backlink" href="/lanmatrix/home" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        返回我的工作台
+      </a>
       <h1>任务/运行</h1>
       <p>提交测试用例到队列，跟踪运行进度与判定结果</p>
     </div>

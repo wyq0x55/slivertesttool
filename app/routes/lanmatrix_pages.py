@@ -152,6 +152,31 @@ def editor(project_id: int):
         collab_available=_collab_bundle_available())
 
 
+def _charts_bundle_available() -> bool:
+    """True when the ECharts bundle has been vendored.
+
+    Gates the optional charting layer on the project dashboard. When absent the
+    page still renders every figure as numeric summary cards, so a missing
+    bundle costs the visualisation, not the data.
+    """
+    bundle = os.path.join(
+        current_app.root_path, "static", "vendor", "charts", "echarts.min.js")
+    return os.path.isfile(bundle)
+
+
+@pages_bp.get("/projects/<int:project_id>/dashboard")
+def project_dashboard(project_id: int):
+    """Per-project progress dashboard. Members only; the API enforces
+    membership, the page is a thin shell."""
+    user = _current_user()
+    if user is None:
+        return redirect(url_for("lanmatrix_pages.login"))
+    return render_template(
+        "lanmatrix/dashboard.html", user=user.to_dict(),
+        project_id=project_id,
+        charts_available=_charts_bundle_available())
+
+
 @pages_bp.get("/projects/<int:project_id>/tasks")
 def project_tasks(project_id: int):
     """Per-project Upload Tasks page (test execution). Members only; the API

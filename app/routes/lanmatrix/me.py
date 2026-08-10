@@ -16,10 +16,11 @@ from __future__ import annotations
 from flask import Blueprint, g, request
 
 from ...extensions import db
-from ...models import Task, TaskStatus
+from ...models import LMUser, Task, TaskStatus
 from ...services import task_service
-from ...services.lanmatrix import service
-from ._base import ok, login_required, register_common
+from ...services.lanmatrix import (notification_service, review_service,
+                                   service)
+from ._base import arg_int, err, ok, login_required, register_common
 
 bp = Blueprint("lanmatrix_me", __name__, url_prefix="/api/v1")
 register_common(bp)
@@ -164,3 +165,120 @@ def me_tasks():
                      for pid in sorted(seen)],
         "truncated": truncated,
     })
+
+
+# --------------------------------------------------------------------------- #
+# Review queue
+#
+# The reason this lives beside the task list rather than inside a project: an
+# assigned review is work the reviewer did not choose and may not know about, so
+# it has to appear where they already look. A review queue you have to go
+# hunting for per project is a review queue nobody clears.
+#
+# Visibility reuses ``_visible_projects`` unchanged, so the review queue cannot
+# leak a row from a project the user cannot already read.
+# --------------------------------------------------------------------------- #
+@bp.get("/me/reviews")
+@login_required
+def me_reviews():
+    projects = _visible_projects()
+    by_id = {p.id: p for p in projects}
+    if not by_id:
+        return ok({"reviews": [], "projects": [], "counts": {}})
+
+    wanted = arg_int("project_id", None)
+    pids = [wanted] if wanted in by_id else list(by_id)
+
+    limit = arg_int("limit", 200, minimum=1, maximum=500)
+    rows = review_service.pending_for(g.user.id, pids, limit=limit)
+
+    reviewer_ids = {r.reviewer_id for r in rows if r.reviewer_id}
+    reviewers = {u.id: u for u in
+                 LMUser.query.filter(LMUser.id.in_(reviewer_ids)).all()} \
+        if reviewer_ids else {}
+
+    seen = {r.project_id for r in rows if r.project_id in by_id}
+    return ok({
+        "reviews": [review_service.row_review_dict(r, reviewers) for r in rows],
+        "projects": [{"id": pid, "code": by_id[pid].code, "name": by_id[pid].name}
+                     for pid in sorted(seen)],
+        "counts": review_service.counts_for(list(by_id)),
+    })
+
+
+# --------------------------------------------------------------------------- #
+# Notifications
+# --------------------------------------------------------------------------- #
+def _notification_totals() -> dict:
+    """Both tab counters in one place, so a response cannot ship half of them."""
+    return {
+        "unread": notification_service.unread_count(g.user.id),
+        "history": notification_service.history_count(g.user.id),
+    }
+
+
+@bp.get("/me/notifications")
+@login_required
+def me_notifications():
+    """List notifications for one scope (``unread`` | ``history`` | ``all``).
+
+    The legacy ``?unread=1`` flag still works so an older cached page keeps
+    functioning after a deploy.
+    """
+    scope = (request.args.get("scope") or "").strip().lower()
+    if scope not in notification_service.SCOPES:
+        scope = notification_service.SCOPE_UNREAD
+    limit = arg_int("limit", None, minimum=1, maximum=200)
+    rows = notification_service.list_for(g.user.id, scope=scope, limit=limit)
+    payload = {"notifications": [n.to_dict() for n in rows], "scope": scope}
+    payload.update(_notification_totals())
+    return ok(payload)
+
+
+@bp.get("/me/notifications/unread_count")
+@login_required
+def me_notifications_unread_count():
+    """Cheap endpoint for the 30s badge poll -- one COUNT, no row payload."""
+    return ok({"unread": notification_service.unread_count(g.user.id)})
+
+
+@bp.post("/me/notifications/archive")
+@login_required
+def me_notifications_archive():
+    """File notifications away into history.
+
+    Archiving is not deleting: "I have dealt with this" and "this never
+    happened" are different statements, and only the first one is safe to make
+    on the user's behalf. Archived rows also stop being revived by the
+    collapsing window, which is what made dismissed items reappear.
+    """
+    payload = request.get_json(silent=True) or {}
+    ids = payload.get("ids")
+    if ids is not None and not isinstance(ids, list):
+        return err("INVALID_ARGUMENT", "ids 必须是数组", status=400)
+    changed = notification_service.archive(g.user.id, ids)
+    body = {"archived": changed}
+    body.update(_notification_totals())
+    return ok(body)
+
+
+@bp.post("/me/notifications/clear_history")
+@login_required
+def me_notifications_clear_history():
+    """Drop read/archived rows only. Unread rows are outstanding work and stay."""
+    removed = notification_service.clear_history(g.user.id)
+    body = {"removed": removed}
+    body.update(_notification_totals())
+    return ok(body)
+
+
+@bp.post("/me/notifications/read")
+@login_required
+def me_notifications_read():
+    payload = request.get_json(silent=True) or {}
+    ids = payload.get("ids")
+    if ids is not None and not isinstance(ids, list):
+        return err("INVALID_ARGUMENT", "ids 必须是数组", status=400)
+    changed = notification_service.mark_read(g.user.id, ids)
+    return ok({"marked": changed,
+               "unread": notification_service.unread_count(g.user.id)})

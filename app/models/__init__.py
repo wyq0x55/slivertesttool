@@ -10,11 +10,14 @@ from .lanmatrix import (
     DataJob,
     FieldDefinition,
     LMUser,
+    Notification,
     Project,
     ProjectMember,
     ProjectModel,
+    RowWriteback,
     SbsRevision,
     TestItemRow,
+    TestRunRecord,
 )
 from .setting import Setting
 from .task import Task, TaskStatus
@@ -34,6 +37,9 @@ __all__ = [
     "SbsRevision",
     "FieldDefinition",
     "TestItemRow",
+    "TestRunRecord",
+    "RowWriteback",
+    "Notification",
     "CellComment",
     "AuditLog",
     "DataJob",

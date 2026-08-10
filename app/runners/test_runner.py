@@ -61,18 +61,28 @@ _TEST_PASS_RE = re.compile(
 
 
 def extract_case_section(text: str, test_id: str) -> str:
-    """Return only the log section for ``test_id``.
+    """Return the **most recent** log section for ``test_id``.
 
-    A jdgrslt.log may accumulate several test cases; scoping to the requested
-    one prevents a passing test from inheriting another case's failure. If no
-    per-case markers exist (or the id is not found), the full text is returned.
+    A jdgrslt.log may accumulate several test cases, and -- when a judge appends
+    instead of truncating -- several *runs* of the same case. Scoping to the
+    requested id prevents a passing test from inheriting another case's failure.
+
+    The scan runs from the end backwards on purpose. Returning the *first*
+    matching section makes a re-run report the verdict of the previous run
+    forever: "重新测试" appears to do nothing because the parser keeps reading
+    the stale block above. The newest block is the one this run just wrote, so
+    it is the only correct answer.
+
+    If no per-case markers exist (or the id is not found), the full text is
+    returned.
     """
     lines = text.splitlines()
     starts = [i for i, ln in enumerate(lines) if _CASE_START_RE.search(ln)]
     if not starts:
         return text
     tid = (test_id or "").strip()
-    for idx, start in enumerate(starts):
+    for idx in range(len(starts) - 1, -1, -1):
+        start = starts[idx]
         m = _CASE_START_RE.search(lines[start])
         marker_id = (m.group(1).strip() if m else "")
         if tid and (marker_id == tid or tid in lines[start] or marker_id in tid):
@@ -230,6 +240,13 @@ def execute(app, config, task: Task, pool=None, instance=None,
     # run finishes).
     workspace = Path(task.workspace)
     log_dir = run_layout.log_dir(workspace, task.test_id)
+    # Results are keyed by test id and therefore REUSED across runs. Without
+    # this wipe the previous run's jdgrslt.log / Console.log stay in place, and
+    # a re-run that produces no judge output at all silently reports the old
+    # verdict -- the user clicks "retest" and nothing appears to change.
+    # Clearing first makes a missing verdict read as UNKNOWN, which is true,
+    # instead of as the stale result, which is a lie.
+    shutil.rmtree(log_dir, ignore_errors=True)
     log_dir.mkdir(parents=True, exist_ok=True)
     staging = run_layout.staging_dir(workspace, task.test_id)
     run_dir = run_layout.instance_run_dir(
@@ -441,38 +458,52 @@ def _finalise(task: Task, status: TaskStatus, message: str, verdict: str) -> Non
     db.session.add(task)
     db.session.commit()
     _write_row_result(task, verdict)
+    _notify_submitter(task, status, verdict)
+
+
+def _notify_submitter(task: Task, status: TaskStatus, verdict: str) -> None:
+    """Tell whoever queued the run that it finished.
+
+    A long run is exactly the case where the submitter has navigated away, so
+    without this the result is only discoverable by going back to look. Grouped
+    per project so submitting a batch of cases yields one "N runs finished"
+    entry instead of flooding the bell.
+
+    Best-effort by construction: the run is already committed, and a failure to
+    notify must not turn a completed run into an error.
+    """
+    try:
+        from ..services.lanmatrix import notification_service as notify_svc
+
+        if not task.submitter_id:
+            return
+        label = task.test_id or task.task_key or "run"
+        notify_svc.notify(
+            task.submitter_id, notify_svc.TASK_FINISHED,
+            f"运行完成：{label} → {verdict or status.value}",
+            body=(task.message or "")[:500],
+            project_id=task.project_id,
+            link_url=notify_svc.task_link(task.project_id, task.task_key),
+            ref_type="task", ref_id=task.task_key or str(task.id),
+            # Per run, not per project: a merged row can only carry one link,
+            # so "×50" hid 49 runs behind a link to one of them.
+            group_key=(f"task.finished:{task.project_id or 0}"
+                       f":{task.task_key or task.id}"),
+            commit=True,
+        )
+    except Exception:  # pragma: no cover - notifications never break a run
+        logger.exception("failed to notify submitter for task %s", task.task_key)
 
 
 def _write_row_result(task: Task, verdict: str) -> None:
-    """Mirror the task verdict onto the matching Test-Matrix row(s).
+    """Mirror the finished run onto the matching Test-Matrix row(s).
 
-    The editor colours each test row from its ``result`` field (row-level
-    conditional formatting), so the run outcome has to flow back from the
-    Task world into ``TestItemRow.result``. A row is matched by project +
-    logical test id (``row_test_id`` = the row's ``test_id`` field, else its
-    ``case_id``); a test id shared by several rows updates all of them. Purely
-    best-effort: a write-back failure must never fail the run itself.
+    Delegates to :mod:`app.services.lanmatrix.run_writeback_service`, which
+    writes the full evidence set (verdict, model version, executor, execution
+    date, originating task key), appends the immutable run record the dashboard
+    aggregates, and routes the write through the collaborative-safe path so an
+    open editor session cannot revert it.
     """
-    if not task.project_id or not task.test_id:
-        return
-    try:
-        from ..services.lanmatrix import silver_json_export as sje
+    from ..services.lanmatrix import run_writeback_service
 
-        value = (verdict or "")[:24]
-        rows = TestItemRow.query.filter_by(
-            project_id=task.project_id, sheet="test", deleted_at=None,
-        ).all()
-        changed = False
-        for row in rows:
-            if sje.row_test_id(row) != task.test_id:
-                continue
-            if row.result != value:
-                row.result = value
-                row.version = (row.version or 1) + 1
-                db.session.add(row)
-                changed = True
-        if changed:
-            db.session.commit()
-    except Exception:  # pragma: no cover - defensive, never break the run
-        db.session.rollback()
-        logger.exception("failed to mirror verdict onto TestItemRow.result")
+    run_writeback_service.record_run(task, verdict)

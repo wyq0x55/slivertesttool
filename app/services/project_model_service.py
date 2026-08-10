@@ -34,6 +34,7 @@ import shutil
 from pathlib import Path
 from typing import List, Optional
 
+from flask import current_app
 from werkzeug.datastructures import FileStorage
 
 from ..config import BASE_DIR
@@ -252,10 +253,228 @@ def _validate_name(project_id: int, name: str) -> None:
         raise ModelError(f"该项目已存在名为 '{name}' 的模型。")
 
 
+# --------------------------------------------------------------------------- #
+# Model identity: ``name@version``
+#
+# A model is identified by its *name* plus the exact build it was cut from. The
+# build is a git commit sha, because that is the only identifier that cannot be
+# reused: a human label ("v1.2") gets re-cut, re-uploaded and quietly reassigned
+# to different bytes, at which point every test row stamped with it is evidence
+# for nothing in particular.
+#
+# Full 40-char shas are stored (uniqueness), 7 chars are displayed (readability),
+# and ``name@version`` is the single string used in the UI, in run submissions
+# and in evidence.
+# --------------------------------------------------------------------------- #
+#: Displayed prefix length of a git sha.
+GIT_SHORT_LEN = 7
+
+_GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
+
+#: Separator between a model name and its version in a reference string.
+REF_SEP = "@"
+
+
+def is_git_sha(version: Optional[str]) -> bool:
+    """Whether ``version`` looks like a git commit sha (7-40 hex chars)."""
+    token = (version or "").strip()
+    return bool(token) and _GIT_SHA_RE.match(token) is not None
+
+
+def short_version(version: Optional[str]) -> str:
+    """The display form of a version: shas are truncated, labels are not."""
+    token = (version or "").strip()
+    if is_git_sha(token):
+        return token[:GIT_SHORT_LEN]
+    return token
+
+
+def format_ref(name: str, version: Optional[str] = None, *,
+               short: bool = False) -> str:
+    """Build the ``name@version`` reference string.
+
+    An unversioned model degrades to a bare ``name`` rather than a dangling
+    ``name@``: pre-existing models must keep resolving.
+    """
+    base = (name or "").strip()
+    token = (version or "").strip()
+    if not token:
+        return base
+    return f"{base}{REF_SEP}{short_version(token) if short else token}"
+
+
+def parse_ref(ref: str) -> tuple[str, str]:
+    """Split ``name@version`` into ``(name, version)``.
+
+    Splits on the LAST separator so a model whose name contains ``@`` still
+    resolves. A reference with no separator is a bare name with no pinned
+    version, which is legal and means "whatever version is registered".
+    """
+    token = (ref or "").strip()
+    if REF_SEP not in token:
+        return token, ""
+    name, _, version = token.rpartition(REF_SEP)
+    return name.strip(), version.strip()
+
+
+class ModelVersionMismatch(ModelError):
+    """Raised when a pinned version does not match the registered one.
+
+    Its own class because the caller must answer it with 409, not 400: the
+    request was well-formed, the *world* moved. Falling back to the current
+    build instead would attach the wrong commit to the run's evidence, which is
+    the one failure mode this whole feature exists to prevent.
+    """
+
+    def __init__(self, name: str, wanted: str, actual: str):
+        self.model_name = name
+        self.wanted = wanted
+        self.actual = actual
+        super().__init__(
+            f"模型 '{name}' 的注册版本为 "
+            f"{short_version(actual) or '（未设置版本）'}，"
+            f"与提交指定的 {short_version(wanted)} 不一致。"
+            "请刷新页面后重新选择模型。")
+
+
+def resolve_ref(project_id: int, ref: str) -> tuple[str, str, Path]:
+    """Resolve a ``name@version`` reference to ``(name, version, sil_path)``.
+
+    When the reference pins a version, that version must equal the one the
+    registry currently holds -- otherwise :class:`ModelVersionMismatch` is
+    raised instead of quietly running against whatever is registered now. The
+    silent-substitution behaviour is worse than an error: the run completes, the
+    row is stamped, and the recorded commit is simply wrong.
+
+    An empty ``ref`` resolves the project's default model.
+    """
+    name, wanted = parse_ref(ref)
+    if not name:
+        default = effective_default(project_id)
+        if not default:
+            raise ModelError("该项目尚未添加 .sil 模型。")
+        name = default["name"]
+        wanted = ""
+
+    row = _query(project_id).filter_by(name=name).first()
+    actual = (row.version or "") if row is not None else ""
+    if wanted and actual.lower() != wanted.lower():
+        raise ModelVersionMismatch(name, wanted, actual)
+
+    path = effective_path(project_id, name)
+    if path is None:
+        raise ModelError("未知模型，请选择该项目已添加的 .sil 模型。")
+    return name, actual, path
+
+
+def normalise_version(version: Optional[str]) -> str:
+    """Validate a model version label and return the cleaned token.
+
+    The label is not cosmetic: it is stamped onto every test row this model
+    produces a verdict for, and it is the grouping key of the dashboard's
+    per-version comparisons. Free text would quietly split one release into
+    several ("v1.0" vs "v1.0 " vs "V1.0 rc"), so it must match
+    ``LM_MODEL_VERSION_PATTERN``. An empty value is allowed and means
+    "unversioned", because pre-existing models have to keep working.
+
+    A git sha is accepted unconditionally and lower-cased. It is the *preferred*
+    version format, so an operator who tightened ``LM_MODEL_VERSION_PATTERN``
+    for their own labelling scheme must not end up locked out of the one
+    identifier the product recommends. Lower-casing keeps ``ABC123`` and
+    ``abc123`` -- the same commit -- from registering as two versions.
+    """
+    token = (version or "").strip()
+    if not token:
+        return ""
+    if is_git_sha(token):
+        return token.lower()
+    pattern = current_app.config.get(
+        "LM_MODEL_VERSION_PATTERN", r"^[A-Za-z0-9._\-+]{1,64}$")
+    try:
+        matched = re.fullmatch(pattern, token) is not None
+    except re.error:
+        # A broken operator-supplied pattern must not block model management.
+        matched = len(token) <= 64
+    if not matched:
+        raise ModelError(
+            "版本号只能包含字母、数字、点、下划线、连字符和加号，且不超过 64 个字符。")
+    return token
+
+
+def update_version(project_id: int, name: str, version: Optional[str],
+                   note: Optional[str] = None,
+                   updated_by: Optional[int] = None) -> dict:
+    """Change a registered model's version label / release note.
+
+    Editing an existing label rewrites the meaning of test evidence that was
+    already produced under the old one, so the change is deliberately audited
+    (``model.version.update``) rather than applied silently. Historical rows and
+    run records keep the value they were stamped with -- only future runs use
+    the new label.
+    """
+    target = _query(project_id).filter_by(name=(name or "").strip()).first()
+    if target is None:
+        raise ModelError("未找到该模型，请刷新后重试。")
+
+    new_version = normalise_version(version)
+    old_version = target.version or ""
+    target.version = new_version or None
+    if note is not None:
+        target.version_note = str(note).strip()
+
+    if new_version != old_version:
+        _audit_version_change(project_id, target, old_version, new_version,
+                              updated_by)
+    db.session.commit()
+    return target.to_dict(include_path=True)
+
+
+def set_deprecated(project_id: int, name: str, deprecated: bool) -> dict:
+    """Hide (or restore) a model without deleting the history that cites it.
+
+    Deleting a retired model would orphan every run record and every row that
+    names it, so a superseded model is flagged instead: it disappears from the
+    pickers but stays fully resolvable for existing evidence.
+    """
+    target = _query(project_id).filter_by(name=(name or "").strip()).first()
+    if target is None:
+        raise ModelError("未找到该模型，请刷新后重试。")
+    target.deprecated_at = _dt.datetime.utcnow() if deprecated else None
+    if deprecated and target.is_current:
+        # A deprecated model must not stay the default anyone runs against.
+        target.is_current = False
+    db.session.commit()
+    return target.to_dict(include_path=True)
+
+
+def _audit_version_change(project_id: int, model: ProjectModel,
+                          old: str, new: str,
+                          user_id: Optional[int]) -> None:
+    """Record a version relabel in the audit log (best effort)."""
+    try:
+        from ..models import AuditLog
+        db.session.add(AuditLog(
+            project_id=project_id,
+            actor_id=user_id,
+            action="model.version.update",
+            object_type="project_model",
+            object_id=str(model.id),
+            old_value={"model": model.name, "version": old},
+            new_value={"model": model.name, "version": new},
+        ))
+    except Exception:  # noqa: BLE001 - auditing must not block the change
+        import logging
+        logging.getLogger(__name__).warning(
+            "could not audit model version change for %s", model.name)
+
+
 def add_path_model(project_id: int, name: str, path: str,
-                   created_by: Optional[int] = None) -> dict:
+                   created_by: Optional[int] = None,
+                   version: Optional[str] = None,
+                   version_note: Optional[str] = None) -> dict:
     """Register a server-side ``.sil`` path for a project."""
     name = (name or "").strip()
+    version = normalise_version(version)
     path = (path or "").strip().strip('"')
     if not path:
         raise ModelError("请填写 .sil 文件的服务器绝对路径。")
@@ -267,7 +486,8 @@ def add_path_model(project_id: int, name: str, path: str,
     first = not has_models(project_id)
     row = ProjectModel(project_id=project_id, name=name, kind="path",
                        sil_path=str(Path(path)), created_by=created_by,
-                       is_current=first)
+                       is_current=first, version=version or None,
+                       version_note=(version_note or "").strip())
     db.session.add(row)
     db.session.commit()
     return row.to_dict(include_path=True)
@@ -276,7 +496,9 @@ def add_path_model(project_id: int, name: str, path: str,
 def add_bundle_model(project_id: int, name: str, dll: FileStorage,
                      sbs: FileStorage, config,
                      pdb: Optional[FileStorage] = None,
-                     created_by: Optional[int] = None) -> dict:
+                     created_by: Optional[int] = None,
+                     version: Optional[str] = None,
+                     version_note: Optional[str] = None) -> dict:
     """Store an uploaded ``dll`` + ``sbs`` (+ ``pdb``) set and generate the ``.sil``.
 
     A per-project model directory is created and all uploaded files are saved
@@ -288,6 +510,9 @@ def add_bundle_model(project_id: int, name: str, dll: FileStorage,
     must sit in the same directory or Silver cannot locate the debug symbols.
     """
     name = (name or "").strip()
+    # Validate before any file is written: rejecting the version afterwards
+    # would leave an orphaned bundle directory on disk.
+    version = normalise_version(version)
     if dll is None or not dll.filename:
         raise ModelError("请上传 dll 文件。")
     if sbs is None or not sbs.filename:
@@ -329,7 +554,9 @@ def add_bundle_model(project_id: int, name: str, dll: FileStorage,
     first = not has_models(project_id)
     row = ProjectModel(project_id=project_id, name=name, kind="bundle",
                        sil_path=str(sil_path), bundle_dir=str(model_dir),
-                       created_by=created_by, is_current=first)
+                       created_by=created_by, is_current=first,
+                       version=version or None,
+                       version_note=(version_note or "").strip())
     db.session.add(row)
     db.session.commit()
     return row.to_dict(include_path=True)

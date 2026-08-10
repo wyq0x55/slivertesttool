@@ -35,6 +35,47 @@
     <div id="lm-mem-candidates" class="cands"></div>
   </div>
 
+  {# Review policy sits with 成员管理 because it is the other half of the same
+     decision: who reviews, and what has to be reviewed. Splitting them across
+     tabs would let an admin appoint reviewers with nothing routed to them. #}
+  <div class="lm-rv-policy" id="lm-rv-policy" hidden>
+    <div class="mform-cap">评审策略</div>
+    <p class="muted" style="margin:0 0 12px">
+      勾选的判定结果需经评审确认后才被认可。仅项目管理员可修改。
+    </p>
+    <label class="lm-rv-policy-row">
+      <input type="checkbox" id="lm-rv-pol-pass">
+      <span>
+        <strong>PASS 需要评审</strong>
+        <em>通过的用例可批量审核，适合回归批量确认。</em>
+      </span>
+    </label>
+    <label class="lm-rv-policy-row">
+      <input type="checkbox" id="lm-rv-pol-untestable">
+      <span>
+        <strong>Untestable 需要评审</strong>
+        <em>无法测试的用例必须逐条审核并填写意见，评审时可看到说明列理由。</em>
+      </span>
+    </label>
+    {# One named reviewer, not a pool. A request addressed to everybody is owned
+       by nobody; with a single accountable reviewer (who can reassign) the
+       queue always has someone it belongs to. Without this the fallback chain
+       ends at the project owner. #}
+    <div class="lm-rv-policy-row" style="align-items:center">
+      <span>
+        <strong>默认审核人</strong>
+        <em>行未指定审核人时由 TA 审核；留空则回退到项目负责人。</em>
+      </span>
+      <select id="lm-rv-pol-reviewer" class="input" style="max-width:220px">
+        <option value="">（未设置 · 回退项目负责人）</option>
+      </select>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button type="button" class="btn btn-primary" id="lm-rv-pol-save">保存策略</button>
+      <span class="muted" id="lm-rv-pol-msg"></span>
+    </div>
+  </div>
+
   <div class="mgrid" id="lm-member-rows">
     <div class="muted">加载中…</div>
   </div>
@@ -42,4 +83,5 @@
 {% endblock %}
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/lanmatrix/members.js') }}"></script>
+<script src="{{ url_for('static', filename='js/lanmatrix/review_policy.js') }}"></script>
 {% endblock %}

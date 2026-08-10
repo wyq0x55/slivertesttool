@@ -8,12 +8,36 @@
  * Filter state lives in the URL via LMUrl (see urlstate.js), matching the
  * convention established for the project task list, so a filtered workspace
  * can be linked, bookmarked and reached with the Back button.
+ *
+ * Views, not a stack
+ * ------------------
+ * 最近任务 / 待我审核 / 我的项目 are three different jobs, and stacking them on
+ * one page meant the third was only reachable after scrolling past up to 200
+ * tasks and every pending review. They are now tabs over panes -- the same
+ * strip the project 设置 pages use -- and each list is paged client-side
+ * (pager.js) instead of dumping every fetched row at once. `?view=` carries the
+ * active tab, which is also what notification links already send (?view=reviews).
  */
-(function () {
+(function (global) {
   "use strict";
 
   const $ = (id) => document.getElementById(id);
   const TASK_LIMIT = 200;
+  const TASK_PAGE_SIZE = 20;
+  const PROJECT_PAGE_SIZE = 9;
+
+  const VIEWS = ["tasks", "reviews", "projects"];
+  const DEFAULT_VIEW = "tasks";
+  let view = DEFAULT_VIEW;
+
+  // Rows currently held for each paged list, so switching page repaints from
+  // memory instead of re-querying the server.
+  let taskRows = [];
+  let taskProjects = {};
+  let projectRows = [];
+
+  let taskPager = null;
+  let projectPager = null;
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
@@ -44,6 +68,46 @@
     const p = (n) => String(n).padStart(2, "0");
     return `${p(d.getFullYear() % 100)}/${p(d.getMonth() + 1)}/${p(d.getDate())} `
       + `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  }
+
+  // --- views ---------------------------------------------------------------
+  function normaliseView(v) {
+    return VIEWS.indexOf(String(v || "")) >= 0 ? String(v) : DEFAULT_VIEW;
+  }
+
+  function paintView() {
+    document.querySelectorAll("#lm-home-tabs .tab").forEach((b) => {
+      const on = b.dataset.view === view;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    VIEWS.forEach((v) => {
+      const pane = $(`lm-pane-${v}`);
+      if (!pane) return;
+      pane.classList.toggle("on", v === view);
+      // hidden as well as the class: a display:none pane must also be out of
+      // the accessibility tree, not just invisible.
+      pane.hidden = v !== view;
+    });
+  }
+
+  // push: a tab click is a navigation the user should be able to undo with
+  // Back. Restoring from the URL is not, so it replaces instead.
+  function setView(next, push) {
+    const want = normaliseView(next);
+    const changed = want !== view;
+    view = want;
+    paintView();
+    if (global.LMUrl) {
+      const patch = { view: view === DEFAULT_VIEW ? null : view };
+      if (push && changed) LMUrl.set(patch); else LMUrl.replace(patch);
+    }
+    return changed;
+  }
+
+  function setTabCount(key, n) {
+    const el = document.querySelector(`#lm-home-tabs [data-tabcount="${key}"]`);
+    if (el) el.textContent = n ? String(n) : "";
   }
 
   // --- filter state <-> URL -----------------------------------------------
@@ -121,12 +185,22 @@
   }
 
   function renderProjects(projects) {
+    // Most-recently-touched first. Nothing is dropped any more: the list is
+    // paged, so the 9th project is one click away instead of invisible.
+    projectRows = (projects || []).slice()
+      .sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
+    setTabCount("projects", projectRows.length);
+    if (projectPager) {
+      projectPager.reset();
+      projectPager.setTotal(projectRows.length);
+    }
+    paintProjects();
+  }
+
+  function paintProjects() {
     const host = $("lm-h-projects");
-    // Most-recently-touched first, capped: this strip is a shortcut, and the
-    // full management surface is one click away on the projects page.
-    const rows = (projects || []).slice()
-      .sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")))
-      .slice(0, 8);
+    if (!host) return;
+    const rows = projectPager ? projectPager.slice(projectRows) : projectRows;
     if (!rows.length) { host.innerHTML = ""; return; }
     host.innerHTML = rows.map((p) => `
       <a class="proj-mini" href="/lanmatrix/projects/${encodeURIComponent(p.id)}/tasks">
@@ -157,28 +231,40 @@
   }
 
   function renderTasks(data) {
-    const tasks = (data && data.tasks) || [];
+    taskRows = (data && data.tasks) || [];
     // Server ships the project lookup with the payload — a cross-project list
     // showing bare numeric ids would defeat the point of the page.
-    const names = {};
-    ((data && data.projects) || []).forEach((p) => { names[p.id] = p; });
+    taskProjects = {};
+    ((data && data.projects) || []).forEach((p) => { taskProjects[p.id] = p; });
 
+    $("lm-home-count").textContent = taskRows.length ? `${taskRows.length} 条` : "";
+    setTabCount("tasks", taskRows.length);
+    $("lm-h-more").hidden = !(data && data.truncated);
+
+    // A new result set always starts at page 1: staying on page 7 of the
+    // previous filter would show an empty table and look like a failure.
+    if (taskPager) {
+      taskPager.reset();
+      taskPager.setTotal(taskRows.length);
+    }
+    paintTasks();
+  }
+
+  function paintTasks() {
     const body = $("lm-h-rows");
     const empty = $("lm-h-empty");
-    const more = $("lm-h-more");
+    if (!body) return;
 
-    $("lm-home-count").textContent = tasks.length ? `${tasks.length} 条` : "";
-    more.hidden = !(data && data.truncated);
-
-    if (!tasks.length) {
+    if (!taskRows.length) {
       body.innerHTML = "";
       empty.hidden = false;
       return;
     }
     empty.hidden = true;
 
-    body.innerHTML = tasks.map((t) => {
-      const p = names[t.project_id];
+    const page = taskPager ? taskPager.slice(taskRows) : taskRows;
+    body.innerHTML = page.map((t) => {
+      const p = taskProjects[t.project_id];
       // Deep-link straight into the task's detail panel on the project page,
       // using the ?task= contract the task list already understands.
       const href = t.project_id
@@ -281,6 +367,22 @@
   }
 
   document.addEventListener("DOMContentLoaded", () => {
+    if (global.LMPager) {
+      taskPager = LMPager.create({
+        host: $("lm-h-pager"), pageSize: TASK_PAGE_SIZE, onChange: paintTasks,
+      });
+      projectPager = LMPager.create({
+        host: $("lm-h-proj-pager"), pageSize: PROJECT_PAGE_SIZE,
+        onChange: paintProjects,
+      });
+    }
+
+    const tabs = $("lm-home-tabs");
+    if (tabs) tabs.addEventListener("click", (e) => {
+      const btn = e.target.closest(".tab");
+      if (btn) setView(btn.dataset.view, true);
+    });
+
     $("lm-h-text").addEventListener("input", onTyping);
     $("lm-h-project").addEventListener("change", onFilterChange);
     $("lm-h-mine").addEventListener("change", onFilterChange);
@@ -305,6 +407,10 @@
           $("lm-h-mine").checked = false;
           setStatus(on ? "" : want);
         }
+        // The tiles filter the task list, so they must also bring it into
+        // view — otherwise clicking 失败 from the review tab changes a list the
+        // user cannot see and looks like nothing happened.
+        setView("tasks", true);
         onFilterChange();
       });
     });
@@ -313,14 +419,20 @@
     $("lm-home-retry").addEventListener("click", loadAll);
 
     // Back/forward restores the whole filtered view, not just one control.
-    if (window.LMUrl) {
-      LMUrl.onPop(() => {
+    if (global.LMUrl) {
+      LMUrl.onPop((all) => {
+        setView(all.view);
         applyUrlFilters();
         loadTasks();
       });
     }
 
+    setView(global.LMUrl ? LMUrl.get("view", DEFAULT_VIEW) : DEFAULT_VIEW);
     applyUrlFilters();
     loadAll();
   });
-})();
+
+  // Exposed so the review queue (workspace_reviews.js) can raise its own tab
+  // and publish its count without either module reaching into the other's DOM.
+  global.LMHome = { setView, setTabCount, view: () => view };
+})(window);

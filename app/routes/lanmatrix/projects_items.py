@@ -247,7 +247,8 @@ def add_project_model(project_id):
     try:
         entry = project_model_service.add_path_model(
             project_id, body.get("name", ""), body.get("path", ""),
-            created_by=g.user.id)
+            created_by=g.user.id,
+            version=body.get("version"), version_note=body.get("version_note"))
     except project_model_service.ModelError as exc:
         return err("VALIDATION_ERROR", str(exc), status=400)
     return ok({"model": entry,
@@ -266,7 +267,9 @@ def upload_project_model(project_id):
     try:
         entry = project_model_service.add_bundle_model(
             project_id, request.form.get("name", ""), dll, sbs,
-            current_app.config_obj, pdb=pdb, created_by=g.user.id)
+            current_app.config_obj, pdb=pdb, created_by=g.user.id,
+            version=request.form.get("version"),
+            version_note=request.form.get("version_note"))
     except project_model_service.ModelError as exc:
         return err("VALIDATION_ERROR", str(exc), status=400)
     return ok({"model": entry,
@@ -284,6 +287,45 @@ def set_current_project_model(project_id):
     except project_model_service.ModelError as exc:
         return err("VALIDATION_ERROR", str(exc), status=400)
     return ok({"models": models})
+
+@bp.patch("/projects/<int:project_id>/models/version")
+@login_required
+def update_project_model_version(project_id):
+    """Relabel a registered model (version + release note).
+
+    Separate from model creation on purpose: a version label is usually decided
+    *after* the model has been uploaded and smoke-tested, and re-labelling
+    changes how future test evidence is grouped, so it is an audited operation
+    of its own rather than a silent field edit.
+    """
+    _project_and_role(project_id, "model.manage")
+    body = request.get_json(silent=True) or {}
+    try:
+        entry = project_model_service.update_version(
+            project_id, (body.get("name") or "").strip(),
+            body.get("version"), body.get("version_note"),
+            updated_by=g.user.id)
+    except project_model_service.ModelError as exc:
+        return err("VALIDATION_ERROR", str(exc), status=400)
+    return ok({"model": entry,
+               "models": project_model_service.list_models(
+                   project_id, include_path=True)})
+
+@bp.post("/projects/<int:project_id>/models/deprecate")
+@login_required
+def deprecate_project_model(project_id):
+    """Hide a superseded model from the pickers without deleting its history."""
+    _project_and_role(project_id, "model.manage")
+    body = request.get_json(silent=True) or {}
+    try:
+        entry = project_model_service.set_deprecated(
+            project_id, (body.get("name") or "").strip(),
+            bool(body.get("deprecated", True)))
+    except project_model_service.ModelError as exc:
+        return err("VALIDATION_ERROR", str(exc), status=400)
+    return ok({"model": entry,
+               "models": project_model_service.list_models(
+                   project_id, include_path=True)})
 
 @bp.delete("/projects/<int:project_id>/models")
 @login_required
@@ -990,3 +1032,221 @@ def remove_member(project_id, member_id):
     project, _ = _project_and_role(project_id, "project.members")
     service.remove_member(g.user, project, member_id)
     return ok({"removed": True})
+
+
+# --------------------------------------------------------------------------- #
+# Review sign-off
+#
+# Gated on ``item.review`` (project_admin / reviewer), which the permission
+# matrix has always declared but nothing used until now.
+# --------------------------------------------------------------------------- #
+def _review_rows(project_id: int, uuids: list[str]):
+    """Load live rows by uuid, preserving the caller's order."""
+    from ...models import TestItemRow
+
+    wanted = [str(u) for u in uuids if str(u).strip()]
+    if not wanted:
+        return []
+    found = (TestItemRow.query
+             .filter_by(project_id=project_id, sheet="test", deleted_at=None)
+             .filter(TestItemRow.uuid.in_(wanted))
+             .all())
+    by_uuid = {r.uuid: r for r in found}
+    return [by_uuid[u] for u in wanted if u in by_uuid]
+
+
+@bp.get("/projects/<int:project_id>/reviews")
+@login_required
+def list_project_reviews(project_id: int):
+    """Pending reviews in one project, optionally only the caller's own queue."""
+    from ...models import TestItemRow
+    from ...services.lanmatrix import review_service
+
+    _project_and_role(project_id, "item.review")
+
+    q = (TestItemRow.query
+         .filter_by(project_id=project_id, sheet="test", deleted_at=None)
+         .filter(TestItemRow.review_status == review_service.PENDING))
+    if (request.args.get("mine") or "").strip() in ("1", "true", "yes"):
+        q = q.filter(TestItemRow.reviewer_id == g.user.id)
+    rows = q.order_by(TestItemRow.id.desc()).limit(500).all()
+
+    ids = {r.reviewer_id for r in rows if r.reviewer_id}
+    reviewers = ({u.id: u for u in LMUser.query.filter(LMUser.id.in_(ids)).all()}
+                 if ids else {})
+    return ok({
+        "reviews": [review_service.row_review_dict(r, reviewers) for r in rows],
+        "counts": review_service.counts_for([project_id]).get(project_id, {}),
+    })
+
+
+@bp.post("/projects/<int:project_id>/items/<row_uuid>/review")
+@login_required
+def review_item(project_id: int, row_uuid: str):
+    """Approve or reject a single pending review."""
+    from ...services.lanmatrix import review_service
+
+    project, _ = _project_and_role(project_id, "item.review")
+    payload = request.get_json(silent=True) or {}
+    action = (payload.get("action") or "").strip().lower()
+    if action not in ("approve", "reject"):
+        return err("INVALID_ARGUMENT", "action 必须是 approve 或 reject", status=400)
+
+    rows = _review_rows(project_id, [row_uuid])
+    if not rows:
+        return err("NOT_FOUND", "用例不存在", status=404)
+
+    try:
+        row = review_service.decide(project, rows[0], action == "approve",
+                                    actor_id=g.user.id,
+                                    note=payload.get("note") or "")
+    except review_service.ReviewError as exc:
+        return err("INVALID_STATE", str(exc), status=400)
+
+    db.session.commit()
+    audit.record("item.review", actor_id=g.user.id, object_type="test_item",
+                 object_id=row.uuid, project_id=project_id,
+                 old_value=review_service.PENDING,
+                 new_value={"status": row.review_status,
+                            "verdict": row.review_verdict,
+                            "note": row.review_note},
+                 client_ip=_client_ip())
+    db.session.commit()
+    return ok({"review": review_service.row_review_dict(row)})
+
+
+@bp.post("/projects/<int:project_id>/reviews/bulk")
+@login_required
+def review_items_bulk(project_id: int):
+    """Approve/reject many rows at once.
+
+    Only verdicts declared bulk-approvable are accepted; ``Untestable`` rows are
+    reported back in ``skipped`` so the reviewer sees exactly what still needs an
+    individual decision instead of silently believing the queue is empty.
+    """
+    from ...services.lanmatrix import review_service
+
+    project, _ = _project_and_role(project_id, "item.review")
+    payload = request.get_json(silent=True) or {}
+    action = (payload.get("action") or "").strip().lower()
+    if action not in ("approve", "reject"):
+        return err("INVALID_ARGUMENT", "action 必须是 approve 或 reject", status=400)
+    uuids = payload.get("uuids")
+    if not isinstance(uuids, list) or not uuids:
+        return err("INVALID_ARGUMENT", "uuids 必须是非空数组", status=400)
+    if len(uuids) > 500:
+        return err("INVALID_ARGUMENT", "单次最多处理 500 条", status=400)
+
+    rows = _review_rows(project_id, uuids)
+    result = review_service.decide_bulk(project, rows, action == "approve",
+                                        actor_id=g.user.id,
+                                        note=payload.get("note") or "")
+    audit.record("item.review.bulk", actor_id=g.user.id, object_type="project",
+                 object_id=project_id, project_id=project_id,
+                 new_value={"action": action,
+                            "decided": len(result.get(
+                                "approved" if action == "approve"
+                                else "rejected", [])),
+                            "skipped": len(result.get("skipped", []))},
+                 client_ip=_client_ip())
+    db.session.commit()
+    return ok(result)
+
+
+@bp.post("/projects/<int:project_id>/items/<row_uuid>/reviewer")
+@login_required
+def assign_item_reviewer(project_id: int, row_uuid: str):
+    """Assign or clear the reviewer of a row."""
+    from ...services.lanmatrix import review_service
+
+    project, _ = _project_and_role(project_id, "item.review")
+    payload = request.get_json(silent=True) or {}
+    raw = payload.get("reviewer_id")
+    reviewer_id = int(raw) if raw not in (None, "", 0) else None
+
+    if reviewer_id is not None and not LMUser.query.get(reviewer_id):
+        return err("NOT_FOUND", "指定的审核人不存在", status=404)
+
+    rows = _review_rows(project_id, [row_uuid])
+    if not rows:
+        return err("NOT_FOUND", "用例不存在", status=404)
+
+    review_service.assign_reviewer(rows[0], reviewer_id, project=project,
+                                   actor_id=g.user.id)
+    db.session.commit()
+    return ok({"review": review_service.row_review_dict(rows[0])})
+
+
+@bp.put("/projects/<int:project_id>/review_policy")
+@login_required
+def set_review_policy(project_id: int):
+    """Set which verdicts require sign-off in this project.
+
+    Project-level because it is a team policy, not a product decision: a
+    safety-critical project reviews every PASS, an exploratory one reviews
+    nothing.
+    """
+    project, _ = _project_and_role(project_id, "project.edit")
+    payload = request.get_json(silent=True) or {}
+    previous = project.review_policy()
+    prev_reviewer = project.default_reviewer_id
+    policy = {k: bool(payload.get(k, previous[k]))
+              for k in Project.REVIEW_DEFAULTS}
+    project.review_required_on = policy
+
+    # The reviewer travels with the policy: turning review on without naming a
+    # recipient is what produced a permanently empty queue before.
+    if "default_reviewer_id" in payload:
+        raw = payload.get("default_reviewer_id")
+        if raw in (None, "", 0, "0"):
+            project.default_reviewer_id = None
+        else:
+            try:
+                reviewer_id = int(raw)
+            except (TypeError, ValueError):
+                return err("INVALID_ARGUMENT", "审核人 ID 无效", status=400)
+            is_member = db.session.query(ProjectMember.id).filter(
+                ProjectMember.project_id == project_id,
+                ProjectMember.user_id == reviewer_id,
+            ).first() is not None
+            if not is_member and reviewer_id != project.owner_id:
+                return err("INVALID_ARGUMENT",
+                           "审核人必须是本项目成员或项目负责人", status=400)
+            project.default_reviewer_id = reviewer_id
+
+    db.session.commit()
+    audit.record("project.review_policy", actor_id=g.user.id,
+                 object_type="project", object_id=project_id,
+                 project_id=project_id,
+                 old_value={**previous, "default_reviewer_id": prev_reviewer},
+                 new_value={**policy,
+                            "default_reviewer_id": project.default_reviewer_id},
+                 client_ip=_client_ip())
+    db.session.commit()
+    return ok({"review_required_on": project.review_policy(),
+               "default_reviewer_id": project.default_reviewer_id})
+
+
+@bp.get("/projects/<int:project_id>/dashboard")
+@login_required
+def project_dashboard_data(project_id: int):
+    """Progress, trend, per-version and review aggregates for one project.
+
+    Served as a single bundle rather than four endpoints so the page cannot
+    render a progress ring and a review funnel computed seconds apart.
+
+    Gated on ``project.view``: this is a read-only summary of data the member
+    can already see row by row, so requiring a stronger capability would only
+    push people back to counting cells by hand.
+    """
+    from ...services.lanmatrix import dashboard_service
+
+    project, role = _project_and_role(project_id, "project.view")
+    data = dashboard_service.snapshot(project)
+    # The review-policy panel reuses this payload. Tell it up front whether this
+    # user may change the policy: without the flag a reader is shown live
+    # checkboxes that only fail on save, which reads as a broken page rather
+    # than as a permission boundary.
+    data["can_edit_policy"] = permissions.can(
+        "project.edit", role, is_system_admin=g.user.is_system_admin)
+    return ok(data)

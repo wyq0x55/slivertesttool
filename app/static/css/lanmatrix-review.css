@@ -1,0 +1,294 @@
+/* Notification bell, review queue and dashboard chrome.
+ *
+ * Built entirely from the design-system tokens (design-system.css) rather than
+ * literal colours, so dark mode follows automatically from `html[data-theme]`
+ * with no rules duplicated here. Any hard-coded hex in this file would be a bug
+ * that only shows up after somebody switches theme.
+ */
+
+/* --------------------------------------------------------------------------
+   Notification bell
+   -------------------------------------------------------------------------- */
+.lm-notif { position: relative; display: inline-flex; }
+
+.lm-notif-dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  /* Ring in the surface colour so the badge reads as sitting on top of the
+     icon rather than merging into it. */
+  box-shadow: 0 0 0 2px var(--surface);
+  pointer-events: none;
+}
+
+.lm-notif-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  z-index: 300;
+  overflow: hidden;
+}
+
+.lm-notif-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.lm-notif-list { max-height: 420px; overflow-y: auto; }
+
+.lm-notif-item {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  text-decoration: none;
+  font-size: 13px;
+  transition: background var(--dur) var(--ease);
+}
+.lm-notif-item:last-child { border-bottom: 0; }
+.lm-notif-item:hover { background: var(--surface-2); }
+
+/* Unread is marked with a left rule *and* weight, not colour alone: a colour
+   difference this small is invisible to a chunk of users. */
+.lm-notif-item.unread {
+  box-shadow: inset 2px 0 0 var(--brand);
+  background: var(--brand-soft);
+}
+.lm-notif-item.unread .lm-notif-title { font-weight: 600; }
+
+.lm-notif-ico { flex: 0 0 auto; color: var(--text-3); line-height: 1.5; }
+.lm-notif-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.lm-notif-title { color: var(--text); word-break: break-word; }
+.lm-notif-body {
+  color: var(--text-2);
+  font-size: 12px;
+  /* Bodies are log excerpts and can be long; clamp instead of letting one
+     notification push the rest of the list out of view. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.lm-notif-time { color: var(--text-3); font-size: 11px; }
+.lm-notif-count {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+}
+.lm-notif-empty { padding: 24px 12px; text-align: center; color: var(--text-3); font-size: 13px; }
+
+/* Scope tabs: unread (work) vs history (evidence). */
+.lm-notif-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.lm-notif-tab {
+  flex: 1;
+  padding: 6px 8px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.lm-notif-tab.is-active { color: var(--text-1); border-bottom-color: var(--brand); }
+.lm-notif-tab span { opacity: .7; }
+
+.lm-notif-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px 8px;
+  border-top: 1px solid var(--line);
+}
+
+/* Per-row archive control. Hidden until hover so the list stays readable, but
+   always focusable for keyboard users. */
+.lm-notif-item { position: relative; }
+.lm-notif-x {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-3);
+  font-size: 13px;
+  line-height: 18px;
+  cursor: pointer;
+  opacity: 0;
+}
+.lm-notif-item:hover .lm-notif-x,
+.lm-notif-x:focus-visible { opacity: 1; }
+.lm-notif-x:hover { background: var(--surface-2); color: var(--text-1); }
+
+/* --------------------------------------------------------------------------
+   Review queue
+   -------------------------------------------------------------------------- */
+.lm-rv-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.lm-rv-toolbar .spacer { flex: 1; }
+
+.lm-rv-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.lm-rv-table th,
+.lm-rv-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+.lm-rv-table th { color: var(--text-3); font-weight: 500; white-space: nowrap; }
+
+/* The stated reason for an Untestable verdict. This column *is* the thing being
+   reviewed, so it gets real width and wraps rather than being ellipsised into
+   uselessness. */
+.lm-rv-reason {
+  color: var(--text-2);
+  max-width: 420px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.lm-rv-reason:empty::after { content: "—"; color: var(--text-3); }
+
+/* A row needing an individual decision is visually separated from the bulk-
+   approvable majority, so a reviewer clearing 300 passes cannot sweep one past
+   without noticing. */
+.lm-rv-table tr.needs-note { background: var(--warn-soft); }
+.lm-rv-table tr.needs-note td:first-child { box-shadow: inset 2px 0 0 var(--warn); }
+
+.lm-rv-acts { display: flex; gap: 6px; white-space: nowrap; }
+
+.lm-rv-empty { padding: 32px; text-align: center; color: var(--text-3); }
+
+/* --------------------------------------------------------------------------
+   Review policy editor (project settings)
+   -------------------------------------------------------------------------- */
+.lm-rv-policy {
+  margin-top: 22px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.lm-rv-policy-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 0;
+  cursor: pointer;
+}
+.lm-rv-policy-row + .lm-rv-policy-row { border-top: 1px solid var(--border); }
+.lm-rv-policy-row input { margin-top: 2px; }
+.lm-rv-policy-row strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.lm-rv-policy-row em {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  font-style: normal;
+  color: var(--text-3);
+}
+.lm-rv-pol-err { font-size: 12px; color: var(--danger); }
+
+/* Return path back to the personal workspace, shown above the page title when
+   the user arrived from there. */
+.lm-backlink {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--text-3);
+  text-decoration: none;
+}
+.lm-backlink:hover { color: var(--brand); }
+.lm-backlink svg { width: 13px; height: 13px; }
+
+/* --------------------------------------------------------------------------
+   Dashboard
+   -------------------------------------------------------------------------- */
+.lm-dash-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+/* Time-series and per-version charts carry many x categories; at half width
+   their labels collide, so they span the row on wide viewports. */
+@media (min-width: 900px) {
+  .lm-dash-grid .lm-chart-card.wide { grid-column: 1 / -1; }
+}
+/* Title and caption on one baseline, caption pushed right. */
+.lm-chart-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.lm-chart-head .muted { font-size: 12px; color: var(--text-3); }
+.lm-chart-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  box-shadow: var(--shadow-sm);
+}
+.lm-chart-card h3 {
+  margin: 0 0 2px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.lm-chart-card .sub { margin: 0 0 10px; font-size: 12px; color: var(--text-3); }
+.lm-chart-box { width: 100%; height: 280px; }
+.lm-chart-box.tall { height: 340px; }
+/* Placeholder shown before ECharts paints (or if the bundle is missing), so a
+   failed chart reads as "no data yet" instead of a silent blank rectangle. */
+.lm-chart-box.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  font-size: 13px;
+}

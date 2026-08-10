@@ -288,10 +288,23 @@ def _migrate_schema() -> None:
             "submitter_id": "INTEGER",
             "deleted_at": "TIMESTAMP",
             "deleted_by": "INTEGER",
+            # Re-runs reuse the task row, so the counter is the only way to see
+            # that a retest actually executed when the verdict is unchanged.
+            "run_count": "INTEGER NOT NULL DEFAULT 1",
         },
         "lm_projects": {
             "tm_id_prefix": "VARCHAR(64)",
             "tm_summary_sheet": "VARCHAR(120)",
+            # Which verdicts require reviewer sign-off (per-project policy).
+            "review_required_on": "JSONB",
+            # Who reviews when a row names no reviewer of its own.
+            "default_reviewer_id": "INTEGER",
+        },
+        "lm_notifications": {
+            # Retention ages rows by read_at; archived rows leave the bell but
+            # stay in history.
+            "read_at": "TIMESTAMP",
+            "archived_at": "TIMESTAMP",
         },
         "lm_field_definitions": {
             "sheet": "VARCHAR(16) NOT NULL DEFAULT 'test'",
@@ -301,9 +314,21 @@ def _migrate_schema() -> None:
         "lm_test_items": {
             "sheet": "VARCHAR(16) NOT NULL DEFAULT 'test'",
             "deleted_by": "INTEGER",
+            # Review sign-off state machine (see TestItemRow).
+            "review_status": "VARCHAR(16) NOT NULL DEFAULT ''",
+            "reviewer_id": "INTEGER",
+            "review_note": "TEXT NOT NULL DEFAULT ''",
+            "review_requested_at": "TIMESTAMP",
+            "reviewed_at": "TIMESTAMP",
+            "review_verdict": "VARCHAR(24) NOT NULL DEFAULT ''",
         },
         "lm_project_models": {
             "is_current": "BOOLEAN NOT NULL DEFAULT FALSE",
+            # Release identity of the plant model, stamped onto every row it
+            # produces a verdict for and used to group the dashboard charts.
+            "version": "VARCHAR(64)",
+            "version_note": "TEXT NOT NULL DEFAULT ''",
+            "deprecated_at": "TIMESTAMP",
         },
     }
     for table, columns in additions.items():
@@ -349,6 +374,20 @@ def _migrate_schema() -> None:
         except Exception as exc:  # noqa: BLE001
             logging.getLogger(__name__).warning(
                 "schema migration: could not index %s.deleted_at: %s", table, exc)
+
+    # The bell's two tabs filter on these, and the retention sweep scans
+    # read_at across every user. ADD COLUMN creates no index.
+    if "lm_notifications" in existing_tables:
+        for column in ("read_at", "archived_at"):
+            try:
+                with db.engine.begin() as conn:
+                    conn.execute(text(
+                        f"CREATE INDEX IF NOT EXISTS ix_notif_{column} "
+                        f"ON lm_notifications ({column})"))
+            except Exception as exc:  # noqa: BLE001
+                logging.getLogger(__name__).warning(
+                    "schema migration: could not index lm_notifications.%s: %s",
+                    column, exc)
 
     _migrate_widen_testitem_uuid(existing_tables, inspector)
     _migrate_user_fk_ondelete(inspector)

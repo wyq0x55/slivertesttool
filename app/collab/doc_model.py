@@ -151,6 +151,51 @@ def write_row_errors(doc: Doc, errors_by_uuid: dict[str, Any]) -> int:
     return len(desired)
 
 
+def write_row_fields(doc: Doc, sheet: str,
+                     values_by_uuid: dict[str, dict[str, Any]]) -> int:
+    """Publish server-computed field values onto matching rows in the Doc.
+
+    ``values_by_uuid`` maps ``uuid -> {field_key: value}``. This is how data the
+    *server* owns -- most importantly a finished run's verdict, executor,
+    execution date and model version -- reaches a project that is currently
+    being edited collaboratively. Writing it into the database instead would be
+    reverted by the next materializer flush, because in collaborative mode the
+    ``Y.Doc`` is the authoritative copy of a row (see ``RowWriteback``).
+
+    Only primitives are written: a nested dict/list would become a nested
+    ``Y.Map``/``Y.Array``, which the rest of the pipeline treats as an opaque
+    string. Unchanged values are skipped so an already-applied write-back causes
+    no observer churn. Returns the number of rows actually modified.
+
+    MUST be called inside a ``doc.transaction()`` **and** the materializer's
+    ``suppressed()`` block so the write does not re-trigger a reconcile.
+    """
+    if not values_by_uuid:
+        return 0
+    arr = doc.get(sheet_key(sheet), type=Array)
+    rows = arr.to_py()  # plain dicts, cheap to scan for uuid + index
+    changed = 0
+    for index, row in enumerate(rows):
+        row_uuid = (row or {}).get("uuid")
+        wanted = values_by_uuid.get(row_uuid) if row_uuid else None
+        if not wanted:
+            continue
+        ymap = arr[index]
+        touched = False
+        for key, value in wanted.items():
+            if isinstance(value, (dict, list)):
+                try:
+                    value = json.dumps(value, ensure_ascii=False)
+                except (TypeError, ValueError):
+                    continue
+            if row.get(key) != value:
+                ymap[key] = value
+                touched = True
+        if touched:
+            changed += 1
+    return changed
+
+
 def write_back_ids(doc: Doc, sheet: str,
                    id_map: dict[str, tuple[int, int]]) -> int:
     """Write authoritative server ``id`` / ``version`` back onto matching rows.

@@ -27,6 +27,7 @@
         <div class="row wrap">
           <input id="lm-model-name" class="ipt" placeholder="名称（可留空，用文件名）" autocomplete="off">
           <input id="lm-model-path" class="ipt grow" placeholder="服务器端 .sil 绝对路径" autocomplete="off">
+          <input id="lm-model-version" class="ipt lm-ipt-ver" placeholder="版本号（可留空）" autocomplete="off">
           <button type="button" class="btn btn-primary btn-sm" id="lm-model-add-btn">添加</button>
         </div>
       </div>
@@ -37,6 +38,7 @@
           <label class="filepick">dll<input type="file" id="lm-bundle-dll" accept=".dll"></label>
           <label class="filepick">sbs<input type="file" id="lm-bundle-sbs" accept=".sbs"></label>
           <label class="filepick">pdb<input type="file" id="lm-bundle-pdb" accept=".pdb"></label>
+          <input id="lm-bundle-version" class="ipt lm-ipt-ver" placeholder="版本号（可留空）" autocomplete="off">
           <button type="button" class="btn btn-primary btn-sm" id="lm-bundle-add">上传并生成 .sil</button>
         </div>
       </div>
@@ -46,6 +48,36 @@
 
   <div class="mgrid" id="lm-model-rows">
     <div class="muted">加载中…</div>
+  </div>
+
+
+  <!-- Version relabelling. Separate from the add forms because a release label
+       is normally assigned after the model has been uploaded and smoke-tested,
+       and changing it re-groups every future chart bucket. -->
+  <div class="lm-modal" id="lm-ver-modal" hidden>
+    <div class="lm-modal-backdrop" data-ver-close></div>
+    <div class="lm-modal-panel lm-ver-panel">
+      <div class="lm-modal-head">
+        <h3>模型版本<span id="lm-ver-title"></span></h3>
+        <button class="btn btn-sm" data-ver-close title="关闭">✕</button>
+      </div>
+      <div class="lm-ver-body">
+        <label class="lm-ver-lab" for="lm-ver-input">版本号</label>
+        <input id="lm-ver-input" class="ipt" autocomplete="off" spellcheck="false"
+               placeholder="例如 v1.2.0 或 RC3_20260810">
+        <p class="lm-ver-hint">只能包含字母、数字、点、下划线、连字符和加号；留空表示不标注版本。
+          该版本号会写入此模型产出的每条测试结果，并作为仪表盘按版本对比的分组依据。</p>
+        <label class="lm-ver-lab" for="lm-ver-note">版本说明<span class="lm-ver-opt">（可选）</span></label>
+        <textarea id="lm-ver-note" class="ipt" rows="3"
+                  placeholder="这一版改了什么"></textarea>
+        <div class="lm-ver-err" id="lm-ver-err" hidden></div>
+      </div>
+      <div class="lm-modal-foot">
+        <span class="lm-grow"></span>
+        <button class="btn btn-sm" data-ver-close>取消</button>
+        <button class="btn btn-primary btn-sm" id="lm-ver-save">保存</button>
+      </div>
+    </div>
   </div>
 
   <!-- SBS in-app editor (bundle models only, shown for model.manage users) -->

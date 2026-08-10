@@ -68,6 +68,11 @@ class Task(db.Model):
     workspace = db.Column(db.String(500), nullable=False, default="")
     report_path = db.Column(db.String(500), nullable=False, default="")
 
+    # How many times this row has been executed. A re-run reuses the row and
+    # overwrites its result, so without a counter "did my retest actually run?"
+    # is unanswerable from the UI whenever the new verdict equals the old one.
+    run_count = db.Column(db.Integer, nullable=False, default=1)
+
     created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
     started_at = db.Column(db.DateTime, nullable=True)
     finished_at = db.Column(db.DateTime, nullable=True)
@@ -104,6 +109,7 @@ class Task(db.Model):
             "progress": self.progress,
             "message": self.message,
             "has_result": bool(self.report_path),
+            "run_count": self.run_count or 1,
             "created_at": _iso(self.created_at),
             "started_at": _iso(self.started_at),
             "finished_at": _iso(self.finished_at),

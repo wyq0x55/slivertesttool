@@ -163,6 +163,74 @@ def find_task_by_test_id(test_id: str, project_id: Optional[int] = None) -> Opti
     return query.order_by(Task.id.desc()).first()
 
 
+def _reset_for_run(task: Task, *, task_name: str, file_name: str,
+                   submitter: str, sil_relpath: str, sil_name: str,
+                   workspace: str, submitter_id: Optional[int]) -> Task:
+    """Reset one existing row back to QUEUED, in place.
+
+    Shared by :func:`upsert_task` and :func:`requeue_task` so a re-queue can
+    never clear a different subset of fields than a fresh submission -- a row
+    that keeps last run's ``result`` or ``report_path`` is exactly how a retest
+    ends up displaying the previous verdict.
+    """
+    task.task_name = task_name or task.test_id
+    task.file_name = file_name
+    task.submitter = submitter or task.submitter
+    task.submitter_id = (submitter_id if submitter_id is not None
+                         else task.submitter_id)
+    task.sil_relpath = sil_relpath
+    task.sil_name = sil_name
+    task.workspace = workspace
+    task.status = TaskStatus.QUEUED.value
+    task.progress = 0
+    task.result = ""
+    task.report_path = ""
+    task.message = "Queued, waiting for a free license slot."
+    task.cancel_requested = False
+    task.run_count = (task.run_count or 1) + 1
+    task.created_at = _utcnow()
+    task.started_at = None
+    task.finished_at = None
+    return task
+
+
+def requeue_task(
+    task: Task,
+    *,
+    sil_relpath: str,
+    workspace: str,
+    sil_name: str = "",
+    task_name: str = "",
+    file_name: str = "(json runner)",
+    submitter: str = "",
+    submitter_id: Optional[int] = None,
+    commit: bool = True,
+) -> Task:
+    """Re-queue **this exact task row** (the "重新测试" path).
+
+    Deliberately takes the row rather than a ``test_id``: ``upsert_task`` finds
+    its target by looking up the newest task for a ``(project_id, test_id)``
+    pair, so when several tasks share a test id -- routine once a case has been
+    submitted more than once -- re-running the row the user selected would reset
+    a *different* row. The user then watches an untouched task and concludes the
+    button is broken.
+
+    Raises :class:`ValueError` if the task is still queued or running; a live
+    run must not be reset underneath the worker executing it.
+    """
+    if TaskStatus(task.status) in (TaskStatus.QUEUED, TaskStatus.RUNNING):
+        raise ValueError("任务仍在队列或执行中，无需重新测试。")
+    _reset_for_run(
+        task,
+        task_name=task_name or task.task_name or task.test_id,
+        file_name=file_name, submitter=submitter or task.submitter,
+        sil_relpath=sil_relpath, sil_name=sil_name, workspace=workspace,
+        submitter_id=submitter_id)
+    if commit:
+        db.session.commit()
+    return task
+
+
 def upsert_task(
     task_name: str,
     file_name: str,
@@ -192,22 +260,10 @@ def upsert_task(
     if TaskStatus(existing.status) in (TaskStatus.QUEUED, TaskStatus.RUNNING):
         return existing
 
-    existing.task_name = task_name or test_id
-    existing.file_name = file_name
-    existing.submitter = submitter or existing.submitter
-    existing.submitter_id = submitter_id if submitter_id is not None else existing.submitter_id
-    existing.sil_relpath = sil_relpath
-    existing.sil_name = sil_name
-    existing.workspace = workspace
-    existing.status = TaskStatus.QUEUED.value
-    existing.progress = 0
-    existing.result = ""
-    existing.report_path = ""
-    existing.message = "Queued, waiting for a free license slot."
-    existing.cancel_requested = False
-    existing.created_at = _utcnow()
-    existing.started_at = None
-    existing.finished_at = None
+    _reset_for_run(
+        existing, task_name=task_name or test_id, file_name=file_name,
+        submitter=submitter, sil_relpath=sil_relpath, sil_name=sil_name,
+        workspace=workspace, submitter_id=submitter_id)
     db.session.commit()
     return existing
 

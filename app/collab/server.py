@@ -76,6 +76,11 @@ class CollabWebsocketServer(WebsocketServer):
         # collaborative (single-writer boundary; design doc §1.6 / §12.3).
         self._heartbeat_interval = float(
             cfg.get("COLLAB_PRESENCE_HEARTBEAT_SECONDS", 10) or 10)
+        # Server -> Doc write-back drain (finished-run verdicts etc.). Kept well
+        # below the materializer debounce so a queued value reaches the Doc
+        # before the next reconcile would overwrite it from the stale Doc state.
+        self._writeback_interval = float(
+            cfg.get("COLLAB_WRITEBACK_POLL_SECONDS", 2.0) or 2.0)
 
     async def get_room(self, name: str) -> YRoom:
         room = self._rooms.get(name)
@@ -141,6 +146,12 @@ class CollabWebsocketServer(WebsocketServer):
             self._task_group.start_soon(self._heartbeat_loop)
             _log.info("collab presence heartbeat on: interval=%ss",
                       self._heartbeat_interval)
+        # Drain server-computed row write-backs (finished-run verdicts) into the
+        # live Y.Docs; without this they would be reverted by the materializer.
+        if self._writeback_interval > 0 and self._task_group is not None:
+            self._task_group.start_soon(self._writeback_loop)
+            _log.info("collab write-back drain on: interval=%ss",
+                      self._writeback_interval)
         return self
 
     async def __aexit__(self, exc_type, exc_value, exc_tb):
@@ -190,6 +201,50 @@ class CollabWebsocketServer(WebsocketServer):
         with self._app.app_context():
             for pid in pids:
                 presence.clear_presence(pid)
+
+    # ------------------------------------------------------------------ #
+    # Server -> Doc write-back drain
+    # ------------------------------------------------------------------ #
+    async def _writeback_loop(self) -> None:
+        """Apply queued server-computed field values onto the live Y.Docs.
+
+        See :mod:`app.collab.writeback` for why this indirection exists: the
+        worker that finalises a run cannot reach the Y.Doc, and a plain database
+        write would be overwritten by the next materializer flush.
+        """
+        while True:
+            await anyio.sleep(self._writeback_interval)
+            try:
+                await self._drain_writebacks()
+            except Exception:  # pragma: no cover - drain must never die
+                _log.exception("collab write-back drain iteration failed")
+
+    async def _drain_writebacks(self) -> None:
+        pids = {int(name.split(":", 1)[1]): name for name in self._rooms}
+        if not pids:
+            return
+        claimed = await anyio.to_thread.run_sync(self._claim_writebacks_sync,
+                                                 list(pids))
+        for pid, by_uuid in (claimed or {}).items():
+            name = pids.get(pid)
+            room = self._rooms.get(name) if name else None
+            mat = self._materializers.get(name) if name else None
+            if room is None or mat is None:
+                continue
+            # Suppress the reconcile: these values came FROM the database, so
+            # echoing them back through the materializer would be pure churn.
+            with mat.suppressed():
+                with room.ydoc.transaction():
+                    changed = doc_model.write_row_fields(
+                        room.ydoc, "test", by_uuid)
+            if changed:
+                _log.info("applied %s collab write-back row(s) to %s",
+                          changed, name)
+
+    def _claim_writebacks_sync(self, pids: list) -> dict:
+        from . import writeback
+        with self._app.app_context():
+            return writeback.claim_pending(pids)
 
     async def _sweep_loop(self) -> None:
         """Periodically evict rooms that have been client-less past the TTL."""

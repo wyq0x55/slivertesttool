@@ -41,6 +41,11 @@
     <button class="kpi-tile" type="button" data-kpi="passed" data-filter="passed">
       <span class="k">通过</span><span class="v ok" data-v="passed">–</span>
     </button>
+    {# Assigned reviews are work the user did not choose and may not know about,
+       so they get a first-class tile rather than living behind a tab. #}
+    <button class="kpi-tile" type="button" data-kpi="reviews" id="lm-h-kpi-review">
+      <span class="k">待我审核</span><span class="v warn" data-v="reviews">–</span>
+    </button>
   </div>
 
   <div id="lm-home-err" class="state err" hidden>
@@ -58,6 +63,32 @@
   </div>
 
   <section id="lm-home-body" hidden>
+    {# --- View tabs ----------------------------------------------------------
+       The three lists used to be stacked on one page, so reaching 我的项目 meant
+       scrolling past up to 200 tasks and every pending review. They are separate
+       jobs ("what ran", "what needs my decision", "where do I go"), so they get
+       separate views -- same tab strip the project 设置 pages use, so the two
+       areas of the product behave the same way.
+
+       The active view lives in ?view=, which is also the parameter notification
+       links already use (?view=reviews). #}
+    <nav class="tabs lm-home-tabs" id="lm-home-tabs" role="tablist"
+         aria-label="工作台视图">
+      <button type="button" class="tab on" role="tab" data-view="tasks"
+              aria-selected="true" aria-controls="lm-pane-tasks">
+        最近任务 <span class="tab-n" data-tabcount="tasks"></span>
+      </button>
+      <button type="button" class="tab" role="tab" data-view="reviews"
+              aria-selected="false" aria-controls="lm-pane-reviews">
+        待我审核 <span class="tab-n warn" data-tabcount="reviews"></span>
+      </button>
+      <button type="button" class="tab" role="tab" data-view="projects"
+              aria-selected="false" aria-controls="lm-pane-projects">
+        我的项目 <span class="tab-n" data-tabcount="projects"></span>
+      </button>
+    </nav>
+
+    <div class="pane on" id="lm-pane-tasks" role="tabpanel">
     <div class="lm-sec-head">
       <h2>最近任务</h2>
       <span class="muted" id="lm-home-count"></span>
@@ -104,6 +135,8 @@
         </table>
       </div>
     </div>
+    <div id="lm-h-pager"></div>
+
     <p class="muted" id="lm-h-more" hidden style="margin-top:10px">
       结果较多，仅显示最近的部分任务。请用搜索或筛选缩小范围。
     </p>
@@ -113,15 +146,78 @@
       <h3>没有符合条件的任务</h3>
       <p>调整筛选条件，或前往项目上传新的测试任务。</p>
     </div>
+    </div>{# /pane tasks #}
 
-    <div class="lm-sec-head" style="margin-top:34px">
+    {# --- Review queue -------------------------------------------------------
+       Its own view rather than a section further down the page: it is work
+       assigned to the user, and work you have to scroll to find is work that
+       does not get done. Every row carries its full action set (通过 / 驳回 /
+       打开), not just a "view" link -- a queue you can only look at is a queue
+       that sends you somewhere else to do the actual job. #}
+    <div class="pane" id="lm-pane-reviews" role="tabpanel" hidden>
+    <div class="lm-sec-head" id="lm-h-rv-head">
+      <h2>待我审核</h2>
+      <span class="muted" id="lm-h-rv-count"></span>
+    </div>
+
+    <div class="lm-rv-toolbar" id="lm-h-rv-toolbar" hidden>
+      <label class="lm-check-inline">
+        <input type="checkbox" id="lm-h-rv-all"> 全选
+      </label>
+      <span class="muted" id="lm-h-rv-sel"></span>
+      <div class="spacer"></div>
+      {# Bulk approval exists for PASS only. `Untestable` rows are excluded
+         server-side and reported back as skipped. #}
+      <button class="btn primary small" type="button" id="lm-h-rv-approve" disabled>
+        批量通过
+      </button>
+    </div>
+
+    <div class="tablecard" id="lm-h-rv-card" hidden>
+      <div style="overflow-x:auto">
+        <table class="lm-rv-table">
+          <thead>
+            <tr>
+              <th style="width:1%"></th>
+              <th>项目</th>
+              <th>用例</th>
+              <th>判定</th>
+              <th>説明 / 理由</th>
+              <th>实施者</th>
+              <th>实施日</th>
+              <th style="width:1%">操作</th>
+            </tr>
+          </thead>
+          <tbody id="lm-h-rv-rows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="lm-h-rv-pager"></div>
+
+    <div class="state" id="lm-h-rv-empty" hidden style="margin-top:8px">
+      <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+      <h3>没有待你审核的用例</h3>
+      <p>被指派给你的审核会出现在这里。</p>
+    </div>
+    </div>{# /pane reviews #}
+
+    <div class="pane" id="lm-pane-projects" role="tabpanel" hidden>
+    <div class="lm-sec-head">
       <h2>我的项目</h2>
       <a class="btn ghost small" href="{{ url_for('lanmatrix_pages.projects') }}">查看全部</a>
     </div>
     <div class="grid" id="lm-h-projects"></div>
+    <div id="lm-h-proj-pager"></div>
+    </div>{# /pane projects #}
   </section>
 </div>
 {% endblock %}
 {% block scripts %}
+{# Shared client-side pager used by every list on this page. #}
+<script src="{{ url_for('static', filename='js/lanmatrix/pager.js') }}"></script>
 <script src="{{ url_for('static', filename='js/lanmatrix/home.js') }}"></script>
+{# Review queue. Independent of home.js: it owns its own section and reload, so
+   a failure in one list cannot blank the other. #}
+<script src="{{ url_for('static', filename='js/lanmatrix/workspace_reviews.js') }}"></script>
 {% endblock %}

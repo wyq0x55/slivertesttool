@@ -1,0 +1,106 @@
+{% extends "lanmatrix/base_lm.html" %}
+{% from "lanmatrix/_crumb.html" import project_crumb %}
+{% block title %}项目仪表盘{% endblock %}
+{% block crumb %}{{ project_crumb(project_id, "仪表盘") }}{% endblock %}
+{% block content %}
+<div class="content lm-dash" data-project="{{ project_id }}">
+  <div class="page-head">
+    <div class="ttl">
+      <h1>项目仪表盘</h1>
+      <p>用例覆盖、执行趋势、版本对比与审核进度</p>
+    </div>
+    <div class="head-actions">
+      <button class="btn" id="lm-dash-refresh" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/></svg>
+        刷新
+      </button>
+    </div>
+  </div>
+
+  <div class="state err" id="lm-dash-err" hidden></div>
+
+  {# Numbers first, charts second. The counters are the answer; the charts are
+     a reading aid. This ordering is also why a missing chart bundle costs the
+     visualisation and not the data. #}
+  <div class="kpis" id="lm-dash-kpi">
+    <button class="kpi-tile" type="button" disabled>
+      <span class="k">总用例</span><span class="v" data-v="total">–</span>
+    </button>
+    <button class="kpi-tile" type="button" disabled>
+      <span class="k">要实施</span><span class="v" data-v="planned">–</span>
+    </button>
+    <button class="kpi-tile" type="button" disabled>
+      <span class="k">已实施</span><span class="v" data-v="executed">–</span>
+      <span class="sub muted" data-v="executed_pct"></span>
+    </button>
+    <button class="kpi-tile" type="button" disabled>
+      <span class="k">通过</span><span class="v ok" data-v="passed">–</span>
+      <span class="sub muted" data-v="passed_pct"></span>
+    </button>
+    <button class="kpi-tile" type="button" disabled>
+      <span class="k">失败/错误</span><span class="v" data-v="failed_errored">–</span>
+    </button>
+    <button class="kpi-tile" type="button" disabled>
+      <span class="k">待审核</span><span class="v warn" data-v="review_pending">–</span>
+    </button>
+  </div>
+
+  {% if not charts_available %}
+  {# Says what is missing and how to fix it, rather than leaving blank boxes. #}
+  <div class="state" id="lm-dash-nochart" style="margin-top:16px">
+    <h3>未安装图表组件</h3>
+    <p>上方统计数据仍然有效。要显示图表，请将 ECharts 放到
+      <code>app/static/vendor/charts/echarts.min.js</code> 后刷新本页。</p>
+  </div>
+  {% endif %}
+
+  <div class="lm-dash-grid" id="lm-dash-charts" {% if not charts_available %}hidden{% endif %}>
+    <div class="lm-chart-card">
+      <div class="lm-chart-head">
+        <h3>实施进度</h3>
+        <span class="muted">按要实施用例统计</span>
+      </div>
+      <div class="lm-chart-box" id="lm-chart-progress"></div>
+    </div>
+
+    <div class="lm-chart-card">
+      <div class="lm-chart-head">
+        <h3>审核漏斗</h3>
+        <span class="muted">需审核 → 已决定</span>
+      </div>
+      <div class="lm-chart-box" id="lm-chart-review"></div>
+    </div>
+
+    <div class="lm-chart-card wide">
+      <div class="lm-chart-head">
+        <h3>累计实施趋势</h3>
+        {# Says what is counted, because "cumulative" invites the assumption
+           that re-runs add to the total. #}
+        <span class="muted">按实施日统计去重用例数（同一用例只计首次实施）</span>
+      </div>
+      <div class="lm-chart-box tall" id="lm-chart-trend"></div>
+    </div>
+
+    <div class="lm-chart-card wide">
+      <div class="lm-chart-head">
+        <h3>按版本对比</h3>
+        <span class="muted">每个版本取各用例的最后一次结果</span>
+      </div>
+      <div class="lm-chart-box tall" id="lm-chart-version"></div>
+    </div>
+  </div>
+
+  <div class="state" id="lm-dash-empty" hidden style="margin-top:16px">
+    <h3>还没有数据</h3>
+    <p>导入测试用例并完成一次运行后，这里会显示项目进度。</p>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% if charts_available %}
+<script src="{{ url_for('static', filename='vendor/charts/echarts.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/lanmatrix/charts_theme.js') }}"></script>
+{% endif %}
+<script src="{{ url_for('static', filename='js/lanmatrix/dashboard.js') }}"></script>
+{% endblock %}

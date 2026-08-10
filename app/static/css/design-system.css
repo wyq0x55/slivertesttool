@@ -24,6 +24,22 @@
   --ok:#12a150; --ok-soft:#e7f5ec; --warn:#c4841d; --warn-soft:#fbf1e0;
   --danger:#e5484d; --danger-soft:#fdecec; --run:#3b82c4; --run-soft:#e6f0fa;
 
+  /* chart series
+     ------------
+     Charts need their own layer on top of the semantic colours. The semantic
+     tokens above are tuned for small marks -- pill text, dots, 1px borders --
+     where the surrounding --*-soft background carries the meaning. A chart
+     fills large areas with the saturated colour itself, directly against
+     --surface, so the dark theme needs lifted variants (see [data-theme=dark]);
+     without them --ok #12a150 sits at poor contrast on the #141518 dark card.
+     In the light theme these are plain aliases, so a chart and a pill agree on
+     what "pass" looks like. Charts must reference --chart-*, never --ok etc.,
+     or dark mode silently regresses. */
+  --chart-ok:var(--ok); --chart-warn:var(--warn);
+  --chart-danger:var(--danger); --chart-info:var(--run);
+  --chart-brand:var(--brand); --chart-muted:var(--n-400);
+  --chart-grid:var(--border); --chart-axis:var(--text-3);
+
   /* surfaces / text */
   --bg:var(--n-50); --surface:var(--n-0); --surface-2:var(--n-25);
   --border:var(--n-200); --border-strong:var(--n-300);
@@ -62,6 +78,12 @@
   --text:#ededef; --text-2:#a1a5ad; --text-3:#8b8f98;
   --brand-soft:#20223a; --brand-ring:rgba(94,106,210,.45);
   --ok-soft:#12241a; --warn-soft:#2a2113; --danger-soft:#2c1717; --run-soft:#14202c;
+
+  /* Lifted chart colours: same hues, raised lightness/saturation so large
+     filled areas stay legible against the dark surface. Deliberately scoped to
+     --chart-* so existing pills and dots keep their current appearance. */
+  --chart-ok:#2fcc71; --chart-warn:#e8a33d; --chart-danger:#ff6369;
+  --chart-info:#5aa9e6; --chart-brand:#7f8ae8; --chart-muted:#71757e;
   --shadow-sm:0 1px 2px rgba(0,0,0,.4);
   --shadow-md:0 4px 14px -4px rgba(0,0,0,.5),0 2px 6px -2px rgba(0,0,0,.4);
   --shadow-lg:0 12px 32px -8px rgba(0,0,0,.6);
@@ -512,6 +534,23 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 /* The settings strip uses real links rather than the JS panes above, so it has
    to opt out of the global anchor colour and sit flush with the page heading
    that follows it. */
+/* Workspace view tabs. Same strip as 设置, plus a count so the user can see
+   there is work behind 待我审核 without opening it. */
+.lm-home-tabs{ margin-bottom:18px; flex-wrap:wrap; }
+.lm-home-tabs .tab-n{ display:inline-block; min-width:18px; margin-left:4px;
+  padding:1px 6px; border-radius:999px; background:var(--surface-2);
+  color:var(--text-3); font-size:11.5px; font-weight:600; line-height:16px; }
+.lm-home-tabs .tab-n:empty{ display:none; }
+.lm-home-tabs .tab.on .tab-n{ background:var(--brand); color:#fff; }
+.lm-home-tabs .tab-n.warn{ background:var(--warn); color:#fff; }
+
+/* Pager (see js/lanmatrix/pager.js). Right-aligned under the list it pages, so
+   it reads as part of that list rather than as page furniture. */
+.lm-pager{ display:flex; align-items:center; justify-content:flex-end; gap:10px;
+  margin-top:12px; }
+.lm-pager[hidden]{ display:none; }
+.lm-pager-info{ color:var(--text-3); font-size:12.5px; }
+
 .lm-settings-tabs{ margin-bottom:24px; flex-wrap:wrap; }
 .lm-settings-tabs .tab{ color:var(--text-2); text-decoration:none; display:block; }
 .lm-settings-tabs .tab:hover{ color:var(--text); }
@@ -650,6 +689,26 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 /* inline label wrapping a control (e.g. 模型 select) inside the upload addbar */
 .uplbl{ display:inline-flex; align-items:center; gap:8px; height:36px; font-size:12.5px; color:var(--text-2); }
 #lm-open-upload.active{ background:var(--brand-strong, var(--brand)); }
+
+/* Version label. `tag-nover` is deliberately warn-tinted, not muted grey: an
+   unversioned model still runs fine but its results fall into the dashboard's
+   "(未标注)" bucket, and that is worth noticing before the comparison is read. */
+.tag-ver{ background:var(--brand-soft); color:var(--brand); border-color:transparent;
+  font-family:var(--mono); font-weight:600; }
+.tag-nover{ background:var(--warn-soft); color:var(--warn); border-color:transparent; }
+.mcard .mnote{ margin-top:8px; font-size:12.5px; color:var(--text-2); line-height:1.55;
+  white-space:pre-wrap; word-break:break-word; }
+.lm-ipt-ver{ width:190px; }
+/* Version dialog */
+.lm-ver-panel{ width:min(520px, 92vw); }
+.lm-ver-body{ padding:18px 20px; display:flex; flex-direction:column; gap:8px; }
+.lm-ver-lab{ font-size:12px; font-weight:600; letter-spacing:.02em; color:var(--text-3); }
+.lm-ver-lab .lm-ver-opt{ font-weight:400; color:var(--text-3); }
+.lm-ver-body .ipt{ width:100%; }
+.lm-ver-body textarea.ipt{ height:auto; padding:9px 12px; line-height:1.55; resize:vertical; }
+.lm-ver-hint{ margin:0 0 4px; font-size:12px; color:var(--text-3); line-height:1.6; }
+.lm-ver-err{ background:var(--danger-soft); color:var(--danger); border-radius:var(--radius-sm);
+  padding:9px 12px; font-size:13px; font-weight:550; }
 
 /* ===== PART 10 · FIELDS ================================================= */
 .grip{ cursor:grab; color:var(--text-3); display:inline-grid; place-items:center; width:22px; height:22px;

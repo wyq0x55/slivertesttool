@@ -1055,11 +1055,21 @@
       sel.innerHTML = '<option value="">（无已注册模型）</option>';
       return;
     }
-    sel.innerHTML = models.map((m) =>
-      `<option value="${esc(m.name)}"${m.is_current ? " selected" : ""}>${esc(m.name)}` +
-      `${m.is_current ? "（当前模型）" : ""}${m.exists === false ? "（服务器缺失）" : ""}</option>`).join("");
+    // Submit `name@version` rather than a bare name. A name alone means "run
+    // whatever is registered right now", so a build that lands between opening
+    // the page and pressing 提交 is attributed to the commit the user thought
+    // they picked. The pinned ref makes that a 409 instead of wrong evidence.
+    sel.innerHTML = models.map((m) => {
+      const value = m.ref || m.name;
+      const label = m.ref_short || m.version_short
+        ? (m.ref_short || `${m.name}@${m.version_short}`)
+        : m.name;
+      return `<option value="${esc(value)}"${m.is_current ? " selected" : ""}>` +
+        `${esc(label)}${m.is_current ? "（当前模型）" : ""}` +
+        `${m.exists === false ? "（服务器缺失）" : ""}</option>`;
+    }).join("");
     const cur = models.find((m) => m.is_current);
-    if (cur) sel.value = cur.name;
+    if (cur) sel.value = cur.ref || cur.name;
   }
   function renderLicense(lic) {
     if (!lic) { $("lm-license").textContent = ""; return; }
@@ -1253,6 +1263,16 @@
   });
 
   window.addEventListener("beforeunload", () => Object.keys(streams).forEach(closeStream));
+
+  // Reveal the return path only for users who actually came from the workspace;
+  // for everyone else the link would point somewhere they never were.
+  (function wireBackToWorkspace() {
+    const back = document.getElementById("lm-back-workspace");
+    if (!back || !window.LMTaskActions) return;
+    if (!LMTaskActions.cameFromWorkspace()) return;
+    back.href = LMTaskActions.backUrl();
+    back.hidden = false;
+  })();
 
   // Read the URL BEFORE the first fetch so load()'s render already reflects the
   // linked-to filters — no flash of the unfiltered list.
