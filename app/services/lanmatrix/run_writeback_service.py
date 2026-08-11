@@ -182,8 +182,12 @@ def _matching_rows(project_id: int, test_id: str) -> list[TestItemRow]:
 def record_run(task: Task, verdict: str) -> int:
     """Write the run's evidence onto its row(s) and append a run record.
 
-    Returns the number of rows updated. Strictly best-effort: a write-back
-    problem is logged but must never fail a run that already completed.
+    Returns the number of rows updated, ``0`` when there was legitimately
+    nothing to write, and ``-1`` when the write-back FAILED. The three used to
+    be indistinguishable: a swallowed exception looked exactly like "no matrix
+    row matches this test id", which is how a broken loop stayed invisible.
+    Still best-effort -- a write-back problem must never fail a run that already
+    completed -- but now it is loud.
     """
     if not task.project_id or not task.test_id:
         return 0
@@ -232,6 +236,13 @@ def record_run(task: Task, verdict: str) -> int:
         db.session.commit()
         return changed
     except Exception:  # pragma: no cover - defensive, never break the run
-        db.session.rollback()
+        try:
+            db.session.rollback()
+        except Exception:
+            logger.exception("rollback after failed run write-back also failed")
+        logger.warning(
+            "run write-back FAILED: task=%s test_id=%r project=%s -- the run "
+            "finished but its evidence columns were not written",
+            task.task_key, task.test_id, task.project_id)
         logger.exception("failed to write run evidence back onto TestItemRow")
-        return 0
+        return -1

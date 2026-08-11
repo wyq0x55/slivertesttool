@@ -585,6 +585,18 @@ def run_cleanup(ctx: TestContext, time):
     if ctx.test_python_over == 0:
         return ctx._DLL_OK
 
+    # Silver loads this module twice per run: once when ``add_module`` injects
+    # it, and again after ``silver.restart()``. The first instance is discarded
+    # without ever executing a step, and its teardown used to emit a full
+    # "suspended -> Step.N is failed -> Test is failed" block into jdgrslt.log.
+    # Those lines carry no "Test case ... is started!" marker, so whenever the
+    # discarded instance was torn down *after* the real run had written its
+    # result -- a matter of timing, which is why it only bit under load -- the
+    # verdict parser attributed the failure to the real, passing case.
+    # An instance that never reached a step has nothing to report.
+    if ctx.current_step is None or ctx.test_step_no == -1:
+        return ctx._DLL_OK
+
     print('The test was suspended !!!')
     log.info('The test was suspended !!!')
 

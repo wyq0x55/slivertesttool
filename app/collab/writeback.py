@@ -41,7 +41,6 @@ from flask import current_app
 
 from ..extensions import db
 from ..models import RowWriteback, TestItemRow
-from . import presence
 
 _log = logging.getLogger(__name__)
 
@@ -87,9 +86,15 @@ def apply_server_fields(project_id: int, row: TestItemRow,
     row.version = (row.version or 0) + 1
     row.updated_at = _utcnow()
 
-    # Mirror into the CRDT document only while somebody is actually editing;
-    # otherwise the next room bootstrap picks the values up from the database.
-    if row.uuid and presence.is_collab_active(project_id):
+    # Always queue the mirror when the row is addressable. Gating on
+    # ``presence.is_collab_active`` looked like an optimisation but was a data
+    # loss: presence is a heartbeat with a TTL, so a single missed beat (or a
+    # room that is live but between heartbeats) skipped the queue entirely --
+    # and the database write we just made would then be overwritten by the next
+    # materializer flush, with nothing left to restore it. Queue entries for a
+    # project nobody is editing cost one row and are dropped by the TTL in
+    # :func:`claim_pending` / :func:`purge_applied`.
+    if row.uuid:
         db.session.add(RowWriteback(
             project_id=project_id,
             sheet=sheet,
@@ -149,11 +154,27 @@ def claim_pending(project_ids: Iterable[int]) -> dict[int, dict[str, dict]]:
 
 
 def purge_applied(older_than_seconds: int = 3600) -> int:
-    """Delete write-backs applied longer than ``older_than_seconds`` ago."""
+    """Trim the queue table: applied rows, plus entries nobody ever claimed.
+
+    Applied rows older than ``older_than_seconds`` are deleted. Unapplied rows
+    are also deleted once they are far past ``COLLAB_WRITEBACK_TTL_SECONDS``
+    (they would be dropped as stale by :func:`claim_pending` anyway): since the
+    presence gate was removed, every write-back is queued, including for
+    projects that are never opened collaboratively, and without this the table
+    only ever grows.
+    """
     cutoff = _utcnow() - timedelta(seconds=max(0, older_than_seconds))
     deleted = (RowWriteback.query
                .filter(RowWriteback.applied_at.isnot(None))
                .filter(RowWriteback.applied_at < cutoff)
                .delete(synchronize_session=False))
+
+    ttl = int(current_app.config.get("COLLAB_WRITEBACK_TTL_SECONDS", 900) or 0)
+    if ttl > 0:
+        stale_cutoff = _utcnow() - timedelta(seconds=ttl * 4)
+        deleted += (RowWriteback.query
+                    .filter(RowWriteback.applied_at.is_(None))
+                    .filter(RowWriteback.created_at < stale_cutoff)
+                    .delete(synchronize_session=False))
     db.session.commit()
     return int(deleted or 0)

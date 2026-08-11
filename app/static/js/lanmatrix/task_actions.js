@@ -198,6 +198,27 @@
     return data;
   }
 
+  /* 項目作成=不要 sign-off. Same queue, same buttons as a verdict review, but a
+     different endpoint -- and a reason is mandatory in BOTH directions, not
+     just on rejection: approving permanently writes an Untestable verdict and
+     shrinks the plan, so "why was this case never written?" has to stay
+     answerable years later. */
+  async function decideExemption(ctx, action, note) {
+    const pid = need(ctx, "projectId");
+    const uuid = need(ctx, "uuid");
+    let text = note;
+    if (!String(text || "").trim()) {
+      text = ui.prompt(action === "approve"
+        ? "确认无需作成的理由（将记为 Untestable）："
+        : "请填写驳回理由：", "");
+      if (text === null) return null;
+      if (!String(text).trim()) { ui.toast("必须填写理由", false); return null; }
+    }
+    const data = await LMApi.decideExemption(pid, uuid, action, text);
+    ui.toast(action === "approve" ? "已通过，判定记为 Untestable" : "已驳回", true);
+    return data;
+  }
+
   async function approveReviewsBulk(ctx, rows, note) {
     const pid = need(ctx, "projectId");
     const list = rows || [];
@@ -238,5 +259,6 @@
     downloadTask, downloadTasks, taskDetailUrl, backUrl, cameFromWorkspace,
     // review
     approveReview, rejectReview, approveReviewsBulk, assignReviewer,
+    decideExemption,
   };
 })(window);

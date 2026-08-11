@@ -24,7 +24,14 @@ from __future__ import annotations
 import logging
 import os
 
-logging.basicConfig(level=os.environ.get("COLLAB_LOG_LEVEL", "INFO"))
+from app.config import Config
+from app.logging_setup import configure as configure_logging
+
+# This used to be a bare ``basicConfig`` that ran before ``create_app`` and thus
+# disabled the one inside it -- which is why collab lines had no timestamps.
+# ``COLLAB_LOG_LEVEL`` is still honoured (see ``logging_setup.configure``).
+configure_logging("collab", Config)
+
 _log = logging.getLogger("collab")
 
 

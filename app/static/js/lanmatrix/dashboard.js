@@ -51,6 +51,12 @@
     setKpi("passed", s.passed);
     setKpi("failed_errored", s.failed + s.errored);
     setKpi("review_pending", review.pending);
+    // Approved 不要 cases have left the denominator; pending ones have not, and
+    // saying so is the point of the tile. Silence about a pending claim is how
+    // a case ends up excluded without anyone having agreed to it.
+    setKpi("exempt_approved", s.exempt_approved || 0);
+    setKpi("exempt_pending",
+      s.exempt_pending ? `${s.exempt_pending} 待审批（仍计入要实施）` : "");
     // Percentages are shown against the in-scope total, so state the
     // denominator rather than leaving a bare "72%".
     setKpi("executed_pct", s.planned ? `${s.executed_pct}% / 要实施` : "");
@@ -82,7 +88,20 @@
       { name: "失败", value: s.failed, itemStyle: { color: p.danger } },
       { name: "错误", value: s.errored, itemStyle: { color: p.warn } },
       { name: "无法测试", value: s.untestable, itemStyle: { color: p.info } },
-      { name: "未实施", value: s.not_run, itemStyle: { color: p.muted } },
+      // Split out of 未实施 rather than added to it: these cases are proposed
+      // for removal from the plan and are still counted in the denominator, so
+      // burying them in the grey block hides both the backlog and the pending
+      // decision that would shrink it.
+      {
+        name: "不要待审批",
+        value: s.exempt_pending_not_run || 0,
+        itemStyle: { color: p.warn },
+      },
+      {
+        name: "未实施",
+        value: Math.max(0, s.not_run - (s.exempt_pending_not_run || 0)),
+        itemStyle: { color: p.muted },
+      },
     ].filter((d) => d.value > 0);
 
     return {

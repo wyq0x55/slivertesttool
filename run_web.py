@@ -12,8 +12,14 @@ worker together, use ``python run.py`` instead.
 
 from __future__ import annotations
 
-from app import __version__, create_app
 from app.config import Config
+from app.logging_setup import configure as configure_logging
+
+# Before create_app so the web process claims the "web" role (and its own
+# rotating file); create_app's own call then becomes a no-op.
+configure_logging("web", Config)
+
+from app import __version__, create_app  # noqa: E402  (after logging setup)
 
 app = create_app()
 

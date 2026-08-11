@@ -26,6 +26,9 @@
   const TASK_PAGE_SIZE = 20;
   const PROJECT_PAGE_SIZE = 9;
 
+  // 項目作成 = 不要 claims are NOT a view of their own: they are sign-offs, and
+  // they live in `reviews` alongside verdict reviews. See
+  // exemption_service.row_review_dict.
   const VIEWS = ["tasks", "reviews", "projects"];
   const DEFAULT_VIEW = "tasks";
   let view = DEFAULT_VIEW;

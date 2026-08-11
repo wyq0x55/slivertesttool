@@ -46,6 +46,8 @@
     <button class="kpi-tile" type="button" data-kpi="reviews" id="lm-h-kpi-review">
       <span class="k">待我审核</span><span class="v warn" data-v="reviews">–</span>
     </button>
+    {# Same reasoning as 待我审核: a 不要 claim waiting on this user is work they
+       did not choose, and an unanswered claim keeps a case pinned in 未実施. #}
   </div>
 
   <div id="lm-home-err" class="state err" hidden>
@@ -82,6 +84,10 @@
               aria-selected="false" aria-controls="lm-pane-reviews">
         待我审核 <span class="tab-n warn" data-tabcount="reviews"></span>
       </button>
+      {# Separate from 待我审核 on purpose: that queue asks "is this result
+         correct", this one asks "may this case be dropped from the plan at
+         all". Approving the first is not agreeing to the second, and one list
+         whose rows meant either thing would invite exactly that mistake. #}
       <button type="button" class="tab" role="tab" data-view="projects"
               aria-selected="false" aria-controls="lm-pane-projects">
         我的项目 <span class="tab-n" data-tabcount="projects"></span>
@@ -255,6 +261,12 @@
     </div>
     </div>{# /pane reviews #}
 
+    {# --- 不要 (項目作成) sign-off ------------------------------------------
+       項目作成 used to be free text no code read: a case marked 不要 could
+       neither be approved nor be counted, so it sat in 未実施 forever and the
+       progress figure drifted. The server now keeps an unapproved claim in the
+       denominator; this pane is where the claim is actually answered. #}
+
     <div class="pane" id="lm-pane-projects" role="tabpanel" hidden>
     <div class="lm-sec-head">
       <h2>我的项目</h2>
@@ -284,4 +296,6 @@
 {# Review queue. Independent of home.js: it owns its own section and reload, so
    a failure in one list cannot blank the other. #}
 <script src="{{ url_for('static', filename='js/lanmatrix/workspace_reviews.js') }}"></script>
+{# 不要 sign-off queue. Same independence: it must keep working if the verdict
+   queue fails, and vice versa. #}
 {% endblock %}

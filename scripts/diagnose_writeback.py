@@ -27,6 +27,10 @@ from datetime import datetime, timedelta
 
 SERVER_FIELDS = ("exec_date", "executor", "version_label")
 
+#: Terminal task states (see ``app.models.task.TaskStatus``). There is no
+#: "finished" state; filtering on that string is what made this script useless.
+FINAL_STATUSES = ("passed", "failed", "cancelled")
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -54,7 +58,10 @@ def main() -> int:
         print(f"display timezone : "
               f"{application.config.get('LM_DISPLAY_TZ', '(unset)')}")
 
-        q = Task.query.filter(Task.status == "finished")
+        # TaskStatus has no "finished" member (queued/running/passed/failed/
+        # cancelled), so the old filter matched nothing and this script always
+        # printed "No finished tasks found" -- the diagnostic itself was broken.
+        q = Task.query.filter(Task.status.in_(FINAL_STATUSES))
         if args.project:
             q = q.filter(Task.project_id == args.project)
         if args.test_id:
@@ -62,8 +69,8 @@ def main() -> int:
         tasks = q.order_by(Task.id.desc()).limit(args.limit).all()
 
         if not tasks:
-            print("\nNo finished tasks found. Run a task first, or widen "
-                  "--project / --test-id.")
+            print(f"\nNo tasks in a final state {FINAL_STATUSES} found. "
+                  "Run a task first, or widen --project / --test-id.")
             return 1
 
         # ---- hop 1: field definitions ----------------------------------- #
@@ -175,6 +182,10 @@ def main() -> int:
                        .filter_by(project_id=pid)
                        .filter(RowWriteback.applied_at.is_(None))
                        .count())
+            applied = (RowWriteback.query
+                       .filter_by(project_id=pid)
+                       .filter(RowWriteback.applied_at.isnot(None))
+                       .count())
             stale_cut = datetime.utcnow() - timedelta(minutes=5)
             stale = (RowWriteback.query
                      .filter_by(project_id=pid)
@@ -182,7 +193,8 @@ def main() -> int:
                      .filter(RowWriteback.created_at < stale_cut)
                      .count())
             print(f"  project {pid}: collab_active={active} "
-                  f"pending_writebacks={pending} older_than_5min={stale}")
+                  f"lm_row_writebacks pending={pending} applied={applied} "
+                  f"older_than_5min={stale}")
             if active and stale:
                 print("    -> the collab server is not draining its queue. "
                       "Values are safe in the database but will not reach the "

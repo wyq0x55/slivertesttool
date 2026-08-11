@@ -84,10 +84,20 @@
     return p ? (p.code || p.name || pid) : pid;
   }
 
+  function isExemption(r) {
+    return (r && r.kind) === "exemption";
+  }
+
   function verdictPill(r) {
     const v = String(r.review_verdict || r.result || "");
     const cls = /untestable/i.test(v) ? "warn" : "ok";
-    return `<span class="pill ${cls}">${esc(v || "—")}</span>`;
+    // Both kinds show the verdict at stake -- an exemption reports Untestable
+    // because that is literally what approving it writes onto the row. The tag
+    // says where the claim came from, so a reviewer can still tell a runner's
+    // result apart from a hand-typed 不要 without opening the case.
+    const tag = isExemption(r)
+      ? ` <span class="muted">項目作成=不要</span>` : "";
+    return `<span class="pill ${cls}">${esc(v || "—")}</span>${tag}`;
   }
 
   /* The review's own state, as a pill. In the pending scope every row is
@@ -254,9 +264,14 @@
     if (!r) return;
     const ctx = { projectId: r.project_id, uuid: r.uuid, needsNote: r.needs_note };
     try {
-      const res = kind === "approve"
-        ? await LMTaskActions.approveReview(ctx)
-        : await LMTaskActions.rejectReview(ctx);
+      // Same two buttons for both kinds of sign-off, different endpoints. The
+      // reviewer is answering one question either way; which table the answer
+      // lands in is our problem, not theirs.
+      const res = isExemption(r)
+        ? await LMTaskActions.decideExemption(ctx, kind)
+        : (kind === "approve"
+          ? await LMTaskActions.approveReview(ctx)
+          : await LMTaskActions.rejectReview(ctx));
       if (res) await load();
     } catch (ex) {
       toast(ex.message || "操作失败", false);

@@ -23,6 +23,11 @@ import logging
 import threading
 
 from app.config import Config
+from app.logging_setup import configure as configure_logging
+
+# Before the tasks module (which builds the Flask app lazily) so the worker
+# claims the "worker" role and its own rotating file.
+configure_logging("worker", Config)
 
 # Importing the tasks module registers ``run_task`` with the shared huey instance.
 # The single worker-side Flask app is built lazily and cached inside ``tasks``

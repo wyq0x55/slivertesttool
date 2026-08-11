@@ -80,7 +80,7 @@ def seeded(app):
     db.session.commit()
 
     task = Task(project_id=project.id, test_id="TC-001",
-                task_key=f"job{suffix}"[:16], status="finished",
+                task_key=f"job{suffix}"[:16], status="passed",
                 submitter_id=user.id, sil_name="engine",
                 finished_at=datetime(2026, 8, 10, 1, 30, tzinfo=timezone.utc))
     db.session.add(task)
@@ -134,7 +134,7 @@ class TestRecordRun:
         rws.record_run(task, "PASS")
 
         again = Task(project_id=project.id, test_id="TC-001",
-                     task_key=(task.task_key + "b")[:16], status="finished",
+                     task_key=(task.task_key + "b")[:16], status="passed",
                      submitter_id=user.id, sil_name="engine",
                      finished_at=datetime(2026, 8, 11, 2, 0,
                                           tzinfo=timezone.utc))
@@ -167,7 +167,7 @@ class TestRecordRun:
         db.session.commit()
 
         task = Task(project_id=project.id, test_id="TC-JSON-9",
-                    task_key="jsonjob", status="finished",
+                    task_key="jsonjob", status="passed",
                     submitter_id=user.id, sil_name="engine",
                     finished_at=datetime(2026, 8, 10, 1, 30,
                                          tzinfo=timezone.utc))
@@ -208,7 +208,7 @@ class TestRecordRun:
 
         project, user, _ = seeded
         orphan = Task(project_id=project.id, test_id="TC-NOPE",
-                      task_key="orphan", status="finished",
+                      task_key="orphan", status="passed",
                       submitter_id=user.id, sil_name="engine",
                       finished_at=datetime(2026, 8, 10, 1, 30,
                                            tzinfo=timezone.utc))
@@ -269,8 +269,9 @@ class TestDialectPortability:
             raise AttributeError("simulated dialect-only operator")
 
         monkeypatch.setattr(rws, "_matching_rows", boom)
-        # Must not propagate: the run already finished.
-        assert rws.record_run(task, "PASS") == 0
+        # Must not propagate: the run already finished. -1 (not 0) so a failure
+        # is distinguishable from "no matrix row matched".
+        assert rws.record_run(task, "PASS") == -1
 
 
 class TestCollabDelivery:
@@ -329,15 +330,42 @@ class TestCollabDelivery:
         for key in self.SERVER_FIELDS:
             assert row.get(key), f"{key} never reached the open document"
 
-    def test_nothing_is_queued_when_no_one_is_editing(self, app, seeded):
-        """Without a live room the database alone is authoritative.
+    def test_queued_even_without_presence(self, app, seeded):
+        """Presence must NOT gate the queue.
 
-        Queueing anyway would leave rows no collab server ever drains, to be
-        replayed later onto a much newer document.
+        Presence is a heartbeat with a TTL: a single missed beat used to skip
+        the queue entirely, and the database write was then blanked by the next
+        materializer flush with nothing left to restore it. Queueing for a
+        project nobody is editing costs one row, which ``claim_pending``'s TTL
+        and ``purge_applied`` drop.
         """
         from app.models import RowWriteback
         from app.services.lanmatrix import run_writeback_service as rws
 
         project, user, task = seeded
         assert rws.record_run(task, "PASS") == 1
-        assert RowWriteback.query.filter_by(project_id=project.id).count() == 0
+        assert RowWriteback.query.filter_by(project_id=project.id).count() == 1
+
+    def test_purge_applied_trims_both_applied_and_abandoned(self, app, seeded):
+        from datetime import timedelta
+
+        from app.extensions import db
+        from app.models import RowWriteback
+        from app.collab import writeback
+
+        project, user, task = seeded
+        old = datetime.utcnow() - timedelta(days=1)
+        db.session.add(RowWriteback(project_id=project.id, sheet="test",
+                                    row_uuid="a", payload={"result": "PASS"},
+                                    created_at=old, applied_at=old))
+        db.session.add(RowWriteback(project_id=project.id, sheet="test",
+                                    row_uuid="b", payload={"result": "PASS"},
+                                    created_at=old))
+        fresh = RowWriteback(project_id=project.id, sheet="test", row_uuid="c",
+                             payload={"result": "PASS"})
+        db.session.add(fresh)
+        db.session.commit()
+
+        assert writeback.purge_applied() == 2
+        left = RowWriteback.query.filter_by(project_id=project.id).all()
+        assert [r.row_uuid for r in left] == ["c"]

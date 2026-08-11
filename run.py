@@ -29,8 +29,15 @@ import sys
 import time
 from pathlib import Path
 
-from app import __version__, create_app
 from app.config import Config
+from app.logging_setup import configure as configure_logging
+
+# The launcher serves the web app in the foreground, so it takes the "web" role;
+# the worker and collab children configure their own files in their own
+# processes (never share one rotating handle across processes).
+configure_logging("web", Config)
+
+from app import __version__, create_app  # noqa: E402  (after logging setup)
 
 BASE_DIR = Path(__file__).resolve().parent
 

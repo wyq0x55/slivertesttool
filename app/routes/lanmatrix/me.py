@@ -18,8 +18,8 @@ from flask import Blueprint, g, request
 from ...extensions import db
 from ...models import LMUser, ProjectMember, Task, TaskStatus
 from ...services import task_service
-from ...services.lanmatrix import (notification_service, permissions,
-                                   review_service, service)
+from ...services.lanmatrix import (exemption_service, notification_service,
+                                   permissions, review_service, service)
 from ._base import arg_int, err, ok, login_required, register_common
 
 bp = Blueprint("lanmatrix_me", __name__, url_prefix="/api/v1")
@@ -263,33 +263,50 @@ def me_reviews():
     rows = review_service.queue_for(g.user.id, pids, status=status, role=role,
                                     limit=limit)
 
+    # 項目作成=不要 claims join the same queue. They ask the reviewer the same
+    # question a runner's Untestable verdict does -- "may this case count as
+    # work that will never be done?" -- and the split into a second tab only
+    # exposed the fact that we store them in different columns.
+    ex_rows = exemption_service.queue_for(
+        pids,
+        status=(exemption_service.PENDING if status == review_service.PENDING
+                else exemption_service.STATUS_DECIDED),
+        reviewer_id=(g.user.id if role == review_service.ROLE_REVIEWER else None),
+        requester_id=(g.user.id if role == review_service.ROLE_REQUESTER else None),
+        limit=limit)
+
     user_ids = review_service.review_user_ids(rows)
+    user_ids |= exemption_service.review_user_ids(ex_rows)
     users = {u.id: u for u in
              LMUser.query.filter(LMUser.id.in_(user_ids)).all()} \
         if user_ids else {}
 
-    seen = {r.project_id for r in rows if r.project_id in by_id}
+    items = ([review_service.row_review_dict(r, users) for r in rows]
+             + [exemption_service.row_review_dict(r, users) for r in ex_rows])
+    # One queue means one ordering. Newest request first, undated last, so a
+    # claim raised today is not buried under last month's verdicts.
+    items.sort(key=lambda d: (d.get("review_requested_at") or ""), reverse=True)
+    items = items[:limit]
+
+    seen = {d["project_id"] for d in items if d["project_id"] in by_id}
+    counts = review_service.counts_by_role(g.user.id, list(by_id))
+    ex_counts = exemption_service.counts_by_reviewer(g.user.id, list(by_id))
+    # The badge counts everything waiting on this user. Reporting only verdict
+    # reviews would understate the backlog by exactly the rows this merge just
+    # moved into the queue.
+    counts["pending"] = int(counts.get("pending", 0)) + ex_counts["pending"]
+    counts["decided"] = int(counts.get("decided", 0)) + ex_counts["decided"]
+
     return ok({
-        "reviews": [review_service.row_review_dict(r, users) for r in rows],
+        "reviews": items,
         "projects": [{"id": pid, "code": by_id[pid].code, "name": by_id[pid].name}
                      for pid in sorted(seen)],
         "counts": review_service.counts_for(list(by_id)),
         # Tab counters: how many rows each of the three views holds.
-        "queue_counts": review_service.counts_by_role(g.user.id, list(by_id)),
+        "queue_counts": counts,
         "role": role,
         "status": status,
     })
-
-
-# --------------------------------------------------------------------------- #
-# Notifications
-# --------------------------------------------------------------------------- #
-def _notification_totals() -> dict:
-    """Both tab counters in one place, so a response cannot ship half of them."""
-    return {
-        "unread": notification_service.unread_count(g.user.id),
-        "history": notification_service.history_count(g.user.id),
-    }
 
 
 @bp.get("/me/notifications")

@@ -24,10 +24,18 @@ Every case falls into exactly one bucket at each level, so the numbers add up:
     planned = not_run + executed
     executed = pass + fail + error + untestable
 
-*Scope*: a case is out of scope when its result is blank **and** it has been
-archived (``workflow_status`` = ``Archived``). Nothing else is excluded --
-inventing a broader exclusion rule would let a project improve its percentage by
-reclassifying inconvenient cases.
+*Scope*: a case is out of scope when its result is blank **and** either
+
+* it has been archived (``workflow_status`` = ``Archived``), or
+* its 項目作成 says ``不要`` **and a reviewer has approved that claim**
+  (:mod:`exemption_service`).
+
+Both are deliberate, recorded acts by someone with the authority to perform
+them. The approval requirement on the second is the whole point: a bare ``不要``
+cell is a *proposal* to drop the case, and honouring it unreviewed would let
+anyone improve the project's percentage by typing two characters. An unapproved
+claim therefore stays in ``not_run`` and is reported separately as
+``exempt_pending``, so the gap is visible rather than flattering.
 
 *Executed* is derived from the row's current verdict, not from run history: a
 case re-run from FAIL to PASS must count once, as a pass.
@@ -48,7 +56,7 @@ from typing import Optional
 
 from ...extensions import db
 from ...models import LMUser, Project, TestItemRow, TestRunRecord
-from . import review_service
+from . import exemption_service, review_service
 from .run_writeback_service import classify
 
 logger = logging.getLogger(__name__)
@@ -96,34 +104,83 @@ def summary(project_id: int) -> dict:
     """
     counts = {k: 0 for k in OUTCOMES}
     total = 0
-    out_of_scope = 0
+    archived = 0
     not_run = 0
+    exempt = {exemption_service.PENDING: 0,
+              exemption_service.APPROVED: 0,
+              exemption_service.REJECTED: 0}
+    # Pending claims that are *also* still unexecuted. ``exempt_pending`` counts
+    # every claim awaiting sign-off, including rows that carry a verdict anyway;
+    # only this subset lives inside ``not_run``, so only this subset may be
+    # carved out of it without making the chart's slices overlap.
+    exempt_pending_not_run = 0
 
+    # ``custom_values`` carries 項目作成; projecting the JSON column keeps this
+    # to one query instead of hydrating every row just to read one key.
     rows = _base_rows(project_id).with_entities(
-        TestItemRow.result, TestItemRow.workflow_status
+        TestItemRow.result, TestItemRow.workflow_status,
+        TestItemRow.custom_values, TestItemRow.exempt_status,
+        TestItemRow.exempt_value,
     )
-    for result, workflow_status in rows:
+    for result, workflow_status, custom, ex_status, ex_value in rows:
         total += 1
+        item_created = (custom or {}).get(exemption_service.FIELD_KEY)
+        ex_state = exemption_service.status_of(item_created, ex_status, ex_value)
+        if ex_state:
+            exempt[ex_state] += 1
+
         bucket = classify(result or "")
         if bucket in counts:
+            # A case that actually ran is evidence, whatever the 項目作成 cell
+            # claims. Counting it as out of scope would discard a real result.
             counts[bucket] += 1
             continue
         # No recognised verdict: either deliberately excluded, or simply not
-        # run yet. Only an explicit archive takes it out of the denominator.
+        # run yet. Only an explicit archive, or an *approved* 不要 claim, takes
+        # it out of the denominator -- a claim still awaiting sign-off stays in
+        # ``not_run`` so nobody can leave the plan unilaterally.
         if (workflow_status or "").strip() == ARCHIVED:
-            out_of_scope += 1
+            archived += 1
+        elif ex_state == exemption_service.APPROVED:
+            pass  # already counted in ``exempt``; folded into out_of_scope below
         else:
             not_run += 1
+            if ex_state == exemption_service.PENDING:
+                exempt_pending_not_run += 1
 
     executed = sum(counts[k] for k in EXECUTED_OUTCOMES)
     # A cancelled run leaves the case still owing a result, so it belongs with
     # the outstanding work rather than in its own dead-end bucket.
     not_run += counts["cancelled"]
+    # An approved-but-already-executed row is counted under its verdict, not
+    # here, so the exclusion is exactly the rows the loop skipped.
+    exempt_out = total - archived - not_run - executed
+    out_of_scope = archived + exempt_out
     planned = total - out_of_scope
 
     return {
         "total": total,
         "out_of_scope": out_of_scope,
+        "archived": archived,
+        # Approved 不要 rows that are genuinely out of the plan. Distinct from
+        # ``exempt_approved``, which also counts rows whose claim was approved
+        # but which carry a verdict anyway (those stay in the executed pile).
+        #
+        # In practice this is now ~0 and kept only as a leak detector. Approving
+        # a claim writes an Untestable verdict onto the row
+        # (exemption_service.write_untestable), and ``untestable`` is in
+        # EXECUTED_OUTCOMES, so an approved row lands in ``executed`` rather than
+        # here. A non-zero value therefore means a row was approved but never got
+        # its verdict written back -- worth seeing, not worth a KPI tile. The
+        # dashboard tile reads ``exempt_approved`` instead.
+        "exempt_out_of_scope": exempt_out,
+        "exempt_pending": exempt[exemption_service.PENDING],
+        # The slice of ``not_run`` that is awaiting a 不要 decision, so a chart
+        # can carve it out without double-counting a claimed row that already
+        # has a verdict.
+        "exempt_pending_not_run": exempt_pending_not_run,
+        "exempt_approved": exempt[exemption_service.APPROVED],
+        "exempt_rejected": exempt[exemption_service.REJECTED],
         "planned": planned,
         "not_run": not_run,
         "executed": executed,

@@ -1190,6 +1190,128 @@ def assign_item_reviewer(project_id: int, row_uuid: str):
     return ok({"review": review_service.row_review_dict(rows[0])})
 
 
+# --------------------------------------------------------------------------- #
+# Scope exemption sign-off (項目作成 = 不要)
+#
+# Same gate as verdict review (``item.review``) and the same テスト区分 routing:
+# whoever is trusted to judge a 区分's results is the person with the context to
+# judge whether one of its cases may be skipped.
+# --------------------------------------------------------------------------- #
+@bp.get("/projects/<int:project_id>/exemptions")
+@login_required
+def list_project_exemptions(project_id: int):
+    """Cases claiming 項目作成 = 不要, by decision state.
+
+    Listing also routes freshly-typed claims (:func:`sync_pending`). Pending is
+    derived, so this only stamps a reviewer and rings a bell -- a claim is in
+    the queue whether or not this endpoint is ever called.
+    """
+    from ...services.lanmatrix import exemption_service
+
+    project, _ = _project_and_role(project_id, "item.review")
+
+    status = (request.args.get("status") or exemption_service.PENDING).strip()
+    if status not in exemption_service.STATUSES:
+        status = exemption_service.PENDING
+
+    try:
+        if exemption_service.sync_pending(project, actor_id=g.user.id):
+            db.session.commit()
+    except Exception:  # noqa: BLE001 - routing must never block the queue
+        db.session.rollback()
+        current_app.logger.warning("exemption sync failed for project %s",
+                                   project_id, exc_info=True)
+
+    reviewer_id = (g.user.id
+                   if (request.args.get("mine") or "").strip() in ("1", "true", "yes")
+                   else None)
+    rows = exemption_service.queue_for([project_id], status=status,
+                                       reviewer_id=reviewer_id)
+    ids = exemption_service.review_user_ids(rows)
+    users = ({u.id: u for u in LMUser.query.filter(LMUser.id.in_(ids)).all()}
+             if ids else {})
+    return ok({
+        "exemptions": [exemption_service.row_dict(r, users) for r in rows],
+        "counts": exemption_service.counts_for([project_id]).get(project_id, {}),
+        "status": status,
+    })
+
+
+@bp.post("/projects/<int:project_id>/items/<row_uuid>/exemption")
+@login_required
+def decide_item_exemption(project_id: int, row_uuid: str):
+    """Approve or reject one 不要 claim. A note is mandatory either way."""
+    from ...services.lanmatrix import exemption_service
+
+    project, _ = _project_and_role(project_id, "item.review")
+    payload = request.get_json(silent=True) or {}
+    action = (payload.get("action") or "").strip().lower()
+    if action not in ("approve", "reject"):
+        return err("INVALID_ARGUMENT", "action 必须是 approve 或 reject", status=400)
+
+    rows = _review_rows(project_id, [row_uuid])
+    if not rows:
+        return err("NOT_FOUND", "用例不存在", status=404)
+
+    try:
+        row = exemption_service.decide(project, rows[0], action == "approve",
+                                       actor_id=g.user.id,
+                                       note=payload.get("note") or "")
+    except exemption_service.ExemptionError as exc:
+        return err("INVALID_STATE", str(exc), status=400)
+
+    db.session.commit()
+    audit.record("item.exemption", actor_id=g.user.id, object_type="test_item",
+                 object_id=row.uuid, project_id=project_id,
+                 old_value=exemption_service.PENDING,
+                 new_value={"status": row.exempt_status,
+                            "note": row.exempt_note},
+                 client_ip=_client_ip())
+    db.session.commit()
+    return ok({"exemption": exemption_service.row_dict(row)})
+
+
+@bp.post("/projects/<int:project_id>/exemptions/bulk")
+@login_required
+def decide_exemptions_bulk(project_id: int):
+    """Approve/reject many 不要 claims at once, with one shared reason.
+
+    Bulk is allowed (unlike ``Untestable``) because 不要 is normally decided per
+    feature area, but the note is still required and is written onto every row,
+    so no approval is left without a justification.
+    """
+    from ...services.lanmatrix import exemption_service
+
+    project, _ = _project_and_role(project_id, "item.review")
+    payload = request.get_json(silent=True) or {}
+    action = (payload.get("action") or "").strip().lower()
+    if action not in ("approve", "reject"):
+        return err("INVALID_ARGUMENT", "action 必须是 approve 或 reject", status=400)
+    uuids = payload.get("uuids")
+    if not isinstance(uuids, list) or not uuids:
+        return err("INVALID_ARGUMENT", "uuids 必须是非空数组", status=400)
+    if len(uuids) > 500:
+        return err("INVALID_ARGUMENT", "单次最多处理 500 条", status=400)
+    if not (payload.get("note") or "").strip():
+        return err("INVALID_ARGUMENT", "审批『不要』时必须填写理由", status=400)
+
+    rows = _review_rows(project_id, uuids)
+    result = exemption_service.decide_bulk(project, rows, action == "approve",
+                                           actor_id=g.user.id,
+                                           note=payload.get("note") or "")
+    audit.record("item.exemption.bulk", actor_id=g.user.id,
+                 object_type="project", object_id=project_id,
+                 project_id=project_id,
+                 new_value={"action": action,
+                            "decided": len(result.get(
+                                "approved" if action == "approve"
+                                else "rejected", [])),
+                            "skipped": len(result.get("skipped", []))},
+                 client_ip=_client_ip())
+    db.session.commit()
+    return ok(result)
+
+
 @bp.put("/projects/<int:project_id>/review_policy")
 @login_required
 def set_review_policy(project_id: int):

@@ -532,9 +532,6 @@ logfile = (_CLI['logfile']
            or os.path.join(_SCRIPT_DIR,
                            (_SPEC.get('test_case_id') or 'judge') + '.log'))
 
-if os.path.exists(logfile):
-    os.remove(logfile)
-
 time = Variable('currentTime')
 stepsize = Variable('modelStepSize')
 digit = len(str(stepsize.Value).split('.')[1])
@@ -548,7 +545,35 @@ _started = 'Test case ID.ID;;' + _SPEC.get('test_case_id', '') + ' is started!'
 print(datetime.datetime.today())
 print(_started)
 
-logging.basicConfig(filename=logfile, encoding='UTF-8', level=logging.INFO)
+def _bind_log_file(path):
+    """Point the root logger at *path*, exclusively.
+
+    ``logging.basicConfig`` is a no-op once the root logger owns a handler. A
+    pooled Silver instance can keep one Python interpreter alive across runs, so
+    basicConfig would silently keep writing this run's verdict into the
+    *previous* run's jdgrslt.log: the earlier task got foreign lines appended and
+    this task got an empty file, i.e. an UNKNOWN verdict. Closing the inherited
+    handlers and opening our own guarantees the verdict lands in the file the
+    caller asked for.
+
+    Opening with mode 'w' truncates in place. The previous ``os.remove`` raced
+    with the console tailer and, on Windows, raised outright when the file was
+    still held open by a handler from a prior load.
+    """
+    root = logging.getLogger()
+    for handler in list(root.handlers):
+        root.removeHandler(handler)
+        try:
+            handler.close()
+        except Exception:  # noqa: BLE001 - a stale handle must not abort the run
+            pass
+    handler = logging.FileHandler(path, mode='w', encoding='UTF-8')
+    handler.setFormatter(logging.Formatter('%(levelname)s:%(name)s:%(message)s'))
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+
+
+_bind_log_file(logfile)
 logging.info(datetime.datetime.today())
 logging.info(_started)
 

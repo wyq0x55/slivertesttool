@@ -79,6 +79,26 @@ class Config:
     # via the admin page and shared by every test run).
     MODEL_DIR = Path(os.environ.get("MODEL_DIR", BASE_DIR / "instance" / "model"))
 
+    # --- Application logging (see ``app.logging_setup``) ---
+    # Every process writes a rotating file here in addition to the console, so a
+    # restart no longer takes the evidence with it. One file per process role
+    # (web.log / worker.log / collab.log / cli.log) keeps three concurrently
+    # running processes from interleaving into a single handle -- on Windows a
+    # shared rotating handle cannot be renamed while another process holds it.
+    LOG_DIR = Path(os.environ.get("LOG_DIR", BASE_DIR / "instance" / "logs"))
+    #: Root level for the application's own loggers.
+    LOG_LEVEL = (os.environ.get("LOG_LEVEL") or "INFO").upper()
+    #: Console level; defaults to LOG_LEVEL. Set higher to keep the terminal
+    #: quiet while the file still records everything.
+    LOG_CONSOLE_LEVEL = (os.environ.get("LOG_CONSOLE_LEVEL") or "").upper()
+    #: Level for chatty third-party loggers (sqlalchemy, werkzeug, huey, uvicorn).
+    LOG_THIRD_PARTY_LEVEL = (
+        os.environ.get("LOG_THIRD_PARTY_LEVEL") or "WARNING").upper()
+    LOG_MAX_BYTES = _as_int(os.environ.get("LOG_MAX_BYTES"), 10 * 1024 * 1024)
+    LOG_BACKUP_COUNT = _as_int(os.environ.get("LOG_BACKUP_COUNT"), 10)
+    #: Set to 0 to disable file logging entirely (console only).
+    LOG_TO_FILE = _as_bool(os.environ.get("LOG_TO_FILE"), True)
+
     # --- Database (PostgreSQL only) ---
     # The platform runs exclusively on PostgreSQL (the former bundled-SQLite
     # option has been removed). ``DATABASE_URL`` is a standard SQLAlchemy DSN;
@@ -371,5 +391,6 @@ class Config:
             cls.WORKSPACE_DIR,
             cls.MODEL_DIR,
             cls.POOL_DIR,
+            cls.LOG_DIR,
         ):
             Path(path).mkdir(parents=True, exist_ok=True)

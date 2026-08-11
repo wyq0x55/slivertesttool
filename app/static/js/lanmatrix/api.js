@@ -79,7 +79,10 @@
     meOverview() { return request("GET", "/me/overview"); },
     meTasks(params) { return request("GET", "/me/tasks", { query: params }); },
     meReviews(params) { return request("GET", "/me/reviews", { query: params }); },
-
+    // 項目作成 = 不要 sign-off queue. Separate from meReviews on purpose: a
+    // verdict review asks "is this result right", an exemption asks "may this
+    // case be dropped from the plan at all". Mixing them would make one queue
+    // whose rows mean two different things.
     // --- notifications ----------------------------------------------------
     // `unreadCount` is deliberately separate from `list`: the badge polls every
     // 30s and only needs one integer, so it must not drag the whole dropdown
@@ -124,6 +127,24 @@
       return request("POST", `/projects/${pid}/reviews/bulk`,
         { body: { uuids, action, note: note || "" } });
     },
+    // --- 不要 (項目作成) exemption sign-off ---------------------------------
+    // The GET also stamps and routes any newly typed claim, so opening the
+    // queue is what puts fresh claims in front of a reviewer.
+    listProjectExemptions(pid, params) {
+      return request("GET", `/projects/${pid}/exemptions`, { query: params });
+    },
+    // `note` is mandatory in both directions server-side: an approval that
+    // silently shrinks the test plan must carry a reason someone can audit.
+    decideExemption(pid, uuid, action, note) {
+      return request("POST",
+        `/projects/${pid}/items/${encodeURIComponent(uuid)}/exemption`,
+        { body: { action, note: note || "" } });
+    },
+    decideExemptionsBulk(pid, uuids, action, note) {
+      return request("POST", `/projects/${pid}/exemptions/bulk`,
+        { body: { uuids, action, note: note || "" } });
+    },
+
     assignItemReviewer(pid, uuid, reviewerId) {
       return request("POST", `/projects/${pid}/items/${encodeURIComponent(uuid)}/reviewer`,
         { body: { reviewer_id: reviewerId } });

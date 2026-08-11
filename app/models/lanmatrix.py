@@ -508,6 +508,31 @@ class TestItemRow(db.Model):
     # could unknowingly approve a verdict that no longer exists.
     review_verdict = db.Column(db.String(24), nullable=False, default="")
 
+    # --- Scope exemption (項目作成 = 不要) ---------------------------------
+    # A separate state machine from ``review_status`` on purpose: that one asks
+    # "is this verdict trustworthy?", this one asks "is skipping this case
+    # legitimate?", and a row can be subject to both at once. Sharing a column
+    # would let a verdict approval silently grant a scope exemption.
+    #
+    # Only *decisions* live here. "Pending" is derived from the 項目作成 cell
+    # (see ``exemption_service.effective_status``) so that no write path --
+    # collab document, Excel import, API -- can let a claim past the reviewer by
+    # forgetting to enqueue it.
+    exempt_status = db.Column(db.String(16), nullable=False, default="", index=True)
+    # The 項目作成 value the decision was made about. A decision is dormant
+    # while the cell says something else, so editing the claim away and back
+    # cannot turn an approval into cover for a different statement.
+    exempt_value = db.Column(db.String(24), nullable=False, default="")
+    # Mandatory both ways: an approval permanently shrinks the tested surface
+    # and must stay answerable years later; a rejection has to say what to do.
+    exempt_note = db.Column(db.Text, nullable=False, default="")
+    exempt_reviewer_id = db.Column(db.Integer, db.ForeignKey("lm_users.id"),
+                                   nullable=True, index=True)
+    exempt_requested_at = db.Column(db.DateTime, nullable=True)
+    exempt_requested_by = db.Column(db.Integer, db.ForeignKey("lm_users.id"),
+                                    nullable=True, index=True)
+    exempt_decided_at = db.Column(db.DateTime, nullable=True)
+
     version = db.Column(db.Integer, nullable=False, default=1)
     created_by = db.Column(db.Integer, db.ForeignKey("lm_users.id"), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)

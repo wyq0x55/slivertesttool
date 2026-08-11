@@ -119,6 +119,19 @@ def review_queue_link(project_id: Optional[int] = None) -> str:
     return f"{base}&project_id={int(project_id)}" if project_id else base
 
 
+def exemption_queue_link(project_id: Optional[int] = None) -> str:
+    """The 不要 (項目作成) sign-off queue on the workspace page.
+
+    Deliberately the queue and not the row: unlike a verdict review -- where
+    the reviewer must read the case to judge it -- a 不要 claim is decided from
+    the list (区分 + case + who asked), and the 通过 / 驳回 buttons only exist
+    here. Pointing at the matrix row would land the reviewer on a screen with
+    no way to answer the notification that brought them there.
+    """
+    base = f"{PAGE_PREFIX}/home?view=exemptions"
+    return f"{base}&project_id={int(project_id)}" if project_id else base
+
+
 def _default_group_key(type: str, project_id: Optional[int],
                        ref_id: str = "") -> str:
     """``type:project:ref`` -- unique per referenced object.

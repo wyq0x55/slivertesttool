@@ -73,6 +73,16 @@ def extract_case_section(text: str, test_id: str) -> str:
     the stale block above. The newest block is the one this run just wrote, so
     it is the only correct answer.
 
+    A section also ends at its own verdict line, not merely at the next case.
+    Silver loads the judge module twice per run and tears the discarded first
+    instance down at an unpredictable moment; its teardown emits failure lines
+    that carry NO "Test case ... is started!" marker of their own. Landing after
+    the real case's verdict, they used to be swallowed into that case's section
+    and -- since an overall failure marker outranks everything -- turned a
+    passing run into a FAIL. Reproducible only under load, which is exactly how
+    it presented: wrong in a batch, right when re-run alone. Cutting at the
+    verdict makes any such trailing noise unreachable.
+
     If no per-case markers exist (or the id is not found), the full text is
     returned.
     """
@@ -81,15 +91,26 @@ def extract_case_section(text: str, test_id: str) -> str:
     if not starts:
         return text
     tid = (test_id or "").strip()
+
+    def _section(start: int, next_start: int) -> str:
+        end = next_start
+        for i in range(start, end):
+            # The verdict line itself belongs to the section; anything after it
+            # is a different (unmarked) emitter's output.
+            if _TEST_FAIL_RE.search(lines[i]) or _TEST_PASS_RE.search(lines[i]):
+                end = i + 1
+                break
+        return "\n".join(lines[start:end])
+
     for idx in range(len(starts) - 1, -1, -1):
         start = starts[idx]
         m = _CASE_START_RE.search(lines[start])
         marker_id = (m.group(1).strip() if m else "")
         if tid and (marker_id == tid or tid in lines[start] or marker_id in tid):
-            end = starts[idx + 1] if idx + 1 < len(starts) else len(lines)
-            return "\n".join(lines[start:end])
+            nxt = starts[idx + 1] if idx + 1 < len(starts) else len(lines)
+            return _section(start, nxt)
     # Fall back to the last case if the id could not be matched exactly.
-    return "\n".join(lines[starts[-1]:])
+    return _section(starts[-1], len(lines))
 
 
 def line_failed(line: str) -> bool:
@@ -506,4 +527,8 @@ def _write_row_result(task: Task, verdict: str) -> None:
     """
     from ..services.lanmatrix import run_writeback_service
 
-    run_writeback_service.record_run(task, verdict)
+    written = run_writeback_service.record_run(task, verdict)
+    if written < 0:
+        logger.warning("evidence write-back failed for task %s (verdict=%r); "
+                       "see run_writeback_service log above",
+                       getattr(task, "task_key", None), verdict)

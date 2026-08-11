@@ -240,6 +240,15 @@ class CollabWebsocketServer(WebsocketServer):
             if changed:
                 _log.info("applied %s collab write-back row(s) to %s",
                           changed, name)
+                # The suppressed write above deliberately does not trigger the
+                # observer, so nothing would ever persist these values back to
+                # the database -- and a materializer flush that snapshotted the
+                # Doc *before* this write is about to blank them. Bump the
+                # epoch (invalidating such a snapshot) and arm one reconcile.
+                # ``materialize_sheet`` is a no-op when nothing differs, so the
+                # extra pass is cheap when the database already agrees.
+                mat.note_external_write()
+                mat.schedule_flush()
 
     def _claim_writebacks_sync(self, pids: list) -> dict:
         from . import writeback
@@ -254,6 +263,19 @@ class CollabWebsocketServer(WebsocketServer):
                 await self._evict_idle_rooms()
             except Exception:  # pragma: no cover - sweeper must never die
                 _log.exception("collab idle sweep iteration failed")
+            try:
+                # ``lm_row_writebacks`` is append-only otherwise: nothing else
+                # in the project calls ``purge_applied``.
+                await anyio.to_thread.run_sync(self._purge_writebacks_sync)
+            except Exception:  # pragma: no cover - sweeper must never die
+                _log.exception("collab write-back purge failed")
+
+    def _purge_writebacks_sync(self) -> None:
+        from . import writeback
+        with self._app.app_context():
+            deleted = writeback.purge_applied()
+            if deleted:
+                _log.info("purged %s applied collab write-back row(s)", deleted)
 
     async def _evict_idle_rooms(self) -> None:
         now = time.monotonic()

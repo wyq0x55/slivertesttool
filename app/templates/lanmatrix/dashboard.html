@@ -43,6 +43,17 @@
     <button class="kpi-tile" type="button" disabled>
       <span class="k">待审核</span><span class="v warn" data-v="review_pending">–</span>
     </button>
+    {# 項目作成=不要. Shown even at zero: "how much did we decide not to test?"
+       is a question whose answer must never be an empty space, and a pending
+       claim is a case that has left nobody's plan but is still in the ring.
+       Reads `exempt_approved`, not `exempt_out_of_scope`: an approved claim now
+       writes an Untestable verdict, so it counts as executed and the
+       out-of-scope bucket it used to live in is empty by construction. #}
+    <button class="kpi-tile" type="button" disabled>
+      <span class="k">不要（Untestable）</span>
+      <span class="v" data-v="exempt_approved">–</span>
+      <span class="sub muted" data-v="exempt_pending"></span>
+    </button>
   </div>
 
   {% if not charts_available %}

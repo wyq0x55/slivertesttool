@@ -49,10 +49,14 @@ def create_app(config_object: type[Config] = Config) -> Flask:
             "For a disposable dev run only, set LM_ALLOW_INSECURE_SECRET=1."
         )
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    # Fallback only: every ``run_*.py`` entry point configures logging with its
+    # own process role before importing the app, and ``configure`` is a no-op
+    # once that has happened. This keeps a bare ``create_app()`` (a shell, a
+    # test, a management script) from logging into the void.
+    from .logging_setup import configure as _configure_logging
+    # ``config_object`` (the class), not ``app.config`` (a dict): the helper
+    # reads attributes so it can also run before an app exists.
+    _configure_logging("cli", config_object)
 
     db.init_app(app)
 
@@ -325,6 +329,14 @@ def _migrate_schema() -> None:
             "review_requested_by": "INTEGER",
             "reviewed_at": "TIMESTAMP",
             "review_verdict": "VARCHAR(24) NOT NULL DEFAULT ''",
+            # Scope-exemption sign-off for 項目作成 = 不要 (see TestItemRow).
+            "exempt_status": "VARCHAR(16) NOT NULL DEFAULT ''",
+            "exempt_value": "VARCHAR(24) NOT NULL DEFAULT ''",
+            "exempt_note": "TEXT NOT NULL DEFAULT ''",
+            "exempt_reviewer_id": "INTEGER",
+            "exempt_requested_at": "TIMESTAMP",
+            "exempt_requested_by": "INTEGER",
+            "exempt_decided_at": "TIMESTAMP",
         },
         "lm_project_models": {
             "is_current": "BOOLEAN NOT NULL DEFAULT FALSE",
@@ -391,6 +403,22 @@ def _migrate_schema() -> None:
             except Exception as exc:  # noqa: BLE001
                 logging.getLogger(__name__).warning(
                     "schema migration: could not index lm_notifications.%s: %s",
+                    column, exc)
+
+    # The 不要 (項目作成) sign-off queue filters on these three, both per project
+    # and across projects for "my queue". The model declares them indexed, but
+    # ADD COLUMN on an upgraded database creates no index.
+    if "lm_test_items" in existing_tables:
+        for column in ("exempt_status", "exempt_reviewer_id",
+                       "exempt_requested_by"):
+            try:
+                with db.engine.begin() as conn:
+                    conn.execute(text(
+                        f"CREATE INDEX IF NOT EXISTS ix_lm_items_{column} "
+                        f"ON lm_test_items ({column})"))
+            except Exception as exc:  # noqa: BLE001
+                logging.getLogger(__name__).warning(
+                    "schema migration: could not index lm_test_items.%s: %s",
                     column, exc)
 
     _migrate_widen_testitem_uuid(existing_tables, inspector)

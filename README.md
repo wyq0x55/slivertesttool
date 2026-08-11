@@ -235,6 +235,33 @@ Configuration is via environment variables (optionally a `.env` file); see
 the real backend requiring `SILVER_HOME`), `LICENSE_LIMIT`, `ADMIN_TOKEN`,
 `HOST`/`PORT`.
 
+### Application logs
+
+All three processes configure Python logging exactly once, through
+`app/logging_setup.py`, at startup. Each writes a **rotating file named after
+its role** — `web.log`, `worker.log`, `collab.log` (plus `cli.log` for scripts
+and shells) — so no two processes ever share a rotating handle, which would
+corrupt the rollover on Windows. Console output is unchanged.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `LOG_DIR` | `instance/logs` | Directory holding the rotating log files. |
+| `LOG_LEVEL` | `INFO` | Level for the application's own loggers. |
+| `LOG_CONSOLE_LEVEL` | *(follows `LOG_LEVEL`)* | Console-only level, e.g. `WARNING` to keep a terminal quiet while the file stays verbose. |
+| `LOG_THIRD_PARTY_LEVEL` | `WARNING` | Ceiling for chatty libraries (SQLAlchemy, werkzeug, huey, uvicorn, urllib3, PIL). |
+| `LOG_MAX_BYTES` | `10485760` | Rotate once a file exceeds this size. |
+| `LOG_BACKUP_COUNT` | `10` | Rotated files to keep (`web.log.1` … `web.log.10`). |
+| `LOG_TO_FILE` | `1` | Set to `0` for console-only (containers that collect stdout). |
+
+`COLLAB_LOG_LEVEL` still overrides `LOG_LEVEL` in the collab process only. If
+`LOG_DIR` cannot be created the process logs a warning and continues with
+console output rather than refusing to start.
+
+These are the *diagnostic* logs of the server itself. They are distinct from the
+three per-run artefacts a test produces (`Console.log`, `jdgrslt.log`,
+`output.csv` under the workspace `log/<test id>/` directory), from the live task
+event stream, and from the lanmatrix audit trail.
+
 ## Register `.sil` models (admin)
 
 > **Since 2.12.0** administration lives inside lanmatrix. Log in as a **System
@@ -325,6 +352,9 @@ present.
 | GET | `/api/tasks/download_batch` | Download several reports as one zip |
 | GET | `/api/licenses` | License/concurrency status |
 | GET | `/api/models` | Registered `.sil` model names (for pickers) |
+| GET | `/api/v1/projects/<id>/exemptions` | 項目作成=不要 claims by state (sign-off queue) |
+| POST | `/api/v1/projects/<id>/items/<uuid>/exemption` | Approve/reject one 不要 claim (note required) |
+| POST | `/api/v1/projects/<id>/exemptions/bulk` | Decide many 不要 claims at once |
 | POST | `/api/admin/verify` | Verify the admin token (unlock the console) |
 | GET | `/api/admin/models` | Registered models incl. paths (admin) |
 | POST | `/api/admin/models` | Register a server-side `.sil` path (admin) |
@@ -368,6 +398,46 @@ lightweight fake driver, so it runs without Flask or a real Silver install.
 - **导入失败不再关闭对话框，按原因归类罗列每一行.** Test-Matrix 导入出现失败行时，
   对话框保持打开，在结果区**按相同原因归类**列出每行的 **行号 + case_id + 消息**，并给出
   一行「失败原因归类」汇总，方便一眼看出共同的失败原因。
+- **項目作成=不要 需经审批才退出统计口径，仪表盘单独计数.** 以前 `項目作成` 只是一列
+  自由文本，没有任何代码消费它：填「不要」的用例既没有地方审批，也永远挂在「未实施」
+  里，让进度数字长期失真。现在它是一条**需要签核的免测声明**：
+  - **待审批（pending）是推导出来的**，不存库。只要单元格是「不要」且没有针对该值的
+    决定，这一行就在队列里——协同编辑、Excel 导入、API 三条写入路径都无法绕过（漏掉
+    入队的那一条就是会漏人的那一条）。
+  - **只有审批通过才结案.** 未审批的仍计入「要实施」，并在仪表盘单列「不要待审批」，
+    避免任何人靠改两个字给自己减工作量。驳回则留在计划内。通过后不是「消失」，
+    而是带着 `Untestable` 判定进入已实施——见下方口径说明。
+  - **审批人沿用测试判定的路由**：行内指定 → テスト区分 规则 → 项目默认 → 项目负责人，
+    权限同为 `item.review`（project_admin / reviewer）。通过与驳回**都必须填理由**。
+  - **决定与声明绑定.** 决定记录当时的 `項目作成` 值；把单元格改成别的值，该决定即
+    休眠（行回到计划内），不会被挪用为对另一句话的背书。
+  - **已跑出结果的行以判定为准.** 即使免测已通过，只要该用例真的执行过，就按其判定
+    计数，不会丢掉真实证据。
+  - **并入「待我审核」队列，不再单开标签页.** 「不要」问的是和判定审核同一个问题——
+    「这条用例可以算作永远不会做的工作吗？」——分成两个 tab 只是把我们内部用了两组
+    字段存储这件事暴露给了审批人。队列里它显示成一条 `Untestable` 待审判定，并标注
+    `項目作成=不要` 以便辨别来源；通过 / 驳回按钮照旧，客户端按 `kind` 分派到对应端点。
+  - **审批通过自动回环判定.** 通过即写入 `結果=Untestable`、実施日、実施者（审批人），
+    并补 バージョン（行内已有则不覆盖），同时追加一条 `TestRunRecord`，因此这些用例
+    会出现在**版本汇总图与燃起图**里。两条硬规则：
+    - **真实证据优先**——行上已有 PASS/FAIL 则不覆盖，绝不为了满足流程状态而抹掉真跑过的结果；
+    - **必须走协同写回**（`writeback.apply_server_fields`），直接赋值会被编辑器下一次
+      flush 冲掉。
+    合成记录的 `task_key` 为 `exemption:<uuid>`：可识别、幂等（重复通过不会产生第二条）、
+    可撤销（撤销只删这一条，真实运行历史不动）。
+  - **口径变化.** 通过的「不要」现在算作**已实施-Untestable（在分母内）**，而不再是
+    「対象外（移出分母）」。仪表盘第 7 格因此改为「不要（Untestable）」并读 `exempt_approved`；
+    `exempt_out_of_scope` 保留但正常情况恒为 0，仅作**泄漏检测**（非 0 = 有行通过了审批
+    但判定没写回）。未审批的仍计入「要实施」，环图仍用 `exempt_pending_not_run` 切分。
+  - **不支持批量通过.** 两个方向都必须填理由，与 `Untestable` 判定既有的规则一致
+    （`needs_note` 的行本来就不可批量通过）。项目级批量端点仍保留。
+  - **徽标与 KPI 只数「指派给我的」**（`/me/reviews` 的 `queue_counts`，两个队列相加）。
+    用项目级总数去填一个写着「待批」的格子，会让手上没活的人看到几十条待办，而且这个
+    数字无论他签核多少都不会下降。
+  - **指派通知直接链到审批队列**而不是矩阵单行——通过 / 驳回 按钮只存在于队列页，
+    链到没法响应通知的界面等于死路。审批结果通知仍链回申请人自己的用例行。
+  - 入口：项目 `GET/POST /api/v1/projects/<id>/exemptions`，工作台
+    `GET /api/v1/me/reviews`（页面 `/lanmatrix/home?view=reviews`）。
 - **修复 VHILS Excel「-」占位导致的解析/校验失败.** 当 項目作成=不要 时，実施日 /
   実施者 等单元格填 `-`（含全角/长音等变体）；导入时这些纯占位符统一按空值处理，
   不再触发日期/字段的「格式不正确」。
