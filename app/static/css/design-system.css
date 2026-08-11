@@ -506,8 +506,26 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
   background:var(--brand-soft); color:var(--brand); border-color:transparent; }
 .dt .row-acts .btn-icon{ width:30px; height:30px; padding:0; justify-content:center; }
 .dt .row-acts .btn-icon svg{ width:15px; height:15px; }
-/* Keep TEST ID on one line so the freed action-column width isn't re-consumed. */
+/* Keep TEST ID on one line so the freed action-column width isn't re-consumed.
+   TEST ID is also the row's opener now (the synthetic 任务 key lost its column),
+   so it carries link affordance without the default underline noise. */
 .dt .lm-cell-testid{ white-space:nowrap; }
+.dt .lm-cell-testid a{ color:inherit; text-decoration:none; }
+.dt .lm-cell-testid a:hover{ color:var(--brand); text-decoration:underline; }
+/* Review sign-off column: a pill, optionally wrapping a deep link to the matrix
+   row. The link must not restyle the pill, only make it clickable. */
+.dt .lm-cell-review{ white-space:nowrap; }
+.dt a.lm-review-link{ text-decoration:none; }
+.dt a.lm-review-link:hover .pill{ box-shadow:0 0 0 2px var(--brand-soft); }
+/* Review states. Deliberately NOT reusing the run colours: a rejected review is
+   not a failed run, and painting both danger-red made a signed-off failure look
+   identical to a case nobody has looked at. */
+.st-pending{ background:var(--warn-soft); color:var(--warn); }
+.st-pending .dot{ background:var(--warn); }
+.st-approved{ background:var(--ok-soft); color:var(--ok); }
+.st-approved .dot{ background:var(--ok); }
+.st-rejected{ background:var(--danger-soft); color:var(--danger); }
+.st-rejected .dot{ background:var(--danger); }
 /* Tasks table: fit the card width (no horizontal scroll).
    1) Tighten per-cell padding. 2) Ellipsis-truncate the free-text columns
    (模型 / 提交者) so long values don't widen the table. 3) The hover action
@@ -1095,9 +1113,13 @@ textarea.lmui-input{ resize:vertical; min-height:76px; }
 .proj-mini .pm-nums .bad b{ color:var(--danger); }
 .proj-mini .pm-nums .run b{ color:var(--run); }
 
-/* Project column in the cross-project task table. */
+/* Project column in the cross-project task table. The cell is a link to that
+   project's task list: the workspace row already deep-links to the task, so the
+   project name is the only affordance for "show me everything in this project". */
 .lm-home .dt .proj-cell{ display:inline-flex; align-items:center; gap:6px;
   font-size:12px; font-weight:600; color:var(--text-2); }
+.lm-home .dt a.proj-cell{ text-decoration:none; }
+.lm-home .dt a.proj-cell:hover{ color:var(--brand); text-decoration:underline; }
 
 /* ============================================================
    PART 20 · LIST FOOTER (truncation notice + 加载更多)

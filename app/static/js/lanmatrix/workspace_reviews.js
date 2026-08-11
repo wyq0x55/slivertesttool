@@ -28,6 +28,34 @@
   let rows = [];
   let projects = [];
   let pager = null;
+  /* Which side of the review, and which states.
+     `reviewer/pending` is the inbox. `requester/rejected` is the answer to
+     "where do I see what got rejected" -- a decided row leaves the reviewer's
+     queue by definition, so without this scope a rejection was announced (at
+     best) and then unreachable. `reviewer/decided` is the reviewer's own audit
+     trail of what they signed off. */
+  let scope = { role: "reviewer", status: "pending" };
+
+  const SCOPE_TEXT = {
+    "reviewer/pending": {
+      title: "待我审核",
+      empty: ["没有待你审核的用例", "被指派给你的审核会出现在这里。"],
+    },
+    "requester/rejected": {
+      title: "我被驳回",
+      empty: ["没有被驳回的用例", "你提交的判定被驳回时会出现在这里，附带驳回理由。"],
+    },
+    "reviewer/decided": {
+      title: "我已处理",
+      empty: ["还没有处理过的审核", "你通过或驳回的用例会留在这里。"],
+    },
+  };
+
+  const scopeKey = () => `${scope.role}/${scope.status}`;
+  // Actions only make sense on rows that are still open; a decided row is a
+  // record, and offering 通过 on it would post a request the server refuses.
+  const isPending = (r) => String((r && r.review_status) || "") === "pending";
+  const actionable = () => scope.status === "pending";
   // Selection is keyed by row index and deliberately survives paging: a
   // reviewer who ticks four rows on page 1, checks something on page 2 and
   // comes back must still have their four rows selected.
@@ -62,19 +90,76 @@
     return `<span class="pill ${cls}">${esc(v || "—")}</span>`;
   }
 
+  /* The review's own state, as a pill. In the pending scope every row is
+     `pending`, so the column shows the author's 説明 instead -- the substance
+     of what is being reviewed. In the decided scopes the state and, above all,
+     the rejection reason are the whole point. */
+  function statusCell(r) {
+    if (actionable()) return esc(r.description || "");
+    const zh = { pending: "待审核", approved: "已通过", rejected: "已驳回" };
+    const st = String(r.review_status || "");
+    const badge = global.LMPill
+      ? LMPill.html(st, zh[st] || st, r.review_note || "")
+      : `<span class="pill">${esc(zh[st] || st)}</span>`;
+    const who = r.reviewer_name ? ` <span class="muted">${esc(r.reviewer_name)}</span>` : "";
+    const note = r.review_note
+      ? `<div class="lm-rv-reason">${esc(r.review_note)}</div>`
+      : (r.description ? `<div class="muted">${esc(r.description)}</div>` : "");
+    return badge + who + note;
+  }
+
+  function applyScopeText() {
+    const text = SCOPE_TEXT[scopeKey()] || SCOPE_TEXT["reviewer/pending"];
+    const title = $("lm-h-rv-title");
+    if (title) title.textContent = text.title;
+    const empty = $("lm-h-rv-empty");
+    if (empty) {
+      const h = empty.querySelector("h3");
+      const p = empty.querySelector("p");
+      if (h) h.textContent = text.empty[0];
+      if (p) p.textContent = text.empty[1];
+    }
+    document.querySelectorAll(".lm-rv-scope").forEach((btn) => {
+      const on = btn.dataset.role === scope.role
+        && btn.dataset.status === scope.status;
+      btn.classList.toggle("is-on", on);
+      btn.classList.toggle("ghost", !on);
+      btn.setAttribute("aria-selected", on ? "true" : "false");
+    });
+  }
+
+  function renderCounts(counts) {
+    const map = { pending: "lm-h-rv-n-pending", rejected: "lm-h-rv-n-rejected",
+                  decided: "lm-h-rv-n-decided" };
+    Object.keys(map).forEach((k) => {
+      const el = $(map[k]);
+      if (!el) return;
+      const n = Number((counts || {})[k] || 0);
+      el.textContent = n ? String(n) : "";
+      el.hidden = !n;
+    });
+  }
+
   function render(data) {
     rows = (data && data.reviews) || [];
     projects = (data && data.projects) || [];
     selected.clear();
+    renderCounts(data && data.queue_counts);
+    applyScopeText();
 
     const card = $("lm-h-rv-card");
     const empty = $("lm-h-rv-empty");
     const toolbar = $("lm-h-rv-toolbar");
     const count = $("lm-h-rv-count");
+    // The KPI tile and the tab badge count OUTSTANDING work, always -- never
+    // the scope the user happens to be reading. A tab that reads "审核 0" while
+    // eight reviews wait, just because someone opened 我已处理, is a lie.
+    const pending = Number(((data && data.queue_counts) || {}).pending
+      || (actionable() ? rows.length : 0));
     const kpi = document.querySelector('#lm-kpi [data-v="reviews"]');
-    if (kpi) kpi.textContent = rows.length;
+    if (kpi) kpi.textContent = pending;
     if (count) count.textContent = rows.length ? `${rows.length} 条` : "";
-    if (global.LMHome) LMHome.setTabCount("reviews", rows.length);
+    if (global.LMHome) LMHome.setTabCount("reviews", pending);
 
     if (pager) {
       pager.reset();
@@ -106,25 +191,31 @@
         + `?row=${encodeURIComponent(r.uuid)}&from=workspace`;
       // Only bulk-approvable rows get a checkbox: offering one that silently
       // does nothing on submit is worse than not offering it.
-      const box = r.bulk_approvable
+      const box = (actionable() && r.bulk_approvable)
         ? `<input type="checkbox" class="lm-rv-box" data-i="${i}"`
           + `${selected.has(i) ? " checked" : ""}>`
-        : `<span class="muted" title="需逐条审核">—</span>`;
+        : `<span class="muted" title="${actionable() ? "需逐条审核" : "已完成审核"}">—</span>`;
+      // A decided row gets 打开 only: 通过 / 驳回 on it would be refused by the
+      // server, and a button that cannot work is worse than no button.
+      const acts = (actionable() && isPending(r))
+        ? `<button class="btn primary small" data-act="approve" data-i="${i}">通过</button>
+           <button class="btn small" data-act="reject" data-i="${i}">驳回</button>
+           <a class="btn ghost small" href="${href}">打开</a>`
+        : `<a class="btn ghost small" href="${href}">打开</a>`;
+      // The list is read by test id, like every other list in the product; the
+      // row uuid is only the fallback for a case that has none.
+      const label = r.test_id || r.case_id || r.uuid || "";
       return `<tr class="${r.needs_note ? "needs-note" : ""}">
         <td>${box}</td>
         <td>${esc(projName(r.project_id, projects))}</td>
-        <td><a href="${href}">${esc(r.case_id || r.uuid || "")}</a>
+        <td><a href="${href}">${esc(label)}</a>
             <div class="muted">${esc(r.title || "")}</div></td>
         <td>${verdictPill(r)}</td>
-        <td class="lm-rv-reason">${esc(r.description || "")}</td>
+        <td class="lm-rv-reason">${statusCell(r)}</td>
         <td>${esc(r.executor || "")}</td>
         <td class="muted">${esc(r.exec_date || "")}</td>
         <td>
-          <div class="lm-rv-acts">
-            <button class="btn primary small" data-act="approve" data-i="${i}">通过</button>
-            <button class="btn small" data-act="reject" data-i="${i}">驳回</button>
-            <a class="btn ghost small" href="${href}">打开</a>
-          </div>
+          <div class="lm-rv-acts">${acts}</div>
         </td>
       </tr>`;
     }).join("");
@@ -139,12 +230,17 @@
     const all = $("lm-h-rv-all");
     const eligible = rows.filter((r) => r.bulk_approvable).length;
     if (all) all.checked = eligible > 0 && selected.size === eligible;
+    // The bulk bar belongs to the pending scope only.
+    const toolbar = $("lm-h-rv-toolbar");
+    if (toolbar && !actionable()) toolbar.hidden = true;
   }
 
   async function load() {
     if (!global.LMApi || !LMApi.meReviews) return;
     try {
-      render(await LMApi.meReviews({ limit: 200 }));
+      render(await LMApi.meReviews({
+        limit: 200, role: scope.role, status: scope.status,
+      }));
     } catch (ex) {
       if (ex.status === 401) return;
       const host = $("lm-h-rv-rows");
@@ -256,13 +352,36 @@
       if (global.LMHome) LMHome.setView("reviews", true);
     });
 
+    document.querySelectorAll(".lm-rv-scope").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const next = { role: btn.dataset.role, status: btn.dataset.status };
+        if (next.role === scope.role && next.status === scope.status) return;
+        scope = next;
+        selected.clear();
+        applyScopeText();
+        load();
+      });
+    });
+
     const refresh = $("lm-home-refresh");
     if (refresh) refresh.addEventListener("click", load);
+
+    applyScopeText();
 
     // Notifications link here with ?view=reviews; home.js raises that tab on
     // load, so this module only has to fill it.
     load();
   });
 
-  global.LMWorkspaceReviews = { reload: load };
+  global.LMWorkspaceReviews = {
+    reload: load,
+    // Lets a notification deep-link land on the right scope (e.g. a rejection
+    // notice pointing at 我被驳回) instead of the default inbox.
+    setScope(role, status) {
+      scope = { role: role || "reviewer", status: status || "pending" };
+      selected.clear();
+      applyScopeText();
+      return load();
+    },
+  };
 })(window);

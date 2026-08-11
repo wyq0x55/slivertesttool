@@ -295,6 +295,12 @@
      cannot drift into different behaviour for the same button. Pure functions,
      no DOM -- safe to load everywhere. #}
   <script src="{{ url_for('static', filename='js/lanmatrix/task_actions.js') }}"></script>
+  {# task_row.js defines window.LMTaskRow: the shared task-row markup, status
+     vocabulary and sort/compare helpers. Loaded after pill.js (it reads
+     LMPill.TASK_ZH at definition time) and before the page scripts that render
+     rows, so the workspace list and the project task list cannot show the same
+     task differently. #}
+  <script src="{{ url_for('static', filename='js/lanmatrix/task_row.js') }}"></script>
   {# notifications.js drives the topbar bell. No-ops when the bell is absent
      (login / register), so it is safe to load on every page. #}
   <script src="{{ url_for('static', filename='js/lanmatrix/notifications.js') }}"></script>

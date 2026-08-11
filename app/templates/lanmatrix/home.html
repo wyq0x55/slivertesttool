@@ -113,24 +113,54 @@
       <label class="lm-check-inline">
         <input type="checkbox" id="lm-h-mine"> 只看我提交的
       </label>
+      <span style="flex:1"></span>
+      {# Same batch verbs as the project task list. The selection spans projects,
+         so every one of these fans out per project_id and reports how many rows
+         actually succeeded -- see home.js. #}
+      <div class="toolbar-batch">
+        <span id="lm-h-batch-status" class="muted" style="font-size:12.5px"></span>
+        <button class="btn ghost small" id="lm-h-batch-download" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          下载所选
+        </button>
+        <button class="btn ghost small" id="lm-h-batch-cancel" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+          取消运行
+        </button>
+        <button class="btn ghost small" id="lm-h-batch-retest" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          重新测试
+        </button>
+        <button class="btn small danger" id="lm-h-batch-delete" type="button" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
+          删除所选
+        </button>
+      </div>
     </div>
 
+    {# Columns mirror the project task list (project_tasks.html) one for one,
+       plus a leading 项目 column: the workspace spans projects, so a task id
+       alone does not say where the row lives. Rows are rendered by the shared
+       LMTaskRow module, so both pages stay in step. #}
     <div class="tablecard">
       <div style="overflow-x:auto">
-        <table class="dt">
+        <table class="dt lm-tasks-table">
           <thead>
             <tr>
-              <th>项目</th>
-              <th>任务</th>
-              <th>test id</th>
-              <th>提交者</th>
-              <th>状态 / 结果</th>
-              <th>完成时间</th>
+              <th class="lm-col-check" style="width:36px"><input type="checkbox" id="lm-h-check-all" title="全选/全不选（当前筛选）"></th>
+              <th class="lm-sortable" data-sort="project">项目</th>
+              <th class="lm-sortable" data-sort="test_id">test id</th>
+              <th class="lm-sortable" data-sort="sil_name">模型</th>
+              <th class="lm-sortable" data-sort="submitter">提交者</th>
+              <th class="lm-sortable" data-sort="status">状态 / 结果</th>
+              <th class="lm-sortable" data-sort="review">审核</th>
+              <th class="lm-sortable" data-sort="progress">进度</th>
+              <th class="lm-sortable" data-sort="finished_at">完成时间</th>
               <th style="width:1%"></th>
             </tr>
           </thead>
           <tbody id="lm-h-rows">
-            <tr><td colspan="7" class="muted">加载中…</td></tr>
+            <tr><td colspan="10" class="muted">加载中…</td></tr>
           </tbody>
         </table>
       </div>
@@ -156,8 +186,29 @@
        that sends you somewhere else to do the actual job. #}
     <div class="pane" id="lm-pane-reviews" role="tabpanel" hidden>
     <div class="lm-sec-head" id="lm-h-rv-head">
-      <h2>待我审核</h2>
+      <h2 id="lm-h-rv-title">待我审核</h2>
       <span class="muted" id="lm-h-rv-count"></span>
+    </div>
+
+    {# Sub-filters, not three separate tabs.
+       A decided review leaves the reviewer's queue by definition, so with only
+       a pending list the product had nowhere at all to see what had been
+       approved or -- the case that actually matters -- rejected: the executor
+       was told nothing and could find nothing. These three scopes are the same
+       queue read from the two sides of the review. #}
+    <div class="lm-rv-scopes" role="tablist" aria-label="审核范围">
+      <button class="btn small lm-rv-scope is-on" type="button" role="tab"
+              data-role="reviewer" data-status="pending" aria-selected="true">
+        待我审核 <span class="lm-rv-badge" id="lm-h-rv-n-pending"></span>
+      </button>
+      <button class="btn small ghost lm-rv-scope" type="button" role="tab"
+              data-role="requester" data-status="rejected" aria-selected="false">
+        我被驳回 <span class="lm-rv-badge" id="lm-h-rv-n-rejected"></span>
+      </button>
+      <button class="btn small ghost lm-rv-scope" type="button" role="tab"
+              data-role="reviewer" data-status="decided" aria-selected="false">
+        我已处理 <span class="lm-rv-badge" id="lm-h-rv-n-decided"></span>
+      </button>
     </div>
 
     <div class="lm-rv-toolbar" id="lm-h-rv-toolbar" hidden>
@@ -182,7 +233,9 @@
               <th>项目</th>
               <th>用例</th>
               <th>判定</th>
-              <th>説明 / 理由</th>
+              {# Carries the review state in the decided scopes and the author's
+                 説明 in the pending one -- see workspace_reviews.js. #}
+              <th>审核 / 理由</th>
               <th>实施者</th>
               <th>实施日</th>
               <th style="width:1%">操作</th>
@@ -212,8 +265,19 @@
     </div>{# /pane projects #}
   </section>
 </div>
+{# Same 手顺 dialog as the project task list -- opened from a task row here too,
+   so the workspace does not have to bounce the user to another page to look at
+   or edit the steps behind a run. #}
+{% include "lanmatrix/_steps_dialog.html" %}
 {% endblock %}
 {% block scripts %}
+{% if univer_available %}
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/univer/univer.full.umd.css') }}">
+<script src="{{ url_for('static', filename='vendor/univer/univer.full.umd.js') }}"></script>
+{% endif %}
+<script src="{{ url_for('static', filename='js/lanmatrix/steps_ref_panel.js') }}"></script>
+<script src="{{ url_for('static', filename='js/lanmatrix/json_editor.js') }}"></script>
+<script src="{{ url_for('static', filename='js/lanmatrix/steps_editor.js') }}"></script>
 {# Shared client-side pager used by every list on this page. #}
 <script src="{{ url_for('static', filename='js/lanmatrix/pager.js') }}"></script>
 <script src="{{ url_for('static', filename='js/lanmatrix/home.js') }}"></script>

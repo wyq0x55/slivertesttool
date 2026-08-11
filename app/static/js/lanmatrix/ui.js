@@ -275,6 +275,24 @@
       opts.alert = true;
       return open(opts);
     },
+
+    /* Transient feedback strip (#lm-toast in base_lm.html).
+     *
+     * Lives here rather than in a page script because several pages need it and
+     * the ones that lacked it (the workspace, the review queue) were failing
+     * silently: their toast() was a no-op, so "已通过" and error messages alike
+     * went nowhere and the user could not tell whether the click had worked.
+     * No-ops when the host element is absent, so it is safe to call anywhere.
+     */
+    toast: function (msg, ok) {
+      var el = document.getElementById("lm-toast");
+      if (!el) return;
+      el.textContent = String(msg == null ? "" : msg);
+      el.className = "lm-toast " + (ok ? "lm-ok" : "lm-err");
+      el.hidden = false;
+      if (el._lmTimer) clearTimeout(el._lmTimer);
+      el._lmTimer = setTimeout(function () { el.hidden = true; }, 3200);
+    },
   };
 
   window.LMUI = LMUI;

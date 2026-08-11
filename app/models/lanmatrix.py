@@ -167,11 +167,19 @@ class Project(db.Model):
     # key means "not required", so an untouched project keeps its old behaviour.
     review_required_on = db.Column(JSONType, nullable=True)
 
-    # The single person reviews are routed to when a row has no reviewer of its
-    # own. Deliberately ONE reviewer rather than a pool: with a pool, every
-    # request is addressed to everybody and therefore owned by nobody, and the
-    # queue only gets cleared when two people happen to do it at once. One named
-    # reviewer who can reassign is the accountable version.
+    # Per-テスト区分 reviewer routing, in priority order:
+    # ``[{"category": "5", "reviewer_id": 7}, ...]``. A test matrix is
+    # partitioned by 区分 and each 区分 has its own feature owner, so routing the
+    # whole project to one person produces either a bottleneck or a rubber
+    # stamp. Matching lives in ``services.lanmatrix.review_routes`` (pure).
+    review_routes = db.Column(JSONType, nullable=True)
+
+    # The single person reviews are routed to when no 区分 rule matched and the
+    # row has no reviewer of its own. Deliberately ONE reviewer rather than a
+    # pool: with a pool, every request is addressed to everybody and therefore
+    # owned by nobody, and the queue only gets cleared when two people happen to
+    # do it at once. One named reviewer who can reassign is the accountable
+    # version.
     #
     # ``use_alter`` + an explicit name because ``lm_users`` and ``lm_projects``
     # already reference each other (owner_id / created_by); without it the two
@@ -196,6 +204,18 @@ class Project(db.Model):
                        for k, v in (self.review_required_on or {}).items()
                        if k in policy})
         return policy
+
+    def review_route_rules(self) -> list:
+        """Normalised per-テスト区分 routing rules, in priority order."""
+        # Imported lazily: the model layer must not depend on the service layer
+        # at import time (services import models).
+        from ..services.lanmatrix.review_routes import normalise_routes
+        return normalise_routes(self.review_routes or [])
+
+    def reviewer_for_category(self, category) -> Optional[int]:
+        """Reviewer routed to ``category``, or ``None`` when no rule matches."""
+        from ..services.lanmatrix.review_routes import match_reviewer
+        return match_reviewer(self.review_routes or [], category)
 
     members = db.relationship(
         "ProjectMember", backref="project",
@@ -225,6 +245,7 @@ class Project(db.Model):
             "is_editable": self.is_editable,
             "owner_id": self.owner_id,
             "default_reviewer_id": self.default_reviewer_id,
+            "review_routes": self.review_route_rules(),
             "member_count": member_count if member_count is not None else len(self.members),
             "created_at": _iso(self.created_at),
             "updated_at": _iso(self.updated_at),
@@ -473,6 +494,14 @@ class TestItemRow(db.Model):
     # rejection and for anything touching ``Untestable``.
     review_note = db.Column(db.Text, nullable=False, default="")
     review_requested_at = db.Column(db.DateTime, nullable=True)
+    # Who produced the verdict that is under review, i.e. who must be told about
+    # the decision. This cannot be derived from ``updated_by``: the run
+    # write-back writes evidence onto the row without touching it, so
+    # ``updated_by`` is whoever last hand-edited the matrix -- very often the
+    # reviewer themselves, whose own decision is then suppressed as a
+    # self-notification and never reaches the person who ran the test.
+    review_requested_by = db.Column(db.Integer, db.ForeignKey("lm_users.id"),
+                                    nullable=True, index=True)
     reviewed_at = db.Column(db.DateTime, nullable=True)
     # The verdict that was under review when the request was raised. The row's
     # ``result`` can be overwritten by a later run, so without this a reviewer

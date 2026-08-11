@@ -22,7 +22,7 @@ from ...services import (
 )
 from ...services.upload_service import UploadError
 from ...services.lanmatrix import (
-    dbadmin, excel_service, permissions, service, settings,
+    dbadmin, excel_service, permissions, review_service, service, settings,
 )
 from ...services.lanmatrix.service import ServiceError
 from ._base import (
@@ -60,6 +60,24 @@ def _resolve_model_ref(project_id: int, ref: str):
     return name, version, str(Path(path).resolve())
 
 
+def _task_reviews(tasks) -> dict:
+    """Review summaries for a page of tasks, with reviewer names resolved.
+
+    Two queries total (matrix rows, then the reviewers they name), no matter how
+    long the page is.
+    """
+    reviews = review_service.reviews_for_tasks(tasks)
+    ids = review_service.task_review_user_ids(reviews)
+    if not ids:
+        return reviews
+    users = {u.id: u for u in LMUser.query.filter(LMUser.id.in_(ids)).all()}
+    for entry in reviews.values():
+        user = users.get(entry.get("reviewer_id"))
+        if user:
+            entry["reviewer_name"] = user.display_name or user.username or ""
+    return reviews
+
+
 def _require_task(project_id: int, task_key: str, capability: str):
     project, _ = _project_and_role(project_id, capability)
     task = task_service.get_project_task(project_id, task_key)
@@ -81,7 +99,12 @@ def list_project_tasks(project_id):
     status = license_service.get_status()
     status["queued_jobs"] = task_service.live(Task.query).filter_by(
         project_id=project_id, status=TaskStatus.QUEUED.value).count()
-    return ok({"tasks": [t.to_dict() for t in tasks],
+    # The sign-off of the verdict this run produced. Without it the executor
+    # sees their claim and never the decision on it, which is the whole reason
+    # a rejection used to be invisible outside the reviewer's own queue.
+    payload = review_service.attach_reviews(
+        tasks, [t.to_dict() for t in tasks], _task_reviews(tasks))
+    return ok({"tasks": payload,
                "total": total,
                "limit": limit,
                "truncated": total > len(tasks),
@@ -406,6 +429,9 @@ def project_task_detail(project_id, task_key):
     events = event_service.fetch_since(task.id, 0, limit=5000)
     data = task.to_dict(detail=True)
     data["events"] = [e.to_dict() for e in events]
+    # The detail panel is where the task key now lives (the list dropped its
+    # column), so it is also where the sign-off has to be readable in full.
+    review_service.attach_reviews([task], [data], _task_reviews([task]))
     return ok({"task": data})
 
 @bp.get("/projects/<int:project_id>/tasks/<task_key>/stream")

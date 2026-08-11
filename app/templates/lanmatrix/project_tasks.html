@@ -114,11 +114,11 @@
           <thead>
             <tr>
               <th class="lm-col-check" style="width:36px"><input type="checkbox" id="lm-check-all" title="全选/全不选（当前筛选）"></th>
-              <th class="lm-sortable" data-sort="task_id">任务</th>
               <th class="lm-sortable" data-sort="test_id">test id</th>
               <th class="lm-sortable" data-sort="sil_name">模型</th>
               <th class="lm-sortable" data-sort="submitter">提交者</th>
               <th class="lm-sortable" data-sort="status">状态 / 结果</th>
+              <th class="lm-sortable" data-sort="review">审核</th>
               <th class="lm-sortable" data-sort="progress">进度</th>
               <th class="lm-sortable" data-sort="finished_at">完成时间</th>
               <th style="width:1%"></th>
@@ -176,6 +176,9 @@
         <dt>状态</dt><dd><span class="pill st-queued" id="lm-d-status"><span class="dot"></span></span></dd>
         <dt>结论</dt><dd id="lm-d-verdict">—</dd>
         <dt>test id</dt><dd id="lm-d-testid"></dd>
+        <!-- The sign-off on this run's verdict. Shown here in full (状态 + 审核人
+             + 意见) because the list column only has room for the state. -->
+        <dt>审核</dt><dd id="lm-d-review">—</dd>
         <dt>模型</dt><dd id="lm-d-model"></dd>
         <dt>提交者</dt><dd id="lm-d-submitter"></dd>
         <dt>创建时间</dt><dd id="lm-d-created"></dd>

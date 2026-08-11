@@ -165,6 +165,35 @@
 }
 .lm-rv-toolbar .spacer { flex: 1; }
 
+/* Scope switch: 待我审核 / 我被驳回 / 我已处理. Sub-filters of one queue rather
+   than three top-level tabs -- they are the same rows read from either side of
+   the review, and promoting them would bury the two lists people open daily. */
+.lm-rv-scopes {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 2px 0 12px;
+}
+.lm-rv-scope.is-on {
+  background: var(--brand-soft);
+  border-color: var(--brand);
+  color: var(--brand);
+}
+.lm-rv-badge {
+  display: inline-block;
+  min-width: 16px;
+  padding: 0 5px;
+  margin-left: 4px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+}
+.lm-rv-scope.is-on .lm-rv-badge { background: var(--brand); color: #fff; }
+.lm-rv-badge[hidden] { display: none; }
+
 .lm-rv-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .lm-rv-table th,
 .lm-rv-table td {
@@ -229,6 +258,58 @@
   color: var(--text-3);
 }
 .lm-rv-pol-err { font-size: 12px; color: var(--danger); }
+
+/* Per-テスト区分 reviewer routing. An ordered list, so the ordinal is shown:
+   precedence is "first match wins", and a rule's position is the only thing
+   that expresses it. */
+.lm-rv-routes {
+  padding: 12px 0 4px;
+  border-top: 1px solid var(--border);
+}
+.lm-rv-routes-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.lm-rv-routes-head strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.lm-rv-routes-head em {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  font-style: normal;
+  color: var(--text-3);
+}
+.lm-rv-routes-head code {
+  padding: 0 4px;
+  background: var(--surface-2, rgba(127, 127, 127, .12));
+  border-radius: 3px;
+  font-size: 11px;
+}
+.lm-rv-route-rows { margin-top: 10px; }
+.lm-rv-route {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+}
+.lm-rv-route-ord {
+  flex: 0 0 20px;
+  font-size: 12px;
+  color: var(--text-3);
+  text-align: right;
+}
+.lm-rv-route-cat { flex: 0 0 180px; }
+.lm-rv-route-who { flex: 1 1 auto; max-width: 260px; }
+.lm-rv-route button { padding: 4px 8px; line-height: 1; }
+.lm-rv-route-empty,
+.lm-rv-route-hint { font-size: 12px; }
+.lm-rv-route-hint { margin: 8px 0 0; }
 
 /* Return path back to the personal workspace, shown above the page title when
    the user arrived from there. */

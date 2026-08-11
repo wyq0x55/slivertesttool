@@ -151,44 +151,17 @@
   }
 
   // --- task list ----------------------------------------------------------- //
-  const FINAL = ["passed", "failed", "cancelled"];
+  // Status vocabulary, verdict merging, time formatting and the row markup all
+  // come from LMTaskRow (task_row.js). The workspace list renders the same rows
+  // from the same module, so a change here cannot leave the two pages showing
+  // the same task differently.
+  const FINAL = LMTaskRow.FINAL;
   const STATUS_ZH = LMPill.TASK_ZH;
   const pill = LMPill.html;
   function statusBadge(s) { return pill(s, STATUS_ZH[s] || s); }
 
-  // Merge the execution ``status`` and the judge ``result`` (verdict) into a
-  // single label. A finished-but-failing run carries status ``failed``; we
-  // split that into a genuine test ``failed`` (verdict FAIL) versus an
-  // execution/judge ``error`` (verdict ERROR) so the two are distinguishable.
-  function mergedVerdict(t) {
-    const st = String(t.status || "").toLowerCase();
-    if (st === "failed") {
-      const v = String(t.result || "").trim().toUpperCase();
-      if (v.startsWith("ERROR")) return { cls: "error", label: "error" };
-      return { cls: "failed", label: "failed" };
-    }
-    if (st === "passed" || st === "cancelled" || st === "running" || st === "queued") {
-      return { cls: st, label: st };
-    }
-    return { cls: st || "notask", label: st || "—" };
-  }
-  function mergedBadge(t) {
-    const m = mergedVerdict(t);
-    const tip = String(t.result || t.status || "");
-    return pill(m.cls, STATUS_ZH[m.label] || m.label, tip);
-  }
-
-  // Format a task's completion moment (``finished_at``, an ISO UTC string) as
-  // ``YY/MM/DD HH:MM:SS`` in the viewer's local time, e.g. ``26/07/20 11:18:15``.
-  function fmtFinished(t) {
-    const iso = t.finished_at;
-    if (!iso) return "";
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return "";
-    const p = (n) => String(n).padStart(2, "0");
-    return `${p(d.getFullYear() % 100)}/${p(d.getMonth() + 1)}/${p(d.getDate())} `
-      + `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-  }
+  const mergedBadge = LMTaskRow.mergedBadge;
+  const fmtFinished = LMTaskRow.fmtFinished;
 
   function getFilters() {
     const st = $("lm-f-status"), sub = $("lm-f-submitter"), txt = $("lm-f-text");
@@ -258,12 +231,7 @@
       names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("");
     sel.value = names.includes(cur) ? cur : "";
   }
-  function cmp(a, b, key) {
-    if (key === "progress") return (+a.progress || 0) - (+b.progress || 0);
-    const x = String(a[key] == null ? "" : a[key]).toLowerCase();
-    const y = String(b[key] == null ? "" : b[key]).toLowerCase();
-    return x < y ? -1 : x > y ? 1 : 0;
-  }
+  const cmp = LMTaskRow.cmp;
   function visibleTasks() {
     const f = getFilters();
     const rows = allTasks.filter((t) => {
@@ -324,52 +292,15 @@
         + `已达单次上限，请用筛选缩小范围${filtered}`;
     }
   }
-  // Compact icon-button actions: the action column is now a fixed, narrow strip
-  // that only reveals on row hover (`.dt .row-acts{opacity:0}`), so TEST ID and
-  // the data columns reclaim the width the old text buttons used to consume.
-  const _ic = (p) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" `
-    + `stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
-  const ICO_VIEW = _ic('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>');
-  const ICO_STEPS = _ic('<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>');
-  const ICO_DL = _ic('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>');
-  const ICO_CANCEL = _ic('<rect x="6" y="6" width="12" height="12" rx="2"/>');
-  const ICO_RETEST = _ic('<path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>');
-  const ICO_DEL = _ic('<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>');
   // A task is "in the queue" only while queued/running; anything else (finished,
   // failed, error, cancelled) can be re-queued via 重新测试.
-  const LIVE_STATUS = ["queued", "running"];
-  const canRetest = (t) => t && !LIVE_STATUS.includes(t.status);
+  const canRetest = LMTaskRow.canRetest;
   function rowHtml(t) {
-    const checked = selected.has(t.task_id) ? " checked" : "";
-    const p = t.progress || 0;
-    const sel = `<td class="lm-col-check"><input type="checkbox" class="lm-task-sel" data-k="${esc(t.task_id)}"${checked}></td>`;
-    const view = `<button class="btn small btn-icon lm-task-view" data-k="${esc(t.task_id)}" title="查看">${ICO_VIEW}</button>`;
-    const steps = t.test_id
-      ? `<button class="btn small btn-icon lm-task-steps" data-k="${esc(t.task_id)}" data-tid="${esc(t.test_id)}" title="手顺">${ICO_STEPS}</button>` : "";
-    const dl = t.has_result
-      ? `<a class="btn small btn-icon" href="${LMApi.projectTaskDownloadUrl(pid, t.task_id)}" title="下载结果">${ICO_DL}</a>` : "";
-    const cancel = FINAL.includes(t.status)
-      ? "" : `<button class="btn small btn-icon lm-task-cancel" data-k="${esc(t.task_id)}" title="取消运行">${ICO_CANCEL}</button>`;
-    const retest = canRetest(t)
-      ? `<button class="btn small btn-icon lm-task-retest" data-k="${esc(t.task_id)}" title="重新测试">${ICO_RETEST}</button>` : "";
-    const del = capabilities.delete
-      ? `<button class="btn small btn-icon danger lm-task-del" data-k="${esc(t.task_id)}" title="删除">${ICO_DEL}</button>` : "";
-    return `<tr data-k="${esc(t.task_id)}">
-      ${sel}
-      <td><a href="#" class="lm-task-open" data-k="${esc(t.task_id)}"><code>${esc(t.task_id)}</code></a></td>
-      <td class="lm-cell-testid">${esc(t.test_id)}</td>
-      <td class="lm-cell-ell" title="${esc(t.sil_name || "")}">${esc(t.sil_name || "")}</td>
-      <td class="lm-cell-ell" title="${esc(t.submitter)}">${esc(t.submitter)}</td>
-      <td class="lm-cell-status">${mergedBadge(t)}</td>
-      <td class="lm-cell-progress">
-        <div style="display:flex;align-items:center;gap:8px">
-          <div class="prog" style="width:70px;flex:0 0 auto"><i style="width:${p}%"></i></div>
-          <span class="muted" style="font-size:12px">${p}%</span>
-        </div>
-      </td>
-      <td class="lm-cell-time"><code>${esc(fmtFinished(t))}</code></td>
-      <td class="lm-row-actions"><span class="row-acts" style="display:flex;gap:4px;justify-content:flex-end">${view} ${steps} ${cancel} ${retest} ${dl} ${del}</span></td>
-    </tr>`;
+    return LMTaskRow.rowHtml(t, {
+      projectId: pid,
+      canDelete: capabilities.delete,
+      selected: selected.has(t.task_id),
+    });
   }
   function bindRowActions() {
     document.querySelectorAll(".lm-task-cancel").forEach((b) =>
@@ -494,10 +425,7 @@
   const LIST_POLL_MS = 3000;
   let listTimer = null;
   let rowSig = {};   // task_id -> signature of the last painted row (skip no-op repaints)
-  function rowSignature(t) {
-    return [t.status, t.progress || 0, t.has_result ? 1 : 0,
-            t.result || "", fmtFinished(t)].join("|");
-  }
+  const rowSignature = LMTaskRow.signature;
   function anyRunning() {
     return allTasks.some((t) => !FINAL.includes(t.status));
   }
@@ -682,6 +610,33 @@
   // `push` is false when we are REACTING to history (popstate) or restoring on
   // first paint — writing to history there would either loop or bury the entry
   // the user is trying to go back to.
+  /* Fill 概览 · 审核 with the sign-off of this run's verdict.
+     The list column can only show the state; the reason a review was rejected
+     is what the executor has to act on, so the detail panel shows it in full
+     and links to the matrix row it belongs to. */
+  function renderDetailReview(t) {
+    const el = $("lm-d-review");
+    if (!el) return;
+    const r = t && t.review;
+    if (!r || !r.status) {
+      el.textContent = "—";
+      el.title = "该判定按项目策略无需审核";
+      return;
+    }
+    const bits = [];
+    if (r.reviewer_name) bits.push("审核人 " + esc(r.reviewer_name));
+    if (r.reviewed_at) bits.push(esc(r.reviewed_at.replace("T", " ").slice(0, 19)));
+    const href = window.LMTaskRow ? LMTaskRow.reviewHref(t) : "";
+    const badge = window.LMTaskRow
+      ? LMTaskRow.reviewBadge(t)
+      : esc(r.status);
+    el.innerHTML = (href ? `<a href="${esc(href)}" class="lm-review-link">${badge}</a>`
+                         : badge)
+      + (bits.length ? ` <span class="submuted">${bits.join(" · ")}</span>` : "")
+      + (r.note ? `<div class="submuted" style="margin-top:4px">${esc(r.note)}</div>` : "");
+    el.title = r.note || "";
+  }
+
   async function openDetail(key, opts) {
     if ((opts || {}).push !== false && window.LMUrl) LMUrl.set({ task: key });
     detailKey = key;
@@ -703,7 +658,9 @@
       const created = (t.created_at || "").replace("T", " ").replace("Z", "");
       $("lm-d-created").textContent = created;
       $("lm-d-message").textContent = t.message || "";
+      renderDetailReview(t);
       $("lm-d-sub").innerHTML = "test id <code>" + esc(t.test_id || "") + "</code>" +
+        " · 任务 <code>" + esc(t.task_id || key) + "</code>" +
         (t.submitter ? " · 提交者 " + esc(t.submitter) : "") +
         (created ? " · " + esc(created) : "");
       setDetailStatus(t.status);
@@ -1257,7 +1214,14 @@
     th.style.cursor = "pointer";
     th.addEventListener("click", () => {
       const key = th.getAttribute("data-sort");
-      if (key === sortKey) sortDir = -sortDir; else { sortKey = key; sortDir = 1; }
+      // Same rule as the workspace list: keys whose interesting end is the high
+      // one start descending (待审核 before 已通过, latest finish first).
+      if (key === sortKey) sortDir = -sortDir;
+      else {
+        sortKey = key;
+        sortDir = (key === "task_id" || key === "finished_at" || key === "review")
+          ? -1 : 1;
+      }
       renderFromUser();
     });
   });

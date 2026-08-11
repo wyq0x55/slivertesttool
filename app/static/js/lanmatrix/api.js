@@ -131,6 +131,10 @@
     setReviewPolicy(pid, policy) {
       return request("PUT", `/projects/${pid}/review_policy`, { body: policy });
     },
+    // Distinct テスト区分 in the project, for the routing editor's picker.
+    listProjectCategories(pid) {
+      return request("GET", `/projects/${pid}/categories`);
+    },
 
     listProjects() { return request("GET", "/projects"); },
     createProject(payload) { return request("POST", "/projects", { body: payload }); },

@@ -299,6 +299,8 @@ def _migrate_schema() -> None:
             "review_required_on": "JSONB",
             # Who reviews when a row names no reviewer of its own.
             "default_reviewer_id": "INTEGER",
+            # Per-テスト区分 reviewer routing rules (ordered, first match wins).
+            "review_routes": "JSONB",
         },
         "lm_notifications": {
             # Retention ages rows by read_at; archived rows leave the bell but
@@ -319,6 +321,8 @@ def _migrate_schema() -> None:
             "reviewer_id": "INTEGER",
             "review_note": "TEXT NOT NULL DEFAULT ''",
             "review_requested_at": "TIMESTAMP",
+            # Notification target for a review decision (see TestItemRow).
+            "review_requested_by": "INTEGER",
             "reviewed_at": "TIMESTAMP",
             "review_verdict": "VARCHAR(24) NOT NULL DEFAULT ''",
         },

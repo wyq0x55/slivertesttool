@@ -44,7 +44,67 @@ Requires `project.edit` (i.e. `project_admin`). Readers can view the page but
 the panel stays hidden — showing them disabled controls advertises a capability
 they do not have.
 
-### 1.3 Review state lives on its own columns
+### 1.3 Reviewers are routed per テスト区分, not per project
+
+One reviewer per project was the wrong unit. A matrix mixes 区分 that belong to
+different owners — the person who can judge a 単体 result is rarely the person
+who should sign off 車両. A single `default_reviewer_id` either buried one
+person under everything or forced reviewers to be assigned row by row, which in
+practice means not at all.
+
+`Project.review_routes` (JSON) holds an **ordered** list:
+
+```json
+[{"category": "5",  "reviewer_id": 7},
+ {"category": "1*", "reviewer_id": 3}]
+```
+
+Resolution order in `review_service.resolve_reviewer`:
+
+```
+explicit argument -> row.reviewer_id -> 区分 route -> default_reviewer_id -> owner_id
+```
+
+`row.reviewer_id` stays above the routes on purpose: somebody named that
+reviewer by hand, and a later settings change must not quietly take the case
+away from them. `default_reviewer_id` keeps its old name but is now the
+**fallback** for 区分 nobody claimed.
+
+Four decisions worth stating:
+
+- **Order is precedence; first match wins.** No longest-prefix or specificity
+  ranking. Implicit precedence is least predictable exactly when rules overlap,
+  which is when it matters. The list is reorderable in the UI, so the priority
+  a user sees is the priority that runs.
+- **Only a trailing `*` wildcard.** `1*` covers `1`, `10`, `19`. No regex —
+  a mistyped pattern should route to nobody, not to everybody.
+- **Categories are normalised before comparing.** Excel emits テスト区分 as
+  `1`, `1.0` or `"01"` depending on cell format; all collapse to `"1"`
+  (`review_routes.normalise_category`). Without this, a rule typed as `1` would
+  match some rows and not others with nothing in the UI to explain why. Text
+  categories are compared case-insensitively. `True`/`False` never normalise to
+  a category — bool is an int subclass, and letting `True` become `"1"` would
+  route rows by an accident of typing.
+- **Reviewers must be project members (or the owner).** Otherwise a rule sends
+  a case to somebody who gets 403 opening it. The UI dropdown lists members
+  only, but keeps an already-configured non-member visible as
+  `（非成員）` so the broken rule can be found and fixed instead of
+  silently disappearing.
+
+A row with no 区分 matches no rule and falls through to the default. A project
+with no rules behaves exactly as it did before this feature existed.
+
+Storage note: テスト区分 is **not** a first-class `TestItemRow` column — it
+lives in `custom_values`, so it is read via `row.get_field("category")` and
+`GET /projects/<id>/categories` scans `custom_values` to list the 区分 actually
+present (with row counts) for the settings UI datalist. That scan is
+unthrottled; see §7.
+
+Edited on 成员管理 alongside the policy toggles, requires `project.edit`.
+Matching logic lives in `app/services/lanmatrix/review_routes.py` as pure
+functions so it is testable without a database (`tests/test_review_routes.py`).
+
+### 1.4 Review state lives on its own columns
 
 `TestItemRow` gains:
 
@@ -64,7 +124,7 @@ re-point at a different outcome than the one that was actually reviewed.
 `workflow_status` is **not** reused. Its default is `"Draft"`, which would make
 every newly imported row look like it was mid-review.
 
-### 1.4 Behaviour worth knowing
+### 1.5 Behaviour worth knowing
 
 - `request_review` is **idempotent**. Re-running a case that is already pending
   for the same verdict does not re-raise, so a nightly regression does not spam
@@ -269,11 +329,12 @@ rebuild, a dark card keeps light-mode text.
 ## 5. New endpoints
 
 ```
-GET  /api/v1/me/reviews
+GET  /api/v1/me/reviews?role=reviewer|requester&status=pending|approved|rejected|decided|all
 GET  /api/v1/me/notifications
 GET  /api/v1/me/notifications/unread_count
 POST /api/v1/me/notifications/read
-GET  /api/v1/projects/<id>/reviews
+GET  /api/v1/projects/<id>/reviews?status=pending|approved|rejected|decided|all
+GET  /api/v1/projects/<id>/categories
 POST /api/v1/projects/<id>/items/<row_uuid>/review
 POST /api/v1/projects/<id>/items/<row_uuid>/reviewer
 POST /api/v1/projects/<id>/reviews/bulk
@@ -286,6 +347,9 @@ Page routes:
 ```
 GET /lanmatrix/projects/<id>/dashboard
 ```
+
+Task payloads (`GET /projects/<id>/tasks`, `.../tasks/<key>`, `GET /me/tasks`)
+carry an extra `review` object per task — see §7.3.
 
 All mutating endpoints require the `X-CSRF-Token` header matching
 `session["csrf_token"]`.
@@ -323,12 +387,165 @@ those pages then show a **返回我的工作台** link. This is a real URL rathe
 `history.back()`, because a user who arrived via a pasted link would otherwise
 be thrown out of the application.
 
+### 6.2 最近任务 is the project task list, not a preview of it
+
+工作台 · 最近任务 used to be a read-only table whose only action was a 查看 link,
+so anything the user actually wanted to *do* — cancel a stuck run, re-queue a
+failure, download a report, open the steps behind a test — meant opening the
+project first. A list you can only look at sends its reader somewhere else.
+
+It now renders the same rows, with the same columns and the same verbs, as
+任务/运行 (`/lanmatrix/projects/<id>/tasks`):
+
+| | 工作台 · 最近任务 | 项目 · 任务/运行 |
+|---|---|---|
+| Columns | ☑ · **项目** · 任务 · test id · 模型 · 提交者 · 状态/结果 · 进度 · 完成时间 · 动作 | same, without 项目 |
+| Row actions | 查看 · 手顺 · 取消 · 重测 · 下载 · 删除 | identical |
+| Batch actions | 下载所选 · 取消运行 · 重新测试 · 删除所选 | identical |
+| Sorting | every column, client-side | identical |
+| Live progress | one 4 s poll of `/me/tasks`, patched per row | one 3 s poll of the project list |
+| Paging | client-side, 20/page (`pager.js`) | 加载更多, +200 rows |
+| Detail (live log + 判定结果) | deep-links into the project page | in place |
+
+This is *one* implementation, not two that look alike. The row markup, the
+status vocabulary, the "which buttons apply to this state" rules and the sort
+comparator all live in `static/js/lanmatrix/task_row.js` (`LMTaskRow`), loaded
+from `base_lm.html` and used by both pages; the verbs already lived in
+`task_actions.js`. `tests/test_workspace_task_list.py` fails if either page
+starts rendering rows itself again.
+
+Three consequences worth spelling out:
+
+- **Batches fan out per project.** Every task endpoint is
+  `/projects/<pid>/tasks/...`, and a workspace selection routinely spans
+  projects, so each batch groups the selection by `project_id`, calls each
+  project in turn and reports the total honestly ("已取消 8 个，2 个失败").
+  Every button also carries `data-p` with its project id.
+- **删除 is decided per project.** `task.delete` is project-admin only, so
+  `GET /me/tasks` now returns `can_delete` / `can_cancel` / `can_upload` /
+  `can_download` per project (from `permissions.can`, one bulk `ProjectMember`
+  query, not one lookup per project). The 删除 icon appears only on rows whose
+  project allows it, and 删除所选 skips the rest and says how many it skipped.
+- **The detail panel stays on the project page.** It carries an SSE log stream
+  and the `jdgrslt` parser; a second copy is the drift risk this whole section
+  exists to remove. 查看 deep-links to `?task=<id>&from=workspace`, which is why
+  the project page offers 返回我的工作台.
+
+全选 covers every row matching the current filter, not just the visible page —
+same promise as the review queue — and the selection survives paging, sorting
+and the live poll.
+
+Feedback for all of this goes through `LMUI.toast` (`ui.js`). It used to exist
+only inside `project_tasks.js`, so the workspace and the review queue called a
+no-op `toast()` and their successes and failures were both silent.
+
 ---
 
-## 7. Known gaps
+## 7. Closing the review loop
+
+A review that nobody hears about and that cannot be looked up afterwards is not
+a review. Three defects made exactly that happen, and all three were invisible
+from inside the review screen — approving and rejecting "worked", the outcome
+simply never arrived anywhere.
+
+### 7.1 A decision must reach the person who produced the verdict
+
+`decide()` notified `row.updated_by`. That column is only written by the manual
+matrix-editing paths (`items_service`, `batch_service`, `excel_service`); the
+run write-back stamps evidence onto a row **without** touching it. So
+`updated_by` held whoever last hand-edited the matrix — very often the reviewer
+themselves, and `notify()` suppresses self-notification. The executor was told
+nothing at all.
+
+The requester is therefore recorded explicitly, on
+`TestItemRow.review_requested_by`, at the moment the review is raised
+(`request_review(..., actor_id=task.submitter_id)`). `decide()` notifies
+`review_requested_by or updated_by or created_by` — the fallbacks stay so rows
+raised before the column existed still reach somebody.
+
+**Contract:** the notification target of a review decision is the requester.
+Never derive it from an edit-tracking column.
+
+A rejection notification carries the reason in its body. The reason *is* the
+actionable content; "被驳回" alone sends the executor back to hunt for it.
+
+### 7.2 A decided review must stay findable
+
+Every review query filtered `review_status == pending`, so the instant a review
+was decided the row left the product entirely: no rejected list, no reviewer
+history, nothing to open from the notification's neighbours.
+
+`pending_for()` is now a thin wrapper over `queue_for(user_id, project_ids, *,
+role, status)`:
+
+- `role=reviewer` keys on `reviewer_id`; `role=requester` keys on
+  `review_requested_by`, falling back to `updated_by` / `created_by` for
+  pre-existing rows — the same chain §7.1 notifies through, so the list and the
+  bell can never disagree about whose row this is.
+- `status` accepts `pending` / `approved` / `rejected` / `decided` / `all`.
+- Ordering is `coalesce(reviewed_at, review_requested_at) DESC`: a decision that
+  just landed on a week-old row must not sort below fresh requests.
+
+`GET /me/reviews` takes `role` and `status`, and returns `queue_counts`
+(`pending` / `rejected` / `decided`) computed server-side — the client only ever
+holds one scope and cannot count the others. `GET /projects/<id>/reviews` takes
+`status`.
+
+The workspace queue exposes the three scopes as sub-filters of one view
+(待我审核 / 我被驳回 / 我已处理), not as three top-level tabs: they are the same
+rows read from the two sides of the same review. Rows in a decided scope offer
+打开 only — 通过 / 驳回 would be refused by the server, and a button that cannot
+work is worse than no button. The KPI tile and the tab badge always report
+outstanding work, never the size of the scope being read.
+
+### 7.3 The task lists must show the sign-off
+
+`Task.to_dict()` carried no review field. A task and a matrix row are linked
+only by test id and were never joined, so 任务/运行 and 工作台 · 最近任务 — the two
+lists people actually live in — could not say whether a verdict had been signed
+off.
+
+`reviews_for_tasks(tasks)` projects the review onto a page of tasks with **one
+query per project**, narrowing on `case_id IN (...)` OR
+`custom_values["test_id"].as_string() IN (...)`. Note `.as_string()`, not
+`.astext`: `custom_values` is `JSON().with_variant(JSONB, "postgresql")`, whose
+Python-side comparator always comes from the base type, so `.astext` raises
+`AttributeError` on every dialect. The match is re-confirmed in Python with
+`silver_json_export.row_test_id`, which also settles precedence when a row
+carries both a `case_id` and a differing `test_id` field.
+
+One test id can hit several matrix rows. The projection reports the most severe
+state (`pending` > `rejected` > `approved`) and the number of rows it covers, so
+a partially-approved test id cannot look fully signed off.
+
+Failure is swallowed: the task list still renders if the matrix cannot be read.
+A sign-off column is important, but not more important than the list itself.
+
+### 7.4 The 任务 column is gone
+
+Both lists dropped the `task_key` column. The key is machine identity — nobody
+reads it, everybody reads the test id — and it was occupying the slot the review
+state now uses. It survives as the tooltip on the row and on the test id, in the
+detail panel's subtitle, and in every deep link, so it is still one hover away
+when a run has to be traced in the logs. With the column gone the test id itself
+became the opener.
+
+---
+
+## 8. Known gaps
 
 - `project_tasks.js` still implements its own cancel/delete/retest verbs
   instead of delegating to `LMTaskActions`. Both work today, but they can
   drift. Consolidating them is the next cleanup.
 - The project page has no embedded review panel; review work is done from the
   personal workspace queue or the matrix.
+- `GET /projects/<id>/categories` scans every live `custom_values` blob in the
+  project with no cache or limit. Fine at current matrix sizes, but it is a
+  full scan on a settings page, so it will need an index or a cached column
+  before very large projects.
+- Category normalisation and wildcard matching exist twice: `review_routes.py`
+  and the same rules re-implemented in `review_policy.js` for the live preview
+  hint. They are hand-aligned and can drift; the server value is authoritative
+  and the UI redraws from the normalised response after every save.
+- Routing keys off テスト区分 only. Per-module or per-owner routing would need
+  a second dimension, which the current flat rule list cannot express.

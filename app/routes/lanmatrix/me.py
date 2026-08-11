@@ -16,10 +16,10 @@ from __future__ import annotations
 from flask import Blueprint, g, request
 
 from ...extensions import db
-from ...models import LMUser, Task, TaskStatus
+from ...models import LMUser, ProjectMember, Task, TaskStatus
 from ...services import task_service
-from ...services.lanmatrix import (notification_service, review_service,
-                                   service)
+from ...services.lanmatrix import (notification_service, permissions,
+                                   review_service, service)
 from ._base import arg_int, err, ok, login_required, register_common
 
 bp = Blueprint("lanmatrix_me", __name__, url_prefix="/api/v1")
@@ -34,6 +34,45 @@ _MAX_TASKS = 300
 def _visible_projects() -> list:
     """Projects the current user may read. System admins see all."""
     return service.list_projects(g.user)
+
+
+def _roles_in(project_ids: list[int]) -> dict[int, str]:
+    """Role of the current user in each project, in one query.
+
+    ``users_service.role_in_project`` costs a query per project, and the
+    workspace resolves roles for every visible project on every load. A system
+    admin sees them all, so per-project lookups would turn one page load into
+    dozens of round trips.
+    """
+    if not project_ids:
+        return {}
+    if g.user.is_system_admin:
+        return {pid: "project_admin" for pid in project_ids}
+    rows = (
+        db.session.query(ProjectMember.project_id, ProjectMember.role)
+        .filter(ProjectMember.project_id.in_(project_ids),
+                ProjectMember.user_id == g.user.id)
+        .all()
+    )
+    return {pid: role for pid, role in rows}
+
+
+def _capabilities(role: str | None) -> dict:
+    """What the current user may do to tasks in a project.
+
+    Shipped per project because the workspace list spans several of them: a user
+    who is admin of one project and a reader in another must see 删除 on the
+    first project's rows only. Sending a single flag for the whole page would
+    either hide a button the user is entitled to or show one the server will
+    refuse.
+    """
+    admin = g.user.is_system_admin
+    return {
+        "can_delete": permissions.can("task.delete", role, is_system_admin=admin),
+        "can_cancel": permissions.can("task.cancel", role, is_system_admin=admin),
+        "can_upload": permissions.can("task.upload", role, is_system_admin=admin),
+        "can_download": permissions.can("task.download", role, is_system_admin=admin),
+    }
 
 
 def _status_counts(project_ids: list[int]) -> dict[int, dict[str, int]]:
@@ -159,10 +198,33 @@ def me_tasks():
     # Ship the project lookup with the payload: a cross-project list is unusable
     # if every row only carries a numeric project_id.
     seen = {t.project_id for t in rows if t.project_id in by_id}
+    roles = _roles_in(sorted(seen))
+    # Capabilities ride along per project so the workspace list can offer the
+    # same verbs as the project task list without asking one endpoint per row's
+    # project -- and without guessing, which is how a 删除 button ends up shown
+    # to somebody the server will refuse.
+    payload = []
+    for pid in sorted(seen):
+        entry = {"id": pid, "code": by_id[pid].code, "name": by_id[pid].name,
+                 "role": roles.get(pid)}
+        entry.update(_capabilities(roles.get(pid)))
+        payload.append(entry)
+    # Same review projection the project task list uses, so the two lists cannot
+    # disagree about whether a run's verdict has been signed off.
+    reviews = review_service.reviews_for_tasks(rows)
+    reviewer_ids = review_service.task_review_user_ids(reviews)
+    if reviewer_ids:
+        users = {u.id: u for u in
+                 LMUser.query.filter(LMUser.id.in_(reviewer_ids)).all()}
+        for entry in reviews.values():
+            user = users.get(entry.get("reviewer_id"))
+            if user:
+                entry["reviewer_name"] = user.display_name or user.username or ""
+    tasks = review_service.attach_reviews(rows, [t.to_dict() for t in rows],
+                                          reviews)
     return ok({
-        "tasks": [t.to_dict() for t in rows],
-        "projects": [{"id": pid, "code": by_id[pid].code, "name": by_id[pid].name}
-                     for pid in sorted(seen)],
+        "tasks": tasks,
+        "projects": payload,
         "truncated": truncated,
     })
 
@@ -189,20 +251,33 @@ def me_reviews():
     wanted = arg_int("project_id", None)
     pids = [wanted] if wanted in by_id else list(by_id)
 
-    limit = arg_int("limit", 200, minimum=1, maximum=500)
-    rows = review_service.pending_for(g.user.id, pids, limit=limit)
+    # ``role`` + ``status`` turn the one-purpose pending queue into the three
+    # views the workflow actually has: work assigned to me, decisions made on my
+    # submissions (above all the rejections), and my own decided history. A
+    # decided row leaves the reviewer's queue by definition, so before this the
+    # product had nowhere at all to see what had been rejected.
+    role = (request.args.get("role") or review_service.ROLE_REVIEWER).strip()
+    status = (request.args.get("status") or review_service.PENDING).strip()
 
-    reviewer_ids = {r.reviewer_id for r in rows if r.reviewer_id}
-    reviewers = {u.id: u for u in
-                 LMUser.query.filter(LMUser.id.in_(reviewer_ids)).all()} \
-        if reviewer_ids else {}
+    limit = arg_int("limit", 200, minimum=1, maximum=500)
+    rows = review_service.queue_for(g.user.id, pids, status=status, role=role,
+                                    limit=limit)
+
+    user_ids = review_service.review_user_ids(rows)
+    users = {u.id: u for u in
+             LMUser.query.filter(LMUser.id.in_(user_ids)).all()} \
+        if user_ids else {}
 
     seen = {r.project_id for r in rows if r.project_id in by_id}
     return ok({
-        "reviews": [review_service.row_review_dict(r, reviewers) for r in rows],
+        "reviews": [review_service.row_review_dict(r, users) for r in rows],
         "projects": [{"id": pid, "code": by_id[pid].code, "name": by_id[pid].name}
                      for pid in sorted(seen)],
         "counts": review_service.counts_for(list(by_id)),
+        # Tab counters: how many rows each of the three views holds.
+        "queue_counts": review_service.counts_by_role(g.user.id, list(by_id)),
+        "role": role,
+        "status": status,
     })
 
 

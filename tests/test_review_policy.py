@@ -91,7 +91,12 @@ class TestStateConstants:
 
 
 class _FakeProject:
-    """Minimal stand-in: resolve_reviewer only reads two attributes."""
+    """Minimal stand-in for a project with no per-区分 routing configured.
+
+    It deliberately lacks ``review_routes``: projects created before routing
+    existed have no such value, and the chain must still resolve for them.
+    Routing itself is covered in ``test_review_routes.py``.
+    """
 
     def __init__(self, default_reviewer_id=None, owner_id=None):
         self.default_reviewer_id = default_reviewer_id

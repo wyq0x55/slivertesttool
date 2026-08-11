@@ -1064,19 +1064,32 @@ def list_project_reviews(project_id: int):
 
     _project_and_role(project_id, "item.review")
 
+    # ``status`` defaults to pending (the historical behaviour) but accepts
+    # approved / rejected / decided / all, because a decided review is the only
+    # record that a verdict was ever challenged and it must stay reachable.
+    status = (request.args.get("status") or review_service.PENDING).strip()
+    if status not in review_service.STATUSES:
+        status = review_service.PENDING
+
     q = (TestItemRow.query
          .filter_by(project_id=project_id, sheet="test", deleted_at=None)
-         .filter(TestItemRow.review_status == review_service.PENDING))
+         .filter(TestItemRow.review_status != review_service.NONE))
+    if status == review_service.STATUS_DECIDED:
+        q = q.filter(TestItemRow.review_status.in_(
+            (review_service.APPROVED, review_service.REJECTED)))
+    elif status != review_service.STATUS_ALL:
+        q = q.filter(TestItemRow.review_status == status)
     if (request.args.get("mine") or "").strip() in ("1", "true", "yes"):
         q = q.filter(TestItemRow.reviewer_id == g.user.id)
     rows = q.order_by(TestItemRow.id.desc()).limit(500).all()
 
-    ids = {r.reviewer_id for r in rows if r.reviewer_id}
-    reviewers = ({u.id: u for u in LMUser.query.filter(LMUser.id.in_(ids)).all()}
-                 if ids else {})
+    ids = review_service.review_user_ids(rows)
+    users = ({u.id: u for u in LMUser.query.filter(LMUser.id.in_(ids)).all()}
+             if ids else {})
     return ok({
-        "reviews": [review_service.row_review_dict(r, reviewers) for r in rows],
+        "reviews": [review_service.row_review_dict(r, users) for r in rows],
         "counts": review_service.counts_for([project_id]).get(project_id, {}),
+        "status": status,
     })
 
 
@@ -1186,13 +1199,51 @@ def set_review_policy(project_id: int):
     safety-critical project reviews every PASS, an exploratory one reviews
     nothing.
     """
+    from ...services.lanmatrix import review_routes as rr
+
     project, _ = _project_and_role(project_id, "project.edit")
     payload = request.get_json(silent=True) or {}
     previous = project.review_policy()
     prev_reviewer = project.default_reviewer_id
+    prev_routes = project.review_route_rules()
     policy = {k: bool(payload.get(k, previous[k]))
               for k in Project.REVIEW_DEFAULTS}
     project.review_required_on = policy
+
+    # Per-テスト区分 routing. Absent key means "leave as is", so a client that
+    # only toggles a checkbox cannot wipe the routing table by omission.
+    if "routes" in payload:
+        raw_routes = payload.get("routes")
+        if raw_routes in (None, ""):
+            raw_routes = []
+        if not isinstance(raw_routes, list):
+            return err("INVALID_ARGUMENT", "区分审核人规则格式无效", status=400)
+        if len(raw_routes) > rr.MAX_ROUTES:
+            return err("INVALID_ARGUMENT",
+                       f"区分审核人规则最多 {rr.MAX_ROUTES} 条", status=400)
+        # Reject rather than silently drop malformed entries here: on the write
+        # path a rule the user typed and cannot see afterwards is worse than an
+        # error message. ``normalise_routes`` still runs last, so what is stored
+        # is always canonical.
+        cleaned: list[dict] = []
+        for entry in raw_routes:
+            if not isinstance(entry, dict):
+                return err("INVALID_ARGUMENT", "区分审核人规则格式无效", status=400)
+            category = str(entry.get("category") or "").strip()
+            if not category:
+                return err("INVALID_ARGUMENT", "区分不能为空", status=400)
+            try:
+                reviewer_id = int(entry.get("reviewer_id") or 0)
+            except (TypeError, ValueError):
+                return err("INVALID_ARGUMENT", "审核人 ID 无效", status=400)
+            if reviewer_id <= 0:
+                return err("INVALID_ARGUMENT",
+                           f"区分「{category}」未指定审核人", status=400)
+            if not _may_review(project, reviewer_id):
+                return err("INVALID_ARGUMENT",
+                           "审核人必须是本项目成员或项目负责人", status=400)
+            cleaned.append({"category": category, "reviewer_id": reviewer_id})
+        project.review_routes = rr.normalise_routes(cleaned)
 
     # The reviewer travels with the policy: turning review on without naming a
     # recipient is what produced a permanently empty queue before.
@@ -1205,11 +1256,7 @@ def set_review_policy(project_id: int):
                 reviewer_id = int(raw)
             except (TypeError, ValueError):
                 return err("INVALID_ARGUMENT", "审核人 ID 无效", status=400)
-            is_member = db.session.query(ProjectMember.id).filter(
-                ProjectMember.project_id == project_id,
-                ProjectMember.user_id == reviewer_id,
-            ).first() is not None
-            if not is_member and reviewer_id != project.owner_id:
+            if not _may_review(project, reviewer_id):
                 return err("INVALID_ARGUMENT",
                            "审核人必须是本项目成员或项目负责人", status=400)
             project.default_reviewer_id = reviewer_id
@@ -1218,13 +1265,74 @@ def set_review_policy(project_id: int):
     audit.record("project.review_policy", actor_id=g.user.id,
                  object_type="project", object_id=project_id,
                  project_id=project_id,
-                 old_value={**previous, "default_reviewer_id": prev_reviewer},
+                 old_value={**previous, "default_reviewer_id": prev_reviewer,
+                            "routes": prev_routes},
                  new_value={**policy,
-                            "default_reviewer_id": project.default_reviewer_id},
+                            "default_reviewer_id": project.default_reviewer_id,
+                            "routes": project.review_route_rules()},
                  client_ip=_client_ip())
     db.session.commit()
     return ok({"review_required_on": project.review_policy(),
-               "default_reviewer_id": project.default_reviewer_id})
+               "default_reviewer_id": project.default_reviewer_id,
+               "review_routes": project.review_route_rules()})
+
+
+def _may_review(project: Project, user_id: int) -> bool:
+    """Whether ``user_id`` may be named as a reviewer of ``project``.
+
+    Membership (or ownership) is the rule, so a routing rule cannot address
+    somebody who then gets a 403 opening the case it sent them to.
+    """
+    if user_id == project.owner_id:
+        return True
+    return db.session.query(ProjectMember.id).filter(
+        ProjectMember.project_id == project.id,
+        ProjectMember.user_id == user_id,
+    ).first() is not None
+
+
+@bp.get("/projects/<int:project_id>/categories")
+@login_required
+def list_project_categories(project_id: int):
+    """Distinct テスト区分 in this project, with names and case counts.
+
+    Exists so the routing editor can offer the 区分 that actually exist instead
+    of making an admin type them from memory: a mistyped 区分 produces a rule
+    that never matches, and nothing in the UI would ever say so.
+    """
+    from ...models import TestItemRow
+    from ...services.lanmatrix import review_routes as rr
+
+    _project_and_role(project_id, "project.view")
+    rows = (db.session.query(TestItemRow.custom_values)
+            .filter(TestItemRow.project_id == project_id,
+                    TestItemRow.deleted_at.is_(None),
+                    TestItemRow.sheet == "test")
+            .all())
+
+    tally: dict[str, dict] = {}
+    for (values,) in rows:
+        values = values or {}
+        key = rr.normalise_category(values.get(rr.CATEGORY_KEY))
+        if not key:
+            continue
+        entry = tally.setdefault(
+            key, {"category": key, "category_name": "", "count": 0})
+        entry["count"] += 1
+        if not entry["category_name"]:
+            entry["category_name"] = str(
+                values.get(rr.CATEGORY_NAME_KEY) or "").strip()
+
+    # Numeric 区分 first and in numeric order (1, 2, 10 -- not 1, 10, 2), which
+    # is the order the editor's category pager already uses.
+    def sort_key(item: dict):
+        raw = item["category"]
+        try:
+            return (0, float(raw), "")
+        except ValueError:
+            return (1, 0.0, raw)
+
+    return ok({"categories": sorted(tally.values(), key=sort_key)})
 
 
 @bp.get("/projects/<int:project_id>/dashboard")

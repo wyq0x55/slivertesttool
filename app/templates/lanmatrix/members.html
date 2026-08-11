@@ -57,19 +57,36 @@
         <em>无法测试的用例必须逐条审核并填写意见，评审时可看到说明列理由。</em>
       </span>
     </label>
+    {# Reviewers are assigned per テスト区分, because that is how the matrix is
+       actually divided: the owner of 区分 5 has no basis for judging 区分 12.
+       Rules are ordered and the first match wins, so precedence is readable
+       top-to-bottom instead of being inferred from pattern specificity. #}
+    <div class="lm-rv-routes">
+      <div class="lm-rv-routes-head">
+        <span>
+          <strong>区分审核人</strong>
+          <em>按 テスト区分 分派审核。自上而下第一条命中生效，可用结尾通配（如 <code>1*</code> 覆盖 1/10/19）。</em>
+        </span>
+        <button type="button" class="btn btn-ghost" id="lm-rv-route-add">+ 添加规则</button>
+      </div>
+      <div id="lm-rv-route-rows" class="lm-rv-route-rows"></div>
+      <p class="muted lm-rv-route-hint" id="lm-rv-route-hint"></p>
+    </div>
+
     {# One named reviewer, not a pool. A request addressed to everybody is owned
        by nobody; with a single accountable reviewer (who can reassign) the
-       queue always has someone it belongs to. Without this the fallback chain
-       ends at the project owner. #}
+       queue always has someone it belongs to. This is now the fallback for 区分
+       that no rule claims; without it the chain ends at the project owner. #}
     <div class="lm-rv-policy-row" style="align-items:center">
       <span>
-        <strong>默认审核人</strong>
-        <em>行未指定审核人时由 TA 审核；留空则回退到项目负责人。</em>
+        <strong>默认审核人（兜底）</strong>
+        <em>未被上述区分规则覆盖、且行未指定审核人时由 TA 审核；留空则回退到项目负责人。</em>
       </span>
       <select id="lm-rv-pol-reviewer" class="input" style="max-width:220px">
         <option value="">（未设置 · 回退项目负责人）</option>
       </select>
     </div>
+    <datalist id="lm-rv-cat-list"></datalist>
     <div class="row" style="margin-top:12px">
       <button type="button" class="btn btn-primary" id="lm-rv-pol-save">保存策略</button>
       <span class="muted" id="lm-rv-pol-msg"></span>

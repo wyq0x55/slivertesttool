@@ -306,6 +306,13 @@ def snapshot(project: Project) -> dict:
         # Resolved here rather than in the browser: the policy panel would
         # otherwise have to fetch the member list just to render one name.
         "default_reviewer_name": _reviewer_name(project.default_reviewer_id),
+        # Per-テスト区分 routing, with names resolved for the same reason. A rule
+        # pointing at a user who has since left the project must still render as
+        # a name, otherwise the admin cannot tell which rule to fix.
+        "review_routes": [
+            {**rule, "reviewer_name": _reviewer_name(rule["reviewer_id"])}
+            for rule in project.review_route_rules()
+        ],
     }
 
 

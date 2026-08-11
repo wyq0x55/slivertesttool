@@ -76,7 +76,11 @@ def workspace():
     user = _current_user()
     if user is None:
         return redirect(url_for("lanmatrix_pages.login"))
-    return render_template("lanmatrix/home.html", user=user.to_dict())
+    # ``univer_available`` is passed because the workspace task list now hosts
+    # the same 手顺 dialog as the project task list, and that dialog falls back
+    # to the plain grid when the Univer bundle is not vendored in.
+    return render_template("lanmatrix/home.html", user=user.to_dict(),
+                           univer_available=_univer_bundle_available())
 
 
 @pages_bp.get("/admin/db")

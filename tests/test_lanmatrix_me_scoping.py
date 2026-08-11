@@ -103,3 +103,26 @@ def test_result_set_is_capped():
 def test_search_escapes_like_wildcards():
     """Unescaped % in a LIKE turns a search box into a full-table scan."""
     assert r'replace("%", r"\%")' in ME_SOURCE
+
+
+def test_capabilities_come_from_the_permission_matrix():
+    """The workspace ships per-project capability flags so its rows can offer
+    the same buttons as the project task list. They must be derived from
+    ``permissions.can`` -- a hand-written role check here would let the UI offer
+    a 删除 the API then refuses (or hide one the user is entitled to)."""
+    assert 'permissions.can("task.delete"' in ME_SOURCE
+    assert "_capabilities" in ME_SOURCE
+
+
+def test_role_lookup_is_restricted_to_the_current_user():
+    """The bulk role query replaces per-project lookups; forgetting the user
+    predicate would hand out every member's role for every project."""
+    assert "ProjectMember.user_id == g.user.id" in ME_SOURCE
+    assert "ProjectMember.project_id.in_(project_ids)" in ME_SOURCE
+
+
+def test_role_lookup_is_a_single_query():
+    """One query for all projects: a system admin sees every project, so a
+    per-project lookup would turn one page load into dozens of round trips."""
+    assert "def _roles_in(" in ME_SOURCE
+    assert "role_in_project(" not in ME_SOURCE
