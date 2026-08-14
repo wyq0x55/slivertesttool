@@ -587,6 +587,52 @@ def counts_by_reviewer(user_id: int, project_ids: Iterable[int]) -> dict:
     return out
 
 
+def _raised_by(row: TestItemRow, user_id: int) -> bool:
+    """Did *user_id* raise this claim?
+
+    Mirrors the fallback chain :func:`row_review_dict` and
+    ``review_service.counts_by_role`` use: a claim written before
+    ``exempt_requested_by`` existed has no requester recorded, so authorship
+    stands in. Without the fallback the person who typed 不要 would never be
+    counted as the one whose claim was rejected.
+    """
+    if row.exempt_requested_by:
+        return int(row.exempt_requested_by) == int(user_id)
+    return int(user_id) in {int(v) for v in (row.updated_by, row.created_by)
+                            if v}
+
+
+def counts_by_role(user_id: int, project_ids: Iterable[int]) -> dict:
+    """``{pending, rejected, decided}`` for one user's exemption queue.
+
+    The counterpart of ``review_service.counts_by_role``, and the reason it
+    exists: the workspace tabs mix both kinds of sign-off into one list, so
+    counting only verdict reviews puts a number on the 我被驳回 tab that is
+    smaller than the list underneath it.
+
+    ``pending`` and ``decided`` are the reviewer's own workload; ``rejected``
+    is the *requester's* -- "claims I raised that came back" -- exactly as in
+    the review queue, so the same tab means the same thing on both halves.
+    """
+    out = {PENDING: 0, REJECTED: 0, STATUS_DECIDED: 0}
+    pids = [int(p) for p in project_ids]
+    if not pids or not user_id:
+        return out
+    uid = int(user_id)
+    for row in _live_rows(pids).all():
+        state = effective_status(row)
+        if not state:
+            continue
+        if row.exempt_reviewer_id and int(row.exempt_reviewer_id) == uid:
+            if state == PENDING:
+                out[PENDING] += 1
+            elif state in DECIDED:
+                out[STATUS_DECIDED] += 1
+        if state == REJECTED and _raised_by(row, uid):
+            out[REJECTED] += 1
+    return out
+
+
 def review_user_ids(rows: Iterable[TestItemRow]) -> set[int]:
     """Every user id named by these rows' exemptions, for one bulk lookup."""
     ids: set[int] = set()

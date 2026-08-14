@@ -179,7 +179,12 @@ class TestSummary:
         assert s["exempt_pending"] == 1
         assert s["exempt_pending_not_run"] == 1
 
-    def test_an_approved_claim_leaves_the_denominator(self, seeded):
+    def test_an_approved_claim_with_no_verdict_leaves_the_denominator(self, seeded):
+        # Stamps the columns directly rather than calling decide(), so this is
+        # the leak path: approved, but the Untestable verdict never landed. Going
+        # through decide() the row would carry a verdict and be counted as
+        # executed instead -- see TestUntestableWriteBack. Kept because that
+        # failure mode must degrade to "excluded", never to "still owed".
         from app.services.lanmatrix import dashboard_service as ds
         project, _ = seeded
         self._claim(project, 0, status="approved", value="不要")
@@ -573,3 +578,177 @@ class TestExemptionQueue:
         row.custom_values = dict(row.custom_values, item_created="不要")
         db.session.commit()
         assert es.effective_status(row) == es.APPROVED
+
+
+class TestUntestableWriteBack:
+    """Approving 不要 must land as a real, chart-visible Untestable verdict.
+
+    The point of the feature is that these rows stopped being invisible. So what
+    is asserted here is not "a field was set" but "the case now appears where a
+    human looks": the row's own 結果 cell, and the per-version breakdown that the
+    dashboard draws from ``TestRunRecord``.
+    """
+
+    def _claim(self, project, offset):
+        from app.extensions import db
+        from app.models import TestItemRow
+        row = (TestItemRow.query
+               .filter_by(project_id=project.id, result="Not Tested",
+                          workflow_status="Draft")
+               .order_by(TestItemRow.id.asc()).offset(offset).first())
+        row.custom_values = dict(row.custom_values or {}, item_created="不要")
+        db.session.commit()
+        return row
+
+    def _records(self, row):
+        from app.models import TestRunRecord
+        return TestRunRecord.query.filter_by(row_uuid=row.uuid).all()
+
+    def test_approval_writes_the_verdict_onto_the_row(self, seeded):
+        from app.extensions import db
+        from app.services.lanmatrix import exemption_service as es
+        from app.services.lanmatrix import run_writeback_service as rwb
+        project, user = seeded
+        row = self._claim(project, 0)
+
+        es.decide(project, row, True, actor_id=user.id, note="not applicable")
+        db.session.commit()
+
+        assert row.result == rwb.UNTESTABLE
+        assert row.get_field("exec_date")          # dated, not blank
+        assert row.get_field("executor")           # attributable to the approver
+
+    def test_approval_queues_a_collab_write_back(self, seeded):
+        # Writing row.result directly would be undone by the editor's next
+        # flush. The queue entry is what makes the verdict survive a live room.
+        from app.extensions import db
+        from app.models import RowWriteback
+        from app.services.lanmatrix import exemption_service as es
+        project, user = seeded
+        row = self._claim(project, 0)
+
+        es.decide(project, row, True, actor_id=user.id, note="ok")
+        db.session.commit()
+
+        queued = RowWriteback.query.filter_by(row_uuid=row.uuid).all()
+        assert queued, "verdict was written to the DB only; collab will erase it"
+        assert queued[-1].payload.get("result")
+
+    def test_approval_shows_up_in_the_per_version_breakdown(self, seeded):
+        # by_version() reads run records exclusively -- the row's version_label
+        # column has no effect on it. Without a synthetic record the case would
+        # be invisible in the chart however correct the row looked.
+        from app.extensions import db
+        from app.services.lanmatrix import dashboard_service as ds
+        from app.services.lanmatrix import exemption_service as es
+        project, user = seeded
+        row = self._claim(project, 0)
+
+        es.decide(project, row, True, actor_id=user.id, note="ok")
+        db.session.commit()
+
+        records = self._records(row)
+        assert len(records) == 1
+        assert records[0].outcome == "untestable"
+        assert records[0].task_key.startswith(es.RECORD_PREFIX)
+
+        chart = ds.by_version(project.id)
+        assert sum(chart["series"]["untestable"]) >= 1
+
+    def test_approving_twice_does_not_double_count(self, seeded):
+        # decide() is reachable from the queue, the project view and the bulk
+        # endpoint. A second call must be a no-op, not a second data point in
+        # every chart the case appears in.
+        from app.extensions import db
+        from app.services.lanmatrix import exemption_service as es
+        project, user = seeded
+        row = self._claim(project, 0)
+
+        es.decide(project, row, True, actor_id=user.id, note="ok")
+        db.session.commit()
+        es.decide(project, row, True, actor_id=user.id, note="again")
+        db.session.commit()
+
+        assert len(self._records(row)) == 1
+
+    def test_a_real_verdict_is_never_overwritten(self, seeded):
+        # A case that actually ran is evidence. Approving a scope claim about it
+        # must not destroy the only record that it passed.
+        from app.extensions import db
+        from app.services.lanmatrix import exemption_service as es
+        project, user = seeded
+        row = self._claim(project, 0)
+        row.result = "Pass"
+        db.session.commit()
+
+        es.decide(project, row, True, actor_id=user.id, note="ok")
+        db.session.commit()
+
+        assert row.result == "Pass"
+        assert self._records(row) == []
+
+    def test_rejection_writes_no_verdict(self, seeded):
+        from app.extensions import db
+        from app.services.lanmatrix import exemption_service as es
+        project, user = seeded
+        row = self._claim(project, 0)
+
+        es.decide(project, row, False, actor_id=user.id, note="please write it")
+        db.session.commit()
+
+        assert row.result == "Not Tested"
+        assert self._records(row) == []
+
+    def test_reset_retracts_the_verdict_it_wrote(self, seeded):
+        from app.extensions import db
+        from app.services.lanmatrix import exemption_service as es
+        project, user = seeded
+        row = self._claim(project, 0)
+        es.decide(project, row, True, actor_id=user.id, note="ok")
+        db.session.commit()
+
+        es.reset(row)
+        db.session.commit()
+
+        assert row.result != "Untestable"
+        assert self._records(row) == []
+
+    def test_reset_leaves_a_real_run_record_alone(self, seeded):
+        # Retraction targets the synthetic record by task_key. Run history is
+        # evidence and must not be editable by changing your mind about scope.
+        from datetime import date
+        from app.extensions import db
+        from app.models import TestRunRecord
+        from app.services.lanmatrix import exemption_service as es
+        project, user = seeded
+        row = self._claim(project, 0)
+        db.session.add(TestRunRecord(
+            project_id=project.id, row_uuid=row.uuid, test_id="t",
+            task_key="real-task-1", verdict="Pass", outcome="pass",
+            model_name="m", model_version="v1", executed_on=date.today()))
+        db.session.commit()
+
+        es.decide(project, row, True, actor_id=user.id, note="ok")
+        db.session.commit()
+        es.reset(row)
+        db.session.commit()
+
+        keys = {r.task_key for r in self._records(row)}
+        assert keys == {"real-task-1"}
+
+    def test_approved_rows_leave_the_out_of_scope_bucket(self, seeded):
+        # The accounting change the feature implies: an approved claim is now
+        # executed work carrying an Untestable verdict, not a row excluded from
+        # the denominator. exempt_out_of_scope is kept as a leak detector only.
+        from app.extensions import db
+        from app.services.lanmatrix import dashboard_service as ds
+        from app.services.lanmatrix import exemption_service as es
+        project, user = seeded
+        row = self._claim(project, 0)
+        es.decide(project, row, True, actor_id=user.id, note="ok")
+        db.session.commit()
+
+        snap = ds.summary(project.id)
+        assert snap["exempt_out_of_scope"] == 0
+        assert snap["exempt_approved"] == 1
+        assert snap["untestable"] >= 1

@@ -1,0 +1,122 @@
+{
+  "mcpServers": {
+    "omniroute": {
+      "url": "http://localhost:20128/api/mcp/sse",
+      "protocolVersion": "legacy",
+      "lifecycle": "lazy",
+      "requestTimeoutMs": 30000
+    },
+    "github.com/AgentDeskAI/browser-tools-mcp": {
+      "transport": {
+        "type": "stdio",
+        "command": "npx",
+        "args": [
+          "@agentdeskai/browser-tools-mcp@latest"
+        ],
+        "env": {}
+      },
+      "disabled": false,
+      "autoApprove": [],
+      "timeout": 60
+    },
+    "github.com/modelcontextprotocol/servers/tree/main/src/filesystem": {
+      "transport": {
+        "type": "stdio",
+        "command": "cmd",
+        "args": [
+          "/c",
+          "npx",
+          "-y",
+          "@modelcontextprotocol/server-filesystem",
+          "c:\\workspeace\\slivertesttool"
+        ],
+        "env": {}
+      },
+      "disabled": false,
+      "autoApprove": [],
+      "timeout": 60
+    },
+    "github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking": {
+      "transport": {
+        "type": "stdio",
+        "command": "cmd",
+        "args": [
+          "/c",
+          "npx",
+          "-y",
+          "@modelcontextprotocol/server-sequential-thinking"
+        ],
+        "env": {}
+      },
+      "disabled": false,
+      "autoApprove": [],
+      "timeout": 60
+    },
+    "github.com/upstash/context7-mcp": {
+      "transport": {
+        "type": "stdio",
+        "command": "cmd",
+        "args": [
+          "/c",
+          "npx",
+          "-y",
+          "@upstash/context7-mcp"
+        ],
+        "env": {
+          "HTTP_PROXY": "http://160.203.98.12:8080",
+          "HTTPS_PROXY": "http://160.203.98.12:8080",
+          "http_proxy": "http://160.203.98.12:8080",
+          "https_proxy": "http://160.203.98.12:8080"
+        }
+      },
+      "disabled": false,
+      "autoApprove": [],
+      "timeout": 60
+    },
+    "github.com/modelcontextprotocol/servers/tree/main/src/git": {
+      "transport": {
+        "type": "stdio",
+        "command": "uvx",
+        "args": [
+          "--with",
+          "mcp<2",
+          "mcp-server-git",
+          "--repository",
+          "c:\\workspeace\\slivertesttool"
+        ],
+        "env": {}
+      },
+      "disabled": false,
+      "autoApprove": [],
+      "timeout": 60
+    },
+    "github.com/github/github-mcp-server": {
+      "transport": {
+        "type": "stdio",
+        "command": "cmd",
+        "args": [
+          "/c",
+          "npx",
+          "-y",
+          "mcp-remote",
+          "https://api.githubcopilot.com/mcp/",
+          "--header",
+          "Authorization:${AUTH_HEADER}"
+        ],
+        "env": {
+          "AUTH_HEADER": "Bearer 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",
+          "HTTP_PROXY": "http://160.203.98.12:8080",
+          "HTTPS_PROXY": "http://160.203.98.12:8080",
+          "http_proxy": "http://160.203.98.12:8080",
+          "https_proxy": "http://160.203.98.12:8080",
+          "NODE_USE_ENV_PROXY": "1"
+        }
+      },
+      "disabled": false,
+      "autoApprove": [
+        "get_me"
+      ],
+      "timeout": 60
+    }
+  }
+}

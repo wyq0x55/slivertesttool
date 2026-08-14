@@ -75,6 +75,27 @@ def _capabilities(role: str | None) -> dict:
     }
 
 
+def exemption_status_for(status: str) -> str:
+    """Translate a review-queue ``status`` filter into the exemption one.
+
+    Both services spell the states identically (``pending`` / ``approved`` /
+    ``rejected`` / ``decided`` / ``all``), so the filter passes straight
+    through. It is a named function rather than an inline expression because
+    the mapping is exactly where this endpoint went wrong before: anything that
+    was not ``pending`` used to be widened to ``decided``, which put *approved*
+    exemptions into the ``rejected`` view -- a user opening 我被驳回 saw rows
+    that had in fact been signed off.
+
+    An unrecognised value falls back to ``pending`` -- the safe direction,
+    since the pending queue is the one the user is expected to act on and it
+    never claims a decision that was not made.
+    """
+    value = (status or "").strip()
+    if value in exemption_service.STATUSES:
+        return value
+    return exemption_service.PENDING
+
+
 def _status_counts(project_ids: list[int]) -> dict[int, dict[str, int]]:
     """One grouped query -> per-project counts keyed by status.
 
@@ -257,6 +278,13 @@ def me_reviews():
     # decided row leaves the reviewer's queue by definition, so before this the
     # product had nowhere at all to see what had been rejected.
     role = (request.args.get("role") or review_service.ROLE_REVIEWER).strip()
+    # Normalised once, here, rather than relied upon inside each service:
+    # ``review_service.queue_for`` falls back to ``reviewer`` internally, so an
+    # unrecognised role used to leave the exemption half with neither a
+    # reviewer nor a requester filter -- i.e. listing every user's claims in
+    # what is supposed to be one person's queue.
+    if role not in review_service.ROLES:
+        role = review_service.ROLE_REVIEWER
     status = (request.args.get("status") or review_service.PENDING).strip()
 
     limit = arg_int("limit", 200, minimum=1, maximum=500)
@@ -267,10 +295,12 @@ def me_reviews():
     # question a runner's Untestable verdict does -- "may this case count as
     # work that will never be done?" -- and the split into a second tab only
     # exposed the fact that we store them in different columns.
+    #
+    # The status filter is passed through verbatim (see
+    # :func:`exemption_status_for`) so 我被驳回 shows rejected exemptions only.
     ex_rows = exemption_service.queue_for(
         pids,
-        status=(exemption_service.PENDING if status == review_service.PENDING
-                else exemption_service.STATUS_DECIDED),
+        status=exemption_status_for(status),
         reviewer_id=(g.user.id if role == review_service.ROLE_REVIEWER else None),
         requester_id=(g.user.id if role == review_service.ROLE_REQUESTER else None),
         limit=limit)
@@ -290,12 +320,14 @@ def me_reviews():
 
     seen = {d["project_id"] for d in items if d["project_id"] in by_id}
     counts = review_service.counts_by_role(g.user.id, list(by_id))
-    ex_counts = exemption_service.counts_by_reviewer(g.user.id, list(by_id))
+    ex_counts = exemption_service.counts_by_role(g.user.id, list(by_id))
     # The badge counts everything waiting on this user. Reporting only verdict
     # reviews would understate the backlog by exactly the rows this merge just
-    # moved into the queue.
-    counts["pending"] = int(counts.get("pending", 0)) + ex_counts["pending"]
-    counts["decided"] = int(counts.get("decided", 0)) + ex_counts["decided"]
+    # moved into the queue -- and every tab must be merged, not just two of
+    # them: a 我被驳回 badge that ignores exemptions reads lower than the list
+    # printed directly beneath it.
+    for key in ("pending", "rejected", "decided"):
+        counts[key] = int(counts.get(key, 0)) + int(ex_counts.get(key, 0))
 
     return ok({
         "reviews": items,
@@ -307,6 +339,21 @@ def me_reviews():
         "role": role,
         "status": status,
     })
+
+
+def _notification_totals() -> dict:
+    """Both tab counters for the current user, in one place.
+
+    Every notification endpoint that can change what the tabs show returns
+    these together: the panel renders 未读 and 历史 side by side, so answering
+    with only the scope the caller happened to ask for leaves the other label
+    stale until the user clicks it. Archiving in particular moves a row from
+    one tab to the other, which makes *both* numbers wrong if only one is sent.
+    """
+    return {
+        "unread": notification_service.unread_count(g.user.id),
+        "history": notification_service.history_count(g.user.id),
+    }
 
 
 @bp.get("/me/notifications")
