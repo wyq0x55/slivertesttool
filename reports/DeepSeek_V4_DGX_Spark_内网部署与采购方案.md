@@ -3,6 +3,23 @@
 > 文档日期：2026-08-11  
 > 适用场景：仅在企业内网使用，用于代码分析、嵌入式日志分析、内部 RAG 和 Agent 服务。
 
+auxiliary:
+  vision:
+    provider: opencode-go
+    model: qwen3.7-plus
+
+  compression:
+    provider: opencode-go
+    model: deepseek-v4-flash
+
+  web_extract:
+    provider: opencode-go
+    model: deepseek-v4-flash
+
+  title_generation:
+    provider: opencode-go
+    model: deepseek-v4-flash
+    
 ## 1. 执行摘要
 
 推荐优先顺序：
