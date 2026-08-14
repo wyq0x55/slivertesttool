@@ -245,7 +245,8 @@ Spark-A ═══ QSFP112 / ConnectX-7 ═══ Spark-B
 
 | 项目 | 推荐规格 | 数量 | 京东价格 | 链接 | 采购备注 |
 |---|---|---:|---:|---|---|
-| DGX Spark | NVIDIA DGX Spark，128GB/4TB | 2 | 34499 | [京东自营 DGX Spark 128GB/4TB](https://item.jd.com/100257674173.html) | 优先自营或厂商授权；确认企业保修和发票 |
+| DGX Spark | NVIDIA DGX Spark，128GB/4TB | 2 | 34499 | [京东自营 DGX Spark 128GB/4TB](【京东】https://3.cn/2YI-uAMi?jkl=@G2ZgZFPRYu@ CZ154 「英伟达 DGX Spark GB10 128G+4TB」
+点击链接直接打开 或者复制文案打开京东) | 优先自营或厂商授权；确认企业保修和发票 |
 | 双机互联线 | 适配 DGX Spark 的 QSFP112 DAC，长度按摆放确定 | 1 | 登录后确认 | [京东 QSFP112 DAC 1米候选](https://item.jd.com/10203558009300.html) | 下单前必须向 NVIDIA/供应商确认兼容，优先官方认可型号 |
 | UPS | 至少覆盖两台 Spark、网络和网关，建议留功率余量 | 1 | 登录后确认 | [京东施耐德/APC 1500VA 980W UPS](https://item.jd.com/100214813949.html) | 需按实际总功耗、续航和插头规格重新核算 |
 | 网络线 | Cat6A 或更高规格成品线 | 2 至 3 | 登录后确认 | [京东搜索 Cat6A 网线](https://search.jd.com/Search?keyword=Cat6A%20%E7%BD%91%E7%BA%BF) | 管理网或隔离网使用 |
