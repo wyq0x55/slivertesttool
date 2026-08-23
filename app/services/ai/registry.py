@@ -10,11 +10,13 @@ exists; nothing here is hand-maintained:
                                   grows monotonically with project use)
     viewpoint seeds             (design-doc terms paired to code names during
                                   viewpoint extraction)
+    project signal dictionary   (optional, human-curated via the AI settings
+                                  panel; the only intentional manual source)
 
 Merge priority — later wins because it is closer to how people actually refer
 to the signal in this project: clang comment < sbs < viewpoint seed <
-historical rows. The winning display name and its origin are kept so the
-review UI can flag "AI-proposed" names separately.
+historical rows < signal dictionary. The winning display name and its origin
+are kept so the review UI can flag "AI-proposed" names separately.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ _PRIO_COMMENT = 0
 _PRIO_SBS = 1
 _PRIO_SEED = 2
 _PRIO_HISTORY = 3
+_PRIO_DICT = 4
 
 Entry = dict[str, Any]  # {"display": str, "type": str, "source": str}
 
@@ -198,12 +201,16 @@ def build(*,
           sbs_variables: Optional[list[Any]] = None,
           historical_pairs: Optional[Iterable[Any]] = None,
           viewpoint_seeds: Optional[Iterable[Any]] = None,
+          signal_dict: Optional[Iterable[Any]] = None,
           extra_types: Optional[dict[str, str]] = None) -> Registry:
     """Assemble the registry from every available source.
 
     ``sbs_variables``: ``[["表示名","路径"], ...]`` pairs (bare ``"path"``
     strings are tolerated — they register the path with a degraded display).
     ``viewpoint_seeds``: same pair shape, from the viewpoint scenario output.
+    ``signal_dict``: ``[["表示名","路径","类型"], ...]`` triples (type
+    optional) from the project's curated dictionary — highest priority, it
+    is the one source a human deliberately maintains.
     """
     reg = Registry()
     for path, (display, type_) in from_index(index or {}).items():
@@ -216,13 +223,16 @@ def build(*,
         for pair in pairs or []:
             if isinstance(pair, str):
                 reg.add(pair, "", source=source, prio=prio)
-            elif isinstance(pair, (list, tuple)) and len(pair) == 2:
-                reg.add(str(pair[1]), str(pair[0]), source=source, prio=prio)
+            elif isinstance(pair, (list, tuple)) and len(pair) in (2, 3):
+                type_ = str(pair[2]) if len(pair) == 3 and pair[2] else ""
+                reg.add(str(pair[1]), str(pair[0]), source=source,
+                        prio=prio, type_=type_)
 
     _add_pairs(sbs_variables, "sbs", _PRIO_SBS)
     _add_pairs(viewpoint_seeds, "seed", _PRIO_SEED)
     for path, display in from_history(historical_pairs or []).items():
         reg.add(path, display, source="history", prio=_PRIO_HISTORY)
+    _add_pairs(signal_dict, "dict", _PRIO_DICT)
     for path, type_ in (extra_types or {}).items():
         entry = reg._entries.get(path)  # noqa: SLF001 - same module family
         if entry is not None and not entry.get("type"):

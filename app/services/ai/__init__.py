@@ -10,6 +10,7 @@ Package layout:
     validators  machine validators (schema + name-existence checks)
     scenarios   the five scenario orchestrators (pure, DB-free)
     apply       apply an approved draft via the existing service layer
+    signal_dict project signal dictionary (curated registry source)
 
 Nothing in this package writes project data directly; every write goes
 through :func:`apply.apply_draft` after a human approves the draft.
@@ -17,11 +18,14 @@ through :func:`apply.apply_draft` after a human approves the draft.
 
 from __future__ import annotations
 
-from . import apply, base, c_index, config, prompts, provider, scenarios, validators  # noqa: F401
+from . import (  # noqa: F401
+    apply, base, c_index, config, prompts, provider, scenarios,
+    signal_dict, sparse, validators,
+)
 
 __all__ = [
     "apply", "base", "c_index", "config", "prompts", "provider",
-    "scenarios", "validators",
+    "scenarios", "signal_dict", "sparse", "validators",
     "ProviderError", "GenerationError", "ApplyError",
 ]
 

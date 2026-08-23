@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .ai_draft import AiDraft
+from .ai_draft import AiDraft, AiSignalDict
 from .lanmatrix import (
     AuditLog,
     CellComment,
@@ -31,6 +31,7 @@ __all__ = [
     "TaskEvent",
     "EventType",
     "AiDraft",
+    "AiSignalDict",
     # LAN Test Matrix models (merged into the platform's model layer).
     "LMUser",
     "ProjectMember",

@@ -243,6 +243,77 @@ def _run_task_dedicated(app, config, task_pk: int) -> None:
             license_service.release()
 
 
+@huey.task()
+def run_ai_generation(draft_pk: int) -> None:
+    """Generate an AI draft off the request path.
+
+    The web route creates the ``AiDraft`` row in ``running`` and enqueues this
+    task, so a multi-viewpoint procedure batch (two phases + retries, easily
+    a minute of LLM calls) can never sit inside an HTTP timeout. Progress
+    events from the scenario land in ``meta_json.progress`` for the polling
+    frontend; the draft ends as ``pending`` (awaiting review) or ``error``.
+    """
+    app = _get_app()
+    with app.app_context():
+        import json
+
+        from ..extensions import db
+        from ..models import AiDraft
+        from ..services.ai import scenarios as ai_scenarios
+        from ..services.ai import signal_dict as ai_signal_dict
+        from ..services.ai.base import GenerationError
+        from ..services.ai.provider import ProviderError
+
+        draft = db.session.get(AiDraft, draft_pk)
+        if draft is None or draft.status != AiDraft.STATUS_RUNNING:
+            return
+
+        # The project's curated signal dictionary rides along in the payload:
+        # scenarios stay pure (DB-free), the registry gains its top-priority
+        # source without knowing where it came from.
+        payload = json.loads(draft.input_json) if draft.input_json else {}
+        entries = ai_signal_dict.entries_for(draft.project_id)
+        if entries:
+            payload.setdefault("signal_dict", entries)
+
+        def _load_meta() -> dict:
+            try:
+                return json.loads(draft.meta_json) if draft.meta_json else {}
+            except ValueError:
+                return {}
+
+        def on_event(event: dict) -> None:
+            meta = _load_meta()
+            meta["progress"] = event
+            draft.meta_json = json.dumps(meta, ensure_ascii=False)
+            db.session.commit()
+
+        try:
+            result = ai_scenarios.run_scenario(
+                draft.scenario, payload, on_event=on_event)
+        except (ProviderError, GenerationError, ValueError) as exc:
+            db.session.rollback()
+            draft = db.session.get(AiDraft, draft_pk)
+            if draft is None:
+                return
+            draft.status = AiDraft.STATUS_ERROR
+            draft.error = str(exc)
+            db.session.commit()
+            return
+        db.session.rollback()  # drop any progress-write state before the final write
+        draft = db.session.get(AiDraft, draft_pk)
+        if draft is None:
+            return
+        draft.output_json = json.dumps(result.output, ensure_ascii=False,
+                                       indent=2)
+        draft.meta_json = json.dumps(
+            {"model": result.model, "rounds": result.rounds,
+             "usage": result.usage, "log": result.log},
+            ensure_ascii=False)
+        draft.status = AiDraft.STATUS_PENDING
+        db.session.commit()
+
+
 @huey.periodic_task(crontab(hour="3", minute="0"))
 def prune_task_events_job() -> None:
     """Daily off-peak sweep that bounds ``TaskEvent`` growth.

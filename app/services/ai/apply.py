@@ -40,7 +40,14 @@ class ApplyError(RuntimeError):
     pass
 
 
-def apply_draft(draft: AiDraft, reviewer) -> dict[str, Any]:
+def apply_draft(draft: AiDraft, reviewer,
+                refs: list[str] | None = None) -> dict[str, Any]:
+    """Apply an approved draft through the existing service layer.
+
+    ``refs`` enables partial approval for batch outputs: when given, only the
+    procedure entries whose ``ref`` is listed are applied — the rest are
+    recorded as skipped so the draft still lands as one reviewable decision.
+    """
     from ...models import Project
     project = db.session.get(Project, draft.project_id)
     if project is None:
@@ -58,7 +65,7 @@ def apply_draft(draft: AiDraft, reviewer) -> dict[str, Any]:
     if applier is None:
         raise ApplyError(f"未知场景：{draft.scenario}")
     try:
-        result = applier(draft, reviewer, project, output)
+        result = applier(draft, reviewer, project, output, refs=refs)
     except ServiceError as exc:
         db.session.rollback()
         raise ApplyError(f"落库被字段校验拒绝：{exc}") from exc
@@ -83,7 +90,7 @@ def _item_or_raise(draft: AiDraft, project) -> TestItemRow:
     return item
 
 
-def _apply_viewpoint(draft, reviewer, project, output) -> dict[str, Any]:
+def _apply_viewpoint(draft, reviewer, project, output, refs=None) -> dict[str, Any]:
     module_id = str(output.get("module_id") or "")
     created_ids: list[int] = []
     for vp in output.get("viewpoints", []):
@@ -108,7 +115,8 @@ def _apply_viewpoint(draft, reviewer, project, output) -> dict[str, Any]:
     return {"created_item_ids": created_ids, "module_id": module_id}
 
 
-def _apply_procedure(draft, reviewer, project, output) -> dict[str, Any]:
+def _apply_procedure(draft, reviewer, project, output,
+                     refs: list[str] | None = None) -> dict[str, Any]:
     payload = _input_payload(draft)
     # ref -> item_id, from the viewpoints the batch was generated for.
     items_map: dict[str, int] = {}
@@ -120,11 +128,15 @@ def _apply_procedure(draft, reviewer, project, output) -> dict[str, Any]:
 
     procedures = output.get("procedures") if isinstance(output, dict) else None
     if isinstance(procedures, list) and procedures:
+        selected = {str(r) for r in refs} if refs is not None else None
         applied: list[dict[str, Any]] = []
         skipped: list[dict[str, Any]] = []
         all_missing: list[dict[str, Any]] = []
         for entry in procedures:
             ref = str(entry.get("ref") or "")
+            if selected is not None and ref not in selected:
+                skipped.append({"ref": ref, "reason": "未勾选（部分通过）"})
+                continue
             steps_doc = entry.get("steps_doc")
             item = db.session.get(TestItemRow, items_map.get(ref))
             if (item is None or item.project_id != project.id
@@ -161,7 +173,7 @@ def _apply_procedure(draft, reviewer, project, output) -> dict[str, Any]:
                      "否则该手顺无法执行") if missing else ""}
 
 
-def _apply_sbs(draft, reviewer, project, output) -> dict[str, Any]:
+def _apply_sbs(draft, reviewer, project, output, refs=None) -> dict[str, Any]:
     payload = _input_payload(draft)
     model = db.session.get(ProjectModel, payload.get("model_id"))
     if model is None or model.project_id != project.id:
@@ -188,7 +200,7 @@ def _apply_sbs(draft, reviewer, project, output) -> dict[str, Any]:
             "needed_variables": output.get("needed_variables") or []}
 
 
-def _apply_lib(draft, reviewer, project, output) -> dict[str, Any]:
+def _apply_lib(draft, reviewer, project, output, refs=None) -> dict[str, Any]:
     lib_name = output.get("lib_name") or ""
     if not lib_name:
         raise ApplyError("草稿缺少 lib_name")
@@ -218,7 +230,7 @@ def _apply_lib(draft, reviewer, project, output) -> dict[str, Any]:
     return {"lib_item_id": lib_row.id, "rewritten_item_ids": rewritten_ids}
 
 
-def _apply_failure(draft, reviewer, project, output) -> dict[str, Any]:
+def _apply_failure(draft, reviewer, project, output, refs=None) -> dict[str, Any]:
     item = _item_or_raise(draft, project)
     text = (
         f"[AI 差异分析 / {output.get('classification', '')}]\n"

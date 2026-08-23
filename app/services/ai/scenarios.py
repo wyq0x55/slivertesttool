@@ -9,13 +9,25 @@ routes approved outputs through the existing service layer.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from . import base, c_index, prompts, provider, registry as registry_mod, sparse as sparse_mod, validators  # noqa: F401
 
 # Context ceilings (chars) — prompts stay small and focused on purpose.
 _MAX_SOURCE_CHARS = 8000
 _MAX_LOG_CHARS = 6000
+
+# Async progress hook: scenarios stay pure (no Flask/DB) — the caller (the
+# Huey task) supplies a callback that persists the events it cares about.
+EventFn = Callable[[dict[str, Any]], None]
+
+
+def _emit(on_event: EventFn | None, **event: Any) -> None:
+    if on_event is not None:
+        try:
+            on_event(event)
+        except Exception:  # noqa: BLE001 - progress reporting must never fail a run
+            pass
 
 
 def _clip(text: str, limit: int) -> str:
@@ -173,12 +185,14 @@ def _validate_item(item: Any, plan: dict[str, Any],
     return doc, []
 
 
-def generate_procedure(payload: dict[str, Any]) -> base.GenerationResult:
+def generate_procedure(payload: dict[str, Any],
+                       on_event: EventFn | None = None) -> base.GenerationResult:
     viewpoints = _normalise_viewpoints(payload)
     source_files: dict[str, str] = payload.get("source_files") or {}
 
     # Deterministic layer: clang index + semantic registry (comments, SBS
-    # mining, historical pairs, viewpoint seeds — no human upkeep anywhere).
+    # mining, historical pairs, viewpoint seeds, the project signal dict —
+    # no human upkeep beyond the optional dictionary).
     index = c_index.index_source(source_files,
                                  compile_args=payload.get("compile_args"))
     reg = registry_mod.build(
@@ -187,6 +201,7 @@ def generate_procedure(payload: dict[str, Any]) -> base.GenerationResult:
         sbs_variables=payload.get("sbs_variables"),
         historical_pairs=payload.get("historical_pairs"),
         viewpoint_seeds=_viewpoint_seeds(viewpoints),
+        signal_dict=payload.get("signal_dict"),
     )
     if len(reg) == 0:
         raise ValueError(
@@ -208,9 +223,11 @@ def generate_procedure(payload: dict[str, Any]) -> base.GenerationResult:
     source_context = _clip(str(source_context or ""), _MAX_SOURCE_CHARS)
 
     log: list[dict[str, Any]] = []
+    usage_total: dict[str, int] = {}
 
     # ---- Phase A: plans (viewpoint → variable/value mapping) ------------- #
     refs = {vp["ref"] for vp in viewpoints}
+    _emit(on_event, phase="plan", message="规划中（观点 → 变量/值映射）")
 
     def build_plan(feedback: list[str]):
         return prompts.plan_messages(
@@ -224,25 +241,32 @@ def generate_procedure(payload: dict[str, Any]) -> base.GenerationResult:
         max_tokens=4096)
     log.extend({"phase": "plan", **entry} for entry in plan_result.log)
     plans_by_ref = {str(p["ref"]): p for p in plan_result.output["plans"]}
+    base.merge_usage(usage_total, plan_result.usage)
 
     # ---- Phase B: sparse procedures, chunked, per-item targeted retry ---- #
     procedures: list[dict[str, Any]] = []
     failed: list[str] = []
     ordered_refs = [vp["ref"] for vp in viewpoints]
-    for start in range(0, len(ordered_refs), _STEP_CHUNK):
+    total_chunks = (len(ordered_refs) + _STEP_CHUNK - 1) // _STEP_CHUNK
+    for chunk_no, start in enumerate(range(0, len(ordered_refs), _STEP_CHUNK), 1):
         chunk_refs = ordered_refs[start:start + _STEP_CHUNK]
         collected: dict[str, dict[str, Any]] = {}
         remaining = [plans_by_ref[r] for r in chunk_refs]
         feedback: list[str] = []
         for round_no in range(1, base.DEFAULT_MAX_ROUNDS + 1):
+            _emit(on_event, phase="procedures", chunk=chunk_no,
+                  total_chunks=total_chunks, round=round_no,
+                  message=f"手顺批次 {chunk_no}/{total_chunks} 第 {round_no} 轮")
             messages = prompts.procedure_batch_messages(
                 remaining, source_context=source_context,
                 registry_lines=registry_lines, lib_functions=lib_functions,
                 constant_names=payload.get("constant_names"),
                 example_sparse=payload.get("example_sparse"),
                 feedback=feedback)
+            usage: dict[str, int] = {}
             try:
-                text = provider.chat(messages, temperature=0.2, max_tokens=8192)
+                text = provider.chat(messages, temperature=0.2, max_tokens=8192,
+                                     usage=usage)
                 parsed = provider.extract_json(text)
                 items = (parsed or {}).get("procedures") if isinstance(parsed, dict) else None
                 if not isinstance(items, list):
@@ -253,6 +277,7 @@ def generate_procedure(payload: dict[str, Any]) -> base.GenerationResult:
             except (provider.ProviderError, ValueError) as exc:
                 items = []
                 feedback = [f"第 {round_no} 轮解析失败：{exc}"]
+            base.merge_usage(usage_total, usage)
             still_bad: list[dict[str, Any]] = []
             for item in items:
                 ref = str((item or {}).get("ref") or "")
@@ -295,11 +320,13 @@ def generate_procedure(payload: dict[str, Any]) -> base.GenerationResult:
     output = {"plans": plan_result.output["plans"],
               "procedures": procedures,
               "failed_refs": failed}
+    _emit(on_event, phase="done",
+          message=f"完成：{len(procedures)} 条手顺，{len(failed)} 条失败")
     from . import config as _config
     cfg = _config.get_ai_config(include_secret=False)
     return base.GenerationResult(
         output=output, rounds=plan_result.rounds + max(1, len(log)), log=log,
-        model=cfg.get(_config.KEY_MODEL, ""))
+        model=cfg.get(_config.KEY_MODEL, ""), usage=usage_total)
 
 
 # --------------------------------------------------------------------------- #
@@ -383,9 +410,17 @@ SCENARIOS = {
 }
 
 
-def run_scenario(scenario: str, payload: dict[str, Any]) -> base.GenerationResult:
+def run_scenario(scenario: str, payload: dict[str, Any],
+                 on_event: EventFn | None = None) -> base.GenerationResult:
     try:
         fn = SCENARIOS[scenario]
     except KeyError:
         raise ValueError(f"未知场景：{scenario}（可选：{sorted(SCENARIOS)}）") from None
-    return fn(payload)
+    if on_event is None or not _supports_events(fn):
+        return fn(payload)
+    return fn(payload, on_event=on_event)
+
+
+def _supports_events(fn) -> bool:
+    """Only the long-running scenario takes a progress hook for now."""
+    return fn is generate_procedure

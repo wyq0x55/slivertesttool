@@ -32,6 +32,9 @@ class AiDraft(db.Model):
     )
 
     SCENARIOS = ("viewpoint", "procedure", "sbs", "lib", "failure")
+    # running = queued on the Huey worker (async generation); pending =
+    # generation finished, waiting for the human decision.
+    STATUS_RUNNING = "running"
     STATUS_PENDING = "pending"
     STATUS_APPROVED = "approved"
     STATUS_REJECTED = "rejected"
@@ -103,3 +106,42 @@ def _utcnow_iso(value) -> str:
     if value is None:
         return ""
     return value.replace(microsecond=0).isoformat() + "Z"
+
+
+class AiSignalDict(db.Model):
+    """Project signal dictionary — the one human-curated registry source.
+
+    Optional by design: the registry assembles itself from clang comments /
+    SBS / history. This table exists for the cases those sources can't fix —
+    supplier code with no comments, a naming the team insists on, or a
+    cold-start project that needs accurate 表示名 from day one. Entries here
+    win over every automatic source (:mod:`..services.ai.registry` prio 4).
+    """
+
+    __tablename__ = "lm_ai_signal_dict"
+    __table_args__ = (
+        db.UniqueConstraint("project_id", "path", name="uq_ai_signal_path"),
+        db.Index("ix_ai_signal_project", "project_id"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(
+        db.Integer, db.ForeignKey("lm_projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    path = db.Column(db.String(256), nullable=False)
+    display = db.Column(db.String(256), nullable=False, default="")
+    type = db.Column(db.String(64), nullable=False, default="")
+    updated_by = db.Column(db.Integer, db.ForeignKey("lm_users.id"),
+                           nullable=True)
+    updated_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "path": self.path,
+            "display": self.display,
+            "type": self.type,
+            "updated_at": _utcnow_iso(self.updated_at),
+        }

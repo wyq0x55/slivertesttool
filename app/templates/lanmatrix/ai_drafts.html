@@ -64,6 +64,29 @@
   </details>
   {% endif %}
 
+  {# Project signal dictionary — the one hand-curated registry source. It only
+     matters for cold-start projects or supplier code without comments, so it
+     lives collapsed; bulk text keeps this a single round-trip. #}
+  <details id="lm-ai-signals" class="panel" style="margin-top:16px">
+    <summary style="cursor:pointer">项目信号字典（可选 · 人工维护 · 最高优先级）</summary>
+    <p class="muted" style="margin:10px 0 6px">每行一条：<code>表示名, 路径, 类型(可选)</code>。留空 = 完全自动组装（clang 注释 / SBS / 历史）。此处条目覆盖一切自动来源。</p>
+    <textarea id="lm-ai-signals-text" class="term" rows="6"
+      placeholder="車速センサ値, engine.veh_speed, uint16_t&#10;警告フラグ, warn_flag"></textarea>
+    <div class="row" style="margin-top:8px">
+      <button class="btn small" id="lm-ai-signals-save" type="button">保存字典</button>
+      <span id="lm-ai-signals-status" class="muted"></span>
+    </div>
+  </details>
+
+  {# Token usage, aggregated from each draft's meta.usage. Sits above the list
+     because cost is the first question every admin asks about AI features. #}
+  <div class="panel" id="lm-ai-usage" style="margin-top:16px" hidden>
+    <div class="panel-bar">
+      <h4 style="margin:0">用量统计 <span class="submuted" id="lm-ai-usage-range"></span></h4>
+    </div>
+    <div id="lm-ai-usage-body" class="muted">加载中…</div>
+  </div>
+
   <div class="toolbar" style="margin-top:16px">
     <select id="lm-ai-f-scenario" class="selbox" title="按场景筛选">
       <option value="">全部场景</option>
@@ -75,6 +98,7 @@
     </select>
     <div class="segmented" id="lm-ai-f-seg" role="tablist">
       <button type="button" class="on" data-status="">全部</button>
+      <button type="button" data-status="running">生成中</button>
       <button type="button" data-status="pending">待审</button>
       <button type="button" data-status="approved">已通过</button>
       <button type="button" data-status="rejected">已驳回</button>
@@ -123,9 +147,21 @@
       <p id="lm-ai-d-sub"></p>
     </div>
     <div class="head-actions">
+      <button class="btn small" id="lm-ai-d-edit" type="button">编辑输出…</button>
       <button class="btn small danger" id="lm-ai-d-reject" type="button">驳回…</button>
       <button class="btn small primary" id="lm-ai-d-approve" type="button">通过并落库</button>
     </div>
+  </div>
+
+  {# Partial approval: which batch entries land. Only rendered for procedure
+     drafts with a procedures[] output; single-output drafts approve whole. #}
+  <div class="panel" id="lm-ai-d-refs" style="margin-top:16px" hidden>
+    <div class="panel-bar">
+      <h4 style="margin:0">部分通过 <span class="submuted">· 勾选要落库的手顺</span></h4>
+      <div style="flex:1"></div>
+      <label class="jchk"><input type="checkbox" id="lm-ai-refs-all" checked><span>全选</span></label>
+    </div>
+    <div id="lm-ai-refs-list" class="lm-checklist"></div>
   </div>
 
   <div class="detail-grid">
@@ -136,6 +172,7 @@
         <dt>状态</dt><dd><span class="pill st-queued" id="lm-ai-d-status"><span class="dot"></span></span></dd>
         <dt>模型</dt><dd id="lm-ai-d-model"></dd>
         <dt>生成轮次</dt><dd id="lm-ai-d-rounds"></dd>
+        <dt>用量</dt><dd id="lm-ai-d-usage">—</dd>
         <dt>审核人 / 时间</dt><dd id="lm-ai-d-review"></dd>
         <dt>落库结果</dt><dd id="lm-ai-d-applied"></dd>
         <dt>错误</dt><dd id="lm-ai-d-error"></dd>

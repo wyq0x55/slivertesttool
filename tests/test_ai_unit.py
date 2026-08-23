@@ -576,3 +576,172 @@ class TestScenarios:
     def test_run_scenario_dispatch(self):
         with pytest.raises(ValueError):
             scenarios.run_scenario("nope", {})
+
+
+# --------------------------------------------------------------------------- #
+# usage accumulation + async progress events + curated signal dictionary
+# --------------------------------------------------------------------------- #
+class UsageChat:
+    """FakeChat variant that also fills the ``usage`` out-parameter."""
+
+    def __init__(self, replies, in_tok=100, out_tok=20):
+        self.replies = list(replies)
+        self.in_tok, self.out_tok = in_tok, out_tok
+
+    def __call__(self, messages, usage=None, **_kwargs):
+        if usage is not None:
+            usage["input_tokens"] = self.in_tok
+            usage["output_tokens"] = self.out_tok
+        reply = self.replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+
+class TestUsageTracking:
+    def test_merge_usage_skips_empty(self):
+        total: dict = {}
+        base.merge_usage(total, None)
+        base.merge_usage(total, {})
+        assert total == {}
+
+    def test_generate_validated_sums_rounds(self, monkeypatch):
+        monkeypatch.setattr(provider, "chat", UsageChat(
+            ['{"ok": 1}', '{"ok": 2}'], in_tok=10, out_tok=5))
+
+        def build(feedback):
+            return [{"role": "user", "content": "p"}]
+
+        result = base.generate_validated(
+            build_prompt=build, validate=lambda p: [] if p == {"ok": 2} else ["no"])
+        assert result.usage == {"input_tokens": 20, "output_tokens": 10}
+
+    def test_procedure_sums_plan_and_batch_calls(self, monkeypatch):
+        plan_reply = json.dumps({"plans": [
+            {"ref": "VP-01", "precond": {},
+             "goal": {"veh_speed": "120"},
+             "expected": {"warn_flag": "1"}, "notes": ""},
+        ]}, ensure_ascii=False)
+        batch_reply = json.dumps({"procedures": [
+            {"ref": "VP-01", "steps": [
+                {"no": 1, "purpose": "設定", "operation": "120",
+                 "inputs": {"veh_speed": "120"},
+                 "expecteds": {"warn_flag": "1"}, "timing": "即時"}],
+             "missing_variables": []},
+        ]}, ensure_ascii=False)
+        monkeypatch.setattr(provider, "chat",
+                            UsageChat([plan_reply, batch_reply]))
+        result = scenarios.generate_procedure({
+            "viewpoints": [{"ref": "VP-01", "title": "t"}],
+            "source_files": {"engine.c": _SOURCE},
+            "sbs_variables": [["警告フラグ", "warn_flag"]],
+        })
+        assert result.usage == {"input_tokens": 200, "output_tokens": 40}
+
+
+class TestProgressEvents:
+    def test_procedure_emits_phase_events(self, monkeypatch):
+        plan_reply = json.dumps({"plans": [
+            {"ref": "VP-01", "precond": {},
+             "goal": {"veh_speed": "120"},
+             "expected": {"warn_flag": "1"}},
+        ]}, ensure_ascii=False)
+        batch_reply = json.dumps({"procedures": [
+            {"ref": "VP-01", "steps": [
+                {"no": 1, "purpose": "設定", "operation": "120",
+                 "inputs": {"veh_speed": "120"},
+                 "expecteds": {"warn_flag": "1"}, "timing": "即時"}],
+             "missing_variables": []},
+        ]}, ensure_ascii=False)
+        monkeypatch.setattr(provider, "chat",
+                            FakeChat([plan_reply, batch_reply]))
+        events: list[dict] = []
+        scenarios.generate_procedure(
+            {"viewpoints": [{"ref": "VP-01", "title": "t"}],
+             "source_files": {"engine.c": _SOURCE},
+             "sbs_variables": [["警告フラグ", "warn_flag"]]},
+            on_event=events.append)
+        phases = [e["phase"] for e in events]
+        assert phases[0] == "plan"
+        assert "procedures" in phases
+        assert phases[-1] == "done"
+        assert events[-2]["chunk"] == 1 and events[-2]["total_chunks"] == 1
+
+    def test_event_callback_crash_does_not_fail_generation(self, monkeypatch):
+        reply = json.dumps({
+            "module_id": "M", "viewpoints": [
+                {"case_id": "M-01", "title": "t", "kind": "normal",
+                 "expected": "warn_flag=1"}]})
+        monkeypatch.setattr(provider, "chat", FakeChat([reply]))
+
+        def boom(_event):
+            raise RuntimeError("progress sink down")
+
+        result = scenarios.run_scenario("viewpoint", {"doc_text": "x"},
+                                        on_event=boom)
+        assert result.output["module_id"] == "M"
+
+    def test_run_scenario_other_scenarios_ignore_on_event(self, monkeypatch):
+        # Non-procedure scenarios don't accept on_event; run_scenario must
+        # not force it on them.
+        reply = json.dumps({
+            "module_id": "M", "viewpoints": [
+                {"case_id": "M-01", "title": "t", "kind": "normal",
+                 "expected": "warn_flag=1"}]})
+        monkeypatch.setattr(provider, "chat", FakeChat([reply]))
+        result = scenarios.run_scenario("viewpoint", {"doc_text": "x"},
+                                        on_event=lambda e: None)
+        assert result.output["module_id"] == "M"
+
+
+class TestSignalDictSource:
+    def test_dict_overrides_every_automatic_source(self):
+        from app.services.ai import registry as reg_mod
+        reg = reg_mod.build(
+            index={"files": {"engine.c": {"globals": [
+                {"name": "veh_speed", "type": "uint16_t",
+                 "comment": "車速センサ値"}]}}},
+            sbs_variables=[["別の表示", "veh_speed"]],
+            historical_pairs=[["さらに別", "veh_speed"]],
+            signal_dict=[["実車速", "veh_speed", "uint16_t"]],
+        )
+        assert reg.display("veh_speed") == "実車速"
+        assert reg.type_of("veh_speed") == "uint16_t"
+        entry_line = reg.prompt_lines()[0]
+        assert "（実車速）" in entry_line
+
+    def test_dict_pair_without_type_still_wins(self):
+        from app.services.ai import registry as reg_mod
+        reg = reg_mod.build(
+            index={"files": {"a.c": {"globals": [
+                {"name": "veh_speed", "type": "uint16_t",
+                 "comment": "車速"}]}}},
+            signal_dict=[["実車速", "veh_speed"]],
+        )
+        assert reg.display("veh_speed") == "実車速"
+        # The dictionary's missing type falls back to the clang-declared one.
+        assert reg.type_of("veh_speed") == "uint16_t"
+
+    def test_procedure_generation_uses_dict_display(self, monkeypatch):
+        plan_reply = json.dumps({"plans": [
+            {"ref": "VP-01", "precond": {},
+             "goal": {"veh_speed": "120"},
+             "expected": {"warn_flag": "1"}},
+        ]}, ensure_ascii=False)
+        batch_reply = json.dumps({"procedures": [
+            {"ref": "VP-01", "steps": [
+                {"no": 1, "purpose": "設定", "operation": "120",
+                 "inputs": {"veh_speed": "120"},
+                 "expecteds": {"warn_flag": "1"}, "timing": "即時"}],
+             "missing_variables": []},
+        ]}, ensure_ascii=False)
+        monkeypatch.setattr(provider, "chat",
+                            FakeChat([plan_reply, batch_reply]))
+        result = scenarios.generate_procedure({
+            "viewpoints": [{"ref": "VP-01", "title": "t"}],
+            "source_files": {"engine.c": _SOURCE},
+            "sbs_variables": [["警告フラグ", "warn_flag"]],
+            "signal_dict": [["実車速", "veh_speed"]],
+        })
+        header = result.output["procedures"][0]["steps_doc"]["input_signals"][0]
+        assert header == ["実車速", "veh_speed"]

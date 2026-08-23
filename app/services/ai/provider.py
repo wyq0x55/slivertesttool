@@ -28,11 +28,18 @@ def chat(messages: list[dict[str, str]], *,
          temperature: float = 0.2,
          max_tokens: int = 4096,
          json_mode: bool = True,
-         timeout: Optional[int] = None) -> str:
+         timeout: Optional[int] = None,
+         usage: Optional[dict[str, int]] = None) -> str:
     """Call the configured model once and return the assistant text.
 
     ``temperature`` defaults low: test-case generation wants determinism and
     consistency across projects, not creativity.
+
+    ``usage`` is an optional out-parameter: when a dict is passed, the
+    gateway-reported token counts are written into it as
+    ``input_tokens`` / ``output_tokens`` (0 when the gateway omits them).
+    An out-parameter rather than a richer return type keeps the contract
+    a plain ``str`` — test fakes that patch this function stay valid.
     """
     cfg = config.get_ai_config(include_secret=True)
     if not (cfg[config.KEY_API_BASE] and cfg[config.KEY_API_KEY]
@@ -71,9 +78,14 @@ def chat(messages: list[dict[str, str]], *,
     except (urllib.error.URLError, OSError, ValueError) as exc:
         raise ProviderError(f"AI 接口无法访问：{exc}") from exc
     try:
-        return payload["choices"][0]["message"]["content"] or ""
+        content = payload["choices"][0]["message"]["content"] or ""
     except (KeyError, IndexError, TypeError) as exc:
         raise ProviderError(f"AI 响应格式异常：{json.dumps(payload)[:500]}") from exc
+    if usage is not None:
+        reported = payload.get("usage") or {}
+        usage["input_tokens"] = int(reported.get("prompt_tokens") or 0)
+        usage["output_tokens"] = int(reported.get("completion_tokens") or 0)
+    return content
 
 
 _FENCE_RE = re.compile(r"^```[a-zA-Z0-9_-]*\s*|\s*```$")

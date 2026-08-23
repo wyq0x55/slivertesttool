@@ -345,6 +345,41 @@
       const body = (keepLast != null) ? { keep_last: keepLast } : {};
       return request("POST", "/admin/tasks/prune-events", { body });
     },
+
+    // --- AI drafts (test-asset generation, human review) ---------------- //
+    // Drafts are project-scoped and read with project.view; generation and
+    // the approve/reject decisions require item.edit server-side.
+    aiScenarios() { return request("GET", "/ai/scenarios"); },
+    aiGetSettings() { return request("GET", "/ai/settings"); },
+    aiPutSettings(values) { return request("PUT", "/ai/settings", { body: values }); },
+    listAiDrafts(params) { return request("GET", "/ai/drafts", { query: params }); },
+    getAiDraft(id) { return request("GET", `/ai/drafts/${id}`); },
+    createAiDraft(scenario, projectId, payload) {
+      return request("POST", "/ai/drafts",
+        { body: { scenario, project_id: projectId, payload } });
+    },
+    updateAiDraft(id, output) {
+      return request("PUT", `/ai/drafts/${id}`, { body: { output } });
+    },
+    approveAiDraft(id, refs) {
+      var body = refs ? { refs: refs } : {};
+      return request("POST", `/ai/drafts/${id}/approve`, { body: body });
+    },
+    rejectAiDraft(id, note) {
+      return request("POST", `/ai/drafts/${id}/reject`, { body: { note } });
+    },
+    aiUsage(projectId, months) {
+      var q = { project_id: projectId };
+      if (months) q.months = months;
+      return request("GET", "/ai/usage", { query: q });
+    },
+    aiGetSignals(projectId) {
+      return request("GET", "/ai/signals", { query: { project_id: projectId } });
+    },
+    aiPutSignals(projectId, entries) {
+      return request("PUT", "/ai/signals",
+        { body: { project_id: projectId, entries: entries } });
+    },
   };
 
   global.LMApi = LMApi;
