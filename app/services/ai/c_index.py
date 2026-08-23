@@ -24,7 +24,8 @@ Index shape (unchanged from the previous regex backend — the consumers in
     {
       "files": {
         "engine.c": {
-          "globals": [{"name": ..., "type": ..., "array": bool}],
+          "globals": [{"name": ..., "type": ..., "array": bool,
+                       "comment": "declaration comment, if any"}],
           "functions": [{"name": ..., "signature": ...}]
         }
       },
@@ -35,6 +36,7 @@ Index shape (unchanged from the previous regex backend — the consumers in
 
 from __future__ import annotations
 
+import re
 from typing import Any, Iterable, Optional
 
 from clang.cindex import CursorKind, Index, TranslationUnit, TypeKind
@@ -80,7 +82,11 @@ def index_source(files: dict[str, str],
     ideally from the project's ``compile_commands.json`` — the same code can
     yield different visible variables under different target macros.
     """
-    args = list(compile_args or [])
+    # -fparse-all-comments: ECU code documents variables with ordinary /*
+    # ... */ or // comments (not Doxygen); without this flag clang only
+    # attaches doc-style comments and the registry loses its main semantic
+    # source on a cold-start project.
+    args = ["-x", "c", "-fparse-all-comments", *list(compile_args or [])]
     clang_index = Index.create()
     result: dict[str, Any] = {"files": {}, "variables": {}, "functions": {}}
 
@@ -113,6 +119,7 @@ def _collect(root, main_name: str, file_entry: dict, result: dict) -> None:
             name = cursor.spelling
             if not name:
                 continue
+            comment = _clean_comment(cursor.raw_comment)
             entry = {
                 "name": name,
                 "type": cursor.type.spelling,
@@ -120,6 +127,7 @@ def _collect(root, main_name: str, file_entry: dict, result: dict) -> None:
                                               TypeKind.INCOMPLETEARRAY,
                                               TypeKind.VARIABLEARRAY,
                                               TypeKind.DEPENDENTSIZEDARRAY),
+                "comment": comment,
             }
             file_entry["globals"].append(entry)
             # static/extern storage distinction is visible via
@@ -134,6 +142,16 @@ def _collect(root, main_name: str, file_entry: dict, result: dict) -> None:
             file_entry["functions"].append({"name": name,
                                             "signature": signature})
             result["functions"].setdefault(name, signature)
+
+
+def _clean_comment(raw: Optional[str]) -> str:
+    """Normalise a raw clang comment (``/* 車速 */`` / ``// 車速``) to text."""
+    if not raw:
+        return ""
+    text = raw.strip()
+    text = re.sub(r"^/\*+\s*|\s*\*+/$", "", text)
+    text = re.sub(r"^//+\s*", "", text)
+    return text.strip()[:80]
 
 
 def _signature(cursor) -> str:

@@ -170,7 +170,7 @@ class TestValidateSbsAndOthers:
 # --------------------------------------------------------------------------- #
 _SOURCE = """
 #include "engine.h"
-uint16_t veh_speed;
+uint16_t veh_speed; /* 車速センサ値 */
 static uint8_t engine_state = 0;
 const uint32_t odometer_main;
 
@@ -314,6 +314,101 @@ class TestRetryLoop:
 # --------------------------------------------------------------------------- #
 # scenario smoke tests (fake provider, real validators + indexer)
 # --------------------------------------------------------------------------- #
+class TestRegistry:
+    def test_from_index_uses_declaration_comment(self):
+        from app.services.ai import registry as reg_mod
+        reg = reg_mod.build(index=c_index.index_source({"engine.c": _SOURCE}))
+        assert reg.display("veh_speed") == "車速センサ値"
+        assert "veh_speed（車速センサ値）: uint16_t" in reg.prompt_lines()
+
+    def test_history_overrides_comment(self):
+        from app.services.ai import registry as reg_mod
+        reg = reg_mod.build(
+            index=c_index.index_source({"engine.c": _SOURCE}),
+            historical_pairs=[["実车速", "veh_speed"], ["実车速", "veh_speed"],
+                              ["别的", "veh_speed"]])
+        assert reg.display("veh_speed") == "実车速"  # 最频繁者胜
+
+    def test_sbs_text_mining(self):
+        from app.services.ai import registry as reg_mod
+        sbs = 'engine.veh_speed "車速センサ値" : uint16;\nother_var : uint8; // 備考\n'
+        reg = reg_mod.build(
+            index=c_index.index_source({"engine.c": _SOURCE}),
+            sbs_text=sbs,
+            sbs_variables=[["警告出力", "warn_flag"]])
+        assert "veh_speed" in reg
+        assert "warn_flag" in reg
+        assert reg.display("warn_flag") == "警告出力"
+
+    def test_viewpoint_seeds_come_through_scenario(self, monkeypatch):
+        # covered end-to-end below; here just the pair normalisation
+        from app.services.ai.scenarios import _viewpoint_seeds
+        seeds = _viewpoint_seeds([
+            {"variables": [["車速", "veh_speed"], "plain_name"]},
+        ])
+        assert seeds == [["veh_speed", "車速"], "plain_name"]
+
+    def test_resolve_ambiguity_raises(self):
+        from app.services.ai import registry as reg_mod
+        reg = reg_mod.Registry()
+        reg.add("a.speed", "速度", source="t", prio=0)
+        reg.add("b.speed", "速度", source="t", prio=0)
+        with pytest.raises(ValueError):
+            reg.resolve("speed")
+
+    def test_resolve_by_display_and_tail(self):
+        from app.services.ai import registry as reg_mod
+        reg = reg_mod.Registry()
+        reg.add("engine.veh_speed", "車速", source="t", prio=0)
+        assert reg.resolve("engine.veh_speed") == "engine.veh_speed"
+        assert reg.resolve("車速") == "engine.veh_speed"
+        assert reg.resolve("veh_speed") == "engine.veh_speed"
+
+
+class TestSparseExpansion:
+    def _registry(self):
+        from app.services.ai import registry as reg_mod
+        reg = reg_mod.Registry()
+        reg.add("veh_speed", "車速センサ値", source="t", prio=0, type_="uint16_t")
+        reg.add("warn_flag", "警告フラグ", source="t", prio=0, type_="uint8_t")
+        return reg
+
+    def test_expand_backfills_display_and_blanks(self):
+        from app.services.ai import sparse
+        sparse_doc = {"steps": [
+            {"no": 1, "purpose": "设定车速", "operation": "120",
+             "inputs": {"veh_speed": "120"}, "timing": "即時"},
+            {"no": 2, "purpose": "确认警告", "operation": "確認",
+             "expecteds": {"warn_flag": "1"}, "timing": "即時"},
+        ]}
+        doc, problems = sparse.expand_procedure(sparse_doc, self._registry())
+        assert problems == []
+        assert doc["input_signals"] == [["車速センサ値", "veh_speed"]]
+        assert doc["expected_signals"] == [["警告フラグ", "warn_flag"]]
+        assert doc["steps"][0]["inputs"] == ["120"]
+        assert doc["steps"][0].get("expecteds") is None  # nothing expected yet
+        # Step 2 keeps the input column as blank (unchanged signal).
+        assert doc["steps"][1].get("inputs") is None
+        assert doc["steps"][1]["expecteds"] == ["1"]
+
+    def test_unknown_name_rejected(self):
+        from app.services.ai import sparse
+        doc, problems = sparse.expand_procedure(
+            {"steps": [{"no": 1, "inputs": {"ghost": "1"}}]},
+            self._registry())
+        assert doc == {}
+        assert any("ghost" in p for p in problems)
+
+    def test_allowed_missing_skipped(self):
+        from app.services.ai import sparse
+        doc, problems = sparse.expand_procedure(
+            {"steps": [{"no": 1, "inputs": {"veh_speed": "1",
+                                            "later_var": "2"}}]},
+            self._registry(), allowed_missing={"later_var"})
+        assert problems == []
+        assert doc["input_signals"] == [["車速センサ値", "veh_speed"]]
+
+
 class TestScenarios:
     def test_viewpoint(self, monkeypatch):
         reply = json.dumps({
@@ -338,42 +433,99 @@ class TestScenarios:
         with pytest.raises(ValueError):
             scenarios.generate_viewpoint({"doc_text": "  "})
 
-    def test_procedure_uses_source_index_for_names(self, monkeypatch):
-        # The model tries to sneak in an invented signal; the validator must
-        # reject round 1 and accept round 2 (real name + declared missing).
-        bad = json.dumps({
-            "steps_doc": _steps_doc(input_signals=[["车速", "ghost_speed"]]),
-            "missing_variables": [],
-        })
-        good = json.dumps({
-            "steps_doc": _steps_doc(),
-            "missing_variables": [
-                {"name": "warn_flag", "type": "uint8", "why": "SBS 未登记"}],
-        }, ensure_ascii=False)
-        # good uses veh_speed (in source) for input and warn_flag (NOT in
-        # source, declared missing) for expected — accepted by allow_missing.
-        monkeypatch.setattr(provider, "chat", FakeChat([bad, good]))
+    def test_procedure_two_phase_with_targeted_retry(self, monkeypatch):
+        # Call 1 (plan): valid mapping. Call 2 (batch): one item with an
+        # invented signal. Call 3 (batch retry of that item only): good.
+        plan_reply = json.dumps({"plans": [
+            {"ref": "VP-01", "precond": {},
+             "goal": {"veh_speed": "120"},
+             "expected": {"warn_flag": "1"}, "notes": ""},
+        ]}, ensure_ascii=False)
+        bad_batch = json.dumps({"procedures": [
+            {"ref": "VP-01", "steps": [
+                {"no": 1, "purpose": "設定", "operation": "120",
+                 "inputs": {"ghost_speed": "120"},
+                 "expecteds": {"warn_flag": "1"}, "timing": "即時"}],
+             "missing_variables": []},
+        ]}, ensure_ascii=False)
+        good_batch = json.dumps({"procedures": [
+            {"ref": "VP-01", "steps": [
+                {"no": 1, "purpose": "設定", "operation": "120",
+                 "inputs": {"veh_speed": "120"},
+                 "expecteds": {"warn_flag": "1"}, "timing": "即時"}],
+             "missing_variables": []},
+        ]}, ensure_ascii=False)
+        fake = FakeChat([plan_reply, bad_batch, good_batch])
+        monkeypatch.setattr(provider, "chat", fake)
         result = scenarios.generate_procedure({
-            "viewpoint": {"title": "超速警告", "variables": ["veh_speed"],
-                          "condition": "veh_speed > 100", "expected": "warn=1"},
+            "viewpoints": [{"ref": "VP-01", "case_id": "MDL100-01",
+                            "title": "超速警告·正例",
+                            "condition": "veh_speed > 100",
+                            "expected": "warn_flag = 1",
+                            "variables": ["veh_speed"]}],
             "source_files": {"engine.c": _SOURCE},
-            "sbs_variables": [],
-            "lib_functions": [],
+            "sbs_variables": [["警告フラグ", "warn_flag"]],
         })
-        assert result.rounds == 2
-        assert result.output["steps_doc"]["steps"][0]["no"] == 1
+        assert result.output["failed_refs"] == []
+        proc = result.output["procedures"][0]
+        assert proc["ref"] == "VP-01"
+        assert proc["steps_doc"]["input_signals"] == [["車速センサ値", "veh_speed"]]
+        assert proc["steps_doc"]["steps"][0]["inputs"] == ["120"]
+        # Three LLM calls: plan, failed round, targeted retry round.
+        assert len(fake.calls) == 3
+        # The retry prompt carries only the failed item's feedback.
+        assert any("ghost_speed" in m["content"] for m in fake.calls[2])
 
-    def test_procedure_undeclared_unknown_rejected(self, monkeypatch):
-        bad = json.dumps({
-            "steps_doc": _steps_doc(input_signals=[["车速", "ghost_speed"]]),
-            "missing_variables": [],
+    def test_procedure_persists_failed_refs_instead_of_raising(self, monkeypatch):
+        plan_reply = json.dumps({"plans": [
+            {"ref": "VP-01", "goal": {"veh_speed": "120"},
+             "expected": {"warn_flag": "1"}},
+        ]}, ensure_ascii=False)
+        bad_batch = json.dumps({"procedures": [
+            {"ref": "VP-01", "steps": [
+                {"no": 1, "inputs": {"ghost_speed": "1"}}],
+             "missing_variables": []},
+        ]}, ensure_ascii=False)
+        monkeypatch.setattr(provider, "chat",
+                            FakeChat([plan_reply, bad_batch, bad_batch,
+                                      bad_batch]))
+        result = scenarios.generate_procedure({
+            "viewpoints": [{"ref": "VP-01", "title": "t"}],
+            "source_files": {"engine.c": _SOURCE},
+            "sbs_variables": [["警告フラグ", "warn_flag"]],
         })
-        monkeypatch.setattr(provider, "chat", FakeChat([bad] * 3))
-        with pytest.raises(base.GenerationError):
+        assert result.output["procedures"] == []
+        assert result.output["failed_refs"] == ["VP-01"]
+
+    def test_procedure_requires_signals(self):
+        with pytest.raises(ValueError):
             scenarios.generate_procedure({
-                "viewpoint": {"title": "t"},
-                "source_files": {"engine.c": _SOURCE},
+                "viewpoints": [{"ref": "1", "title": "t"}],
+                "source_files": {},
             })
+
+    def test_procedure_cross_check_catches_untested_plan_var(self, monkeypatch):
+        # The plan expects warn_flag, but the procedure never checks it —
+        # "漂亮但没测到点上" must be caught by the cross-check, retried, then
+        # reported in failed_refs when still missing.
+        plan_reply = json.dumps({"plans": [
+            {"ref": "VP-01", "goal": {"veh_speed": "120"},
+             "expected": {"warn_flag": "1"}},
+        ]}, ensure_ascii=False)
+        no_check = json.dumps({"procedures": [
+            {"ref": "VP-01", "steps": [
+                {"no": 1, "purpose": "設定", "operation": "120",
+                 "inputs": {"veh_speed": "120"}, "timing": "即時"}],
+             "missing_variables": []},
+        ]}, ensure_ascii=False)
+        monkeypatch.setattr(provider, "chat",
+                            FakeChat([plan_reply] + [no_check] * 3))
+        result = scenarios.generate_procedure({
+            "viewpoints": [{"ref": "VP-01", "title": "t"}],
+            "source_files": {"engine.c": _SOURCE},
+            "sbs_variables": [["警告フラグ", "warn_flag"]],
+        })
+        assert result.output["failed_refs"] == ["VP-01"]
 
     def test_sbs(self, monkeypatch):
         reply = json.dumps({

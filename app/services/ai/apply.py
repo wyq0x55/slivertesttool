@@ -109,6 +109,44 @@ def _apply_viewpoint(draft, reviewer, project, output) -> dict[str, Any]:
 
 
 def _apply_procedure(draft, reviewer, project, output) -> dict[str, Any]:
+    payload = _input_payload(draft)
+    # ref -> item_id, from the viewpoints the batch was generated for.
+    items_map: dict[str, int] = {}
+    for vp in payload.get("viewpoints") or []:
+        if isinstance(vp, dict) and vp.get("item_id"):
+            ref = str(vp.get("ref") or vp.get("case_id") or "")
+            if ref:
+                items_map[ref] = int(vp["item_id"])
+
+    procedures = output.get("procedures") if isinstance(output, dict) else None
+    if isinstance(procedures, list) and procedures:
+        applied: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = []
+        all_missing: list[dict[str, Any]] = []
+        for entry in procedures:
+            ref = str(entry.get("ref") or "")
+            steps_doc = entry.get("steps_doc")
+            item = db.session.get(TestItemRow, items_map.get(ref))
+            if (item is None or item.project_id != project.id
+                    or item.deleted_at is not None or not isinstance(steps_doc, dict)):
+                skipped.append({"ref": ref, "reason": "目标行不存在或无 steps_doc"})
+                continue
+            items_service.update_item(
+                reviewer, project, item, item.version,
+                {"steps": json.dumps(steps_doc, ensure_ascii=False)},
+                commit=False)
+            applied.append({"ref": ref, "item_id": item.id})
+            all_missing.extend(entry.get("missing_variables") or [])
+        db.session.commit()
+        result: dict[str, Any] = {"applied": applied, "skipped": skipped,
+                                  "failed_refs": output.get("failed_refs") or []}
+        if all_missing:
+            result["missing_variables"] = all_missing
+            result["note"] = ("missing_variables 请先走 sbs 场景补登记，"
+                              "否则对应手顺无法执行")
+        return result
+
+    # Legacy single-procedure output ({"steps_doc": ...}).
     item = _item_or_raise(draft, project)
     steps_doc = output.get("steps_doc")
     if not isinstance(steps_doc, dict):

@@ -66,35 +66,82 @@ def viewpoint_messages(doc_text: str, *, module_hint: str = "",
 
 
 # --------------------------------------------------------------------------- #
-# procedure：观点 + 源码上下文 → 测试手顺 steps JSON
+# procedure：两阶段 —— 规划（观点 → 变量/值映射）→ 批量手顺（稀疏格式）
+#
+# 两个 prompt 的固定内容（源码上下文、注册表清单、lib 清单）都放在 user
+# 消息的最前面且逐字节稳定：同一模块的分块之间、重试轮次之间因此共享
+# 完全相同的长前缀，能命中厂商的 prompt caching（重发不冲突，前缀一致
+# 才命中）。
 # --------------------------------------------------------------------------- #
-def procedure_messages(viewpoint: dict[str, Any], *,
-                       source_context: str,
-                       variable_list: list[str],
-                       lib_functions: list[dict[str, Any]] | None,
-                       constant_names: list[str] | None,
-                       example_steps: dict[str, Any] | None,
-                       feedback: list[str] | None = None) -> list[dict[str, str]]:
-    user = (
-        "根据测试观点和源码上下文，编写一条 Silver 测试手顺。\n"
-        "手顺 JSON 结构（存储格式）：\n"
-        '{"input_signals": [["表示名","变量路径"], ...],'
-        ' "expected_signals": [["表示名","变量路径"], ...],'
-        ' "steps": [{"no": 1, "purpose": "手順目的", "operation": "操作说明",'
-        ' "inputs": ["单元格值", ...], "expecteds": ["期待值", ...],'
-        ' "timing": "確認タイミング"}]}\n'
-        "要求：变量路径只能取自「已知变量清单」；值单元格可写字面量或「常量名」"
-        "（常量名必须取自「常量清单」）；能复用 lib 子程序的步骤用 "
-        '"subroutine" 字段引用。\n'
-        "输出 JSON：\n"
-        '{"steps_doc": <上述结构的手顺>, "missing_variables": '
-        '[{"name":"不在清单中但你认为需要的变量","type":"类型","why":"用途"}]}'
-        + _section("测试观点", viewpoint)
-        + _section("源码上下文", source_context)
-        + _section("已知变量清单（SBS 已登记 + 源码索引）", variable_list)
+def _fixed_prefix(*, source_context: str, registry_lines: list[str],
+                  lib_functions: list[dict[str, Any]] | None) -> str:
+    return (
+        _section("源码上下文", source_context)
+        + _section("信号注册表（路径（表示名）: 类型；输出只能用这些路径作键）",
+                   registry_lines)
         + _section("可复用 lib 子程序", lib_functions)
+    )
+
+
+def plan_messages(viewpoints: list[dict[str, Any]], *,
+                  source_context: str,
+                  registry_lines: list[str],
+                  lib_functions: list[dict[str, Any]] | None,
+                  feedback: list[str] | None = None) -> list[dict[str, str]]:
+    user = (
+        "第一阶段·测试规划：把每个测试观点映射为具体的变量与目标值。\n"
+        "观点描述的是目标状态（某条件下某变量会变成什么值），"
+        "你要找出：达成前置条件需要哪些变量是什么值、"
+        "驱动条件是什么、期待哪些变量变成什么值。\n"
+        "变量只能取自信号注册表中的路径。\n"
+        "输出 JSON：\n"
+        '{"plans": [{"ref": "观点的case_id或序号",'
+        ' "precond": {"路径": "值"},'
+        ' "goal": {"路径": "值"},'
+        ' "expected": {"路径": "值"},'
+        ' "notes": "映射说明或风险"}]}'
+        + _fixed_prefix(source_context=source_context,
+                        registry_lines=registry_lines,
+                        lib_functions=lib_functions)
+        + _section("测试观点（本批全部）", viewpoints)
+        + _feedback_block(feedback or [])
+    )
+    return [{"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user}]
+
+
+def procedure_batch_messages(plans: list[dict[str, Any]], *,
+                             source_context: str,
+                             registry_lines: list[str],
+                             lib_functions: list[dict[str, Any]] | None,
+                             constant_names: list[str] | None,
+                             example_sparse: dict[str, Any] | None,
+                             feedback: list[str] | None = None) -> list[dict[str, str]]:
+    user = (
+        "第二阶段·手顺编写：按下面每个测试规划（plan）编写 Silver 测试手顺。\n"
+        "手顺用稀疏格式：每一步只写发生变化的信号，"
+        'inputs/expecteds 是 {"路径": "值"} 对象（路径必须取自信号注册表），'
+        "没有变化的信号一律省略（禁止写占位符）。值可写字面量或常量名"
+        "（常量名必须取自常量清单）。能复用 lib 子程序的步骤用 "
+        '"subroutine" 字段。\n'
+        "硬性要求：plan 的 precond/goal 中每个路径必须出现在某一步的 "
+        "inputs 中（或申报进 missing_variables）；plan 的 expected 中每个"
+        "路径必须出现在某一步的 expecteds 中（或同样申报）。\n"
+        "输出 JSON：\n"
+        '{"procedures": [{"ref": "对应plan的ref",'
+        ' "steps": [{"no": 1, "purpose": "手順目的",'
+        ' "operation": "操作说明",'
+        ' "inputs": {"路径": "值"},'
+        ' "expecteds": {"路径": "值"},'
+        ' "timing": "確認タイミング"}],'
+        ' "missing_variables": [{"name": "注册表没有但需要的变量",'
+        ' "type": "类型", "why": "用途"}]}]}'
+        + _fixed_prefix(source_context=source_context,
+                        registry_lines=registry_lines,
+                        lib_functions=lib_functions)
         + _section("常量清单", constant_names)
-        + _section("范例手顺（书写风格参考）", example_steps)
+        + _section("范例（稀疏格式书写风格参考）", example_sparse)
+        + _section("测试规划（本批全部，逐个生成手顺）", plans)
         + _feedback_block(feedback or [])
     )
     return [{"role": "system", "content": SYSTEM_PROMPT},

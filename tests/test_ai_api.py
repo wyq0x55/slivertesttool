@@ -19,6 +19,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.services.ai import provider  # noqa: E402
 
 
+class FakeSequence:
+    """Returns queued replies in order (provider.chat stand-in)."""
+
+    def __init__(self, replies):
+        self.replies = list(replies)
+
+    def __call__(self, *args, **kwargs):
+        return self.replies.pop(0)
+
+
 def _login(client, user_id):
     with client.session_transaction() as sess:
         sess["lm_user_id"] = user_id
@@ -197,27 +207,27 @@ class TestApproveProcedure:
             item_id = item.id
             db.session.commit()
 
-        good_output = {
-            "steps_doc": {
-                "input_signals": [["车速", "veh_speed"]],
-                "expected_signals": [["警告", "warn_flag"]],
-                "steps": [{"no": 1, "purpose": "设定车速", "operation": "120",
-                           "inputs": ["120"], "expecteds": ["1"],
-                           "timing": "即時"}],
-            },
-            "missing_variables": [],
-        }
+        plan_reply = json.dumps({"plans": [
+            {"ref": "MDL100-01", "precond": {},
+             "goal": {"veh_speed": "120"},
+             "expected": {"warn_flag": "1"}, "notes": ""},
+        ]}, ensure_ascii=False)
+        batch_reply = json.dumps({"procedures": [
+            {"ref": "MDL100-01", "steps": [
+                {"no": 1, "purpose": "設定", "operation": "120",
+                 "inputs": {"veh_speed": "120"},
+                 "expecteds": {"warn_flag": "1"}, "timing": "即時"}],
+             "missing_variables": []},
+        ]}, ensure_ascii=False)
         monkeypatch.setattr(
-            provider, "chat",
-            lambda *a, **k: json.dumps(good_output, ensure_ascii=False))
+            provider, "chat", FakeSequence([plan_reply, batch_reply]))
         resp = client.post("/api/v1/ai/drafts", headers=headers, json={
             "scenario": "procedure", "project_id": project_env,
-            "payload": {"viewpoint": {"title": "超速警告·正例",
-                                      "condition": "veh_speed > 100",
-                                      "expected": "warn_flag = 1"},
-                        "item_id": item_id,
-                        "source_files": {"engine.c": "uint16_t veh_speed;"},
-                        "sbs_variables": ["veh_speed", "warn_flag"]},
+            "payload": {
+                "viewpoints": [{"ref": "MDL100-01", "title": "超速警告·正例",
+                                "item_id": item_id}],
+                "source_files": {"engine.c": "uint16_t veh_speed; /* 車速 */"},
+                "sbs_variables": [["警告フラグ", "warn_flag"]]},
         })
         assert resp.status_code == 201, resp.get_data(as_text=True)
         draft_id = resp.get_json()["data"]["id"]
@@ -225,7 +235,8 @@ class TestApproveProcedure:
         resp = client.post(f"/api/v1/ai/drafts/{draft_id}/approve",
                            headers=headers)
         assert resp.status_code == 200, resp.get_data(as_text=True)
-        assert resp.get_json()["data"]["applied"]["item_id"] == item_id
+        applied = resp.get_json()["data"]["applied"]
+        assert applied["applied"][0]["item_id"] == item_id
 
         with app_ctx.app_context():
             from app.extensions import db as _db
