@@ -80,6 +80,11 @@ class AiDraft(db.Model):
             "project_id": self.project_id,
             "scenario": self.scenario,
             "status": self.status,
+            # The summary (list view) omits payloads but keeps a truncated
+            # error so a failed generation is visible without fetching each
+            # draft — an error the reviewer must open one-by-one to see is an
+            # error nobody sees.
+            "error": (self.error[:200] + "…") if len(self.error) > 200 else (self.error or None),
             "created_by": self.created_by,
             "created_at": _utcnow_iso(self.created_at),
             "reviewed_by": self.reviewed_by,
@@ -90,7 +95,6 @@ class AiDraft(db.Model):
             entry["input"] = _load(self.input_json)
             entry["output"] = _load(self.output_json)
             entry["meta"] = _load(self.meta_json)
-            entry["error"] = self.error or None
             entry["applied_result"] = _load(self.applied_result_json)
         return entry
 

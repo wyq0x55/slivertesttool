@@ -231,7 +231,9 @@ class TestApproveProcedure:
             from app.extensions import db as _db
             from app.models import TestItemRow
             row = _db.session.get(TestItemRow, item_id)
-            steps = json.loads(row.test_steps)
+            # Test-Matrix steps live in custom_values["steps"] (the provisioned
+            # field), not the legacy test_steps column.
+            steps = json.loads(row.get_field("steps"))
             assert steps["input_signals"][0][1] == "veh_speed"
 
         # Approving twice is refused (already processed).
