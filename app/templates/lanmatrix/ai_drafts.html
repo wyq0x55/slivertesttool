@@ -1,0 +1,161 @@
+{% extends "lanmatrix/base_lm.html" %}
+{% from "lanmatrix/_crumb.html" import project_crumb %}
+{% block title %}AI 草稿{% endblock %}
+{% block crumb %}{{ project_crumb(project_id, "AI 草稿") }}{% endblock %}
+{% block content %}
+<div class="content lm-ai-drafts" data-project="{{ project_id }}">
+  <div class="page-head">
+    <div class="ttl">
+      <h1>AI 草稿</h1>
+      <p>测试资产生成（观点 / 手顺 / SBS / lib / 失败分析）——AI 只出草稿，人工在这里审核落库</p>
+    </div>
+    <div class="head-actions">
+      <button class="btn" id="lm-ai-refresh" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/></svg>
+        刷新
+      </button>
+      <button class="btn primary" id="lm-ai-open-gen" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8L20 10l-5 3.6 1.7 6L12 16l-4.7 3.6L9 13.6 4 10l6.1-1.2z"/></svg>
+        生成草稿
+      </button>
+    </div>
+  </div>
+
+  {# Generation panel. Payload is raw JSON on purpose: the five scenarios
+     evolve with the pipeline and a hand-built form per scenario would lag
+     behind within weeks. The JSON contract lives in docs/ai-integration.md. #}
+  <div id="lm-ai-gen-panel" class="addbar" hidden>
+    <div class="mforms">
+      <div class="mform-cap">生成草稿</div>
+      <div class="row wrap">
+        <label class="uplbl">场景 <select id="lm-ai-gen-scenario" class="selbox">
+          <option value="viewpoint">观点抽取（设计书 → 测试观点）</option>
+          <option value="procedure">手顺生成（观点 + 源码 → steps）</option>
+          <option value="sbs">SBS 构筑（源码 → SBS 增量 / 补变量）</option>
+          <option value="lib">lib 编写（人工提议 + 被标注手顺）</option>
+          <option value="failure">失败分析（日志 + 观点 → issue 草稿）</option>
+        </select></label>
+        <span class="muted" style="align-self:center">生成走 机器校验 + 重试，草稿进入待审</span>
+      </div>
+      <textarea id="lm-ai-gen-payload" class="term" rows="10"
+        placeholder='payload（JSON），各场景字段见 docs/ai-integration.md，例如 procedure：&#10;{"viewpoints": [{"ref": "MDL100-01", "title": "超速警告·正例", "item_id": 12}],&#10; "source_files": {"engine.c": "..."}, "sbs_variables": [["警告フラグ", "warn_flag"]]}'></textarea>
+      <div class="row" style="margin-top:10px">
+        <button class="btn primary" id="lm-ai-gen-submit" type="button">提交生成</button>
+        <span id="lm-ai-gen-status" class="muted"></span>
+      </div>
+    </div>
+  </div>
+
+  {% if user.is_system_admin or user.is_bootstrap_admin %}
+  {# LLM gateway settings. Admin-only; the key never echoes back (masked), and
+     a masked/empty value on submit leaves the stored key untouched. #}
+  <details id="lm-ai-settings" class="panel" style="margin-top:16px">
+    <summary style="cursor:pointer">LLM 网关设置（系统管理员）</summary>
+    <div class="row wrap" style="margin-top:12px">
+      <label class="uplbl">API Base <input id="lm-ai-set-base" class="inbox" placeholder="https://llm-gateway.example.com/v1"></label>
+      <label class="uplbl">API Key <input id="lm-ai-set-key" class="inbox" type="password" placeholder="***set***（留空保持不变）"></label>
+      <label class="uplbl">模型 <input id="lm-ai-set-model" class="inbox" placeholder="glm-4.7"></label>
+      <label class="uplbl">超时(秒) <input id="lm-ai-set-timeout" class="inbox" type="number" min="10" max="600"></label>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn small" id="lm-ai-set-save" type="button">保存设置</button>
+      <span id="lm-ai-set-status" class="muted"></span>
+    </div>
+  </details>
+  {% endif %}
+
+  <div class="toolbar" style="margin-top:16px">
+    <select id="lm-ai-f-scenario" class="selbox" title="按场景筛选">
+      <option value="">全部场景</option>
+      <option value="viewpoint">观点抽取</option>
+      <option value="procedure">手顺生成</option>
+      <option value="sbs">SBS 构筑</option>
+      <option value="lib">lib 编写</option>
+      <option value="failure">失败分析</option>
+    </select>
+    <div class="segmented" id="lm-ai-f-seg" role="tablist">
+      <button type="button" class="on" data-status="">全部</button>
+      <button type="button" data-status="pending">待审</button>
+      <button type="button" data-status="approved">已通过</button>
+      <button type="button" data-status="rejected">已驳回</button>
+      <button type="button" data-status="error">生成失败</button>
+    </div>
+  </div>
+
+  <div class="tablecard">
+    <div style="overflow-x:auto">
+      <table class="dt">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>场景</th>
+            <th>状态</th>
+            <th>校验轮次</th>
+            <th>创建时间</th>
+            <th>错误 / 说明</th>
+            <th style="width:1%"></th>
+          </tr>
+        </thead>
+        <tbody id="lm-ai-rows">
+          <tr><td colspan="7" class="muted">加载中…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="state" id="lm-ai-empty" hidden style="margin-top:16px">
+    <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8L20 10l-5 3.6 1.7 6L12 16l-4.7 3.6L9 13.6 4 10l6.1-1.2z"/></svg></span>
+    <h3>没有符合条件的草稿</h3>
+    <p>调整筛选条件，或点击「生成草稿」创建一个。</p>
+  </div>
+</div>
+
+<section id="lm-ai-detail" class="task-detail" hidden>
+  <div class="page-head">
+    <div class="ttl">
+      <button class="btn small ghost" id="lm-ai-d-close" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+        返回列表
+      </button>
+      <div class="dtitle">
+        <h1 id="lm-ai-d-title">草稿</h1>
+        <span class="pill st-queued" id="lm-ai-d-hstatus"><span class="dot"></span></span>
+      </div>
+      <p id="lm-ai-d-sub"></p>
+    </div>
+    <div class="head-actions">
+      <button class="btn small danger" id="lm-ai-d-reject" type="button">驳回…</button>
+      <button class="btn small primary" id="lm-ai-d-approve" type="button">通过并落库</button>
+    </div>
+  </div>
+
+  <div class="detail-grid">
+    <div class="panel">
+      <h4>概览</h4>
+      <dl class="meta">
+        <dt>场景</dt><dd id="lm-ai-d-scenario"></dd>
+        <dt>状态</dt><dd><span class="pill st-queued" id="lm-ai-d-status"><span class="dot"></span></span></dd>
+        <dt>模型</dt><dd id="lm-ai-d-model"></dd>
+        <dt>生成轮次</dt><dd id="lm-ai-d-rounds"></dd>
+        <dt>审核人 / 时间</dt><dd id="lm-ai-d-review"></dd>
+        <dt>落库结果</dt><dd id="lm-ai-d-applied"></dd>
+        <dt>错误</dt><dd id="lm-ai-d-error"></dd>
+      </dl>
+      <h4 style="margin-top:18px">逐轮校验日志 <span class="submuted">· 机器校验记录</span></h4>
+      <pre id="lm-ai-d-log" class="term" style="max-height:260px"></pre>
+    </div>
+    <div class="panel">
+      <div class="panel-bar">
+        <h4 style="margin:0">生成输出 <span class="submuted">· 审核内容</span></h4>
+      </div>
+      <pre id="lm-ai-d-output" class="term"></pre>
+      <div class="panel-bar" style="margin-top:8px">
+        <h4 style="margin:0">生成输入 <span class="submuted">· 当时的上下文</span></h4>
+      </div>
+      <pre id="lm-ai-d-input" class="term"></pre>
+    </div>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/lanmatrix/ai_drafts.js') }}"></script>
+{% endblock %}
