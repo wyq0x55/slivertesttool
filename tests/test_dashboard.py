@@ -403,8 +403,13 @@ class TestSnapshot:
         from app.services.lanmatrix import dashboard_service as ds
         project, _ = seeded
         snap = ds.snapshot(project)
+        # default_reviewer_* / review_routes are top-level on purpose: the
+        # policy panel needs server-resolved names, and burying them inside
+        # review_policy (a verbatim policy dump) would conflate the two.
         assert set(snap) == {"project", "summary", "review", "trend",
-                             "by_version", "review_policy"}
+                             "by_version", "review_policy",
+                             "default_reviewer_id", "default_reviewer_name",
+                             "review_routes"}
 
     def test_review_policy_defaults_are_carried(self, seeded):
         from app.services.lanmatrix import dashboard_service as ds
@@ -657,8 +662,9 @@ class TestUntestableWriteBack:
 
     def test_approving_twice_does_not_double_count(self, seeded):
         # decide() is reachable from the queue, the project view and the bulk
-        # endpoint. A second call must be a no-op, not a second data point in
-        # every chart the case appears in.
+        # endpoint. A second call is refused (the row is no longer pending),
+        # so it can never become a second data point in every chart the case
+        # appears in.
         from app.extensions import db
         from app.services.lanmatrix import exemption_service as es
         project, user = seeded
@@ -666,7 +672,9 @@ class TestUntestableWriteBack:
 
         es.decide(project, row, True, actor_id=user.id, note="ok")
         db.session.commit()
-        es.decide(project, row, True, actor_id=user.id, note="again")
+
+        with pytest.raises(es.ExemptionError):
+            es.decide(project, row, True, actor_id=user.id, note="again")
         db.session.commit()
 
         assert len(self._records(row)) == 1
