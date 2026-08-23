@@ -197,6 +197,34 @@ class TestCIndex:
         names = [g["name"] for g in index["files"]["engine.c"]["globals"]]
         assert "veh_speed" in names
 
+    def test_block_locals_are_not_globals(self):
+        # A local declared flush-left inside a function body is invisible to
+        # the AST's file scope — the exact case the old regex backend got
+        # wrong and let into prompts as a settable "global".
+        src = "int real_global;\nvoid f(void)\n{\nlocal_var = 1;\nint flush_local;\n}\n"
+        index = c_index.index_source({"a.c": src})
+        assert "real_global" in index["variables"]
+        assert "local_var" not in index["variables"]
+        assert "flush_local" not in index["variables"]
+
+    def test_multi_declarator_line(self):
+        # ``int a, b;`` — both names must appear (regex backends typically
+        # catch only the first).
+        index = c_index.index_source({"a.c": "int a, b;\n"})
+        assert {"a", "b"} <= set(index["variables"])
+
+    def test_ifdef_resolved_by_compile_args(self):
+        src = (
+            "#ifdef TARGET_A\nuint8_t var_a;\n#endif\n"
+            "#ifdef TARGET_B\nuint8_t var_b;\n#endif\n"
+        )
+        only_a = c_index.index_source({"a.c": src}, compile_args=["-DTARGET_A"])
+        assert "var_a" in only_a["variables"]
+        assert "var_b" not in only_a["variables"]
+        both = c_index.index_source({"a.c": src},
+                                    compile_args=["-DTARGET_A", "-DTARGET_B"])
+        assert {"var_a", "var_b"} <= set(both["variables"])
+
     def test_inventory_lines(self):
         index = c_index.index_source({"engine.c": _SOURCE})
         inv = c_index.variable_inventory(index)

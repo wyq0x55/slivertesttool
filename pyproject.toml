@@ -19,6 +19,8 @@ dependencies = [
     # --- PostgreSQL (required) ---
     "psycopg2-binary>=2.9,<3.0",
     "peewee>=3.17,<4.0",
+    # --- AI agent (C source AST indexing; wheel bundles the native clang lib) ---
+    "libclang>=16,<19",
     # --- Real-time collaboration (pinned to vendored/verified wheels) ---
     "pycrdt==0.14.1",
     "pycrdt-websocket==0.16.4",

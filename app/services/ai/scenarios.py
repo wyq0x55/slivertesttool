@@ -54,9 +54,11 @@ def generate_procedure(payload: dict[str, Any]) -> base.GenerationResult:
     sbs_variables: list[str] = list(payload.get("sbs_variables") or [])
 
     # Deterministic layer first: the variable inventory the model may use is
-    # extracted from the actual source, so inventing names is structurally
-    # impossible to sneak past the validator.
-    index = c_index.index_source(source_files)
+    # extracted from the actual source (clang AST, with the project's compile
+    # args so #ifdef matches the real build), so inventing names is
+    # structurally impossible to sneak past the validator.
+    index = c_index.index_source(source_files,
+                                 compile_args=payload.get("compile_args"))
     known_paths = set(sbs_variables) | set(index["variables"])
     lib_functions = payload.get("lib_functions") or []
     known_subs = {f["name"] for f in lib_functions if isinstance(f, dict) and f.get("name")}
@@ -113,7 +115,8 @@ def generate_sbs(payload: dict[str, Any]) -> base.GenerationResult:
     source_files: dict[str, str] = payload.get("source_files") or {}
     if not source_files:
         raise ValueError("source_files（源码文件）不能为空")
-    index = c_index.index_source(source_files)
+    index = c_index.index_source(source_files,
+                                 compile_args=payload.get("compile_args"))
     known_variables = set(index["variables"])
     per_file_budget = max(1, _MAX_SOURCE_CHARS // len(source_files))
     source_context = "\n\n".join(

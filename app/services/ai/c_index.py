@@ -1,14 +1,25 @@
-"""Lightweight C source indexer — the deterministic layer under procedure/SBS generation.
+"""C source indexer (clang AST) — the deterministic layer under procedure/SBS generation.
 
 LLM prompts must only ever contain variable names that really exist, so the
 module-scoped variable / function inventory is extracted by *code*, not by the
-model. A libclang binding would be more precise, but adds a heavy binary
-dependency this offline platform must not take; the regex pass below handles
-the common embedded-C subset (file-scope declarations, statics, functions,
-structs) well enough to seed prompts, and anything it misses is caught later
-by the Silver build / dry-run validation loop.
+model. Parsing uses libclang (``pip install libclang``, native library
+bundled), which gives the preprocessed, scope-aware truth:
 
-Index shape::
+* ``#ifdef`` blocks are resolved with the supplied compile args, so the index
+  reflects the build configuration the code is actually compiled with;
+* file-scope declarations are told apart from block locals by the AST, not by
+  indentation heuristics;
+* multi-declarator lines (``int a, b;``), qualifiers and array dims come out
+  structurally instead of via regex approximation.
+
+Content is parsed in-memory (unsaved files), so callers hand over source text
+they got from anywhere — no files need to exist on disk. A small prologue of
+the common embedded fixed-width typedefs is prepended when the source does not
+include ``<stdint.h>``, so bare snippets without their real headers still
+parse.
+
+Index shape (unchanged from the previous regex backend — the consumers in
+``scenarios.py`` and the prompts depend on it)::
 
     {
       "files": {
@@ -17,78 +28,119 @@ Index shape::
           "functions": [{"name": ..., "signature": ...}]
         }
       },
-      "variables": {"engine_speed": "uint16", ...},   # name -> type, all files
+      "variables": {"engine_speed": "uint16_t", ...},   # name -> type
       "functions": {"engine_init": "void engine_init(void)"}
     }
 """
 
 from __future__ import annotations
 
-import re
-from typing import Any, Iterable
+from typing import Any, Iterable, Optional
 
-_TYPEDEF_RE = re.compile(r"\btypedef\s+struct\b")
-_GLOBAL_RE = re.compile(
-    r"^[ \t]*(?:extern\s+)?(?:static\s+)?(?:const\s+)?"
-    r"((?:unsigned\s+|signed\s+)?[A-Za-z_][A-Za-z0-9_]*)\s+"
-    r"(?:\*+\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*(\[[^\]]*\])?\s*[=;]",
-    re.MULTILINE,
-)
-_FUNC_RE = re.compile(
-    r"^[ \t]*(?:static\s+)?(?:const\s+)?"
-    r"((?:unsigned\s+|signed\s+)?[A-Za-z_][A-Za-z0-9_]*)\s+\*?\s*"
-    r"([A-Za-z_][A-Za-z0-9_]*)\s*\(([^;{)]*)\)\s*\{",
-    re.MULTILINE,
-)
-_STRUCT_MEMBER_RE = re.compile(
-    r"\{([^{}]*)\}\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\[[^\]]*\])?\s*;"
-)
-_C_KEYWORDS = {
-    "if", "else", "for", "while", "switch", "case", "default", "return",
-    "break", "continue", "goto", "sizeof", "typedef", "struct", "union",
-    "enum", "static", "extern", "const", "register", "volatile", "inline",
-    "void", "int", "char", "long", "short", "float", "double",
-    "unsigned", "signed",
-}
-_NOISE_HEADERS = ("#",)
+from clang.cindex import CursorKind, Index, TranslationUnit, TypeKind
+
+# Prepended when the source doesn't bring its own <stdint.h>: bare snippets
+# (a single function pasted from the review screen, an .c file whose headers
+# live on the build server) still parse with the usual fixed-width types.
+_STDINT_PROLOGUE = """
+typedef signed char int8_t;
+typedef unsigned char uint8_t;
+typedef signed short int16_t;
+typedef unsigned short uint16_t;
+typedef signed int int32_t;
+typedef unsigned int uint32_t;
+typedef signed long long int64_t;
+typedef unsigned long long uint64_t;
+"""
+
+# NOTE: deliberately NOT TranslationUnit.PARSE_SKIP_FUNCTION_BODIES — with
+# bodies skipped, function definitions degrade to plain declarations and
+# ``is_definition()`` returns False, dropping every function from the index.
+_PARSE_FLAGS = 0
 
 
-def _strip_comments(source: str) -> str:
-    source = re.sub(r"/\*[\s\S]*?\*/", "", source)
-    source = re.sub(r"//[^\n]*", "", source)
-    return source
+def _parse_one(index: Index, name: str, content: str,
+               args: list[str]) -> Optional[Any]:
+    text = content or ""
+    if "stdint.h" not in text and "typedef" not in text:
+        text = _STDINT_PROLOGUE + text
+    try:
+        return index.parse(
+            name, args=["-x", "c", *args],
+            unsaved_files=[(name, text)], options=_PARSE_FLAGS)
+    except Exception:  # noqa: BLE001 - a broken file must not break the batch
+        return None
 
 
-def index_source(files: dict[str, str]) -> dict[str, Any]:
-    """Index ``{filename: content}`` into the structure documented above."""
+def index_source(files: dict[str, str],
+                 *, compile_args: Optional[list[str]] = None) -> dict[str, Any]:
+    """Index ``{filename: content}`` into the structure documented above.
+
+    ``compile_args`` are forwarded to clang verbatim (``-D…`` / ``-I…``),
+    ideally from the project's ``compile_commands.json`` — the same code can
+    yield different visible variables under different target macros.
+    """
+    args = list(compile_args or [])
+    clang_index = Index.create()
     result: dict[str, Any] = {"files": {}, "variables": {}, "functions": {}}
+
     for name, content in (files or {}).items():
-        text = _strip_comments(content or "")
+        tu = _parse_one(clang_index, name, content, args)
         file_entry: dict[str, Any] = {"globals": [], "functions": []}
-        for match in _FUNC_RE.finditer(text):
-            ret, fname, params = match.group(1), match.group(2), match.group(3)
-            if fname in _C_KEYWORDS:
-                continue
-            signature = f"{ret.strip()} {fname}({params.strip()})"
-            file_entry["functions"].append(
-                {"name": fname, "signature": signature})
-            result["functions"].setdefault(fname, signature)
-        for match in _GLOBAL_RE.finditer(text):
-            ctype, vname, array = match.group(1), match.group(2), match.group(3)
-            if vname in _C_KEYWORDS or ctype in _C_KEYWORDS and vname == ctype:
-                continue
-            # A global declaration must not sit inside a function body; the
-            # regex anchors to line starts, and true block-locals are rare at
-            # column 0 in embedded code — imprecision is acceptable (the build
-            # loop catches it) as long as we don't invent names.
-            file_entry["globals"].append({
-                "name": vname,
-                "type": ctype,
-                "array": bool(array),
-            })
-            result["variables"].setdefault(vname, ctype)
+        if tu is not None:
+            _collect(tu.cursor, name, file_entry, result)
         result["files"][name] = file_entry
     return result
+
+
+def _in_main_file(cursor, main_name: str) -> bool:
+    loc = cursor.location.file
+    # Cursors from headers (or the injected prologue's implicit file) have a
+    # different or missing source file; only the requested TU's own
+    # declarations belong to the inventory.
+    return loc is not None and (loc.name == main_name or str(loc) == main_name)
+
+
+def _collect(root, main_name: str, file_entry: dict, result: dict) -> None:
+    for cursor in root.get_children():
+        if not _in_main_file(cursor, main_name):
+            continue
+        kind = cursor.kind
+        if kind == CursorKind.VAR_DECL:
+            # A VAR_DECL at file scope (a direct child of the TU) is a global;
+            # block locals only appear under function children, which this
+            # walk never descends into.
+            name = cursor.spelling
+            if not name:
+                continue
+            entry = {
+                "name": name,
+                "type": cursor.type.spelling,
+                "array": cursor.type.kind in (TypeKind.CONSTANTARRAY,
+                                              TypeKind.INCOMPLETEARRAY,
+                                              TypeKind.VARIABLEARRAY,
+                                              TypeKind.DEPENDENTSIZEDARRAY),
+            }
+            file_entry["globals"].append(entry)
+            # static/extern storage distinction is visible via
+            # cursor.storage_class; not surfaced in the inventory for now —
+            # the Silver build loop, not the index, decides what is settable.
+            result["variables"].setdefault(name, entry["type"])
+        elif kind == CursorKind.FUNCTION_DECL and cursor.is_definition():
+            name = cursor.spelling
+            if not name:
+                continue
+            signature = f"{cursor.result_type.spelling} {name}({_signature(cursor)})"
+            file_entry["functions"].append({"name": name,
+                                            "signature": signature})
+            result["functions"].setdefault(name, signature)
+
+
+def _signature(cursor) -> str:
+    """Rebuild ``ret name(param, ...)`` from the AST's parameter children."""
+    params = [c.type.spelling for c in cursor.get_children()
+              if c.kind == CursorKind.PARM_DECL]
+    return ", ".join(params)
 
 
 def variable_inventory(index: dict[str, Any]) -> list[str]:

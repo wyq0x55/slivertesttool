@@ -9,8 +9,10 @@
    `pending`，由人工 `approve`（经既有服务层落库）或 `reject`（必须填原因）。
 2. **每类写入都有机器校验兜底**：生成走 generate → validate → retry 循环
    （最多 3 轮，校验问题回喂模型）；变量名等事实性内容由确定性代码保证。
-3. **确定性优先**：变量/函数清单由 `c_index` 从源码正则抽取（无 libclang
-   依赖），模型 prompt 只拿到真实存在的名字，编造会被校验器拒绝。
+3. **确定性优先**：变量/函数清单由 `c_index` 用 **libclang AST** 抽取
+   （`pip install libclang`，wheel 自带原生库），`#ifdef` 按传入的
+   `compile_args`（建议来自 compile_commands.json）求值、作用域由 AST 区分、
+   多声明符完整收录；模型 prompt 只拿到真实存在的名字，编造会被校验器拒绝。
 4. **lib 人工提议、AI 编写**：lib 只在人工标注"适合做成 lib"后由 AI 生成，
    入库动机是真实复用。
 
@@ -22,7 +24,7 @@ app/services/ai/
     config.py        LLM 网关配置（app_settings 优先，环境变量兜底，密钥永回显掩码）
     provider.py      OpenAI 兼容 chat-completions 客户端（纯 stdlib urllib）+ JSON 抽取
     base.py          generate → validate → retry 循环
-    c_index.py       C 源码索引（全局变量/函数/结构体，token 控制的上下文选择）
+    c_index.py       C 源码索引（libclang AST：全局变量/函数，#ifdef/作用域/多声明符精确；token 控制的上下文选择）
     prompts.py       五个场景的 prompt 构造（系统提示词统一，输出严格 JSON）
     validators.py    机器校验器（steps schema、名字存在性、SBS 括号配平等）
     scenarios.py     五个场景编排（纯函数，无 Flask/DB 依赖，可独立测试）
@@ -80,7 +82,9 @@ POST /api/v1/ai/drafts/<id>/reject    驳回（必须 note）
 
 ## 7. 测试
 
-- `tests/test_ai_unit.py`（无 DB）：JSON 抽取、校验器、C 索引、重试循环、
+- 新增依赖：`libclang>=16,<19`（已加入 requirements.txt / pyproject.toml）。
+- `tests/test_ai_unit.py`（无 DB）：JSON 抽取、校验器、C 索引（含块内局部
+  不误收 / `int a, b;` 双收 / `#ifdef` 随编译参数变化四个 AST 精度用例）、重试循环、
   五场景（脚本化假模型，含"编造变量被打回"用例）。`pytest tests/test_ai_unit.py`
 - `tests/test_ai_api.py`（需 PG）：配置掩码、草稿生命周期、procedure 落库。
   `pytest tests/test_ai_api.py`

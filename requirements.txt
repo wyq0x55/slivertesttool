@@ -13,6 +13,7 @@ openpyxl>=3.1,<4.0            # Excel import/export (Test Matrix + LAN Test Matr
 # (postgresql+psycopg2://...) and peewee (the Huey SqlHuey queue storage).
 psycopg2-binary>=2.9,<3.0
 peewee>=3.17,<4.0            # PostgreSQL-backed Huey queue (huey.contrib.sql_huey)
+libclang>=16,<19             # AI agent: C source AST indexing (native lib bundled in wheel)
 # The installer auto-detects a matching wheel; otherwise it does a HYBRID
 # install (vendored pure-python wheels + PyPI for pycrdt only).
 #
