@@ -30,6 +30,9 @@ import asyncio
 import pytest
 
 pytest.importorskip("anyio")
+# app.collab.materializer -> doc_model imports pycrdt at module level, so
+# machines without the collab wheels skip rather than error (ystore precedent).
+pytest.importorskip("pycrdt")
 
 
 SERVER_FIELDS = ("result", "executor", "exec_date", "version_label", "log")

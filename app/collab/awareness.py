@@ -100,7 +100,9 @@ def row_actors(states: dict[Any, dict]) -> dict[str, int]:
                           if isinstance(state.get("user"), dict) else None)
         if uid is None:
             continue
-        row_uuid = _row_uuid(state.get("selection")) or _row_uuid(state.get("cursor"))
+        # Cursor first: it tracks momentary focus. A selection can linger on
+        # a row after the cursor moved away, so it is only the fallback.
+        row_uuid = _row_uuid(state.get("cursor")) or _row_uuid(state.get("selection"))
         if row_uuid is None:
             continue
         out[row_uuid] = uid

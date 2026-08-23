@@ -43,12 +43,14 @@ def test_shared_row_module_is_loaded_for_every_page():
     assert BASE_HTML.index("js/lanmatrix/pill.js") < BASE_HTML.index("js/lanmatrix/task_row.js")
 
 
-@pytest.mark.parametrize("source", [HOME_JS, TASKS_JS])
+@pytest.mark.parametrize("source", [HOME_JS, TASKS_JS],
+                         ids=["home.js", "project_tasks.js"])
 def test_both_lists_render_through_the_shared_module(source):
     assert "LMTaskRow.rowHtml" in source or "TR.rowHtml" in source
 
 
-@pytest.mark.parametrize("source", [HOME_JS, TASKS_JS])
+@pytest.mark.parametrize("source", [HOME_JS, TASKS_JS],
+                         ids=["home.js", "project_tasks.js"])
 def test_neither_list_reimplements_the_row_markup(source):
     """The row <tr> is built in exactly one place."""
     assert 'class="lm-cell-progress"' not in source

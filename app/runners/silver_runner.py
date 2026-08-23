@@ -491,9 +491,15 @@ class MockSilverRunner(SilverRunnerBase):
                 encoding="utf-8",
             )
         else:
-            verdict = "PASS" if judge_py.is_file() else "PASS(no-judge)"
+            # Same marker grammar as the json_mode branch: the non-JSON path
+            # must resolve to PASS through the same verdict parser. A bare
+            # ``verdict=PASS`` line is a mock-only format the parser has never
+            # understood (it reads as UNKNOWN and fails the task). The
+            # no-judge distinction lives in Console.log, not in the grammar.
             (ctx.log_dir / "jdgrslt.log").write_text(
-                f"test_id={ctx.test_id}\nverdict={verdict}\n",
+                f"Test case ID.ID;;{ctx.test_id} is started!\n"
+                + ("Step.1 is passed\n" if judge_py.is_file() else "")
+                + "All steps are verified.Test is Passed.\n",
                 encoding="utf-8",
             )
         logger.info("[MOCK] completed test '%s'", ctx.test_id)
