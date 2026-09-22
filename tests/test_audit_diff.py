@@ -361,7 +361,7 @@ class TestCsvExport(unittest.TestCase):
 class TestRouteContract(unittest.TestCase):
     def setUp(self):
         self.src = open(os.path.join(REPO,
-                        "app/routes/lanmatrix/projects_items.py"),
+                        "app/routes/lanmatrix/audit_trash.py"),
                         encoding="utf-8").read()
         self.body = self.src[self.src.index("def audit_logs_csv"):
                              self.src.index("def audit_log_actions")]

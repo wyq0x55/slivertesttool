@@ -320,7 +320,7 @@ def _routes_src():
     import pathlib
     import app.routes.lanmatrix as pkg
     root = pathlib.Path(pkg.__file__).parent
-    return (root / "projects_items.py").read_text(encoding="utf-8")
+    return (root / "audit_trash.py").read_text(encoding="utf-8")
 
 
 def _route_body(anchor):
