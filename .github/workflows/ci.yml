@@ -57,8 +57,12 @@ jobs:
         with:
           version: "0.12.15"
 
-      - name: Verify frozen dependency export
-        run: python scripts/export_requirements.py --check
+      - name: Refresh dependency lock/export (diagnostic)
+        run: |
+          uv lock
+          python scripts/export_requirements.py
+          git diff -- uv.lock requirements.txt
+          exit 1
 
       - name: Install Python dependencies
         run: |
