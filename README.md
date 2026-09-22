@@ -98,22 +98,38 @@ local SQLite file are involved.
 
 ## Install (offline)
 
-Python 3.10+. On a machine with the wheels available:
+The validated runtime is **CPython 3.10.18** (matching `pyproject.toml` and CI).
+Install the frozen, generated dependency set with:
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-For a fully offline install, pre-download the wheels on a connected machine
-(`pip download -r requirements.txt -d wheels/`) and install with
-`pip install --no-index --find-links wheels -r requirements.txt`.
+For a fully offline install, pre-download the wheels on a connected machine:
+
+```bash
+python -m pip download -r requirements.txt -d wheels/
+python -m pip install --no-index --find-links wheels -r requirements.txt
+```
+
+Dependency declarations are maintained only in `pyproject.toml`; `uv.lock`
+is the frozen resolution and `requirements.txt` is a generated pip/offline
+export. After intentionally changing dependencies, refresh the lock and export:
+
+```bash
+uv lock
+python scripts/export_requirements.py
+```
+
+Do not edit `requirements.txt` by hand. CI verifies both lock freshness and
+the generated export.
 
 ## Continuous integration
 
 GitHub pull requests run a lightweight CI gate against the parts of the platform
 that are reproducible without Synopsys Silver:
 
-- Python 3.10.18 with the existing `requirements.txt`
+- CPython 3.10.18 with the frozen/generated `requirements.txt`
 - a real PostgreSQL service (never SQLite) with `RUNNER_BACKEND=mock`
 - import/bytecode compilation sanity plus the full pytest suite
 - `npm ci` + the production frontend bundle build

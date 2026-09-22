@@ -43,6 +43,7 @@ dev = [
 [tool.uv]
 # Application project (flat run_*.py scripts + `app/` package imported directly),
 # not a distributable library — keep it non-packaged so `uv sync` won't try to build a wheel.
+required-version = "==0.12.15"
 package = false
 
 [tool.pytest.ini_options]
