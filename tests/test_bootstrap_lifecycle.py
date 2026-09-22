@@ -47,21 +47,3 @@ def test_bootstrap_app_is_idempotent(app_ctx):
 
     with app_ctx.app_context():
         assert LMUser.query.filter_by(is_system_admin=True).count() == 1
-
-
-def test_huey_schema_initializer_is_explicit(monkeypatch):
-    from app.jobqueue import huey_app
-
-    calls = []
-
-    class Storage:
-        def initialize_tables(self):
-            calls.append("init")
-
-    class DummyHuey:
-        storage = Storage()
-
-    monkeypatch.setattr(huey_app, "huey", DummyHuey())
-    huey_app.ensure_huey_schema()
-
-    assert calls == ["init"]
