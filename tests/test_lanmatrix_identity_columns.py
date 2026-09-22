@@ -94,7 +94,7 @@ def test_sort_by_test_name_orders_rows(env):
 
 def test_boot_migration_lifts_legacy_jsonb_rows(env):
     app, user, project = env
-    from app import _migrate_testitem_field_keys
+    from app.bootstrap import _migrate_testitem_field_keys
     from app.extensions import db
     from app.models import TestItemRow
 
@@ -125,7 +125,7 @@ def test_boot_migration_lifts_legacy_jsonb_rows(env):
 
 def test_boot_migration_is_idempotent_and_non_destructive(env):
     app, user, project = env
-    from app import _migrate_testitem_field_keys
+    from app.bootstrap import _migrate_testitem_field_keys
     from app.extensions import db
     from app.models import TestItemRow
 
