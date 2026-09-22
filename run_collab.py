@@ -6,9 +6,9 @@ upgrades, so collaboration runs as its own ASGI process:
     python run_collab.py                 # dev: uvicorn on 0.0.0.0:1234
     COLLAB_HOST=127.0.0.1 COLLAB_PORT=8890 python run_collab.py
 
-It reuses the SAME Flask app factory (and therefore the same database, models
-and ``SECRET_KEY``) so materialization can call the existing service layer and
-token verification shares the web app's secret.
+It reuses the SAME side-effect-light Flask app factory (and therefore the same
+database, models and ``SECRET_KEY``). In split-process deployments run
+``python manage.py bootstrap`` once before starting this process.
 
 Requires ``pycrdt`` and ``pycrdt-websocket`` (only this process needs them).
 
@@ -40,18 +40,9 @@ def main() -> None:
 
     from app import create_app
     from app.config import Config
-    from app.extensions import db
     from app.collab.server import build_asgi_app
 
     flask_app = create_app(Config)
-
-    # Additively create the collaboration tables if a migration hasn't yet; this
-    # never drops or alters existing tables. ``CollabDoc`` stores the durable
-    # CRDT update log; ``CollabPresence`` is the single-writer boundary heartbeat
-    # the web process reads to know a project is collaborative (design §1.6).
-    with flask_app.app_context():
-        from app.models import CollabDoc, CollabPresence  # noqa: F401
-        db.create_all()
 
     asgi_app = build_asgi_app(flask_app)
 

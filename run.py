@@ -38,10 +38,12 @@ from app.logging_setup import configure as configure_logging
 configure_logging("web", Config)
 
 from app import __version__, create_app  # noqa: E402  (after logging setup)
+from app.bootstrap import bootstrap_app  # noqa: E402
 
 BASE_DIR = Path(__file__).resolve().parent
 
-# Build the app once so tables/settings exist before the worker starts.
+# Build the Flask app without mutating persistent state. bootstrap_app() runs
+# once in main() before any child process is spawned.
 app = create_app()
 
 _worker_proc: subprocess.Popen | None = None
@@ -173,7 +175,7 @@ def _sweep_silver() -> None:
 
 def main() -> None:
     global _worker_proc, _collab_proc
-    Config.ensure_dirs()
+    bootstrap_app(app)
     _worker_proc = _start_worker()
     _collab_proc = _start_collab()
     atexit.register(_stop_children)

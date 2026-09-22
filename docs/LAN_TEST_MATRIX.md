@@ -437,7 +437,8 @@ stay safe and consistent:
 5. **No secrets in audit.** Add sensitive keys to `audit._REDACT_KEYS`.
 6. **Offline only.** No new CDN/script/style URLs; vendor assets under
    `static/`.
-7. **Migrations are additive.** New tables via `db.create_all()`; new columns via
-   an idempotent `ALTER TABLE` step (see `_migrate_schema`) or Alembic.
+7. **Migrations are additive and explicit.** `app/bootstrap.py` owns
+   `db.create_all()` plus idempotent `_migrate_schema()` steps. Split-process
+   deployments run `python manage.py bootstrap` before starting services.
 8. **Test before ship.** `python -m unittest discover -s tests` +
    `python -m py_compile app/lanmatrix/*.py` + `node --check` on changed JS.

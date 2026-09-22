@@ -116,9 +116,9 @@ For a fully offline install, pre-download the wheels on a connected machine
 python run.py
 ```
 
-Open <http://localhost:8080>. `run.py` launches the worker as a managed child
-process, so it "always runs" for as long as the server is up, and stops it
-cleanly on Ctrl+C.
+Open <http://localhost:8080>. `run.py` first performs the one-owner persistent
+bootstrap (application + Huey schema, data, and filesystem migrations), then launches the worker and
+collaboration server as managed child processes. They stop cleanly on Ctrl+C.
 
 ### Why is there a separate worker?
 
@@ -128,12 +128,14 @@ long-running test never blocks the web server or the live SSE log streams, and
 you can run several tests concurrently (up to the license limit). `run.py`
 manages both for you — you don't have to start two things by hand.
 
-For scaled or service deployments you can still run them independently (e.g. the
-worker on a different machine, or several workers):
+For scaled or service deployments, bootstrap persistent state **once** before
+starting independent processes. The standalone process entry points intentionally
+do not migrate schema or files:
 
 ```bash
-python run_web.py        # web/API only
-python run_worker.py     # one or more workers
+python manage.py bootstrap   # exactly one bootstrap owner per deployment/update
+python run_web.py             # web/API only
+python run_worker.py          # one or more workers
 ```
 
 Set `START_WORKER=0 python run.py` to start the web server only.
@@ -159,12 +161,15 @@ Browser ─HTTP/SSE─▶ Flask (run_web.py, waitress/WSGI) ──REST/SSE──
                       Huey worker (run_worker.py) ──task_events─────────────────────────────────┘
 ```
 
-Run the three processes side by side (all share the one PostgreSQL DB):
+Run the three processes side by side (all share the one PostgreSQL DB). Run the
+bootstrap command once before starting them, and again once after deploying a
+version that carries a schema/data migration:
 
 ```bash
-python run_web.py        # 1) web/API/SSE (waitress, default :8080)
-python run_worker.py     # 2) task worker(s)
-python run_collab.py     # 3) collaboration ASGI server (uvicorn, default :1234)
+python manage.py bootstrap  # one owner; finish before processes start
+python run_web.py            # 1) web/API/SSE (waitress, default :8080)
+python run_worker.py         # 2) task worker(s)
+python run_collab.py         # 3) collaboration ASGI server (uvicorn, default :1234)
 ```
 
 Install the collab-only dependencies (`pycrdt`, `pycrdt-websocket`, `uvicorn`,

@@ -114,8 +114,9 @@ A **Test Matrix** link is added to the top navigation.
 
 ## 4. Storage
 
-Two new SQLAlchemy tables are created automatically by `db.create_all()` on
-startup — no manual migration is required:
+Two SQLAlchemy tables are registered in the application metadata and are
+created by the explicit persistent bootstrap (`python manage.py bootstrap`, or
+automatically once by the all-in-one `python run.py`):
 
 * `test_matrices`
 * `test_matrix_items` (FK → `test_matrices.id`, `ON DELETE CASCADE`)
