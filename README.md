@@ -108,6 +108,20 @@ For a fully offline install, pre-download the wheels on a connected machine
 (`pip download -r requirements.txt -d wheels/`) and install with
 `pip install --no-index --find-links wheels -r requirements.txt`.
 
+## Continuous integration
+
+GitHub pull requests run a lightweight CI gate against the parts of the platform
+that are reproducible without Synopsys Silver:
+
+- Python 3.10.18 with the existing `requirements.txt`
+- a real PostgreSQL service (never SQLite) with `RUNNER_BACKEND=mock`
+- import/bytecode compilation sanity plus the full pytest suite
+- `npm ci` + the production frontend bundle build
+
+GitHub CI intentionally does **not** run real Silver processes, consume licenses,
+or execute proprietary DLL/SBS/SIL assets. Those remain an internal/manual
+validation gate on a machine with the Silver runtime.
+
 ## Run
 
 **Recommended — one command starts everything** (web server + task worker):
