@@ -45,15 +45,6 @@ def create_app(config_object: type[Config] = Config) -> Flask:
             "For a disposable dev run only, set LM_ALLOW_INSECURE_SECRET=1."
         )
 
-    # Fallback only: every ``run_*.py`` entry point configures logging with its
-    # own process role before importing the app, and ``configure`` is a no-op
-    # once that has happened. This keeps a bare ``create_app()`` (a shell, a
-    # test, a management script) from logging into the void.
-    from .logging_setup import configure as _configure_logging
-    # ``config_object`` (the class), not ``app.config`` (a dict): the helper
-    # reads attributes so it can also run before an app exists.
-    _configure_logging("cli", config_object)
-
     db.init_app(app)
 
     from .routes.api_routes import api_bp

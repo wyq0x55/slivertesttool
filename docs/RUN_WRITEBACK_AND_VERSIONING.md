@@ -184,11 +184,11 @@ and `deprecated_at`.
 
 ## 7. Schema migration
 
-There is no Alembic in this project: `_migrate_schema()` in `app/__init__.py`
-runs idempotent `ALTER TABLE ADD COLUMN` at boot, and `db.create_all()` creates
-new tables. Both new tables and all three new columns are registered there, so
-**no manual migration step is required** — start the app and the schema updates
-itself.
+There is no Alembic in this project. Persistent bootstrap is owned by
+`app/bootstrap.py`: `bootstrap_app()` runs `db.create_all()` plus the idempotent
+`_migrate_schema()` steps. The all-in-one `python run.py` performs this once
+before child processes start; split-process deployments must run
+`python manage.py bootstrap` before starting web/worker/collab.
 
 ---
 

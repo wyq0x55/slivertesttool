@@ -7,8 +7,8 @@ server as the application data. This removes the former local SQLite queue file
 *and* avoids needing a separate broker (Redis/RabbitMQ) -- matching the offline,
 internal-network deployment goal while keeping everything on PostgreSQL.
 
-Huey's own tables (task queue, schedule and result store) are created
-automatically on first use, alongside the SQLAlchemy-managed application tables.
+Huey's own tables (task queue, schedule and result store) are created by Huey
+on first use. Filesystem/bootstrap ownership stays outside this import-only module.
 """
 
 from __future__ import annotations
@@ -17,8 +17,6 @@ import os
 import re
 
 from ..config import Config
-
-Config.ensure_dirs()
 
 # ``immediate`` runs tasks synchronously in-process; handy for tests. Enabled by
 # setting HUEY_IMMEDIATE=1 in the environment.

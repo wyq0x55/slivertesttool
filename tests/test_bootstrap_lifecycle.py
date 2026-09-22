@@ -28,8 +28,12 @@ def test_create_app_does_not_bootstrap(monkeypatch, tmp_path):
 
     monkeypatch.setattr(db, "create_all", fail_create_all)
 
+    instance_dir = FactoryOnlyConfig.INSTANCE_DIR
+    assert not instance_dir.exists()
+
     application = app_pkg.create_app(FactoryOnlyConfig)
 
+    assert not instance_dir.exists()
     assert application.config_obj is FactoryOnlyConfig
     assert application.config["TESTING"] is True
 
