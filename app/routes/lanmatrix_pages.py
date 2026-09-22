@@ -181,6 +181,16 @@ def project_dashboard(project_id: int):
         charts_available=_charts_bundle_available())
 
 
+@pages_bp.get("/projects/<int:project_id>/ai")
+def ai_drafts(project_id: int):
+    """AI draft review shell. The API enforces project capabilities."""
+    user = _current_user()
+    if user is None:
+        return redirect(url_for("lanmatrix_pages.login"))
+    return render_template(
+        "lanmatrix/ai_drafts.html", user=user.to_dict(), project_id=project_id)
+
+
 @pages_bp.get("/projects/<int:project_id>/tasks")
 def project_tasks(project_id: int):
     """Per-project Upload Tasks page (test execution). Members only; the API
