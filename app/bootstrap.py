@@ -34,6 +34,12 @@ def bootstrap_app(app: Flask) -> None:
         db.create_all()
         _migrate_schema()
 
+        # Huey 2.5's SQL backend creates queue tables in its constructor by
+        # default. huey_app suppresses that implicit DDL so this bootstrap owner
+        # creates the queue schema explicitly alongside the application schema.
+        from .jobqueue.huey_app import ensure_huey_schema
+        ensure_huey_schema()
+
         try:
             from .services.lanmatrix import projects_service as _lm_projects
             _lm_projects.backfill_sheet_fields()

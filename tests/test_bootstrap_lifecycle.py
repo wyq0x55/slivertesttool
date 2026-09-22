@@ -47,3 +47,13 @@ def test_bootstrap_app_is_idempotent(app_ctx):
 
     with app_ctx.app_context():
         assert LMUser.query.filter_by(is_system_admin=True).count() == 1
+
+
+def test_immediate_huey_schema_bootstrap_is_noop(monkeypatch):
+    monkeypatch.setenv("HUEY_IMMEDIATE", "1")
+
+    import importlib
+    import app.jobqueue.huey_app as huey_app
+
+    importlib.reload(huey_app)
+    huey_app.ensure_huey_schema()

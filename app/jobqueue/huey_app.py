@@ -7,8 +7,8 @@ server as the application data. This removes the former local SQLite queue file
 *and* avoids needing a separate broker (Redis/RabbitMQ) -- matching the offline,
 internal-network deployment goal while keeping everything on PostgreSQL.
 
-Huey's own tables (task queue, schedule and result store) are created by Huey
-on first use. Filesystem/bootstrap ownership stays outside this import-only module.
+Huey's own tables (task queue, schedule and result store) are also owned by the
+explicit platform bootstrap; importing this module performs no DDL.
 """
 
 from __future__ import annotations
@@ -44,16 +44,34 @@ if _immediate:
 
     huey = MemoryHuey(name=Config.HUEY_NAME, immediate=True)
 else:
-    # Production: the queue is persisted in PostgreSQL alongside the application
-    # data via peewee (huey.contrib.sql_huey). peewee connects lazily, so
-    # importing this module does not require the database to be reachable yet.
-    from huey.contrib.sql_huey import SqlHuey
+    # Huey 2.5 SqlStorage normally creates its three tables from __init__.
+    # That makes any web/worker import a schema owner, which conflicts with the
+    # platform's explicit one-owner bootstrap. Suppress only that constructor
+    # DDL; bootstrap_app() calls ensure_huey_schema() before services start.
+    from huey.api import Huey
+    from huey.contrib.sql_huey import SqlStorage
     from playhouse.db_url import connect as _pw_connect
+
+    class _BootstrapOwnedSqlStorage(SqlStorage):
+        def create_tables(self):
+            return None
+
+        def initialize_tables(self) -> None:
+            super().create_tables()
 
     _pg_database = _pw_connect(_peewee_url(Config.HUEY_DATABASE_URL))
 
-    huey = SqlHuey(
+    huey = Huey(
         name=Config.HUEY_NAME,
+        storage_class=_BootstrapOwnedSqlStorage,
         database=_pg_database,
         immediate=False,
     )
+
+
+def ensure_huey_schema() -> None:
+    """Create Huey's SQL tables from the explicit bootstrap owner only."""
+    storage = getattr(huey, "storage", None)
+    initialize = getattr(storage, "initialize_tables", None)
+    if initialize is not None:
+        initialize()

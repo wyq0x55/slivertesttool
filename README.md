@@ -117,7 +117,7 @@ python run.py
 ```
 
 Open <http://localhost:8080>. `run.py` first performs the one-owner persistent
-bootstrap (schema/data/filesystem migrations), then launches the worker and
+bootstrap (application + Huey schema, data, and filesystem migrations), then launches the worker and
 collaboration server as managed child processes. They stop cleanly on Ctrl+C.
 
 ### Why is there a separate worker?
