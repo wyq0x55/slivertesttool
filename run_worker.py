@@ -3,7 +3,8 @@
     python run_worker.py
 
 Consumes tasks from the PostgreSQL-backed Huey queue and runs them via the
-Silver backend.
+Silver backend. In split-process deployments, run ``python manage.py bootstrap``
+once before starting this worker.
 
 Pre-warmed pool
 ---------------
@@ -31,9 +32,9 @@ configure_logging("worker", Config)
 
 # Importing the tasks module registers ``run_task`` with the shared huey instance.
 # The single worker-side Flask app is built lazily and cached inside ``tasks``
-# (via ``tasks._get_app()``); ``main()`` materialises it exactly once so tables
-# exist and the license settings are seeded. Building it here as well would
-# construct a second, throwaway app (double Flask initialisation), so we don't.
+# (via ``tasks._get_app()``); ``main()`` materialises the side-effect-light app
+# exactly once. Persistent bootstrap is owned by run.py or ``manage.py bootstrap``;
+# the worker must never migrate schema/files itself.
 from app.jobqueue import tasks  # noqa: F401
 from app.jobqueue.huey_app import huey
 

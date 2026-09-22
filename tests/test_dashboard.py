@@ -33,6 +33,8 @@ def app():
     importlib.reload(app_pkg)
 
     application = app_pkg.create_app()
+    from app.bootstrap import bootstrap_app
+    bootstrap_app(application)
     with application.app_context():
         yield application
 

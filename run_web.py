@@ -3,8 +3,9 @@
     python run_web.py
 
 Serves the Bootstrap UI + REST/SSE API on ``HOST:PORT`` (default 0.0.0.0:8080).
-This starts the **web process only**; run the worker separately with
-``python run_worker.py`` so tasks actually execute.
+This starts the **web process only**. For split-process deployments run
+``python manage.py bootstrap`` once before starting web/worker/collab, then run
+the worker separately with ``python run_worker.py`` so tasks actually execute.
 
 For the usual single-command setup that launches both the web server and the
 worker together, use ``python run.py`` instead.
@@ -25,7 +26,6 @@ app = create_app()
 
 
 def main() -> None:
-    Config.ensure_dirs()
     try:
         from waitress import serve
     except ImportError:  # pragma: no cover - dev fallback

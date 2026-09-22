@@ -59,16 +59,19 @@ def app_ctx(monkeypatch):
     importlib.reload(app_pkg)
 
     # Reset the (shared) PostgreSQL test database for isolation between tests:
-    # wipe any schema left by a previous run, then let ``create_app`` recreate
-    # the tables and seed the license/admin defaults into an empty database.
+    # wipe any schema left by a previous run, then explicitly bootstrap the
+    # tables and seed the license/admin defaults into an empty database.
+    from app.bootstrap import bootstrap_app
     from app.extensions import db
 
     try:
         reset_app = app_pkg.create_app(config_mod.Config)
         with reset_app.app_context():
+            from app import models  # noqa: F401
             db.drop_all()
 
         application = app_pkg.create_app(config_mod.Config)
+        bootstrap_app(application)
         yield application
     finally:
         # Each test gets its own instance/uploads/reports/workspace tree under
