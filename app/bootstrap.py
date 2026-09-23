@@ -16,6 +16,23 @@ from .config import Config
 from .extensions import db
 
 
+def reconcile_schema() -> None:
+    """Reconcile the current application and Huey schema.
+
+    SQLAlchemy model metadata is the application-table source of truth.
+    _migrate_schema contains only upgrade steps that create_all cannot express
+    for an existing database. Required schema/data migrations are fail-closed:
+    callers must not start services on a partially upgraded database.
+    """
+    from . import models  # noqa: F401
+
+    db.create_all()
+    _migrate_schema()
+
+    from .jobqueue.huey_app import ensure_huey_schema
+    ensure_huey_schema()
+
+
 def bootstrap_app(app: Flask) -> None:
     """Create or upgrade persistent state for an application.
 
@@ -27,35 +44,20 @@ def bootstrap_app(app: Flask) -> None:
     config_object.ensure_dirs()
 
     with app.app_context():
-        # Import models so SQLAlchemy has complete metadata before create_all.
-        from . import models  # noqa: F401
         from .services import license_service
 
-        db.create_all()
-        _migrate_schema()
+        reconcile_schema()
 
-        # Huey 2.5's SQL backend creates queue tables in its constructor by
-        # default. huey_app suppresses that implicit DDL so this bootstrap owner
-        # creates the queue schema explicitly alongside the application schema.
-        from .jobqueue.huey_app import ensure_huey_schema
-        ensure_huey_schema()
+        # Required data/filesystem reconciliation is deployment correctness.
+        # Abort bootstrap rather than serving partially upgraded state.
+        from .services.lanmatrix import projects_service as _lm_projects
+        _lm_projects.backfill_sheet_fields()
 
-        try:
-            from .services.lanmatrix import projects_service as _lm_projects
-            _lm_projects.backfill_sheet_fields()
-        except Exception as exc:  # noqa: BLE001 - bootstrap remains best-effort here
-            logging.getLogger(__name__).warning(
-                "const/lib field backfill skipped: %s", exc)
-
-        try:
-            from .services import project_model_service as _lm_models
-            moved = _lm_models.migrate_model_dirs(config_object)
-            if moved:
-                logging.getLogger(__name__).info(
-                    "model dirs migrated to project-code names: %d", moved)
-        except Exception as exc:  # noqa: BLE001
-            logging.getLogger(__name__).warning(
-                "model dir migration skipped: %s", exc)
+        from .services import project_model_service as _lm_models
+        moved = _lm_models.migrate_model_dirs(config_object)
+        if moved:
+            logging.getLogger(__name__).info(
+                "model dirs migrated to project-code names: %d", moved)
 
         license_service.init_defaults(config_object.LICENSE_LIMIT)
 
@@ -71,7 +73,6 @@ def bootstrap_app(app: Flask) -> None:
 
         _seed_lanmatrix_admin(app)
 
-
 def _migrate_schema() -> None:
     """Additive, in-place migrations for upgraded databases.
 
@@ -84,10 +85,7 @@ def _migrate_schema() -> None:
     from sqlalchemy import inspect, text
 
     inspector = inspect(db.engine)
-    try:
-        existing_tables = set(inspector.get_table_names())
-    except Exception:  # noqa: BLE001 - database may not be ready yet
-        return
+    existing_tables = set(inspector.get_table_names())
 
     additions = {
         "tasks": {
@@ -158,27 +156,19 @@ def _migrate_schema() -> None:
         for name, ddl in columns.items():
             if name in have:
                 continue
-            try:
-                with db.engine.begin() as conn:
-                    conn.execute(text(
-                        f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
-            except Exception as exc:  # noqa: BLE001
-                logging.getLogger(__name__).warning(
-                    "schema migration: could not add %s.%s: %s", table, name, exc)
+            with db.engine.begin() as conn:
+                conn.execute(text(
+                    f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
 
     # The ``sheet`` columns are filtered on every field/item load, so back them
     # with an index (the ADD COLUMN above does not create one). Idempotent.
     for table in ("lm_field_definitions", "lm_test_items"):
         if table not in existing_tables:
             continue
-        try:
-            with db.engine.begin() as conn:
-                conn.execute(text(
-                    f"CREATE INDEX IF NOT EXISTS ix_{table}_sheet "
-                    f"ON {table} (sheet)"))
-        except Exception as exc:  # noqa: BLE001
-            logging.getLogger(__name__).warning(
-                "schema migration: could not index %s.sheet: %s", table, exc)
+        with db.engine.begin() as conn:
+            conn.execute(text(
+                f"CREATE INDEX IF NOT EXISTS ix_{table}_sheet "
+                f"ON {table} (sheet)"))
 
     # Every recycle-bin listing and every "live rows only" query filters on
     # deleted_at, so the freshly-added columns need the index the model declares
@@ -186,28 +176,19 @@ def _migrate_schema() -> None:
     for table in ("tasks", "lm_field_definitions"):
         if table not in existing_tables:
             continue
-        try:
-            with db.engine.begin() as conn:
-                conn.execute(text(
-                    f"CREATE INDEX IF NOT EXISTS ix_{table}_deleted_at "
-                    f"ON {table} (deleted_at)"))
-        except Exception as exc:  # noqa: BLE001
-            logging.getLogger(__name__).warning(
-                "schema migration: could not index %s.deleted_at: %s", table, exc)
+        with db.engine.begin() as conn:
+            conn.execute(text(
+                f"CREATE INDEX IF NOT EXISTS ix_{table}_deleted_at "
+                f"ON {table} (deleted_at)"))
 
     # The bell's two tabs filter on these, and the retention sweep scans
     # read_at across every user. ADD COLUMN creates no index.
     if "lm_notifications" in existing_tables:
         for column in ("read_at", "archived_at"):
-            try:
-                with db.engine.begin() as conn:
-                    conn.execute(text(
-                        f"CREATE INDEX IF NOT EXISTS ix_notif_{column} "
-                        f"ON lm_notifications ({column})"))
-            except Exception as exc:  # noqa: BLE001
-                logging.getLogger(__name__).warning(
-                    "schema migration: could not index lm_notifications.%s: %s",
-                    column, exc)
+            with db.engine.begin() as conn:
+                conn.execute(text(
+                    f"CREATE INDEX IF NOT EXISTS ix_notif_{column} "
+                    f"ON lm_notifications ({column})"))
 
     # The 不要 (項目作成) sign-off queue filters on these three, both per project
     # and across projects for "my queue". The model declares them indexed, but
@@ -215,15 +196,10 @@ def _migrate_schema() -> None:
     if "lm_test_items" in existing_tables:
         for column in ("exempt_status", "exempt_reviewer_id",
                        "exempt_requested_by"):
-            try:
-                with db.engine.begin() as conn:
-                    conn.execute(text(
-                        f"CREATE INDEX IF NOT EXISTS ix_lm_items_{column} "
-                        f"ON lm_test_items ({column})"))
-            except Exception as exc:  # noqa: BLE001
-                logging.getLogger(__name__).warning(
-                    "schema migration: could not index lm_test_items.%s: %s",
-                    column, exc)
+            with db.engine.begin() as conn:
+                conn.execute(text(
+                    f"CREATE INDEX IF NOT EXISTS ix_lm_items_{column} "
+                    f"ON lm_test_items ({column})"))
 
     _migrate_widen_testitem_uuid(existing_tables, inspector)
     _migrate_user_fk_ondelete(inspector)
@@ -256,25 +232,17 @@ def _migrate_widen_testitem_uuid(existing_tables, inspector) -> None:
     from sqlalchemy import text
 
     log = logging.getLogger(__name__)
-    try:
-        col = next((c for c in inspector.get_columns("lm_test_items")
-                    if c["name"] == "uuid"), None)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("schema migration: could not inspect lm_test_items.uuid: %s", exc)
-        return
+    col = next((c for c in inspector.get_columns("lm_test_items")
+                if c["name"] == "uuid"), None)
     if col is None:
         return
     length = getattr(col.get("type"), "length", None)
     if length is not None and length >= 64:
         return  # already wide enough
-    try:
-        with db.engine.begin() as conn:
-            conn.execute(text(
-                "ALTER TABLE lm_test_items ALTER COLUMN uuid TYPE VARCHAR(64)"))
-        log.info("schema migration: widened lm_test_items.uuid to VARCHAR(64)")
-    except Exception as exc:  # noqa: BLE001
-        log.warning(
-            "schema migration: could not widen lm_test_items.uuid: %s", exc)
+    with db.engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE lm_test_items ALTER COLUMN uuid TYPE VARCHAR(64)"))
+    log.info("schema migration: widened lm_test_items.uuid to VARCHAR(64)")
 
 
 def _migrate_testitem_field_keys(existing_tables) -> None:
@@ -304,21 +272,16 @@ def _migrate_testitem_field_keys(existing_tables) -> None:
     keys = list(aliases)
     log = logging.getLogger(__name__)
 
-    try:
-        query = TestItemRow.query
-        if db.engine.dialect.name == "postgresql":
-            # Select only rows that still carry a legacy alias key in the JSONB
-            # bag, so steady-state boots scan (almost) nothing.
-            query = query.filter(
-                text("jsonb_exists_any(custom_values, :alias_keys)")
-                .bindparams(alias_keys=keys))
-        else:
-            query = query.filter(TestItemRow.custom_values.isnot(None))
-        rows = query.all()
-    except Exception as exc:  # noqa: BLE001 - never block startup
-        db.session.rollback()
-        log.warning("field-key migration: row scan failed: %s", exc)
-        return
+    query = TestItemRow.query
+    if db.engine.dialect.name == "postgresql":
+        # Select only rows that still carry a legacy alias key in the JSONB
+        # bag, so steady-state boots scan (almost) nothing.
+        query = query.filter(
+            text("jsonb_exists_any(custom_values, :alias_keys)")
+            .bindparams(alias_keys=keys))
+    else:
+        query = query.filter(TestItemRow.custom_values.isnot(None))
+    rows = query.all()
 
     changed = 0
     for row in rows:
@@ -338,12 +301,8 @@ def _migrate_testitem_field_keys(existing_tables) -> None:
 
     if not changed:
         return
-    try:
-        db.session.commit()
-        log.info("field-key migration: unified %d legacy row(s)", changed)
-    except Exception as exc:  # noqa: BLE001
-        db.session.rollback()
-        log.warning("field-key migration: commit failed: %s", exc)
+    db.session.commit()
+    log.info("field-key migration: unified %d legacy row(s)", changed)
 
 
 def _migrate_user_fk_ondelete(inspector) -> None:
@@ -377,18 +336,12 @@ def _migrate_user_fk_ondelete(inspector) -> None:
         ("lm_cell_comments", "created_by"): "SET NULL",
     }
     log = logging.getLogger(__name__)
-    try:
-        existing_tables = set(inspector.get_table_names())
-    except Exception:  # noqa: BLE001
-        return
+    existing_tables = set(inspector.get_table_names())
 
     for (table, column), action in targets.items():
         if table not in existing_tables:
             continue
-        try:
-            fks = inspector.get_foreign_keys(table)
-        except Exception:  # noqa: BLE001
-            continue
+        fks = inspector.get_foreign_keys(table)
         for fk in fks:
             if fk.get("referred_table") != "lm_users":
                 continue
@@ -400,19 +353,15 @@ def _migrate_user_fk_ondelete(inspector) -> None:
             current = (fk.get("options") or {}).get("ondelete") or "NO ACTION"
             if current.upper() == action.upper():
                 break  # already correct
-            try:
-                with db.engine.begin() as conn:
-                    conn.execute(text(
-                        f'ALTER TABLE {table} DROP CONSTRAINT "{name}"'))
-                    conn.execute(text(
-                        f'ALTER TABLE {table} ADD CONSTRAINT "{name}" '
-                        f"FOREIGN KEY ({column}) REFERENCES lm_users(id) "
-                        f"ON DELETE {action}"))
-                log.info("schema migration: %s.%s FK -> ON DELETE %s",
-                         table, column, action)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("schema migration: could not update FK %s on %s.%s: %s",
-                            name, table, column, exc)
+            with db.engine.begin() as conn:
+                conn.execute(text(
+                    f'ALTER TABLE {table} DROP CONSTRAINT "{name}"'))
+                conn.execute(text(
+                    f'ALTER TABLE {table} ADD CONSTRAINT "{name}" '
+                    f"FOREIGN KEY ({column}) REFERENCES lm_users(id) "
+                    f"ON DELETE {action}"))
+            log.info("schema migration: %s.%s FK -> ON DELETE %s",
+                     table, column, action)
             break
 
 
