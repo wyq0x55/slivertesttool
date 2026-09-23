@@ -2,7 +2,12 @@
 from __future__ import annotations
 
 import datetime as _dt
+import logging
+import shutil
+from pathlib import Path
 from typing import Any, Optional
+
+from flask import current_app
 
 from ...extensions import db
 from ...models import FieldDefinition, LMUser, Project, ProjectMember
@@ -138,34 +143,58 @@ def soft_delete_project(user: LMUser, project: Project) -> None:
 
 
 def delete_project(user: LMUser, project: Project) -> dict[str, int]:
-    """Hard-delete a project and ALL of its associated data (cascade).
-
-    Removes every row tied to the project across the schema — items, field
-    definitions, cell comments, data jobs, members, audit logs, and the
-    project's run tasks (with their events) — then the project row itself. This
-    is irreversible; there is no soft-delete flag left behind. Returns a small
-    per-table count summary for logging / the API response.
-    """
+    """Hard-delete a project, its DB-owned rows and safely-owned artifacts."""
     from ...models import (AuditLog, CellComment, DataJob, FieldDefinition,
-                           ProjectMember, Task, TaskEvent, TestItemRow)
+                           Notification, ProjectMember, Task, TaskEvent,
+                           TestItemRow)
+    from ...runners import run_layout
+    from ...services import project_model_service
 
     pid = project.id
     code = project.code
+    cfg = current_app.config_obj
     counts: dict[str, int] = {}
 
-    # Tasks + their events are keyed by a plain project_id int (no FK cascade),
-    # so delete the events of this project's tasks first, then the tasks.
-    task_ids = [t.id for t in Task.query.filter_by(project_id=pid).all()]
+    # Capture filesystem ownership before deleting DB rows. Legacy workspaces
+    # were keyed by mutable/non-unique project names, so only remove a legacy
+    # test subtree when no task from another project still references it.
+    tasks = Task.query.filter_by(project_id=pid).all()
+    safe_artifacts: set[tuple[str, str]] = set()
+    skipped_shared = 0
+    for task in tasks:
+        workspace = (task.workspace or "").strip()
+        test_id = (task.test_id or "").strip()
+        if not (workspace and test_id):
+            continue
+        key = (workspace, test_id)
+        if key in safe_artifacts:
+            continue
+        other = Task.query.filter(
+            Task.project_id != pid,
+            Task.workspace == workspace,
+            Task.test_id == test_id,
+        ).first()
+        if other is not None:
+            skipped_shared += 1
+            continue
+        safe_artifacts.add(key)
+
+    code_workspace = run_layout.project_root(cfg, project)
+    workspace_shared = Task.query.filter(
+        Task.project_id != pid,
+        Task.workspace == str(code_workspace),
+    ).first() is not None
+    model_root = project_model_service.project_models_root(cfg, project)
+
+    task_ids = [t.id for t in tasks]
     if task_ids:
         counts["task_events"] = TaskEvent.query.filter(
             TaskEvent.task_id.in_(task_ids)).delete(synchronize_session=False)
         counts["tasks"] = Task.query.filter_by(project_id=pid).delete(
             synchronize_session=False)
 
-    # Child tables of the project. CellComment / TestItemRow / FieldDefinition /
-    # DataJob / ProjectMember have DB-level ON DELETE CASCADE, but we delete them
-    # explicitly so the behaviour is identical on any backend and independent of
-    # ORM relationship configuration. AuditLog.project_id is a plain int.
+    counts["notifications"] = Notification.query.filter_by(
+        project_id=pid).delete(synchronize_session=False)
     counts["cell_comments"] = CellComment.query.filter_by(project_id=pid).delete(
         synchronize_session=False)
     counts["items"] = TestItemRow.query.filter_by(project_id=pid).delete(
@@ -180,10 +209,61 @@ def delete_project(user: LMUser, project: Project) -> dict[str, int]:
         synchronize_session=False)
 
     db.session.delete(project)
-    # Record a single project-scope-less audit entry so a trail of the hard
-    # delete survives (the project's own audit rows were just removed).
     audit.record("project.hard_delete", actor_id=user.id, object_type="project",
                  object_id=pid, project_id=None,
                  old_value={"code": code, "deleted": counts})
     db.session.commit()
+
+    # Filesystem cleanup follows the committed DB deletion. A cleanup failure
+    # must never restore/half-restore database state; log it as orphan cleanup
+    # debt instead. New code-keyed roots are unique and may be removed whole.
+    fs_errors = 0
+    for workspace, test_id in safe_artifacts:
+        try:
+            shutil.rmtree(run_layout.log_dir(workspace, test_id),
+                          ignore_errors=False)
+        except FileNotFoundError:
+            pass
+        except Exception:
+            fs_errors += 1
+            logging.getLogger(__name__).exception(
+                "could not remove task log for deleted project %s: %s/%s",
+                code, workspace, test_id)
+        try:
+            shutil.rmtree(run_layout.staging_dir(workspace, test_id),
+                          ignore_errors=False)
+        except FileNotFoundError:
+            pass
+        except Exception:
+            fs_errors += 1
+            logging.getLogger(__name__).exception(
+                "could not remove task staging dir for deleted project %s: %s/%s",
+                code, workspace, test_id)
+
+    if not workspace_shared:
+        try:
+            shutil.rmtree(code_workspace, ignore_errors=False)
+        except FileNotFoundError:
+            pass
+        except Exception:
+            fs_errors += 1
+            logging.getLogger(__name__).exception(
+                "could not remove workspace root for deleted project %s: %s",
+                code, code_workspace)
+
+    try:
+        shutil.rmtree(model_root, ignore_errors=False)
+    except FileNotFoundError:
+        pass
+    except Exception:
+        fs_errors += 1
+        logging.getLogger(__name__).exception(
+            "could not remove model root for deleted project %s: %s",
+            code, model_root)
+
+    if skipped_shared:
+        counts["shared_legacy_artifacts_skipped"] = skipped_shared
+    if fs_errors:
+        counts["filesystem_cleanup_errors"] = fs_errors
     return counts
+
