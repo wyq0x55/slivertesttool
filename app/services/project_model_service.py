@@ -1,48 +1,3 @@
-def migrate_model_dirs(config) -> int:
-    """Rename legacy project_<id> model directories to code-based names.
-
-    This is required bootstrap reconciliation. Filesystem, .sil rewrite, or DB
-    persistence errors propagate so startup cannot continue with split model
-    identity.
-    """
-    moved = 0
-    root = Path(config.MODEL_DIR)
-    projects = Project.query.all()
-    for proj in projects:
-        old_seg = _legacy_segment(proj.id)
-        new_seg = _safe_segment(getattr(proj, "code", "") or "", old_seg)
-        if new_seg == old_seg:
-            continue
-        old_root = root / old_seg
-        new_root = root / new_seg
-
-        if old_root.exists() and old_root.resolve() != new_root.resolve():
-            if new_root.exists():
-                # An empty legacy shell is harmless; two populated roots are
-                # ambiguous and must be resolved explicitly instead of guessed.
-                if any(old_root.iterdir()):
-                    raise ModelError(
-                        f"模型目录同时存在旧/新路径：{old_root} / {new_root}")
-                old_root.rmdir()
-            else:
-                new_root.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(old_root), str(new_root))
-                moved += 1
-
-        for m in ProjectModel.query.filter_by(
-                project_id=proj.id, kind="bundle").all():
-            new_bundle = _remap_segment(m.bundle_dir, old_seg, new_seg)
-            new_sil = _remap_segment(m.sil_path, old_seg, new_seg)
-            if new_bundle and not Path(new_bundle).is_dir():
-                raise ModelError(f"模型 bundle 目录不存在：{new_bundle}")
-            if new_sil:
-                _rewrite_sil_ref(new_sil, old_seg, new_seg)
-            m.bundle_dir = new_bundle
-            m.sil_path = new_sil
-
-    db.session.commit()
-    return moved
-
 """Per-project ``.sil`` plant models.
 
 Model management lives inside a project: every project owns its own list of
@@ -666,20 +621,15 @@ def _rewrite_sil_ref(sil_path, old_seg, new_seg):
 
 
 def migrate_model_dirs(config) -> int:
-    """Rename legacy ``project_{id}`` model directories to code-based names.
+    """Rename legacy project_<id> model directories to code-based names.
 
-    For every project whose code yields a directory segment different from the
-    legacy ``project_{id}`` one, the on-disk bundle directory is moved and each
-    bundle model's stored ``sil_path`` / ``bundle_dir`` (plus the ``.sil``
-    module refs) are rewritten. Idempotent and defensive: safe to run on every
-    start, never raises.
+    This is required bootstrap reconciliation. Filesystem, .sil rewrite, or DB
+    persistence errors propagate so startup cannot continue with split model
+    identity.
     """
     moved = 0
-    try:
-        root = Path(config.MODEL_DIR)
-        projects = Project.query.all()
-    except Exception:  # noqa: BLE001 - DB not ready / no projects
-        return 0
+    root = Path(config.MODEL_DIR)
+    projects = Project.query.all()
     for proj in projects:
         old_seg = _legacy_segment(proj.id)
         new_seg = _safe_segment(getattr(proj, "code", "") or "", old_seg)
@@ -687,22 +637,28 @@ def migrate_model_dirs(config) -> int:
             continue
         old_root = root / old_seg
         new_root = root / new_seg
-        try:
-            if old_root.exists() and old_root.resolve() != new_root.resolve():
-                if new_root.exists():
-                    continue  # target already there - stay safe, skip
+
+        if old_root.exists() and old_root.resolve() != new_root.resolve():
+            if new_root.exists():
+                if any(old_root.iterdir()):
+                    raise ModelError(
+                        f"模型目录同时存在旧/新路径：{old_root} / {new_root}")
+                old_root.rmdir()
+            else:
                 new_root.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(old_root), str(new_root))
                 moved += 1
-        except Exception:  # noqa: BLE001
-            continue
+
         for m in ProjectModel.query.filter_by(
                 project_id=proj.id, kind="bundle").all():
-            m.bundle_dir = _remap_segment(m.bundle_dir, old_seg, new_seg)
-            m.sil_path = _remap_segment(m.sil_path, old_seg, new_seg)
-            _rewrite_sil_ref(m.sil_path, old_seg, new_seg)
-    try:
-        db.session.commit()
-    except Exception:  # noqa: BLE001
-        db.session.rollback()
+            new_bundle = _remap_segment(m.bundle_dir, old_seg, new_seg)
+            new_sil = _remap_segment(m.sil_path, old_seg, new_seg)
+            if new_bundle and not Path(new_bundle).is_dir():
+                raise ModelError(f"模型 bundle 目录不存在：{new_bundle}")
+            if new_sil:
+                _rewrite_sil_ref(new_sil, old_seg, new_seg)
+            m.bundle_dir = new_bundle
+            m.sil_path = new_sil
+
+    db.session.commit()
     return moved
