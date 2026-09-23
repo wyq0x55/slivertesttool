@@ -173,13 +173,11 @@ class Config:
     POOL_DIR = Path(os.environ.get("POOL_DIR", BASE_DIR / "instance" / "pool"))
 
     # --- Silver shutdown cleanup ---
-    # On process exit the worker disposes every pooled instance to release its
-    # license. Because a hard/abrupt shutdown (e.g. the parent launcher killing
-    # the worker on Windows) can skip the graceful dispose and leave orphaned
-    # Silver processes holding licenses, we additionally sweep and force-kill any
-    # remaining Silver processes when the app stops. Set SILVER_KILL_ON_EXIT=0 to
-    # disable this safety net (e.g. if you run other Silver instances alongside).
-    SILVER_KILL_ON_EXIT = _as_bool(os.environ.get("SILVER_KILL_ON_EXIT"), True)
+    # Normal shutdown disposes the pool instances owned by this worker. A
+    # machine-wide image-name sweep cannot distinguish unrelated/manual Silver
+    # sessions, so keep it disabled unless this is a dedicated Silver host and
+    # an emergency orphan-process fallback is explicitly desired.
+    SILVER_KILL_ON_EXIT = _as_bool(os.environ.get("SILVER_KILL_ON_EXIT"), False)
     # Image names swept by the exit cleanup (comma-separated). Defaults cover the
     # common Synopsys Silver executables on Windows.
     SILVER_PROCESS_IMAGE_NAMES = [

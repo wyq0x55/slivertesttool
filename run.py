@@ -95,11 +95,9 @@ def _graceful_silver_drain() -> None:
     """Ask the worker to wind Silver down before we terminate it.
 
     Rather than hard-killing the worker (which skips a clean Silver dispose and
-    can orphan processes / leak licenses), we first drop the shared license limit
-    to 0. The worker's reconcile loop notices within one interval and shrinks its
-    Silver pool target to 0, disposing pooled instances gracefully. We then wait a
-    little over one reconcile interval so that drain can complete before the
-    subsequent ``terminate()`` / force-sweep.
+    can orphan processes / leak licenses), request a separate transient drain
+    state. The configured license limit is never changed. The worker's reconcile
+    loop observes the drain and shrinks its pool target to zero before shutdown.
     """
     if _worker_proc is None or _worker_proc.poll() is not None:
         return
@@ -114,7 +112,7 @@ def _graceful_silver_drain() -> None:
         # One interval for the reconciler to observe the new limit, plus a small
         # margin for the disposes to finish.
         wait_s = min(30.0, interval + 3.0)
-        print(f"Draining Silver pool (limit -> 0), waiting {wait_s:.0f}s...")
+        print(f"Draining Silver pool, waiting {wait_s:.0f}s...")
         time.sleep(wait_s)
     except Exception:  # noqa: BLE001 - shutdown must never raise
         pass
@@ -158,14 +156,14 @@ def _stop_children() -> None:
 def _sweep_silver() -> None:
     """Force-kill any leftover Silver processes after the worker stops.
 
-    On Windows the launcher terminates the worker child with TerminateProcess,
-    which skips the child's atexit pool-dispose, so orphaned Silver processes can
-    keep holding licenses. This guarantees closing the app closes all Silver.
+    This is an explicit emergency fallback for a dedicated Silver host. It is
+    disabled by default because image-name sweeping cannot distinguish this
+    application's Silver processes from unrelated/manual Silver sessions.
     """
     try:
         if (getattr(Config, "RUNNER_BACKEND", "mock") or "").lower() != "silver":
             return
-        if not getattr(Config, "SILVER_KILL_ON_EXIT", True):
+        if not getattr(Config, "SILVER_KILL_ON_EXIT", False):
             return
         from app.runners.silver_cleanup import force_kill_silver_processes
         force_kill_silver_processes(getattr(Config, "SILVER_PROCESS_IMAGE_NAMES", None))
