@@ -8,7 +8,7 @@ import re as _re
 from typing import Any, Optional
 
 from ...extensions import db
-from ...models import CellComment, LMUser, Project, ProjectMember, TestItemRow
+from ...models import LMUser, Project, ProjectMember
 from . import audit, settings
 from .errors import ServiceError
 
