@@ -91,5 +91,5 @@ public route contract. Project resource routes are intentionally split across
 ## Delivery
 
 Use normal Git branches, commits, issues, and pull requests. Do **not** create
-`/app/created` delivery copies, incremented filenames, or whole-project ZIP
-archives unless a user explicitly requests an archive artifact.
+special delivery-copy directories, incremented duplicate filenames, or
+whole-project ZIP archives unless a user explicitly requests an archive artifact.

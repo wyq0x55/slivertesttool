@@ -26,7 +26,7 @@ refactors whose only benefit is aesthetic layering.
 - Real-time collaboration is a separate optional ASGI process and uses the same
   PostgreSQL-backed application state.
 - Frontend Univer packages and generated bundle logic are currently pinned to
-  **0.25.1**. The old “0.6.10 -> 0.21.5” migration plan is obsolete.
+  **0.25.1**. Earlier migration plans in historical reports are obsolete.
 - Dependency ownership is `pyproject.toml` -> `uv.lock` -> generated
   `requirements.txt`. CI rejects lock/export drift.
 
