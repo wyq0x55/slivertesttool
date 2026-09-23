@@ -58,9 +58,10 @@ Waitress (prod server)  +  Pydantic  +  pytest
   The summary side and the detail side are regenerated together so both stay
   consistent (round-trip lossless). See `docs/TEST_MATRIX.md`.
 - Duplicate-submission guard (double-clicks don't re-enqueue an active test).
-- Admin page: register/remove `.sil` model paths, change the license limit,
-  and manage every task with the same filter / sort / multi-select controls as
-  the public task list, including **batch cancel** and **batch delete**.
+- Per-project model management: register server-side `.sil` paths or upload
+  DLL/SBS/PDB bundles, select the current model and keep versioned evidence.
+- System-admin console: change the license/runtime settings and manage tasks
+  across projects with filter / sort / multi-select controls.
 
 ## Architecture
 
@@ -390,33 +391,32 @@ present.
 
 ## API
 
+The active product API is under **`/api/v1`**. Project-owned resources are
+always addressed through `/projects/<id>/...` so authentication and project
+RBAC are enforced by the same route boundary used by the UI. The former
+top-level `/api/tasks`, `/api/models`, `/api/licenses` and
+`/api/admin/*` compatibility surface has been retired.
+
+Representative endpoints:
+
 | Method | Path | Purpose |
 |-------|------|---------|
-| GET | `/api/tasks` | List tasks |
-| GET | `/api/tasks/<key>` | Task status |
-| GET | `/api/tasks/<key>/detail` | Task detail + events |
-| GET | `/api/tasks/<key>/stream` | SSE live log/progress |
-| POST | `/api/tasks/upload_tree` | Folder upload: stage tree (+lib/stdlib), queue selected ids |
-| POST | `/api/tasks/<key>/cancel` | Cancel a task |
-| POST | `/api/tasks/cancel_batch` | Cancel several tasks at once |
-| GET | `/api/tasks/<key>/jdgrslt` | Judge result log (`jdgrslt.log`) as JSON text |
-| GET | `/api/tasks/<key>/download` | Download the report zip |
-| GET | `/api/tasks/download_batch` | Download several reports as one zip |
-| GET | `/api/licenses` | License/concurrency status |
-| GET | `/api/models` | Registered `.sil` model names (for pickers) |
-| GET | `/api/v1/projects/<id>/exemptions` | 項目作成=不要 claims by state (sign-off queue) |
-| POST | `/api/v1/projects/<id>/items/<uuid>/exemption` | Approve/reject one 不要 claim (note required) |
-| POST | `/api/v1/projects/<id>/exemptions/bulk` | Decide many 不要 claims at once |
-| POST | `/api/admin/verify` | Verify the admin token (unlock the console) |
-| GET | `/api/admin/models` | Registered models incl. paths (admin) |
-| POST | `/api/admin/models` | Register a server-side `.sil` path (admin) |
-| POST | `/api/admin/models/bulk` | Replace the whole model list (admin) |
-| DELETE | `/api/admin/models` | Remove a registered model (admin) |
-| POST | `/api/admin/license` | Change the license limit (admin) |
-| POST | `/api/admin/tasks/<key>/cancel` | Cancel any task (admin) |
-| POST | `/api/admin/tasks/cancel_batch` | Cancel several tasks (admin) |
-| DELETE | `/api/admin/tasks/<key>` | Delete a task (admin) |
-| POST | `/api/admin/tasks/delete_batch` | Delete several tasks (admin) |
+| GET | `/api/v1/projects/<id>/tasks` | List project tasks |
+| POST | `/api/v1/projects/<id>/tasks/upload-tree` | Upload a test-case tree |
+| POST | `/api/v1/projects/<id>/tasks/run-selected` | Queue selected test ids |
+| GET | `/api/v1/projects/<id>/tasks/<key>/detail` | Task detail + events |
+| GET | `/api/v1/projects/<id>/tasks/<key>/stream` | SSE live log/progress |
+| POST | `/api/v1/projects/<id>/tasks/<key>/cancel` | Cancel a project task |
+| DELETE | `/api/v1/projects/<id>/tasks/<key>` | Delete a project task |
+| GET | `/api/v1/projects/<id>/tasks/<key>/download` | Download one report |
+| GET | `/api/v1/projects/<id>/tasks/download_batch` | Download selected reports |
+| GET | `/api/v1/projects/<id>/models` | List project models |
+| POST | `/api/v1/projects/<id>/models` | Register a project `.sil` path |
+| POST | `/api/v1/projects/<id>/models/upload` | Upload DLL/SBS/PDB model bundle |
+| GET/POST | `/api/v1/admin/license` | Read/change concurrency limit |
+| GET | `/api/v1/admin/tasks` | System-admin cross-project task view |
+| GET | `/api/v1/projects/<id>/exemptions` | 項目作成=不要 sign-off queue |
+| POST | `/api/v1/projects/<id>/items/<uuid>/exemption` | Decide one 不要 claim |
 
 ## Tests
 
