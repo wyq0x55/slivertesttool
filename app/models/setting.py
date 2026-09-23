@@ -19,5 +19,6 @@ class Setting(db.Model):
     # Well-known keys.
     LICENSE_LIMIT = "license_limit"
     LICENSE_INUSE = "license_inuse"
+    LICENSE_DRAINING = "license_draining"
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Setting {self.key}={self.value}>"
