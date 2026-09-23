@@ -273,37 +273,11 @@ def admin_delete_user(actor: LMUser, user_id: int) -> None:
         raise ServiceError("不能删除当前登录的账户", code="VALIDATION_ERROR")
     if user.is_system_admin:
         _guard_last_admin(user)
-    _detach_user_references(user.id)
     username = user.username
     db.session.delete(user)
     audit.record("user.delete", actor_id=actor.id, object_type="user",
                  object_id=username)
     db.session.commit()
-
-
-# Every foreign key that points at ``lm_users``. Membership rows are removed
-# outright (a deleted user is no longer a member); authorship / ownership
-# columns are nullified so historical projects, test items and comments survive
-# the deletion instead of raising a ForeignKeyViolation.
-def _detach_user_references(user_id: int) -> None:
-    """Unified user-deletion strategy: clear all references to ``user_id``.
-
-    Keeps the delete safe regardless of whether the database enforces
-    ``ON DELETE SET NULL`` (Postgres does not, for these legacy FKs).
-    """
-    ProjectMember.query.filter_by(user_id=user_id).delete(
-        synchronize_session=False)
-
-    nullable_refs = (
-        (Project, ("owner_id", "created_by")),
-        (TestItemRow, ("owner_id", "created_by", "updated_by")),
-        (CellComment, ("created_by",)),
-    )
-    for model, columns in nullable_refs:
-        for column in columns:
-            attr = getattr(model, column)
-            model.query.filter(attr == user_id).update(
-                {attr: None}, synchronize_session=False)
 
 
 def _guard_last_admin(user: LMUser) -> None:

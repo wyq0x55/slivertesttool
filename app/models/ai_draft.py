@@ -61,9 +61,9 @@ class AiDraft(db.Model):
     meta_json = db.Column(db.Text, nullable=False, default="")
     error = db.Column(db.Text, nullable=False, default="")
 
-    created_by = db.Column(db.Integer, db.ForeignKey("lm_users.id"), nullable=True)
+    created_by = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=_utcnow, index=True)
-    reviewed_by = db.Column(db.Integer, db.ForeignKey("lm_users.id"), nullable=True)
+    reviewed_by = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True)
     reviewed_at = db.Column(db.DateTime, nullable=True)
     review_note = db.Column(db.Text, nullable=False, default="")
     # What applying produced (created item ids etc.) for traceability.
@@ -132,7 +132,7 @@ class AiSignalDict(db.Model):
     path = db.Column(db.String(256), nullable=False)
     display = db.Column(db.String(256), nullable=False, default="")
     type = db.Column(db.String(64), nullable=False, default="")
-    updated_by = db.Column(db.Integer, db.ForeignKey("lm_users.id"),
+    updated_by = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"),
                            nullable=True)
     updated_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
 
