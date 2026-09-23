@@ -1,4 +1,15 @@
 -- =============================================================================
+-- EXPERIMENTAL / REFERENCE ONLY -- NOT A SUPPORTED APPLICATION RUNTIME MODE
+--
+-- The current Flask runtime does not set app.current_user_id (or equivalent)
+-- on each PostgreSQL transaction. Applying FORCE RLS from this file to the
+-- normal application role can therefore deny legitimate application traffic.
+--
+-- Keep this file as a starting point for a future dedicated RLS integration.
+-- Do not apply it through init_db.py/reset_db.py; those supported CLIs
+-- intentionally no longer expose an --rls switch.
+-- =============================================================================
+-- =============================================================================
 -- OPTIONAL: Row-Level Security (multi-tenant isolation by project membership)
 -- Rule: security-rls-basics (CRITICAL) + security-rls-performance
 --
