@@ -144,9 +144,21 @@ def _project_segment(project_id: int) -> str:
     return _safe_segment(code or "", _legacy_segment(project_id))
 
 
+def project_models_root(config, project) -> Path:
+    """Code-keyed root owned by one project's uploaded model bundles."""
+    seg = _safe_segment(
+        getattr(project, "code", "") or "",
+        _legacy_segment(getattr(project, "id", 0)),
+    )
+    return Path(config.MODEL_DIR) / seg
+
+
 def _models_root(config, project_id: int) -> Path:
     """Server directory that holds a project's uploaded model bundles."""
-    return Path(config.MODEL_DIR) / _project_segment(project_id)
+    project = db.session.get(Project, project_id)
+    if project is not None:
+        return project_models_root(config, project)
+    return Path(config.MODEL_DIR) / _legacy_segment(project_id)
 
 
 def _module_ref(file_path: Path) -> str:
