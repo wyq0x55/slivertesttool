@@ -356,12 +356,12 @@ class Config:
     COLLAB_PRESENCE_TTL_SECONDS = _as_int(
         os.environ.get("COLLAB_PRESENCE_TTL_SECONDS"), 30
     )
-    # When True, direct REST row mutations (create/patch/delete/move/bulk) on a
-    # project that is currently collaborative are rejected with 409 COLLAB_ACTIVE
-    # so the CRDT materializer stays the single authoritative writer. Default
-    # False: the guard is opt-in and fully backwards compatible; collaborative
-    # clients already route their edits through the Y.Doc, not REST.
-    COLLAB_REST_GUARD = _as_bool(os.environ.get("COLLAB_REST_GUARD"), False)
+    # Direct REST row mutations on an actively collaborative project are
+    # rejected so the CRDT materializer remains the single authoritative writer.
+    # Default True: collaboration is started by the all-in-one launcher, so the
+    # correctness boundary must be active without an extra deployment flag.
+    # Set COLLAB_REST_GUARD=0 only as an explicit rollback escape hatch.
+    COLLAB_REST_GUARD = _as_bool(os.environ.get("COLLAB_REST_GUARD"), True)
 
     # --- SSE ---
     # How often the SSE endpoint polls task_events for new rows (seconds).

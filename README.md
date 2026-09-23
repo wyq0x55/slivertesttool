@@ -256,13 +256,17 @@ frontend derives the socket URL from `window.location`.
 **Single-writer boundary.** While a project has live collaborators the CRDT
 materializer is its **only** authoritative DB writer. The collab server
 heartbeats live-room presence into `lm_collab_presence`, and the web process
-reads it to decide whether a project is "collaborative". Setting
-**`COLLAB_REST_GUARD=1`** makes the web app reject direct REST row mutations on a
-collaborative project (HTTP `409 COLLAB_ACTIVE`) so REST and CRDT never fight
-over `row_order`/`version`. It is **off by default** (opt-in, backwards
-compatible) and **fails open**: if the collab process crashes, its presence row
-goes stale within `COLLAB_PRESENCE_TTL_SECONDS` and REST writes resume
-automatically — the editor degrades gracefully to classic REST.
+reads it to decide whether a project is "collaborative". Direct REST row
+mutations are rejected by default on an active collaborative project (HTTP
+`409 COLLAB_ACTIVE`) so REST and CRDT never fight over
+`row_order`/`version`. If the collab process crashes, its presence row goes
+stale within `COLLAB_PRESENCE_TTL_SECONDS` and REST writes resume automatically.
+A presence lookup error fails closed with `503 COLLAB_STATE_UNAVAILABLE`; set
+`COLLAB_REST_GUARD=0` only as an explicit rollback escape hatch.
+
+Server-side import/extraction paths remain the intentional exception: after they
+write the database, the active editor reconciles the affected sheet back into
+the shared Y.Doc via `resyncSheetFromDb`.
 
 Collab-related environment variables (all optional):
 
@@ -270,7 +274,7 @@ Collab-related environment variables (all optional):
 |---|---|---|
 | `COLLAB_HOST` / `COLLAB_PORT` | `0.0.0.0` / `1234` | Bind address of `run_collab.py`. |
 | `COLLAB_WS_URL` | *(derive from page)* | Explicit WS base handed to the browser (e.g. `wss://host/collab`). |
-| `COLLAB_REST_GUARD` | `0` | Reject REST row writes on collaborative projects (single-writer boundary). |
+| `COLLAB_REST_GUARD` | `1` | Reject REST row writes on active collaborative projects; set `0` only to disable the boundary. |
 | `COLLAB_PRESENCE_HEARTBEAT_SECONDS` | `10` | How often the collab server refreshes presence. |
 | `COLLAB_PRESENCE_TTL_SECONDS` | `30` | How long a presence row stays "active" without a refresh. |
 | `COLLAB_ROOM_IDLE_TTL_SECONDS` | `900` | Evict an idle (client-less) room after this long (`0` disables). |
