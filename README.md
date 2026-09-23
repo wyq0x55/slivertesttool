@@ -96,6 +96,22 @@ and the SSE endpoint replays them by id cursor. The Huey task queue is stored in
 the same PostgreSQL server (`huey.contrib.sql_huey`), so no message broker and no
 local SQLite file are involved.
 
+### Engineering boundaries
+
+- `create_app()` constructs the application without persistent bootstrap side
+  effects. `run.py` owns the one-shot bootstrap in the all-in-one deployment;
+  split deployments run `python manage.py bootstrap` before starting web,
+  worker, or collab processes.
+- LAN Matrix project-resource HTTP handlers share the stable
+  `lanmatrix_projects` blueprint but are split by resource owner. The route
+  contract is test-frozen so URLs, methods, and Flask endpoint identities do not
+  drift during refactors.
+- AI-generated test assets are never authoritative on generation alone. The
+  pipeline machine-validates into a draft, exposes the draft for human review,
+  and applies approved output through the existing service layer.
+- Dependency ownership is single-path: `pyproject.toml` -> `uv.lock` ->
+  generated `requirements.txt`.
+
 ## Install (offline)
 
 The validated runtime is **CPython 3.10.18** (matching `pyproject.toml` and CI).
@@ -140,7 +156,7 @@ validation gate on a machine with the Silver runtime.
 
 ## Run
 
-**Recommended — one command starts everything** (web server + task worker):
+**Recommended — one command starts everything** (web server + task worker + collaboration server):
 
 ```bash
 python run.py
@@ -168,7 +184,7 @@ python run_web.py             # web/API only
 python run_worker.py          # one or more workers
 ```
 
-Set `START_WORKER=0 python run.py` to start the web server only.
+Set `START_WORKER=0` and/or `START_COLLAB=0` when the all-in-one launcher should skip those child processes.
 
 ### Real-time collaboration (optional third process)
 
@@ -372,9 +388,6 @@ present.
 
 | Method | Path | Purpose |
 |-------|------|---------|
-| POST | `/api/uploads` | Stage a bundle, report its test ids |
-| POST | `/api/tasks` | Create a task from a staged upload |
-| POST | `/api/tasks/upload` | One-shot upload + create |
 | GET | `/api/tasks` | List tasks |
 | GET | `/api/tasks/<key>` | Task status |
 | GET | `/api/tasks/<key>/detail` | Task detail + events |
