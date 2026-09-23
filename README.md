@@ -528,7 +528,7 @@ lightweight fake driver, so it runs without Flask or a real Silver install.
   `GET /projects/<id>/tasks`、`POST /projects/<id>/tasks/upload-tree`、
   `GET /projects/<id>/tasks/<key>[/detail|/stream|/jdgrslt|/download]`、
   `POST /projects/<id>/tasks/<key>/cancel`、`DELETE /projects/<id>/tasks/<key>`；
-  管理台 `GET/POST/PATCH/DELETE /admin/users[...]`、`/admin/models[/bulk]`、
+  管理台 `GET/POST/PATCH/DELETE /admin/users[...]`、
   `/admin/license`、`/admin/tasks[/<key>/cancel]`（均 `system_admin` 强校验）。
 
 ### 2.11.0

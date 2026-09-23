@@ -8,17 +8,17 @@ Because the libraries are present on the server at this point,
 producing self-contained judges. The bundled judge no longer needs the library
 folders at run time, so each task workspace only keeps its own test-case folder.
 
-The ``.sil`` plant model is **not** uploaded here -- it is a shared asset the
-administrator configures once (see :mod:`.model_service`). Each task is run
-against that admin-configured model, copied into the task workspace at
-materialise time.
+The ``.sil`` plant model is **not** uploaded with the test-case tree. Models
+are registered on the owning project through ``project_model_service``; task
+submission stores the selected project model path separately from the staged
+test-case workspace.
 
 Two entry points:
 
 * :func:`stage_tree` -- save an uploaded directory tree, bundle its judges, and
   report the detected test ids (folders containing a ``judge.py``).
-* :func:`materialise_one` -- copy a single selected test-case folder plus the
-  admin model into a fresh task workspace.
+* :func:`materialise_one` -- copy a single selected test-case folder into a
+  fresh task workspace; the selected project model is opened in place.
 """
 
 from __future__ import annotations

@@ -19,11 +19,9 @@ Silver plant models. A model is registered in one of two ways:
   When the mock runner is active (no license) a minimal text ``.sil`` is
   written instead.
 
-Models are stored in the ``lm_project_models`` table (see
-:class:`app.models.lanmatrix.ProjectModel`). For backward compatibility with
-older single-model deployments, the ``effective_*`` helpers fall back to the
-global admin registry (:mod:`.model_service`) when a project has no models of
-its own.
+Models are stored only in the ``lm_project_models`` table (see
+:class:`app.models.lanmatrix.ProjectModel`). Project model ownership is strict:
+a project with no registered model cannot silently inherit another/global model.
 """
 
 from __future__ import annotations
@@ -40,7 +38,6 @@ from werkzeug.datastructures import FileStorage
 from ..config import BASE_DIR
 from ..extensions import db
 from ..models import Project, ProjectModel
-from . import model_service
 
 
 class ModelError(Exception):
@@ -228,36 +225,6 @@ def set_current(project_id: int, name: str) -> List[dict]:
 
 
 # --------------------------------------------------------------------------- #
-# Effective reads (project models, falling back to the legacy global registry)
-# --------------------------------------------------------------------------- #
-def effective_models(project_id: int, include_path: bool = False) -> List[dict]:
-    rows = list_models(project_id, include_path=include_path)
-    if rows:
-        return rows
-    return model_service.list_models(include_path=include_path)
-
-
-def effective_has(project_id: int) -> bool:
-    return has_models(project_id) or model_service.has_models()
-
-
-def effective_path(project_id: int, name: str) -> Optional[Path]:
-    path = get_model_path(project_id, name)
-    if path is not None:
-        return path
-    if not has_models(project_id):
-        return model_service.get_model_path(name)
-    return None
-
-
-def effective_default(project_id: int) -> Optional[dict]:
-    row = default_model(project_id)
-    if row is not None:
-        return row
-    return model_service.default_model()
-
-
-# --------------------------------------------------------------------------- #
 # Writes
 # --------------------------------------------------------------------------- #
 def _validate_name(project_id: int, name: str) -> None:
@@ -362,7 +329,7 @@ def resolve_ref(project_id: int, ref: str) -> tuple[str, str, Path]:
     """
     name, wanted = parse_ref(ref)
     if not name:
-        default = effective_default(project_id)
+        default = default_model(project_id)
         if not default:
             raise ModelError("该项目尚未添加 .sil 模型。")
         name = default["name"]
@@ -373,7 +340,7 @@ def resolve_ref(project_id: int, ref: str) -> tuple[str, str, Path]:
     if wanted and actual.lower() != wanted.lower():
         raise ModelVersionMismatch(name, wanted, actual)
 
-    path = effective_path(project_id, name)
+    path = get_model_path(project_id, name)
     if path is None:
         raise ModelError("未知模型，请选择该项目已添加的 .sil 模型。")
     return name, actual, path

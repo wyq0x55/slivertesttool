@@ -108,7 +108,7 @@ def list_project_tasks(project_id):
                "total": total,
                "limit": limit,
                "truncated": total > len(tasks),
-               "models": project_model_service.effective_models(project_id),
+               "models": project_model_service.list_models(project_id),
                "license": status,
                "role": role,
                "can_delete": permissions.can("task.delete", role,
@@ -149,7 +149,7 @@ def upload_project_tree(project_id):
 
     project, _ = _project_and_role(project_id, "task.upload")
     cfg = current_app.config_obj
-    if not project_model_service.effective_has(project_id):
+    if not project_model_service.has_models(project_id):
         return err("NO_MODEL", "该项目尚未添加 .sil 模型，请先在“模型管理”中添加", status=409)
 
     try:
@@ -234,7 +234,7 @@ def run_selected_tasks(project_id):
 
     project, _ = _project_and_role(project_id, "task.upload")
     cfg = current_app.config_obj
-    if not project_model_service.effective_has(project_id):
+    if not project_model_service.has_models(project_id):
         return err("NO_MODEL", "该项目尚未添加 .sil 模型，请先在“模型管理”中添加", status=409)
 
     body = request.get_json(silent=True) or {}
@@ -321,7 +321,7 @@ def rerun_selected_tasks(project_id):
 
     project, _ = _project_and_role(project_id, "task.upload")
     cfg = current_app.config_obj
-    if not project_model_service.effective_has(project_id):
+    if not project_model_service.has_models(project_id):
         return err("NO_MODEL", "该项目尚未添加 .sil 模型，请先在“模型管理”中添加", status=409)
 
     body = request.get_json(silent=True) or {}
@@ -347,7 +347,7 @@ def rerun_selected_tasks(project_id):
         if tid:
             by_test_id.setdefault(tid, row)
 
-    default = project_model_service.effective_default(project_id)
+    default = project_model_service.default_model(project_id)
     default_name = default["name"] if default else ""
 
     submitter = g.user.username
