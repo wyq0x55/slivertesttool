@@ -4,12 +4,14 @@ Silver is licensed for a fixed number of concurrent instances. Because the web
 process and the Huey worker run separately, the classic in-memory semaphore no
 longer works -- the gate lives in the shared PostgreSQL database instead.
 
-Two ``app_settings`` rows implement it:
+Three ``app_settings`` rows implement it:
 
 * ``license_limit`` -- the maximum number of concurrent Silver runs. Editable at
   runtime from the admin page; changes apply live (queued tasks pick up freed
   slots without a worker restart).
 * ``license_inuse`` -- the number of slots currently held.
+* ``license_draining`` -- transient shutdown state; it blocks new acquisitions
+  without changing the configured concurrency.
 
 Acquisition is a single conditional ``UPDATE`` executed atomically by
 PostgreSQL (the row-level write lock serialises concurrent updaters), so it is
@@ -44,22 +46,22 @@ def _set_int(key: str, value: int) -> None:
 
 
 def init_defaults(limit: int) -> None:
-    """Seed the license rows if they do not exist. Idempotent.
+    """Seed license state and clear stale shutdown drain state.
 
-    Also self-heals a limit of ``0`` left behind by :func:`begin_drain` (the
-    graceful-shutdown drain): on the next startup it is restored to the configured
-    default so Silver is usable again. Any positive operator-set value is kept.
+    ``license_limit`` is persistent operator configuration. A zero value can
+    only come from an older build that overloaded the limit as a shutdown
+    signal, so heal that legacy value once. New builds never write zero during
+    shutdown.
     """
     limit_row = db.session.get(Setting, Setting.LICENSE_LIMIT)
     if limit_row is None:
         db.session.add(Setting(key=Setting.LICENSE_LIMIT, value=str(int(limit))))
     elif _get_int(Setting.LICENSE_LIMIT, limit) < 1:
-        # Restore a drained (0) limit back to the configured default.
         limit_row.value = str(int(limit))
     if db.session.get(Setting, Setting.LICENSE_INUSE) is None:
         db.session.add(Setting(key=Setting.LICENSE_INUSE, value="0"))
+    _set_int(Setting.LICENSE_DRAINING, 0)
     db.session.commit()
-
 
 def get_limit() -> int:
     return _get_int(Setting.LICENSE_LIMIT, 1)
@@ -69,13 +71,19 @@ def get_in_use() -> int:
     return _get_int(Setting.LICENSE_INUSE, 0)
 
 
+def is_draining() -> bool:
+    return bool(_get_int(Setting.LICENSE_DRAINING, 0))
+
+
 def get_status() -> dict:
     limit = get_limit()
     in_use = get_in_use()
+    draining = is_draining()
     return {
         "total": limit,
         "in_use": in_use,
-        "available": max(0, limit - in_use),
+        "available": 0 if draining else max(0, limit - in_use),
+        "draining": draining,
     }
 
 
@@ -89,17 +97,15 @@ def set_limit(new_limit: int) -> int:
 
 
 def begin_drain() -> None:
-    """Force the concurrency limit to 0 for a graceful shutdown.
-
-    Unlike :func:`set_limit` (which enforces ``>= 1`` for normal operation),
-    this writes ``license_limit = 0`` directly. The worker's reconcile loop then
-    shrinks the Silver pool target to 0 on its next tick, disposing pooled Silver
-    instances cleanly (and releasing their licenses) instead of relying on a hard
-    force-kill. Intended to be called only from the launcher's shutdown path.
-    """
-    _set_int(Setting.LICENSE_LIMIT, 0)
+    """Request graceful drain without mutating configured concurrency."""
+    _set_int(Setting.LICENSE_DRAINING, 1)
     db.session.commit()
 
+
+def end_drain() -> None:
+    """Clear a drain request explicitly; bootstrap also clears stale drains."""
+    _set_int(Setting.LICENSE_DRAINING, 0)
+    db.session.commit()
 
 def try_acquire() -> bool:
     """Atomically take one slot if one is free. Returns True on success."""
@@ -108,10 +114,17 @@ def try_acquire() -> bool:
         "SET value = CAST(value AS INTEGER) + 1 "
         "WHERE key = :inuse "
         "AND CAST(value AS INTEGER) < "
-        "(SELECT CAST(value AS INTEGER) FROM app_settings WHERE key = :limit)"
+        "(SELECT CAST(value AS INTEGER) FROM app_settings WHERE key = :limit) "
+        "AND COALESCE((SELECT CAST(value AS INTEGER) FROM app_settings "
+        "WHERE key = :draining), 0) = 0"
     )
     result = db.session.execute(
-        stmt, {"inuse": Setting.LICENSE_INUSE, "limit": Setting.LICENSE_LIMIT}
+        stmt,
+        {
+            "inuse": Setting.LICENSE_INUSE,
+            "limit": Setting.LICENSE_LIMIT,
+            "draining": Setting.LICENSE_DRAINING,
+        },
     )
     db.session.commit()
     return result.rowcount == 1
