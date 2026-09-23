@@ -42,18 +42,18 @@ from .projects_items import bp
 
 
 def _collab_write_blocked(project_id) -> "Response | None":
-    """Enforce the single-writer boundary (design doc §1.6 / §12.3).
+    """Enforce the CRDT single-writer boundary for direct row mutations.
 
-    When ``COLLAB_REST_GUARD`` is enabled and the project is currently
-    collaborative (a live CRDT room is heartbeating presence), the materializer
-    is the single authoritative writer, so a direct REST row mutation would race
-    it. Return a 409 response to reject such a write; return ``None`` to allow it.
+    With the guard enabled (the default), an active collaboration room owns row
+    mutations through its Y.Doc/materializer. A stale/absent presence row means
+    no room owns the project and REST writes are allowed again.
 
-    Default config disables the guard, so this is a no-op unless opted in. It
-    also fails open: any presence-lookup error allows the write (never blocks
-    editing because bookkeeping hiccuped).
+    Presence lookup failures are fail-closed: they are not evidence that no
+    collaborator is active, so permitting a competing REST write could silently
+    overwrite CRDT state. Operators can explicitly set COLLAB_REST_GUARD=0 as a
+    rollback escape hatch.
     """
-    if not current_app.config.get("COLLAB_REST_GUARD", False):
+    if not current_app.config.get("COLLAB_REST_GUARD", True):
         return None
     try:
         from ...collab import presence
@@ -62,8 +62,14 @@ def _collab_write_blocked(project_id) -> "Response | None":
                 "COLLAB_ACTIVE",
                 "该项目正在实时协同编辑，请在协同视图中修改（此改动已由协同层接管）。",
                 status=409)
-    except Exception:  # noqa: BLE001 - never block editing on a guard failure
-        current_app.logger.debug("collab write-guard check failed", exc_info=True)
+    except Exception:  # noqa: BLE001 - correctness boundary, fail closed
+        current_app.logger.exception(
+            "collab write-guard presence lookup failed for project %s",
+            project_id)
+        return err(
+            "COLLAB_STATE_UNAVAILABLE",
+            "无法确认实时协同状态，请稍后重试。",
+            status=503)
     return None
 
 def _initials(name: str) -> str:
