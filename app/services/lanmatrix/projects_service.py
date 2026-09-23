@@ -4,7 +4,6 @@ from __future__ import annotations
 import datetime as _dt
 import logging
 import shutil
-from pathlib import Path
 from typing import Any, Optional
 
 from flask import current_app
@@ -160,6 +159,7 @@ def delete_project(user: LMUser, project: Project) -> dict[str, int]:
     # test subtree when no task from another project still references it.
     tasks = Task.query.filter_by(project_id=pid).all()
     safe_artifacts: set[tuple[str, str]] = set()
+    seen_artifacts: set[tuple[str, str]] = set()
     skipped_shared = 0
     for task in tasks:
         workspace = (task.workspace or "").strip()
@@ -167,10 +167,11 @@ def delete_project(user: LMUser, project: Project) -> dict[str, int]:
         if not (workspace and test_id):
             continue
         key = (workspace, test_id)
-        if key in safe_artifacts:
+        if key in seen_artifacts:
             continue
+        seen_artifacts.add(key)
         other = Task.query.filter(
-            Task.project_id != pid,
+            db.or_(Task.project_id != pid, Task.project_id.is_(None)),
             Task.workspace == workspace,
             Task.test_id == test_id,
         ).first()
@@ -181,7 +182,7 @@ def delete_project(user: LMUser, project: Project) -> dict[str, int]:
 
     code_workspace = run_layout.project_root(cfg, project)
     workspace_shared = Task.query.filter(
-        Task.project_id != pid,
+        db.or_(Task.project_id != pid, Task.project_id.is_(None)),
         Task.workspace == str(code_workspace),
     ).first() is not None
     model_root = project_model_service.project_models_root(cfg, project)
