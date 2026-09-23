@@ -1,189 +1,99 @@
-# Technical Debt & Dead-Code Report — silvetestapp v2.13.0
+# Current Technical Debt and Cleanup Status
 
-Status: **Step 1 executed** (Category A removed & verified). Categories B/C/D are
-identification-only and were **not** modified, except where a later dated update
-below records follow-up work (see *Field-key unification* and the resolved D1).
+> **Current-state document, not an historical backlog.**
+>
+> Validated against `main` at `71dc3cb67ea3` on **2026-09-23**.
+> The earlier v2.13 cleanup report contained useful historical evidence but also
+> accumulated stale route, bootstrap, test-environment, and Univer assumptions.
+> Git history remains the source for that older snapshot.
 
-Guiding constraints (unchanged): keep deployment, database, public API and
-frontend behaviour identical. Do not refactor for its own sake. No DDD, no
-microservices, no speculative patterns.
+The governing rule is still: preserve deployment, database, public API, and
+frontend behavior unless a dedicated issue explicitly changes a contract. Avoid
+refactors whose only benefit is aesthetic layering.
 
----
+## Current architecture facts
 
-## Method
+- Production application data and the Huey queue are PostgreSQL-backed.
+- `create_app()` is side-effect-light. Persistent schema/data/filesystem/Huey
+  initialization is owned by `app.bootstrap.bootstrap_app()` and is run once by
+  `run.py` or explicitly through `python manage.py bootstrap`.
+- The former LAN Matrix project/items route god-file has been split. The stable
+  `lanmatrix_projects` blueprint is aggregated in
+  `app/routes/lanmatrix/projects_items.py`; resource handlers live in the nine
+  resource modules documented in `AGENT.md`.
+- AI generation follows generate -> validate/retry -> draft -> human review ->
+  apply. Applying approved output goes through the existing service layer.
+- Real-time collaboration is a separate optional ASGI process and uses the same
+  PostgreSQL-backed application state.
+- Frontend Univer packages and generated bundle logic are currently pinned to
+  **0.25.1**. The old “0.6.10 -> 0.21.5” migration plan is obsolete.
+- Dependency ownership is `pyproject.toml` -> `uv.lock` -> generated
+  `requirements.txt`. CI rejects lock/export drift.
 
-Every candidate was confirmed by **actual reference analysis**, not by comments:
-who imports it, who renders it, which HTTP route reaches it. Evidence is given as
-`file:line`. Verification of the deletion used:
+## Resolved historical debt
 
-- Whole-repository scan for any `render_template` / `extends` / `url_for(static, …)`
-  reference to each removed file (result: **zero** live references).
-- `python -m py_compile` on all 44 Python modules (result: **all compile**).
+| Area | Current status |
+|---|---|
+| Orphan standalone submit/tasks/admin UI | Removed. Live navigation is LAN Matrix based; top-level page routes are redirects only. |
+| Legacy staged ZIP upload API | Removed. The primary runner submission path is `POST /api/tasks/upload_tree`. |
+| LAN Matrix service god module | Split into domain services; `service.py` remains a compatibility facade for live callers. |
+| Field-key identity drift | Resolved: aliases such as `test_name -> title` and `remark -> comment` route to first-class storage/search behavior. |
+| Persistent startup ownership | Resolved by #4 / PR #9. Factory construction no longer owns schema/data/filesystem migration. |
+| Missing repository CI | Resolved by #6 / PR #11, with the baseline fixes in PR #12. |
+| Project/items route god module | Resolved by #5 / PR #10 with a frozen 73-route `lanmatrix_projects` contract. |
+| Dependency metadata duplication | Resolved by #7 / PR #13. The migration also exposed and fixed the missing `libclang` lock entry. |
+| Old Univer migration item | Obsolete. Current frontend is consistently on Univer 0.25.1 and is production-built in CI. |
 
-The test suite (`pytest`) could not be executed here because it requires a live
-PostgreSQL instance and Flask, which are unavailable in this analysis sandbox.
-The removed items are template/JS/CSS orphans with no Python import edges, so
-static exhaustion is equivalent for them. Re-run `pytest` in a normal
-environment after pulling these changes.
+## Live compatibility surfaces that are intentionally kept
 
----
+These are not current removal tasks.
 
-## Category A — Safe to delete (DONE, fully verified)
+### Top-level page redirects
 
-Residue of the original stand-alone "submit / tasks / admin" UI. That UI was
-folded into the LAN Test Matrix (lanmatrix); `page_routes.py` now only issues
-redirects and never renders these templates. Each removed JS file was referenced
-only by a removed template.
+`app/routes/page_routes.py` keeps `/`, `/tasks`, `/tasks/<key>`, and
+`/admin` as redirects for old bookmarks. Remove them only when there is a
+known migration plan for callers/bookmarks; do not invent a second UI path.
 
-| File | Evidence it was dead |
-|------|----------------------|
-| `app/templates/base.html` | No `render_template`; only extended by the other removed templates |
-| `app/templates/index.html` | No route renders it |
-| `app/templates/task_list.html` | No route renders it |
-| `app/templates/task_detail.html` | No route renders it |
-| `app/templates/admin.html` (top-level) | No route renders it (≠ live `lanmatrix/admin.html`) |
-| `app/templates/not_found.html` | No `errorhandler` renders it |
-| `app/static/js/upload.js` | Referenced only by removed `index.html` |
-| `app/static/js/task_list.js` | Referenced only by removed `task_list.html` |
-| `app/static/js/task_detail.js` | Referenced only by removed `task_detail.html` |
-| `app/static/js/admin.js` | Referenced only by removed `admin.html` |
-| `app/static/js/app.js` | Referenced only by removed `base.html` (live `base_lm.html` does not use it) |
+### LAN Matrix service facade
 
-**Kept on purpose (NOT in A):** `app/static/css/app.css` is still loaded by the
-live `lanmatrix/base_lm.html` and must stay.
+`app/services/lanmatrix/service.py` re-exports domain service functions for
+existing callers. It is small and has a real compatibility role. Removing it is
+low value unless callers are intentionally migrated in a dedicated change.
 
-See `DELETION_MANIFEST.txt` for byte sizes + SHA-256 of every removed file so the
-change is fully reversible from the original archive.
+### Cohesive LAN Matrix model module
 
----
+`app/models/lanmatrix.py` is large, but the models are tightly related through
+project/test-matrix foreign keys and workflows. File size alone is not a reason
+to split it.
 
-## Category B — Recommend deprecating (owner confirmed no external callers → B1/B2 REMOVED)
+### Bridge identity maps
 
-The owner confirmed there are **no scripts / CI / pipelines** calling the legacy
-`.zip` endpoints. B1 (endpoints) and B2 (their service helpers) were therefore
-removed. B3 (redirect stubs) is intentionally kept one more release.
+Identity maps such as `TM_TO_LM` / `LM_TO_TM` may look redundant when they
+are 1:1, but they document a symmetric format boundary. Simplify only if doing so
+removes real complexity without weakening the bridge contract.
 
-| Item | Action | Detail |
-|------|--------|--------|
-| Endpoints `POST /api/uploads`, `POST /api/tasks`, `POST /api/tasks/upload` | **REMOVED** | `api_routes.py`: deleted `stage_upload()`, `create_task()`, `upload_and_create()`, plus the legacy-only helpers `_pick_default_sil()` and `_materialise_and_enqueue()`. Docstring endpoint list updated. The live folder path `POST /api/tasks/upload_tree` is unchanged. |
-| `upload_service.stage_upload()`, `materialise()`, `_safe_extract()`, `detect_sil_models()` | **REMOVED** | Only reachable through the deleted endpoints. `import zipfile` (only used by `_safe_extract`) removed from the module. Live helpers `stage_tree()`, `materialise_one()`, `cleanup_staging()`, `_save_items()`, `_safe_relpath()` untouched. |
-| `tests/test_api.py` legacy cases | **MIGRATED** | Removed `_make_bundle()` (zip helper), `test_two_step_upload`. The E2E run→result→download coverage was re-pointed to `POST /api/tasks/upload_tree` (`test_upload_tree_and_run`), plus `test_upload_tree_requires_model` and `test_resubmit_after_completion_allowed`. Coverage is preserved/improved. |
-| Top-level `page_bp` redirect routes | **KEPT (B3)** | `app/routes/page_routes.py:19-36`. Pure old-bookmark compatibility. Remove in a later release once old links are confirmed gone. |
+## Remaining validation boundary
 
-> ⚠️ The `test_api.py` migration could not be executed here (no PostgreSQL/Flask
-> in the analysis sandbox). Syntax is validated via `py_compile`; **run `pytest`
-> in a normal environment** to confirm the folder-upload E2E passes.
+GitHub CI validates the reproducible platform surface:
 
----
+- PostgreSQL 16
+- CPython 3.10.18
+- mock runner
+- frozen dependency/export drift
+- web/worker/collab import smoke
+- full pytest
+- frontend production build
 
-## Category C — Must keep (labelled "legacy/compat" but LIVE)
+The final #7 PR gate completed with **924 passed / 4 skipped** plus a green
+frontend build.
 
-| Item | Why it stays |
-|------|--------------|
-| `_migrate_schema()` / `_migrate_user_fk_ondelete()` / `_migrate_testitem_field_keys()` | `app/__init__.py` — idempotent migrations run on every boot; the only upgrade path for older databases. The last one is a data migration (see *Field-key unification* below), not a DDL `ALTER TABLE`. |
-| Two Excel codecs: `lanmatrix/matrix_excel.py` + `lanmatrix/testmatrix_bridge.py` **vs** `lanmatrix/excel_io.py` + `excel_service.py` | **Not duplicates.** Former = byte-compatible Japanese VHILS `..._SYS.xlsx` import/export (`lanmatrix_api.py:574,601`). Latter = generic per-project field template import/export. Different formats, both live. |
-| `models/task.py:39-55` legacy submitter/path columns; `models/setting.py:24` single-model column | Old data rows still depend on these nullable columns for display/traceability. |
-| `fields.py` field catalogue (`TEST_FIELDS` / `TEST_FIELD_KEYS`, formerly `SYSTEM_FIELDS` / `SYSTEM_FIELD_KEYS`) | Still LIVE. First-class column routing is now driven by `models/lanmatrix.py` `TestItemRow._SYSTEM_COLUMN` + `_FIELD_ALIASES` (case_id/result → real columns; `test_name` → `title`, `remark` → `comment`). `fields.py` no longer owns the routing table. See *Field-key unification* below. |
-| `frontend/src/adapter.ts` "kept for compatibility" methods; `_maybeOpenSteps` no-op (`adapter.ts:607,613`) | `editor.js` calls these method names as a contract; the no-op is deliberate (steps are first-class Univer tables now). |
+CI intentionally does not launch Synopsys Silver, consume licenses, or execute
+proprietary DLL/SBS/SIL assets. Changes to real Silver process control, model
+opening, license behavior, or proprietary artifacts still require an internal
+runtime check.
 
----
+## Maintenance rule for this document
 
-## Structural Unification — lanmatrix service layer (DONE, static-verified)
-
-The historical seam where lanmatrix used a different internal layout from the
-rest of `app/services/` has been removed. Full details, verification and the
-deliberately-deferred items are in **`docs/STRUCTURAL_UNIFICATION.md`**. Summary:
-
-- Moved `services/matrix_excel.py` → `services/lanmatrix/matrix_excel.py` (it is a lanmatrix feature module).
-- Renamed `lanmatrix/repository.py` → `lanmatrix/queries.py` (flat query helpers, not a repository pattern).
-- Split the 1,000-line `lanmatrix/service.py` god module into per-domain
-  `users_service` / `projects_service` / `fields_service` / `items_service` /
-  `batch_service` / `comments_service` (+ shared `errors.py`), mirroring the
-  runner's flat `*_service.py` layout. `service.py` is now a thin re-export
-  facade, so **all callers are unchanged** (44/44 public names preserved).
-- Verified by `py_compile` (all app+tests) + a bundled `tools/check_names.py`
-  undefined-name checker + symbol-equivalence check. **`pytest` still to be run
-  in a real env.**
-- Deferred (with rationale): splitting `routes/lanmatrix_api.py` (needs a
-  test-backed pass), splitting `models/lanmatrix.py` (cohesive — not an
-  inconsistency), translating Chinese user-facing strings (behaviour-preserving).
-
----
-
-## Field-key unification — data layer (2026-07-21, DONE; DB tests pending PostgreSQL run)
-
-Follow-up to the front/back-end protocol unification (P1b). The editor now speaks
-one "identity" field vocabulary, but two of its keys had **not** been propagated
-to the data model, so their values were being stranded in the `custom_values`
-JSONB bag instead of their backing columns — which made quick-search / sort /
-filter silently miss them for Test-Matrix projects.
-
-Fixed so `test_name` → `title` and `remark` → `comment` route to first-class
-columns again:
-
-- `app/models/lanmatrix.py` — added `TestItemRow._FIELD_ALIASES =
-  {"test_name": "title", "remark": "comment"}`, merged into `_SYSTEM_COLUMN`;
-  `to_dict()` emits both the alias and the legacy key. The overlay order makes
-  rolling upgrades and the pre-migration state correct without a migration.
-- `app/services/lanmatrix/queries.py` — `SORTABLE` whitelist and the `_COLUMN`
-  map now include `test_name` / `remark`, restoring sort/filter (still
-  whitelist-guarded against injection).
-- `app/services/lanmatrix/items_service.py` — quick-search OR now also scans the
-  `comment` column (covering `remark`; `test_name` is covered via `title`).
-- `app/__init__.py` — new idempotent boot data migration
-  `_migrate_testitem_field_keys()`: lifts any legacy `test_name` / `remark`
-  values out of `custom_values` into their columns and drops the keys.
-  PostgreSQL uses a `jsonb_exists_any` pre-filter (near-zero steady-state scan);
-  other dialects fall back to a full scan. Only fills an empty column — never
-  clobbers an explicit edit — so re-runs are no-ops.
-
-**Scope note:** only `test_name` / `remark` alias onto columns. `steps` stays in
-JSONB (structured JSON consumed by `parse_steps`), and `test_id` stays in JSONB
-(the Test-Matrix display id, distinct from the internal auto-generated `case_id`
-unique column).
-
-**Verification:** `py_compile` all app+tests; pure-module suite 63 passed /
-3 skipped; 78 `/api/v1` routes unchanged; `tools/check_names.py` exit 0; a full
-SQLite-backed end-to-end run of write→column, `to_dict`, `get_field`, sort/filter
-whitelist, SQL search, legacy migration and idempotency all pass. **New
-integration tests `tests/test_lanmatrix_identity_columns.py` require the
-PostgreSQL test DB** (`pytest tests/test_lanmatrix_identity_columns.py`) — the
-`jsonb_exists_any` branch and JSONB semantics can only be confirmed on PG.
-
----
-
-## Category D — Unknown risk (needs owner confirmation)
-
-| Item | What to confirm |
-|------|-----------------|
-| ~~`vendor/bootstrap.min.css` referenced by `lanmatrix/base_lm.html:7` but **file absent**~~ **(D1 — RESOLVED)** | Bootstrap D1 404 has been resolved; the reference no longer produces a missing-asset request on page load. |
-| Univer vendor bundle version mismatch | `frontend/package.json` pins `@univerjs/* 0.6.10`; committed `vendor/univer/univer.full.umd.js` is an old build. Target is **0.21.5** — a separate breaking migration (see below). |
-| Category B external callers | Are there LAN scripts/pipelines POSTing the legacy endpoints? If none → move B1/B2 into A. |
-| `TM_TO_LM` / `LM_TO_TM` identity maps (`testmatrix_bridge.py:41`) | Now `{k: k}`. Could be simplified away, but they form the bridge's symmetric interface. Low value — confirm before touching. |
-
----
-
-## Univer 0.6.10 → 0.21.5 (separate work item, not cleanup)
-
-This is a **breaking** upgrade (package layout, preset composition, Facade API,
-locale registration all changed). `adapter.ts` / `steps_adapter.ts` / `main.ts`
-must be rewritten against 0.21.x and the bundle rebuilt (`npm run build`
-regenerating `vendor/univer/univer.full.umd.{js,css}`). Keep it in its **own PR**
-so a UI regression is easy to localise, separate from the dead-code cleanup.
-
----
-
-## Recommended execution order
-
-1. **Category A** — remove orphan UI (DONE here). Re-run `pytest` + smoke-test
-   lanmatrix flows in a normal env.
-2. **Category B1/B2** — legacy `.zip` upload flow removed (DONE here).
-3. **Structural unification** — lanmatrix service layer (DONE here, see
-   `docs/STRUCTURAL_UNIFICATION.md`). Run `pytest` in a real env to confirm.
-4. Optional follow-up pass: split `routes/lanmatrix_api.py` by resource group
-   (test-backed).
-5. **Field-key unification** — data-layer propagation of the identity protocol
-   (DONE here, see the dated section above). Run
-   `pytest tests/test_lanmatrix_identity_columns.py` against PostgreSQL to confirm.
-6. Separate PR: Univer 0.6.10 → 0.21.5 frontend migration.
-7. Keep all of Category C. D1 resolved; address remaining D items opportunistically.
+Add an item here only when it is current, evidenced, and actionable. Once
+resolved, move it to the resolved table with the validating PR/commit rather
+than leaving obsolete “future work” instructions in place.

@@ -1,105 +1,108 @@
-# Structural Unification — LAN Test Matrix service layer
+# Structural Unification — LAN Test Matrix Service Layer
 
-Status: **applied** to the cleaned tree. Behaviour, HTTP API, database schema,
-deployment and frontend are unchanged. This pass only reorganises Python
-modules inside `app/services/` so the LAN Test Matrix (lanmatrix) feature
-follows the same conventions as the rest of the platform.
+> **Historical design snapshot — completed.**
+>
+> Originally written during the LAN Matrix service-layer cleanup. Revalidated
+> against `main` at `71dc3cb67ea3` on **2026-09-23**.
+> This document records why the service split exists; it is not a current
+> backlog. Later follow-up work, especially the route split, has already landed.
 
-## Why
+## Why this change existed
 
-`app/services/` mixed two conventions:
+The repository historically mixed two service conventions:
 
-* **Silver test runner** — flat, single-responsibility function modules
-  (`task_service.py`, `upload_service.py`, `model_service.py`, …).
-* **LAN Test Matrix** — a `lanmatrix/` sub-package whose logic was concentrated
-  in one 1,000-line `service.py` "god module", plus a `repository.py` whose
-  name implied a repository/DDD layer it does not actually use, plus a feature
-  module (`matrix_excel.py`) that had leaked up to the flat top level.
+- runner services were small, flat, single-responsibility modules;
+- LAN Matrix business logic had accumulated in one large
+  `app/services/lanmatrix/service.py` module plus a misleading
+  `repository.py` query-helper name and a misplaced matrix Excel module.
 
-This was the historical seam left over from lanmatrix once being a self-contained
-standalone app. The three items below remove that seam without changing any
-external contract.
+The cleanup removed that seam without changing the public HTTP/DB/file
+contracts.
 
-## Changes applied
+## Applied service-layer changes
 
-| # | Change | Rationale | Import sites updated |
-|---|--------|-----------|----------------------|
-| 1 | Moved `app/services/matrix_excel.py` → `app/services/lanmatrix/matrix_excel.py` | It is a lanmatrix feature module (byte-compatible VHILS Excel codec), used only by `lanmatrix/testmatrix_bridge.py`. It belongs inside the feature package. | `testmatrix_bridge.py` (`from .. import` → `from . import`, 2 sites); `tests/test_matrix_excel.py` module path; doc/comment refs |
-| 2 | Renamed `lanmatrix/repository.py` → `lanmatrix/queries.py` | The content is flat query helpers (`parse_sort`, `apply_sort`, `build_filter_clause`), not a repository pattern. The old name implied a layer that isn't there and clashed with the flat-function style used everywhere else. | `items_service.py` (`repository.` → `queries.`, 2 sites) |
-| 3 | Split `lanmatrix/service.py` (1,000 LOC) into per-domain `*_service.py` modules mirroring the runner layout, keeping `service.py` as a thin compatibility facade | Removes the god module; each domain is now a small, cohesive file that reads like the runner services. | none — see below |
+| Change | Current result |
+|---|---|
+| Move matrix Excel logic into `app/services/lanmatrix/matrix_excel.py` | The codec now lives with the LAN Matrix feature that owns it. |
+| Rename `repository.py` to `queries.py` | The module is correctly named for its flat query/sort/filter helpers. |
+| Split the old ~1,000-line `service.py` | Business logic lives in domain modules; `service.py` is now only a compatibility facade. |
 
-### The service split
+The domain modules remain:
 
-`service.py` was already cleanly sectioned; each domain was a contiguous block,
-so the code was **sliced verbatim** (no logic was rewritten) into:
+- `users_service.py`
+- `projects_service.py`
+- `fields_service.py`
+- `items_service.py`
+- `batch_service.py`
+- `comments_service.py`
+- `errors.py`
 
-| New module | Responsibility | Source lines |
-|------------|----------------|--------------|
-| `errors.py` | `ServiceError`, `VersionConflict` (shared exception types) | 30–45 |
-| `users_service.py` | users, membership roles, system-admin account CRUD | 48–339 |
-| `projects_service.py` | project lifecycle + default-field seeding | 342–434 |
-| `fields_service.py` | per-project field-definition CRUD | 437–528 |
-| `items_service.py` | row query, single-row CRUD (validation + optimistic lock + audit), multi-row ops | 531–828 |
-| `batch_service.py` | batch search/replace preview / apply / undo | 831–963 |
-| `comments_service.py` | cell comments + audit-log query | 966–1000 |
+`service.py` intentionally re-exports these APIs for existing callers. That
+facade is a compatibility surface, not evidence that the old god module still
+exists.
 
-`service.py` now only re-exports these:
+## Subsequent follow-up status
 
-```python
-from .errors import ServiceError, VersionConflict
-from .users_service import *
-from .projects_service import *
-from .fields_service import *
-from .items_service import *
-from .batch_service import *
-from .comments_service import *
-```
+The original document deferred several items because they could not be safely
+validated at the time. Their current status is now known:
 
-So every existing caller — `routes/lanmatrix_api.py`, `routes/lanmatrix_pages.py`,
-`testmatrix_bridge.py`, `excel_service.py` — that references `service.<name>`,
-`service.ServiceError` or imports `from ...service import ServiceError,
-VersionConflict` keeps working with **zero changes**.
+### Route split — completed
 
-Per-module `_utcnow()` helpers were added where needed, matching the runner's
-existing convention (each `*_service.py` defines its own).
+The old recommendation to split a large LAN Matrix API route module is no longer
+open work. PR #10 split project-resource ownership while preserving one stable
+`lanmatrix_projects` blueprint and endpoint identities.
 
-## Verification (static — no test DB in this environment)
+The current resource modules are:
 
-* `py_compile` passes for **all** modules in `app/` and `tests/`.
-* A custom `symtable`-based checker (bundled as `tools/check_names.py`) confirms
-  **no undefined global names** in any lanmatrix module — i.e. no import was
-  missed during the slice. The checker was validated by deliberately dropping an
-  import and confirming it flags the resulting names.
-* Symbol-equivalence check: the facade exposes **all 44** public names the
-  original `service.py` exported (0 missing).
-* Zero residual references to the old `repository` module or the old flat
-  `matrix_excel` path anywhere in `app/` or `tests/`.
+- `projects.py`
+- `fields.py`
+- `models.py`
+- `items.py`
+- `imports_exports.py`
+- `audit_trash.py`
+- `members.py`
+- `reviews.py`
+- `dashboard.py`
 
-> A real `pytest` run still requires PostgreSQL + Flask (unavailable in the
-> refactoring sandbox). Please run the suite once in a normal environment;
-> `tests/test_api.py` and `tests/test_matrix_excel.py` cover the touched paths.
+`projects_items.py` is now only the blueprint aggregator. A route-contract
+test freezes the **73** routes belonging to this blueprint by URL, HTTP method,
+Flask endpoint identity, and wrapped view identity.
 
-## Deliberately NOT changed (with rationale)
+### Model split — still intentionally deferred
 
-These are lanmatrix-named but are **not** layering inconsistencies, so touching
-them would be change-for-its-own-sake or unacceptable risk:
+`app/models/lanmatrix.py` is large but cohesive. Its related project/test
+matrix models share strong foreign-key and workflow locality. Do not split it
+solely to reduce line count.
 
-* **`app/models/lanmatrix.py`** (8 tightly-related models: `LMUser`,
-  `ProjectMember`, `Project`, `FieldDefinition`, `TestItemRow`, `CellComment`,
-  `AuditLog`, `DataJob`). This is a cohesive, feature-grouped model file — the
-  same shape as the runner's `task.py`/`task_event.py`/`setting.py`. Splitting
-  eight FK-linked models into separate files would reduce locality for no gain.
-  **Kept.**
-* **`app/routes/lanmatrix_api.py` (1,264 LOC) / `lanmatrix_pages.py`.** These are
-  feature route files, structurally consistent with `api_routes.py` /
-  `page_routes.py`. The size of `lanmatrix_api.py` is a god-file smell, but
-  splitting a single Flask blueprint across files can silently drop endpoints
-  (a missed side-effect import → 404 that only appears at runtime) and cannot be
-  validated here. **Recommended as a separate, test-backed pass** (split by
-  resource group — auth / projects / fields / items / batch / import-export —
-  keeping the one `v1` blueprint and identical URLs).
-* **Chinese user-facing strings** in the service/bridge modules (e.g.
-  `"该记录已被其他用户修改"`). These are the messages shown to the Chinese-speaking
-  LAN users; translating them would change the product's behaviour/UX. Left
-  as-is intentionally. (Project policy asks for English in *new* code; existing
-  user-visible copy is preserved.)
+### User-visible Chinese strings — intentionally preserved
+
+Existing Chinese product messages are behavior/UX, not architecture debt.
+Repository engineering docs and new code comments should be English, but
+translating product copy is a separate product decision.
+
+## Verification now available
+
+The original cleanup was initially static-verified because its sandbox lacked a
+live PostgreSQL test environment. That limitation is historical.
+
+The repository now has GitHub CI with:
+
+- PostgreSQL 16
+- mock runner
+- dependency lock/export verification
+- web/worker/collab import smoke
+- full pytest
+- frontend production build
+
+After the route and dependency follow-ups, the #7 PR gate completed with
+**924 passed / 4 skipped**, and the frontend production build was green.
+
+Real Synopsys Silver execution remains outside GitHub CI and must still be
+validated in the internal runtime when Silver-specific behavior changes.
+
+## How to use this document
+
+Use it to understand the rationale behind the current service layout. Do not use
+old source-line numbers, old module names, or the original deferred route split
+as instructions for new work. For current engineering constraints, read
+`AGENT.md` and `README.md`, then verify against the code and tests.
