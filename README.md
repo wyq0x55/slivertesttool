@@ -440,10 +440,11 @@ lightweight fake driver, so it runs without Flask or a real Silver install.
   `testmatrix_bridge.TM_TO_LM` 随之从「补丁式重映射（test_name→title、remark→comment）」
   简化为纯恒等映射；`priority`/`result` 仍透明落到首类列。**注意**：仅新建项目会 seed
   出新字段，存量项目无自动迁移。
-- **关闭应用时优雅关停 Silver.** 组合启动器 `run.py` 在终止 worker 前，先把共享许可
-  上限降到 0（`license_service.begin_drain()`），worker 的 reconcile 循环随即把 Silver
-  连接池 target 收缩到 0、逐个 dispose 实例并释放许可，然后再终止进程并做兜底清理。
-  下次启动时 `init_defaults` 会把被降为 0 的上限自动恢复为配置默认值。
+- **关闭应用时优雅关停 Silver，且不再改写并发配置.** 组合启动器 `run.py` 在终止
+  worker 前写入独立的 transient `license_draining` 状态；worker reconcile 将 Silver
+  pool target 收缩到 0，但管理员设置的 `license_limit` 始终保持原值。下一次 bootstrap
+  会清除遗留 drain 状态。机器级 `SILVER_KILL_ON_EXIT` 默认关闭，仅建议在专用 Silver
+  主机上作为显式 emergency fallback 开启。
 - **步骤明细：入力値/期待値信号与手順列联动.** 步骤编辑器新增「添加信号 / 添加步骤」
   按钮；新增或重命名信号时，手順（步骤）表的对应列（`入力: <名>` / `期待: <名>`）会
   即时增列并重渲染，保持入力/期待与手順列的映射关系。
