@@ -1,4 +1,4 @@
-"""System-admin console (users, models, license, tasks) for the LAN Test Matrix API."""
+"""System-admin console (users, license, tasks) for the LAN Test Matrix API."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from flask import (
 from ...extensions import db
 from ...models import DataJob, FieldDefinition, LMUser, Project, Task, TaskStatus
 from ...services import (
-    event_service, license_service, model_service, report_service,
+    event_service, license_service, report_service,
     runtime_config, task_service, upload_service,
 )
 from ...services.upload_service import UploadError
@@ -74,40 +74,6 @@ def admin_update_user(user_id):
 def admin_delete_user(user_id):
     service.admin_delete_user(g.user, user_id)
     return ok({"deleted": True})
-
-@bp.get("/admin/models")
-@system_admin_required
-def admin_get_models():
-    return ok({"models": model_service.list_models(include_path=True)})
-
-@bp.post("/admin/models")
-@system_admin_required
-def admin_add_model():
-    body = request.get_json(silent=True) or {}
-    try:
-        entry = model_service.add_model(body.get("name", ""), body.get("path", ""))
-    except model_service.ModelError as exc:
-        return err("VALIDATION_ERROR", str(exc), status=400)
-    return ok({"model": entry,
-               "models": model_service.list_models(include_path=True)}, status=201)
-
-@bp.post("/admin/models/bulk")
-@system_admin_required
-def admin_bulk_models():
-    body = request.get_json(silent=True) or {}
-    try:
-        result = model_service.replace_models(body.get("models") or [])
-    except model_service.ModelError as exc:
-        return err("VALIDATION_ERROR", str(exc), status=400)
-    return ok({"models": result})
-
-@bp.delete("/admin/models")
-@system_admin_required
-def admin_remove_model():
-    body = request.get_json(silent=True) or {}
-    removed = model_service.remove_model((body.get("name") or "").strip())
-    return ok({"removed": removed,
-               "models": model_service.list_models(include_path=True)})
 
 @bp.get("/admin/license")
 @system_admin_required

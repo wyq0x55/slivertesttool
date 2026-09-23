@@ -17,7 +17,7 @@ from flask import (
 from ...extensions import db
 from ...models import DataJob, FieldDefinition, LMUser, Project, Task, TaskStatus
 from ...services import (
-    event_service, license_service, model_service, report_service,
+    event_service, license_service, report_service,
     task_service, upload_service,
 )
 from ...services.upload_service import UploadError

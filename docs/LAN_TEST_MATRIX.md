@@ -235,8 +235,6 @@ visible only in the admin console, never in a project's list.
 | POST | `/admin/users` | `{username,password,display_name,email,is_system_admin,status}` → `{user}` (201) |
 | PATCH | `/admin/users/{id}` | `{changes:{display_name?,email?,status?,is_system_admin?,password?}}` → `{user}` |
 | DELETE | `/admin/users/{id}` | → `{deleted}` (guards last admin / self) |
-| GET/POST/DELETE | `/admin/models` | list / `{name,path}` add / `{name}` remove |
-| POST | `/admin/models/bulk` | `{models:[…]}` replace all |
 | GET/POST | `/admin/license` | status / `{count}` set concurrency |
 | GET | `/admin/tasks` | → `{tasks:[{…,project_code}]}` (all projects + legacy) |
 | POST | `/admin/tasks/{key}/cancel` · DELETE | cancel / delete any task |

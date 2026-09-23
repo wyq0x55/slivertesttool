@@ -67,21 +67,30 @@ def _pooling_enabled(config, app=None) -> bool:
 def get_pool(app, config):
     """Return the process-wide Silver instance pool, initialising it lazily.
 
-    The pool's default-model getter resolves the first registered ``.sil`` model
-    inside an app context, so pre-warming can open a real model when one exists.
+    Pre-warm needs only a valid seed model to start Silver early. The seed comes
+    from the project model table (current models first); each real task still
+    re-opens its own ``sil_path`` before execution, so the seed has no model
+    selection semantics.
     """
     from ..runners.silver_pool import build_driver, get_pool as _get_pool
-    from ..services import model_service
 
     def _default_sil():
         try:
             with app.app_context():
-                default = model_service.default_model()
-        except Exception:  # noqa: BLE001
+                from ..models import ProjectModel
+                row = (
+                    ProjectModel.query
+                    .filter(
+                        ProjectModel.deprecated_at.is_(None),
+                        ProjectModel.sil_path != "",
+                    )
+                    .order_by(ProjectModel.is_current.desc(), ProjectModel.id.asc())
+                    .first()
+                )
+                path = Path(row.sil_path) if row and row.sil_path else None
+        except Exception:  # noqa: BLE001 - prewarm may defer safely
             return None
-        if default and Path(str(default["path"])).is_file():
-            return Path(str(default["path"]))
-        return None
+        return path if path is not None and path.is_file() else None
 
     driver = build_driver(
         config.RUNNER_BACKEND,
