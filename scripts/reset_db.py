@@ -1,30 +1,22 @@
 #!/usr/bin/env python3
-"""Destroy and rebuild the whole database from scratch -- one command.
+"""Destroy and rebuild the whole PostgreSQL public schema.
 
-This is the "nuke it and start over" tool. Unlike ``init_db.py --drop`` (which
-drops a known list of tables), ``reset_db.py`` wipes the **entire** ``public``
-schema -- every table, view, sequence, function, type and any stray leftover
-object -- then rebuilds from the authoritative SQL. Use it when you want a
-guaranteed-pristine database and do not care about the existing data.
+This is the destructive pristine-reset tool. It wipes the entire public schema,
+recreates baseline privileges, then rebuilds through the same schema ownership
+path as normal deployment:
 
-    DROP SCHEMA public CASCADE  ->  CREATE SCHEMA public  ->  regrant privileges
-      ->  sql/schema.sql  ->  (optional) sql/rls_supabase.sql  ->  (optional) seed
+    DROP SCHEMA public CASCADE
+      -> CREATE SCHEMA public
+      -> app.bootstrap.reconcile_schema()
+      -> sql/schema.sql PostgreSQL extras
+      -> optional seed
 
-It reuses ``init_db.py`` for DSN handling, SQL execution and admin seeding, so
-the two scripts never drift apart. Depends only on ``psycopg2`` + ``werkzeug``;
-it does NOT import the Flask app.
+RLS is intentionally not part of this supported runtime path. The repository
+keeps sql/rls_supabase.sql only as an experimental/reference artifact because
+the Flask application does not currently bind request identity into PostgreSQL
+RLS context.
 
-Examples:
-
-    # Full wipe + rebuild + bootstrap admin (prompts before destroying)
-    python scripts/reset_db.py --seed-admin
-
-    # Non-interactive rebuild on Supabase, with RLS (for CI / scripted resets)
-    DATABASE_URL='postgresql://postgres:...@...pooler.supabase.com:6543/postgres' \
-        python scripts/reset_db.py --yes --rls --seed-admin
-
-WARNING: this DELETES ALL DATA in the target database's public schema and cannot
-be undone. It refuses to run without --yes unless you confirm at the prompt.
+WARNING: this deletes all data in the target database's public schema.
 """
 
 from __future__ import annotations
@@ -40,39 +32,27 @@ try:
 except ImportError:  # pragma: no cover
     sys.exit("error: psycopg2 is required (pip install psycopg2-binary)")
 
-# Reuse everything from init_db so the two scripts stay in lock-step.
 import init_db
 
 log = logging.getLogger("reset_db")
 
-# Supabase-managed roles we re-grant to *if they exist*. On a vanilla PostgreSQL
-# these are simply absent and skipped, so the same script works on both.
+# Hosted PostgreSQL providers may pre-create these roles. Restore schema usage
+# when they exist; this does not enable or configure RLS.
 _MANAGED_ROLES = ("anon", "authenticated", "service_role")
 
 
 def reset_schema(conn) -> None:
-    """Drop and recreate the public schema, restoring baseline privileges.
-
-    ``DROP SCHEMA public CASCADE`` removes *all* objects unconditionally, which
-    is more thorough (and more robust to unknown leftovers) than dropping a
-    fixed table list. Afterwards we restore the default grants so both a plain
-    PostgreSQL and a Supabase project keep working: the current role and PUBLIC
-    always, plus Supabase's anon/authenticated/service_role when present.
-    """
+    """Drop/recreate public and restore baseline schema privileges."""
     log.warning("dropping the ENTIRE public schema (all objects) -- destructive")
     with conn.cursor() as cur:
         cur.execute("drop schema if exists public cascade;")
         cur.execute("create schema public;")
-
-        # Baseline privileges (safe everywhere).
         cur.execute("grant all on schema public to current_user;")
         cur.execute("grant usage on schema public to public;")
 
-        # Supabase roles -- grant only the ones that actually exist.
         for role in _MANAGED_ROLES:
             cur.execute("select 1 from pg_roles where rolname = %s;", (role,))
             if cur.fetchone() is not None:
-                # Role names here are a fixed allow-list, not user input.
                 cur.execute(f"grant usage on schema public to {role};")
                 cur.execute(
                     f"alter default privileges in schema public "
@@ -86,7 +66,7 @@ def reset_schema(conn) -> None:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="reset_db.py",
-        description="Wipe the whole public schema and rebuild from sql/.",
+        description="Wipe public and rebuild through the application schema owner.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument(
@@ -95,15 +75,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--schema-file", type=Path, default=init_db.SCHEMA_FILE,
-        help="Schema DDL file (default: sql/schema.sql).",
-    )
-    p.add_argument(
-        "--rls", action="store_true",
-        help="Also apply sql/rls_supabase.sql after the schema.",
-    )
-    p.add_argument(
-        "--rls-file", type=Path, default=init_db.RLS_FILE,
-        help="RLS policy file (default: sql/rls_supabase.sql).",
+        help="PostgreSQL extras file (default: sql/schema.sql).",
     )
     p.add_argument(
         "--seed-admin", action="store_true",
@@ -123,8 +95,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--license-limit", type=int,
         default=int(os.environ.get("LICENSE_LIMIT", "4") or "4"),
-        help="Initial concurrent-run license limit (default: env LICENSE_LIMIT "
-             "or 4).",
+        help="Initial concurrent-run license limit (default: env LICENSE_LIMIT or 4).",
     )
     p.add_argument(
         "--yes", "-y", action="store_true",
@@ -143,7 +114,9 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    dsn = init_db.resolve_dsn(args.database_url)
+    database_url = init_db.resolve_database_url(args.database_url)
+    os.environ["DATABASE_URL"] = database_url
+    dsn = init_db.normalise_dsn(database_url)
     safe = init_db.redact(dsn)
 
     if not args.yes:
@@ -152,6 +125,12 @@ def main(argv: list[str] | None = None) -> int:
         if reply != "RESET":
             log.info("aborted; nothing was changed")
             return 1
+
+    # Import only after DATABASE_URL is final.
+    from app import create_app
+    from app.bootstrap import reconcile_schema
+
+    application = create_app()
 
     log.info("connecting to %s", safe)
     try:
@@ -162,15 +141,21 @@ def main(argv: list[str] | None = None) -> int:
     try:
         conn.autocommit = False
         reset_schema(conn)
+
+        with application.app_context():
+            reconcile_schema()
+
         init_db.run_sql_file(conn, args.schema_file)
-        if args.rls:
-            init_db.run_sql_file(conn, args.rls_file)
+
         if args.seed_admin:
             init_db.seed_admin(conn, args.admin_user, args.admin_password,
                                args.license_limit)
-    except psycopg2.Error as exc:
-        conn.rollback()
-        sys.exit(f"error: SQL failed, rolled back: {exc}")
+    except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        sys.exit(f"error: database reset failed: {exc}")
     finally:
         conn.close()
 

@@ -15,8 +15,7 @@ Pipeline:
     1. (optional) --drop      drop current application tables from ORM metadata.
     2. application schema     run reconcile_schema() -- same path as bootstrap.
     3. PostgreSQL extras      run sql/schema.sql.
-    4. (optional) --rls       run sql/rls_supabase.sql.
-    5. (optional) --seed-admin insert bootstrap admin + license defaults.
+    4. (optional) --seed-admin insert bootstrap admin + license defaults.
 
 This removes the former duplicate hand-maintained table schema and static drop
 list: adding a model table automatically makes fresh initialization aware of it.
@@ -40,8 +39,6 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = SCRIPT_DIR.parent
 SQL_DIR = PROJECT_DIR / "sql"
 SCHEMA_FILE = SQL_DIR / "schema.sql"
-RLS_FILE = SQL_DIR / "rls_supabase.sql"
-
 LICENSE_LIMIT_KEY = "license_limit"
 LICENSE_INUSE_KEY = "license_inuse"
 DEFAULT_ADMIN_USER = "admin"
@@ -165,14 +162,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=f"PostgreSQL extras file (default: {SCHEMA_FILE.relative_to(PROJECT_DIR)}).",
     )
     p.add_argument(
-        "--rls", action="store_true",
-        help="Also apply sql/rls_supabase.sql (experimental row-level security).",
-    )
-    p.add_argument(
-        "--rls-file", type=Path, default=RLS_FILE,
-        help=f"RLS policy file (default: {RLS_FILE.relative_to(PROJECT_DIR)}).",
-    )
-    p.add_argument(
         "--drop", action="store_true",
         help="DROP every current ORM-owned application table before building.",
     )
@@ -252,9 +241,6 @@ def main(argv: list[str] | None = None) -> int:
 
         # PostgreSQL-only objects that SQLAlchemy metadata does not own.
         run_sql_file(conn, args.schema_file)
-
-        if args.rls:
-            run_sql_file(conn, args.rls_file)
 
         if args.seed_admin:
             seed_admin(conn, args.admin_user, args.admin_password,

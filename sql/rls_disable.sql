@@ -1,4 +1,11 @@
 -- =============================================================================
+-- RECOVERY / REFERENCE HELPER FOR THE EXPERIMENTAL RLS SCRIPT
+--
+-- The supported Flask deployment does not enable RLS through init/reset CLI.
+-- Use this only to recover a database on which sql/rls_supabase.sql was applied
+-- manually.
+-- =============================================================================
+-- =============================================================================
 -- Undo rls_supabase.sql: turn OFF row-level security and drop its policies.
 --
 -- Use this when the classic self-hosted Flask deployment connects with a single
