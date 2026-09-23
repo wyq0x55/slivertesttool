@@ -306,63 +306,99 @@ def _migrate_testitem_field_keys(existing_tables) -> None:
 
 
 def _migrate_user_fk_ondelete(inspector) -> None:
-    """Unify the ``ON DELETE`` behaviour of every FK that points at ``lm_users``.
+    """Reconcile every relational FK that targets lm_users from model metadata.
 
-    Older databases created these foreign keys with the default ``NO ACTION``
-    rule, so deleting a user that authored/owned a project, test item or comment
-    raised a ``ForeignKeyViolation``. This reconciles them to a single policy:
+    The model declaration is the policy source. This avoids maintaining a second
+    hand-written list here as new reviewer/author/executor columns are added.
 
-    * membership rows (``lm_project_members.user_id``) → ``CASCADE``
-    * authorship / ownership columns → ``SET NULL`` (history is preserved)
-
-    Only PostgreSQL enforces these constraints; on SQLite the step is skipped
-    (constraints are unenforced and ``ALTER TABLE ... DROP CONSTRAINT`` is
-    unsupported). Every step is idempotent: a constraint is only rewritten when
-    its current rule differs from the target.
+    Existing invalid references are normalised before a missing constraint is
+    installed: SET NULL references are cleared; CASCADE-owned rows are deleted.
+    AuditLog.actor_id deliberately remains a plain integer snapshot and therefore
+    is not part of this reconciliation.
     """
     from sqlalchemy import text
 
     if db.engine.dialect.name != "postgresql":
         return
 
-    # (table, column) -> desired ON DELETE action
-    targets = {
-        ("lm_project_members", "user_id"): "CASCADE",
-        ("lm_projects", "owner_id"): "SET NULL",
-        ("lm_projects", "created_by"): "SET NULL",
-        ("lm_test_items", "owner_id"): "SET NULL",
-        ("lm_test_items", "created_by"): "SET NULL",
-        ("lm_test_items", "updated_by"): "SET NULL",
-        ("lm_cell_comments", "created_by"): "SET NULL",
-    }
-    log = logging.getLogger(__name__)
     existing_tables = set(inspector.get_table_names())
+    log = logging.getLogger(__name__)
 
-    for (table, column), action in targets.items():
-        if table not in existing_tables:
+    for table in db.metadata.tables.values():
+        if table.name not in existing_tables:
             continue
-        fks = inspector.get_foreign_keys(table)
-        for fk in fks:
-            if fk.get("referred_table") != "lm_users":
+        existing_fks = inspector.get_foreign_keys(table.name)
+
+        for column in table.columns:
+            user_fks = [
+                fk for fk in column.foreign_keys
+                if fk.column.table.name == "lm_users"
+            ]
+            if not user_fks:
                 continue
-            if list(fk.get("constrained_columns") or []) != [column]:
-                continue
-            name = fk.get("name")
-            if not name:
-                continue
-            current = (fk.get("options") or {}).get("ondelete") or "NO ACTION"
-            if current.upper() == action.upper():
-                break  # already correct
+            if len(user_fks) != 1:
+                raise RuntimeError(
+                    f"ambiguous lm_users FK policy: {table.name}.{column.name}")
+
+            model_fk = user_fks[0]
+            action = (model_fk.ondelete or "NO ACTION").upper()
+            if action not in {"SET NULL", "CASCADE"}:
+                raise RuntimeError(
+                    f"lm_users FK must declare ondelete policy: "
+                    f"{table.name}.{column.name}")
+
+            matching = [
+                fk for fk in existing_fks
+                if fk.get("referred_table") == "lm_users"
+                and list(fk.get("constrained_columns") or []) == [column.name]
+            ]
+            current = None
+            constraint_name = None
+            if matching:
+                current = ((matching[0].get("options") or {}).get("ondelete")
+                           or "NO ACTION").upper()
+                constraint_name = matching[0].get("name")
+                if current == action:
+                    continue
+
+            # Missing FKs (notably legacy Task/DataJob columns) may already
+            # contain ids for users that were deleted before constraints existed.
+            # Normalise those rows before installing the authoritative policy.
+            qtable = f'"{table.name}"'
+            qcol = f'"{column.name}"'
             with db.engine.begin() as conn:
+                if action == "SET NULL":
+                    conn.execute(text(
+                        f"UPDATE {qtable} SET {qcol} = NULL "
+                        f"WHERE {qcol} IS NOT NULL AND NOT EXISTS "
+                        f"(SELECT 1 FROM lm_users u WHERE u.id = {qtable}.{qcol})"
+                    ))
+                else:  # CASCADE ownership
+                    conn.execute(text(
+                        f"DELETE FROM {qtable} WHERE {qcol} IS NOT NULL "
+                        f"AND NOT EXISTS "
+                        f"(SELECT 1 FROM lm_users u WHERE u.id = {qtable}.{qcol})"
+                    ))
+
+                if constraint_name:
+                    conn.execute(text(
+                        f'ALTER TABLE {qtable} DROP CONSTRAINT '
+                        f'"{constraint_name}"'))
+
+                desired_name = (
+                    model_fk.constraint.name
+                    or f"fk_{table.name}_{column.name}_lm_users"
+                )
                 conn.execute(text(
-                    f'ALTER TABLE {table} DROP CONSTRAINT "{name}"'))
-                conn.execute(text(
-                    f'ALTER TABLE {table} ADD CONSTRAINT "{name}" '
-                    f"FOREIGN KEY ({column}) REFERENCES lm_users(id) "
-                    f"ON DELETE {action}"))
-            log.info("schema migration: %s.%s FK -> ON DELETE %s",
-                     table, column, action)
-            break
+                    f'ALTER TABLE {qtable} ADD CONSTRAINT "{desired_name}" '
+                    f"FOREIGN KEY ({qcol}) REFERENCES lm_users(id) "
+                    f"ON DELETE {action}"
+                ))
+
+            log.info(
+                "schema migration: %s.%s FK -> ON DELETE %s",
+                table.name, column.name, action)
+
 
 
 def _seed_lanmatrix_admin(app: Flask) -> None:

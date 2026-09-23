@@ -149,8 +149,8 @@ class Project(db.Model):
     description = db.Column(db.Text, nullable=False, default="")
     # draft | active | frozen | archived
     status = db.Column(db.String(16), nullable=False, default="draft", index=True)
-    owner_id = db.Column(db.Integer, db.ForeignKey("lm_users.id"), nullable=True)
-    created_by = db.Column(db.Integer, db.ForeignKey("lm_users.id"), nullable=True)
+    owner_id = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True)
+    created_by = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
     deleted_at = db.Column(db.DateTime, nullable=True, index=True)
@@ -288,7 +288,7 @@ class FieldDefinition(db.Model):
     # the only irreversible one. The values now stay put until the recycle bin
     # expires the field for real.
     deleted_at = db.Column(db.DateTime, nullable=True, index=True)
-    deleted_by = db.Column(db.Integer, db.ForeignKey("lm_users.id"), nullable=True)
+    deleted_by = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True)
 
     @property
     def options(self) -> list:
@@ -363,7 +363,7 @@ class ProjectModel(db.Model):
     # The one model a project runs its tests with by default. At most one row per
     # project is current; task submit/run fall back to it when no model is named.
     is_current = db.Column(db.Boolean, nullable=False, default=False)
-    created_by = db.Column(db.Integer, db.ForeignKey("lm_users.id"), nullable=True)
+    created_by = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
 
     def to_dict(self, *, include_path: bool = False) -> dict:
@@ -422,7 +422,7 @@ class SbsRevision(db.Model):
     content = db.Column(db.Text, nullable=False, default="")
     sha256 = db.Column(db.String(64), nullable=False, default="")
     size = db.Column(db.Integer, nullable=False, default=0)
-    author_id = db.Column(db.Integer, db.ForeignKey("lm_users.id"), nullable=True)
+    author_id = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=_utcnow, index=True)
 
     def to_dict(self, *, include_content: bool = False) -> dict:
@@ -473,7 +473,7 @@ class TestItemRow(db.Model):
     actual_result = db.Column(db.Text, nullable=False, default="")
     result = db.Column(db.String(24), nullable=False, default="Not Tested")
     priority = db.Column(db.String(24), nullable=True)
-    owner_id = db.Column(db.Integer, db.ForeignKey("lm_users.id"), nullable=True)
+    owner_id = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True)
     tags = db.Column(JSONType, nullable=True)          # list[str]
     comment = db.Column(db.Text, nullable=False, default="")
     custom_values = db.Column(JSONType, nullable=True)  # {field_key: value}
@@ -488,7 +488,7 @@ class TestItemRow(db.Model):
     # States: "" (no review needed / not requested) -> pending -> approved
     #         | rejected. A rejected row goes back to pending on the next run.
     review_status = db.Column(db.String(16), nullable=False, default="", index=True)
-    reviewer_id = db.Column(db.Integer, db.ForeignKey("lm_users.id"), nullable=True,
+    reviewer_id = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True,
                             index=True)
     # Why the reviewer approved or (especially) rejected. Mandatory for a
     # rejection and for anything touching ``Untestable``.
@@ -500,7 +500,7 @@ class TestItemRow(db.Model):
     # ``updated_by`` is whoever last hand-edited the matrix -- very often the
     # reviewer themselves, whose own decision is then suppressed as a
     # self-notification and never reaches the person who ran the test.
-    review_requested_by = db.Column(db.Integer, db.ForeignKey("lm_users.id"),
+    review_requested_by = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"),
                                     nullable=True, index=True)
     reviewed_at = db.Column(db.DateTime, nullable=True)
     # The verdict that was under review when the request was raised. The row's
@@ -526,24 +526,24 @@ class TestItemRow(db.Model):
     # Mandatory both ways: an approval permanently shrinks the tested surface
     # and must stay answerable years later; a rejection has to say what to do.
     exempt_note = db.Column(db.Text, nullable=False, default="")
-    exempt_reviewer_id = db.Column(db.Integer, db.ForeignKey("lm_users.id"),
+    exempt_reviewer_id = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"),
                                    nullable=True, index=True)
     exempt_requested_at = db.Column(db.DateTime, nullable=True)
-    exempt_requested_by = db.Column(db.Integer, db.ForeignKey("lm_users.id"),
+    exempt_requested_by = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"),
                                     nullable=True, index=True)
     exempt_decided_at = db.Column(db.DateTime, nullable=True)
 
     version = db.Column(db.Integer, nullable=False, default=1)
-    created_by = db.Column(db.Integer, db.ForeignKey("lm_users.id"), nullable=True)
+    created_by = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
-    updated_by = db.Column(db.Integer, db.ForeignKey("lm_users.id"), nullable=True)
+    updated_by = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True)
     updated_at = db.Column(db.DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
     deleted_at = db.Column(db.DateTime, nullable=True, index=True)
     # Rows are by far the most frequently deleted thing in the product, so a
     # recycle bin that cannot say who deleted one answers the question people
     # actually arrive with ("was that me, or do I need to go ask someone?")
     # for every kind except the common one.
-    deleted_by = db.Column(db.Integer, db.ForeignKey("lm_users.id"), nullable=True)
+    deleted_by = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True)
 
     # New unified ("identity") protocol field keys that alias onto an existing
     # first-class column, so the Test-Matrix editor vocabulary is stored in real
@@ -662,7 +662,7 @@ class TestRunRecord(db.Model):
     # renaming or deleting a model can never rewrite history.
     model_name = db.Column(db.String(120), nullable=False, default="")
     model_version = db.Column(db.String(64), nullable=False, default="")
-    executor_id = db.Column(db.Integer, db.ForeignKey("lm_users.id"), nullable=True)
+    executor_id = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True)
     # Display name captured at execution time (a user may be renamed later).
     executor_name = db.Column(db.String(120), nullable=False, default="")
     executed_at = db.Column(db.DateTime, nullable=False, default=_utcnow, index=True)
@@ -821,7 +821,7 @@ class CellComment(db.Model):
                              nullable=False, index=True)
     field_key = db.Column(db.String(64), nullable=False)
     content = db.Column(db.Text, nullable=False, default="")
-    created_by = db.Column(db.Integer, db.ForeignKey("lm_users.id"), nullable=True)
+    created_by = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
     edited_at = db.Column(db.DateTime, nullable=True)
     deleted_at = db.Column(db.DateTime, nullable=True)
@@ -901,7 +901,8 @@ class DataJob(db.Model):
     success_count = db.Column(db.Integer, nullable=False, default=0)
     error_count = db.Column(db.Integer, nullable=False, default=0)
     result_file_path = db.Column(db.String(512), nullable=True)
-    created_by = db.Column(db.Integer, nullable=True)
+    created_by = db.Column(
+        db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
     started_at = db.Column(db.DateTime, nullable=True)
     finished_at = db.Column(db.DateTime, nullable=True)

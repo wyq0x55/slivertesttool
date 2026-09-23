@@ -44,7 +44,9 @@ class Task(db.Model):
     # by an authenticated account. Both are nullable so legacy/unscoped rows keep
     # working. Only members of ``project_id`` may view / run / download the task.
     project_id = db.Column(db.Integer, index=True, nullable=True)
-    submitter_id = db.Column(db.Integer, index=True, nullable=True)
+    submitter_id = db.Column(
+        db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"),
+        index=True, nullable=True)
 
     # Silver-specific execution parameters.
     test_id = db.Column(db.String(128), nullable=False, default="")
@@ -80,7 +82,8 @@ class Task(db.Model):
     # Soft delete: a deleted task takes its run history and report with it, and
     # "I deleted the wrong run" is not a recoverable mistake without this.
     deleted_at = db.Column(db.DateTime, nullable=True, index=True)
-    deleted_by = db.Column(db.Integer, nullable=True)
+    deleted_by = db.Column(
+        db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True)
 
     events = db.relationship(
         "TaskEvent",
