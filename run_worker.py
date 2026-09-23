@@ -46,7 +46,7 @@ def _sweep_silver(config) -> None:
     try:
         if (getattr(config, "RUNNER_BACKEND", "mock") or "").lower() != "silver":
             return
-        if not getattr(config, "SILVER_KILL_ON_EXIT", True):
+        if not getattr(config, "SILVER_KILL_ON_EXIT", False):
             return
         from app.runners.silver_cleanup import force_kill_silver_processes
         force_kill_silver_processes(getattr(config, "SILVER_PROCESS_IMAGE_NAMES", None))
@@ -74,11 +74,12 @@ def _reconcile_loop(app, config, stop: threading.Event) -> None:
         try:
             with app.app_context():
                 limit = license_service.get_limit()
+                draining = license_service.is_draining()
                 pool_enabled = runtime_config.get_bool("silver_pool_enabled")
                 prewarm = runtime_config.get_bool("silver_pool_prewarm")
                 interval = runtime_config.get_float("silver_pool_reconcile_seconds")
-            pool.set_target(limit if pool_enabled else 0)
-            if pool_enabled and prewarm:
+            pool.set_target(limit if pool_enabled and not draining else 0)
+            if pool_enabled and prewarm and not draining:
                 pool.prewarm()
         except Exception:  # noqa: BLE001 - reconciler must never die
             logger.exception("Pool reconcile iteration failed")
@@ -110,8 +111,8 @@ def main() -> None:
 
         pool = get_pool(app, config)
 
-        # Dispose all instances (release every license) on process exit, then
-        # force-kill any orphaned Silver processes as a safety net.
+        # Dispose all instances owned by this worker on process exit. The
+        # machine-wide image-name sweep is an explicit emergency fallback.
         def _shutdown_pool() -> None:
             stop_reconcile.set()
             try:
@@ -127,8 +128,9 @@ def main() -> None:
             pool_enabled = runtime_config.get_bool("silver_pool_enabled")
             prewarm = runtime_config.get_bool("silver_pool_prewarm")
             limit = license_service.get_limit()
+            draining = license_service.is_draining()
 
-        if pool_enabled and prewarm:
+        if pool_enabled and prewarm and not draining:
             pool.set_target(limit)
             warmed = pool.prewarm()
             print(f"Pre-warmed {warmed} Silver instance(s); pool={pool.stats()}")
