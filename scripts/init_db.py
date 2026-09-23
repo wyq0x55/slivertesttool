@@ -1,39 +1,25 @@
 #!/usr/bin/env python3
-"""One-shot database initializer for the LAN Test Matrix / Silver Test Tool.
+"""One-shot PostgreSQL initializer for the Silver Test Platform.
 
-Builds a *fresh* PostgreSQL database from the authoritative SQL files and,
-optionally, seeds the bootstrap administrator and license rows -- all in a
-single command. It is the recommended way to stand up a new (e.g. Supabase)
-database because ``db.create_all()`` alone cannot emit the ``updated_at``
-trigger, table comments or the ``pgcrypto`` extension that ``sql/schema.sql``
-carries.
+Application table ownership is shared with normal deployment bootstrap:
 
-Pipeline (each step is opt-in-safe / idempotent where noted):
+    SQLAlchemy model metadata
+        + app.bootstrap.reconcile_schema()
+        = current application schema
 
-    1. (optional) --drop     : DROP every project table -- destructive.
-    2.            schema      : run sql/schema.sql (extensions, tables, trigger).
-    3. (optional) --rls      : run sql/rls_supabase.sql (row-level security).
-    4. (optional) --seed-admin: insert the bootstrap admin + license defaults.
+sql/schema.sql is intentionally extras-only. It contains PostgreSQL objects that
+SQLAlchemy create_all() does not express (trigger function/triggers/comments).
 
-Connection:
+Pipeline:
 
-    The DSN is taken from --database-url or the DATABASE_URL environment
-    variable (SQLAlchemy-style URLs such as
-    ``postgresql+psycopg2://user:pass@host:5432/db`` are normalised for
-    psycopg2 automatically).
+    1. (optional) --drop      drop current application tables from ORM metadata.
+    2. application schema     run reconcile_schema() -- same path as bootstrap.
+    3. PostgreSQL extras      run sql/schema.sql.
+    4. (optional) --rls       run sql/rls_supabase.sql.
+    5. (optional) --seed-admin insert bootstrap admin + license defaults.
 
-Examples:
-
-    # Fresh build + admin, reading DATABASE_URL from the environment / .env
-    python scripts/init_db.py --seed-admin
-
-    # Full rebuild on Supabase (pooler DSN), with RLS, wiping any old tables
-    DATABASE_URL='postgresql://postgres:...@...pooler.supabase.com:6543/postgres' \
-        python scripts/init_db.py --drop --yes --rls --seed-admin
-
-This script depends only on ``psycopg2`` (already required by the app) and
-``werkzeug`` (for password hashing); it does NOT import the Flask app, so it
-stays usable even before the rest of the project is configured.
+This removes the former duplicate hand-maintained table schema and static drop
+list: adding a model table automatically makes fresh initialization aware of it.
 """
 
 from __future__ import annotations
@@ -50,32 +36,11 @@ except ImportError:  # pragma: no cover - clearer failure than a traceback
     sys.exit("error: psycopg2 is required (pip install psycopg2-binary)")
 
 
-# --------------------------------------------------------------------------- #
-# Paths / constants
-# --------------------------------------------------------------------------- #
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = SCRIPT_DIR.parent
 SQL_DIR = PROJECT_DIR / "sql"
 SCHEMA_FILE = SQL_DIR / "schema.sql"
 RLS_FILE = SQL_DIR / "rls_supabase.sql"
-
-# Application tables, in dependency (drop) order -- children before parents.
-DROP_ORDER = [
-    "lm_collab_presence",
-    "lm_collab_doc",
-    "lm_audit_logs",
-    "lm_data_jobs",
-    "lm_cell_comments",
-    "lm_test_items",
-    "lm_project_models",
-    "lm_field_definitions",
-    "lm_project_members",
-    "task_events",
-    "tasks",
-    "lm_projects",
-    "lm_users",
-    "app_settings",
-]
 
 LICENSE_LIMIT_KEY = "license_limit"
 LICENSE_INUSE_KEY = "license_inuse"
@@ -85,15 +50,8 @@ DEFAULT_ADMIN_PASSWORD = "Admin@12345"
 log = logging.getLogger("init_db")
 
 
-# --------------------------------------------------------------------------- #
-# Helpers
-# --------------------------------------------------------------------------- #
 def normalise_dsn(url: str) -> str:
-    """Turn a SQLAlchemy URL into a plain libpq/psycopg2 DSN.
-
-    ``postgresql+psycopg2://`` / ``postgresql+psycopg://`` prefixes are valid
-    for SQLAlchemy but rejected by libpq, so strip the driver suffix.
-    """
+    """Turn a SQLAlchemy PostgreSQL URL into a libpq/psycopg2 DSN."""
     for prefix in ("postgresql+psycopg2://", "postgresql+psycopg://",
                    "postgres+psycopg2://"):
         if url.startswith(prefix):
@@ -101,14 +59,14 @@ def normalise_dsn(url: str) -> str:
     return url
 
 
-def resolve_dsn(cli_value: str | None) -> str:
-    dsn = (cli_value or os.environ.get("DATABASE_URL", "")).strip()
-    if not dsn:
+def resolve_database_url(cli_value: str | None) -> str:
+    url = (cli_value or os.environ.get("DATABASE_URL", "")).strip()
+    if not url:
         sys.exit(
             "error: no database URL. Pass --database-url or set DATABASE_URL "
             "(e.g. postgresql://user:pass@host:5432/dbname)."
         )
-    return normalise_dsn(dsn)
+    return url
 
 
 def redact(dsn: str) -> str:
@@ -124,12 +82,7 @@ def redact(dsn: str) -> str:
 
 
 def run_sql_file(conn, path: Path) -> None:
-    """Execute a whole .sql file in one transaction.
-
-    psycopg2 sends the entire script to the server in a single ``execute`` call,
-    which correctly handles dollar-quoted functions, DO blocks and multi-
-    statement files without fragile client-side statement splitting.
-    """
+    """Execute a whole SQL file in one transaction."""
     if not path.is_file():
         sys.exit(f"error: SQL file not found: {path}")
     sql = path.read_text(encoding="utf-8")
@@ -140,16 +93,17 @@ def run_sql_file(conn, path: Path) -> None:
     log.info("  -> %s applied", path.name)
 
 
-def drop_all_tables(conn) -> None:
-    log.warning("dropping %d tables (CASCADE) -- destructive", len(DROP_ORDER))
+def drop_application_tables(conn, table_names: list[str]) -> None:
+    """Drop current ORM-owned tables in dependency-safe reverse order."""
+    log.warning("dropping %d application tables (CASCADE) -- destructive",
+                len(table_names))
     with conn.cursor() as cur:
-        for table in DROP_ORDER:
+        for table in table_names:
             cur.execute(f'drop table if exists "{table}" cascade;')
-        # Trigger function is schema-level, not table-level; remove it too so a
-        # subsequent schema.sql run recreates a pristine definition.
+        # schema.sql recreates this after application tables are reconciled.
         cur.execute("drop function if exists set_updated_at() cascade;")
     conn.commit()
-    log.info("  -> existing objects dropped")
+    log.info("  -> current application tables dropped")
 
 
 def seed_admin(conn, username: str, password: str, license_limit: int) -> None:
@@ -157,7 +111,6 @@ def seed_admin(conn, username: str, password: str, license_limit: int) -> None:
     from werkzeug.security import generate_password_hash
 
     with conn.cursor() as cur:
-        # License defaults -----------------------------------------------------
         cur.execute(
             "insert into app_settings(key, value) values (%s, %s) "
             "on conflict (key) do nothing;",
@@ -169,7 +122,6 @@ def seed_admin(conn, username: str, password: str, license_limit: int) -> None:
             (LICENSE_INUSE_KEY, "0"),
         )
 
-        # Bootstrap admin ------------------------------------------------------
         cur.execute("select id from lm_users where username = %s;", (username,))
         if cur.fetchone() is not None:
             log.info("  -> admin '%s' already exists; left untouched", username)
@@ -185,27 +137,23 @@ def seed_admin(conn, username: str, password: str, license_limit: int) -> None:
                     username,
                     "System Administrator",
                     generate_password_hash(raw),
-                    not explicit,  # force change only when using built-in default
+                    not explicit,
                 ),
             )
             log.info(
                 "  -> seeded admin '%s' (%s)",
                 username,
                 "password from --admin-password/env"
-                if explicit else f"default password '{DEFAULT_ADMIN_PASSWORD}', "
-                                 "must change on first login",
+                if explicit else "built-in default; must change on first login",
             )
     conn.commit()
     log.info("  -> license defaults ensured (limit=%d)", license_limit)
 
 
-# --------------------------------------------------------------------------- #
-# CLI
-# --------------------------------------------------------------------------- #
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="init_db.py",
-        description="One-shot fresh-database builder for the LAN Test Matrix.",
+        description="One-shot PostgreSQL initializer for the Silver Test Platform.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument(
@@ -214,11 +162,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--schema-file", type=Path, default=SCHEMA_FILE,
-        help=f"Schema DDL file (default: {SCHEMA_FILE.relative_to(PROJECT_DIR)}).",
+        help=f"PostgreSQL extras file (default: {SCHEMA_FILE.relative_to(PROJECT_DIR)}).",
     )
     p.add_argument(
         "--rls", action="store_true",
-        help="Also apply sql/rls_supabase.sql (row-level security).",
+        help="Also apply sql/rls_supabase.sql (experimental row-level security).",
     )
     p.add_argument(
         "--rls-file", type=Path, default=RLS_FILE,
@@ -226,7 +174,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--drop", action="store_true",
-        help="DROP every project table before building. DESTRUCTIVE.",
+        help="DROP every current ORM-owned application table before building.",
     )
     p.add_argument(
         "--yes", "-y", action="store_true",
@@ -250,8 +198,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--license-limit", type=int,
         default=int(os.environ.get("LICENSE_LIMIT", "4") or "4"),
-        help="Initial concurrent-run license limit (default: env LICENSE_LIMIT "
-             "or 4).",
+        help="Initial concurrent-run license limit (default: env LICENSE_LIMIT or 4).",
     )
     p.add_argument(
         "--verbose", "-v", action="store_true", help="Enable debug logging.",
@@ -266,14 +213,27 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    dsn = resolve_dsn(args.database_url)
+    database_url = resolve_database_url(args.database_url)
+    # Config is imported below, so set the selected URL before importing app.
+    os.environ["DATABASE_URL"] = database_url
+    dsn = normalise_dsn(database_url)
 
     if args.drop and not args.yes:
-        log.warning("--drop will DELETE ALL DATA in: %s", redact(dsn))
+        log.warning("--drop will DELETE APPLICATION DATA in: %s", redact(dsn))
         reply = input("Type 'yes' to continue: ").strip().lower()
         if reply != "yes":
             log.info("aborted; nothing was changed")
             return 1
+
+    # Import only after DATABASE_URL is final so Config/Huey bind the same DB.
+    from app import create_app, models  # noqa: F401
+    from app.bootstrap import reconcile_schema
+    from app.extensions import db
+
+    application = create_app()
+    with application.app_context():
+        # Metadata itself is the table list; no duplicate DROP_ORDER to maintain.
+        table_names = [t.name for t in reversed(db.metadata.sorted_tables)]
 
     log.info("connecting to %s", redact(dsn))
     try:
@@ -284,8 +244,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         conn.autocommit = False
         if args.drop:
-            drop_all_tables(conn)
+            drop_application_tables(conn, table_names)
 
+        # Same schema path used by normal deployment bootstrap.
+        with application.app_context():
+            reconcile_schema()
+
+        # PostgreSQL-only objects that SQLAlchemy metadata does not own.
         run_sql_file(conn, args.schema_file)
 
         if args.rls:
@@ -294,9 +259,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.seed_admin:
             seed_admin(conn, args.admin_user, args.admin_password,
                        args.license_limit)
-    except psycopg2.Error as exc:
-        conn.rollback()
-        sys.exit(f"error: SQL failed, rolled back: {exc}")
+    except Exception as exc:  # required initialization is fail-closed
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        sys.exit(f"error: database initialization failed: {exc}")
     finally:
         conn.close()
 
