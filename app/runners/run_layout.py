@@ -1,17 +1,17 @@
-"""Filesystem layout for test runs, keyed by *project name* + *test id*.
+"""Filesystem layout for test runs, keyed by *project code* + *test id*.
 
 The platform no longer identifies a run's directories by the synthetic
 ``task_key`` (``T000022``). Instead:
 
 * **Results** (the persistent ``测试结果``) live under
-  ``WORKSPACE_DIR/<project name>/log/<test id>/`` — one folder per test id,
+  ``WORKSPACE_DIR/<project code>/log/<test id>/`` — one folder per test id,
   reused (overwritten) on every re-run.
 * **Run scripts** are materialised into a short-lived *staging* area at enqueue
   time, copied into the *runtime* pool-instance directory
   (``POOL_DIR/<inst label>/run_<test id>/``) just before execution, and
   **deleted** once the run finishes.
 
-``task.workspace`` stores the project root (``WORKSPACE_DIR/<project name>``)
+``task.workspace`` stores the project root (``WORKSPACE_DIR/<project code>``)
 and is therefore shared by every test id in the project — callers that clean up
 a single task must only remove that test id's subtree, never the whole root.
 """
@@ -44,8 +44,8 @@ def safe_tid(test_id: str) -> str:
 
 
 def project_root(config, project) -> Path:
-    """The persistent per-project root: ``WORKSPACE_DIR/<project name>``."""
-    seg = sanitize_segment(getattr(project, "name", "") or "",
+    """Persistent root keyed by immutable/unique project code."""
+    seg = sanitize_segment(getattr(project, "code", "") or "",
                            f"project_{getattr(project, 'id', 'x')}")
     return Path(config.WORKSPACE_DIR) / seg
 
