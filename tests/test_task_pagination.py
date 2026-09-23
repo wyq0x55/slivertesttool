@@ -93,7 +93,6 @@ class TestScopedQueryIsShared:
 ROUTES = [
     ("app/routes/lanmatrix/tasks.py", "list_project_tasks"),
     ("app/routes/lanmatrix/admin_console.py", "admin_list_tasks"),
-    ("app/routes/api_routes.py", "list_tasks"),
 ]
 
 

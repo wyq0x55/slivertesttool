@@ -35,7 +35,7 @@ refactors whose only benefit is aesthetic layering.
 | Area | Current status |
 |---|---|
 | Orphan standalone submit/tasks/admin UI | Removed. Live navigation is LAN Matrix based; top-level page routes are redirects only. |
-| Legacy staged ZIP upload API | Removed. The primary runner submission path is `POST /api/tasks/upload_tree`. |
+| Legacy top-level task/model/license API | Removed. Active task/model/admin flows live under project-scoped `/api/v1` routes. |
 | LAN Matrix service god module | Split into domain services; `service.py` remains a compatibility facade for live callers. |
 | Field-key identity drift | Resolved: aliases such as `test_name -> title` and `remark -> comment` route to first-class storage/search behavior. |
 | Persistent startup ownership | Resolved by #4 / PR #9. Factory construction no longer owns schema/data/filesystem migration. |

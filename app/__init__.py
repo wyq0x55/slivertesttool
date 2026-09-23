@@ -47,13 +47,11 @@ def create_app(config_object: type[Config] = Config) -> Flask:
 
     db.init_app(app)
 
-    from .routes.api_routes import api_bp
     from .routes.lanmatrix import BLUEPRINTS as lanmatrix_api_blueprints
     from .routes.lanmatrix_pages import pages_bp as lanmatrix_pages_bp
     from .routes.page_routes import page_bp
 
     app.register_blueprint(page_bp)
-    app.register_blueprint(api_bp)
     # LAN Test Matrix online-editing platform — merged into the platform's own
     # model / route / service layers (see app.models.lanmatrix,
     # app.routes.lanmatrix_*, app.services.lanmatrix). The former ``/api/v1``

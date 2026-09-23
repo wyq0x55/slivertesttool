@@ -45,8 +45,8 @@ def app_ctx(monkeypatch):
     monkeypatch.setenv("WORKSPACE_DIR", str(root / "ws"))
     monkeypatch.setenv("DATABASE_URL", test_db_url)
     monkeypatch.setenv("LICENSE_LIMIT", "2")
-    # The legacy API tests exercise the original endpoints directly; keep the
-    # unified-login gate off for them (it is covered separately).
+    # Most tests call API routes directly; authentication behavior is covered
+    # separately, so keep the global page/API gate out of unrelated fixtures.
     monkeypatch.setenv("GLOBAL_LOGIN_REQUIRED", "0")
 
     # Import lazily so the env vars above are picked up by Config.
