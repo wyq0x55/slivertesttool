@@ -110,7 +110,7 @@
 
 {% block scripts %}
 {% if charts_available %}
-<script src="{{ url_for('static', filename='vendor/charts/echarts.min.js') }}"></script>
+<script src="{{ static_asset_url('vendor/charts/echarts.min.js') }}"></script>
 <script src="{{ url_for('static', filename='js/lanmatrix/charts_theme.js') }}"></script>
 {% endif %}
 <script src="{{ url_for('static', filename='js/lanmatrix/dashboard.js') }}"></script>
