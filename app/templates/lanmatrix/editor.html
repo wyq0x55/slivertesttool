@@ -161,12 +161,12 @@
    after the DOM is ready; `rel="preload"` starts the bundle download early and
    in parallel so deferring execution does not delay when it becomes usable. #}
 {% if univer_available %}
-<link rel="stylesheet" href="{{ url_for('static', filename='vendor/univer/univer.full.umd.css') }}">
-<link rel="preload" as="script" href="{{ url_for('static', filename='vendor/univer/univer.full.umd.js') }}">
-<script defer src="{{ url_for('static', filename='vendor/univer/univer.full.umd.js') }}"></script>
+<link rel="stylesheet" href="{{ static_asset_url('vendor/univer/univer.full.umd.css') }}">
+<link rel="preload" as="script" href="{{ static_asset_url('vendor/univer/univer.full.umd.js') }}">
+<script defer src="{{ static_asset_url('vendor/univer/univer.full.umd.js') }}"></script>
 {% endif %}
 {% if collab_available %}
-<script defer src="{{ url_for('static', filename='vendor/collab/collab.umd.js') }}"></script>
+<script defer src="{{ static_asset_url('vendor/collab/collab.umd.js') }}"></script>
 {% endif %}
 <script defer src="{{ url_for('static', filename='js/lanmatrix/rowtools.js') }}"></script>
 <script defer src="{{ url_for('static', filename='js/lanmatrix/grid.js') }}"></script>

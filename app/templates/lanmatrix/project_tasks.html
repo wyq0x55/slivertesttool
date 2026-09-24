@@ -213,8 +213,8 @@
 {% endblock %}
 {% block scripts %}
 {% if univer_available %}
-<link rel="stylesheet" href="{{ url_for('static', filename='vendor/univer/univer.full.umd.css') }}">
-<script src="{{ url_for('static', filename='vendor/univer/univer.full.umd.js') }}"></script>
+<link rel="stylesheet" href="{{ static_asset_url('vendor/univer/univer.full.umd.css') }}">
+<script src="{{ static_asset_url('vendor/univer/univer.full.umd.js') }}"></script>
 {% endif %}
 <script src="{{ url_for('static', filename='js/lanmatrix/steps_ref_panel.js') }}"></script>
 <script src="{{ url_for('static', filename='js/lanmatrix/json_editor.js') }}"></script>
