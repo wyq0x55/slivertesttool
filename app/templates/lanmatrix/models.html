@@ -114,11 +114,11 @@
   // Runtime asset URLs for the SBS highlight bundle (grammar + Oniguruma WASM).
   // The bundle fetches these at mount time; absent bundle => textarea fallback.
   window.LM_SBS_ASSETS = {
-    grammar: "{{ url_for('static', filename='vendor/sbs/sbsV202403.tmLanguage.json') }}",
-    wasm: "{{ url_for('static', filename='vendor/sbs/onig.wasm') }}"
+    grammar: "{{ static_asset_url('vendor/sbs/sbsV202403.tmLanguage.json') }}",
+    wasm: "{{ static_asset_url('vendor/sbs/onig.wasm') }}"
   };
 </script>
-<script src="{{ url_for('static', filename='vendor/sbs/sbs-editor.umd.js') }}" onerror="void 0"></script>
+<script src="{{ static_asset_url('vendor/sbs/sbs-editor.umd.js') }}" onerror="void 0"></script>
 <script src="{{ url_for('static', filename='js/lanmatrix/sbs_editor.js') }}"></script>
 <script src="{{ url_for('static', filename='js/lanmatrix/project_models.js') }}"></script>
 {% endblock %}
