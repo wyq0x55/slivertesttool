@@ -125,10 +125,9 @@ class TestJudgeBundler(unittest.TestCase):
             bundled = judge_bundler.bundle_judge(judge)
             self.assertIn("Extend", bundled)
 
-        ns: dict = {"__name__": "judge_under_test", "__file__": str(judge)}
-        exec(compile(bundled, "<bundled>", "exec"), ns)  # noqa: S102
-        # No NameError; ``__file__`` resolved to the judge's directory.
-        self.assertEqual(ns["run"](), str(Path(str(judge)).resolve().parent))
+            ns: dict = {"__name__": "judge_under_test", "__file__": str(judge)}
+            exec(compile(bundled, "<bundled>", "exec"), ns)  # noqa: S102
+            self.assertTrue(Path(ns["run"]()).samefile(tc))
 
     def test_current_bundle_is_idempotent(self) -> None:
         with TemporaryDirectory() as tmp:

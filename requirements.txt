@@ -113,6 +113,8 @@ typing-extensions==4.16.0
     #   uvicorn
 typing-inspection==0.4.2
     # via pydantic
+tzdata==2026.4 ; sys_platform == 'win32'
+    # via silver-test-platform
 uvicorn==0.51.0
     # via silver-test-platform
 waitress==3.0.2
