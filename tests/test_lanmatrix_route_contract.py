@@ -96,6 +96,7 @@ EXPECTED = [
     ("/api/v1/projects/<int:project_id>/trash", ("GET",), "lanmatrix_projects.list_trash", "list_trash"),
     ("/api/v1/projects/<int:project_id>/trash/purge", ("POST",), "lanmatrix_projects.purge_from_trash", "purge_from_trash"),
     ("/api/v1/projects/<int:project_id>/trash/restore", ("POST",), "lanmatrix_projects.restore_from_trash", "restore_from_trash"),
+    ("/api/v1/projects/<int:project_id>/version-compare", ("GET",), "lanmatrix_projects.version_compare", "version_compare"),
 ]
 
 

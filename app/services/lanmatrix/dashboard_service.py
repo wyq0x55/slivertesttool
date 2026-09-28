@@ -340,6 +340,149 @@ def by_version(project_id: int, *, limit: int = MAX_VERSIONS) -> dict:
     }
 
 
+#: Left-to-right classes. ``other`` is any paired difference that is not
+#: pass to fail/error, or fail/error to pass.
+COMPARE_CHANGES = (
+    "only_left",
+    "only_right",
+    "unchanged",
+    "pass_to_fail",
+    "fail_to_pass",
+    "other",
+)
+
+_FAIL_OUTCOMES = frozenset({"fail", "error"})
+
+
+def _parse_compare_ref(ref: str) -> tuple[str, str]:
+    """Split ``name@version``. A bare name keeps an empty version.
+
+    The last ``@`` is the separator, so a model name that contains ``@`` still
+    resolves to one identity.
+    """
+    from ..project_model_service import parse_ref
+    from .errors import ServiceError
+
+    name, version = parse_ref(ref)
+    if not name:
+        raise ServiceError(
+            "参数必须是 name@version，没有版本时只填模型名",
+            code="VALIDATION_ERROR",
+        )
+    return name, version
+
+
+def _latest_non_cancelled(project_id: int, model_name: str,
+                          model_version: str) -> dict[str, TestRunRecord]:
+    """Latest non-cancelled run of each test id for one model identity.
+
+    The identity is ``model_name`` plus ``model_version``. Sharing a version
+    label does not merge two models. A cancelled row is not a result: an older
+    non-cancelled run is kept, and a test id with only cancelled runs is absent.
+    """
+    rows = (
+        TestRunRecord.query.filter(
+            TestRunRecord.project_id == project_id,
+            TestRunRecord.model_name == model_name,
+            TestRunRecord.model_version == model_version,
+        )
+        .order_by(TestRunRecord.executed_at.desc(), TestRunRecord.id.desc())
+        .all()
+    )
+    chosen: dict[str, TestRunRecord] = {}
+    for row in rows:
+        test_id = (row.test_id or "").strip()
+        if not test_id or test_id in chosen:
+            continue
+        outcome = (row.outcome or "").strip().lower()
+        if not outcome or outcome == "cancelled":
+            continue
+        chosen[test_id] = row
+    return chosen
+
+
+def _compare_change(left_outcome: Optional[str],
+                    right_outcome: Optional[str]) -> str:
+    """Classify one test id. Direction is left to right."""
+    if left_outcome is None:
+        return "only_right"
+    if right_outcome is None:
+        return "only_left"
+    if left_outcome == right_outcome:
+        return "unchanged"
+    if left_outcome == "pass" and right_outcome in _FAIL_OUTCOMES:
+        return "pass_to_fail"
+    if left_outcome in _FAIL_OUTCOMES and right_outcome == "pass":
+        return "fail_to_pass"
+    return "other"
+
+
+def _compare_outcome(row: Optional[TestRunRecord]) -> Optional[str]:
+    if row is None:
+        return None
+    outcome = (row.outcome or "").strip().lower()
+    return outcome or None
+
+
+def _compare_row_uuid(left: Optional[TestRunRecord],
+                      right: Optional[TestRunRecord]) -> str:
+    """Matrix row locator. Prefer the right-hand uuid when it exists."""
+    for record in (right, left):
+        if record is None:
+            continue
+        token = (record.row_uuid or "").strip()
+        if token:
+            return token
+    return ""
+
+
+def compare_versions(project_id: int, left: str, right: str, *,
+                     page: int = 1, page_size: int = 100) -> dict:
+    """Compare the latest non-cancelled result of each test id.
+
+    ``left`` and ``right`` are ``name@version`` references. A model with no
+    version is the bare name. ``summary`` counts every test id; ``page`` only
+    slices ``items``.
+    """
+    left_ref = (left or "").strip()
+    right_ref = (right or "").strip()
+    left_name, left_version = _parse_compare_ref(left_ref)
+    right_name, right_version = _parse_compare_ref(right_ref)
+    page = 1 if page < 1 else int(page)
+    page_size = 1 if page_size < 1 else int(page_size)
+
+    left_rows = _latest_non_cancelled(project_id, left_name, left_version)
+    right_rows = _latest_non_cancelled(project_id, right_name, right_version)
+
+    summary = {key: 0 for key in COMPARE_CHANGES}
+    items = []
+    for test_id in sorted(set(left_rows) | set(right_rows)):
+        left_row = left_rows.get(test_id)
+        right_row = right_rows.get(test_id)
+        left_outcome = _compare_outcome(left_row)
+        right_outcome = _compare_outcome(right_row)
+        change = _compare_change(left_outcome, right_outcome)
+        summary[change] += 1
+        items.append({
+            "test_id": test_id,
+            "left_outcome": left_outcome,
+            "right_outcome": right_outcome,
+            "change": change,
+            "row_uuid": _compare_row_uuid(left_row, right_row),
+        })
+
+    start = (page - 1) * page_size
+    return {
+        "left": left_ref,
+        "right": right_ref,
+        "summary": summary,
+        "page": page,
+        "page_size": page_size,
+        "total": len(items),
+        "items": items[start:start + page_size],
+    }
+
+
 def snapshot(project: Project) -> dict:
     """Everything the dashboard page needs, in one response.
 
