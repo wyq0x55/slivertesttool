@@ -10,7 +10,7 @@ import datetime as _dt
 from typing import Any, BinaryIO, Optional, Union
 
 from ...extensions import db
-from . import audit, excel_io, service, settings, validation
+from . import audit, excel_io, permissions, service, settings, validation
 from ...models import DataJob, Project, TestItemRow
 from .validation import FieldSpec
 
@@ -126,6 +126,12 @@ def commit_import(user, project: Project, job: DataJob) -> dict:
         raise service.ServiceError("导入任务状态无效", code="VALIDATION_ERROR")
     preview = job.preview or {}
     mode = (job.parameters or {}).get("mode", "upsert")
+    if mode == "replace_all":
+        permissions.require(
+            "import.replace",
+            service.role_in_project(project.id, user),
+            is_system_admin=bool(user is not None and user.is_system_admin),
+        )
     rows = preview.get("rows", [])
     if preview.get("invalid", 0) > 0 and mode != "replace_all":
         raise service.ServiceError("存在校验未通过的行，无法提交", code="IMPORT_HAS_ERRORS")
