@@ -97,6 +97,8 @@ def _migrate_schema() -> None:
             # Re-runs reuse the task row, so the counter is the only way to see
             # that a retest actually executed when the verdict is unchanged.
             "run_count": "INTEGER NOT NULL DEFAULT 1",
+            "sil_version": "VARCHAR(64) NOT NULL DEFAULT ''",
+            "sil_model_id": "INTEGER",
         },
         "lm_projects": {
             "tm_id_prefix": "VARCHAR(64)",
@@ -160,6 +162,8 @@ def _migrate_schema() -> None:
                 conn.execute(text(
                     f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
 
+    _migrate_model_version_identity(existing_tables)
+
     # The ``sheet`` columns are filtered on every field/item load, so back them
     # with an index (the ADD COLUMN above does not create one). Idempotent.
     for table in ("lm_field_definitions", "lm_test_items"):
@@ -204,6 +208,28 @@ def _migrate_schema() -> None:
     _migrate_widen_testitem_uuid(existing_tables, inspector)
     _migrate_user_fk_ondelete(inspector)
     _migrate_testitem_field_keys(existing_tables)
+
+
+def _migrate_model_version_identity(existing_tables) -> None:
+    """Allow several saved versions of one project-model name.
+
+    PostgreSQL treats NULL versions as distinct, so the unique index uses an
+    empty string for an unversioned model. Existing task snapshots are not
+    backfilled from the current registry.
+    """
+    if "lm_project_models" not in existing_tables:
+        return
+    if db.engine.dialect.name != "postgresql":
+        return
+    from sqlalchemy import text
+
+    with db.engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE lm_project_models "
+            "DROP CONSTRAINT IF EXISTS uq_model_project_name"))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_model_project_name_version "
+            "ON lm_project_models (project_id, name, COALESCE(version, ''))"))
 
 
 def _migrate_widen_testitem_uuid(existing_tables, inspector) -> None:

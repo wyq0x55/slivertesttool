@@ -330,7 +330,9 @@ class FieldDefinition(db.Model):
 class ProjectModel(db.Model):
     __tablename__ = "lm_project_models"
     __table_args__ = (
-        db.UniqueConstraint("project_id", "name", name="uq_model_project_name"),
+        db.UniqueConstraint(
+            "project_id", "name", "version",
+            name="uq_model_project_name_version"),
     )
 
     id = db.Column(db.Integer, primary_key=True)

@@ -83,7 +83,7 @@ def seeded(app):
 
     task = Task(project_id=project.id, test_id="TC-001",
                 task_key=f"job{suffix}"[:16], status="passed",
-                submitter_id=user.id, sil_name="engine",
+                submitter_id=user.id, sil_name="engine", sil_version="v2.3.1",
                 finished_at=datetime(2026, 8, 10, 1, 30, tzinfo=timezone.utc))
     db.session.add(task)
     db.session.commit()

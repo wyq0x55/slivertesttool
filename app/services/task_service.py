@@ -124,6 +124,8 @@ def create_task(
     sil_relpath: str,
     workspace: str,
     sil_name: str = "",
+    sil_version: str = "",
+    sil_model_id: Optional[int] = None,
     project_id: Optional[int] = None,
     submitter_id: Optional[int] = None,
 ) -> Task:
@@ -136,6 +138,8 @@ def create_task(
         test_id=test_id,
         sil_relpath=sil_relpath,
         sil_name=sil_name,
+        sil_version=sil_version or "",
+        sil_model_id=sil_model_id,
         status=TaskStatus.QUEUED.value,
         message="Queued, waiting for a free license slot.",
         workspace=workspace,
@@ -165,7 +169,8 @@ def find_task_by_test_id(test_id: str, project_id: Optional[int] = None) -> Opti
 
 def _reset_for_run(task: Task, *, task_name: str, file_name: str,
                    submitter: str, sil_relpath: str, sil_name: str,
-                   workspace: str, submitter_id: Optional[int]) -> Task:
+                   workspace: str, submitter_id: Optional[int],
+                   sil_version: str = "", sil_model_id: Optional[int] = None) -> Task:
     """Reset one existing row back to QUEUED, in place.
 
     Shared by :func:`upsert_task` and :func:`requeue_task` so a re-queue can
@@ -180,6 +185,8 @@ def _reset_for_run(task: Task, *, task_name: str, file_name: str,
                          else task.submitter_id)
     task.sil_relpath = sil_relpath
     task.sil_name = sil_name
+    task.sil_version = sil_version or ""
+    task.sil_model_id = sil_model_id
     task.workspace = workspace
     task.status = TaskStatus.QUEUED.value
     task.progress = 0
@@ -200,6 +207,8 @@ def requeue_task(
     sil_relpath: str,
     workspace: str,
     sil_name: str = "",
+    sil_version: str = "",
+    sil_model_id: Optional[int] = None,
     task_name: str = "",
     file_name: str = "(json runner)",
     submitter: str = "",
@@ -225,7 +234,8 @@ def requeue_task(
         task_name=task_name or task.task_name or task.test_id,
         file_name=file_name, submitter=submitter or task.submitter,
         sil_relpath=sil_relpath, sil_name=sil_name, workspace=workspace,
-        submitter_id=submitter_id)
+        submitter_id=submitter_id, sil_version=sil_version,
+        sil_model_id=sil_model_id)
     if commit:
         db.session.commit()
     return task
@@ -239,9 +249,11 @@ def upsert_task(
     sil_relpath: str,
     workspace: str,
     sil_name: str = "",
+    sil_version: str = "",
+    sil_model_id: Optional[int] = None,
     project_id: Optional[int] = None,
     submitter_id: Optional[int] = None,
-) -> Task:
+) -> tuple[Task, bool]:
     """Create or re-queue the task for ``(project_id, test_id)``.
 
     ``test_id`` is unique per project: re-enqueuing an existing test id reuses
@@ -255,17 +267,19 @@ def upsert_task(
         return create_task(
             task_name=task_name, file_name=file_name, submitter=submitter,
             test_id=test_id, sil_relpath=sil_relpath, sil_name=sil_name,
-            workspace=workspace, project_id=project_id, submitter_id=submitter_id)
+            sil_version=sil_version, sil_model_id=sil_model_id,
+            workspace=workspace, project_id=project_id, submitter_id=submitter_id), True
 
     if TaskStatus(existing.status) in (TaskStatus.QUEUED, TaskStatus.RUNNING):
-        return existing
+        return existing, False
 
     _reset_for_run(
         existing, task_name=task_name or test_id, file_name=file_name,
         submitter=submitter, sil_relpath=sil_relpath, sil_name=sil_name,
+        sil_version=sil_version, sil_model_id=sil_model_id,
         workspace=workspace, submitter_id=submitter_id)
     db.session.commit()
-    return existing
+    return existing, True
 
 
 def request_cancel(task: Task) -> str:
