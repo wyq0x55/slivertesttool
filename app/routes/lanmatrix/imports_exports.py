@@ -83,6 +83,8 @@ def commit_import(job_id):
     if job is None or job.job_type != "import":
         return err("NOT_FOUND", "任务不存在", status=404)
     project, _ = _project_and_role(job.project_id, "import.run")
+    if (job.parameters or {}).get("mode") == "replace_all":
+        _project_and_role(job.project_id, "import.replace")
     result = excel_service.commit_import(g.user, project, job)
     return ok(result)
 
