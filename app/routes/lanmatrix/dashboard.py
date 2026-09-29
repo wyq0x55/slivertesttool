@@ -139,3 +139,23 @@ def version_compare(project_id: int):
     )
     return ok(data)
 
+
+@bp.get("/projects/<int:project_id>/test-run-history")
+@login_required
+def test_run_history(project_id: int):
+    """Return paged matrix-backed run summaries for one exact test id."""
+    from ...services.lanmatrix import dashboard_service
+
+    _project_and_role(project_id, "project.view")
+    test_id = arg_str("test_id", max_length=128)
+    if not test_id:
+        return err("VALIDATION_ERROR", "参数 test_id 必填", status=400)
+    page = arg_int("page", 1, minimum=1)
+    page_size = arg_int(
+        "page_size", settings.PAGE_SIZE, minimum=1,
+        maximum=settings.PAGE_SIZE_MAX,
+    )
+    return ok(dashboard_service.test_run_history(
+        project_id, test_id, page=page, page_size=page_size,
+    ))
+

@@ -39,6 +39,8 @@
   const canCancel = (t) => !!t && !FINAL.includes(String(t.status || ""));
   const canRetest = (t) => !!t && !LIVE_STATUS.includes(String(t.status || ""));
   const canDownload = (t) => !!(t && t.has_result);
+  const retestConfirmationBody = "将使用此任务保存的 .sil 模型副本，并按当前项目 test/lib/const 表重新生成输入。"
+    + "确认后会重新入队并清空旧结果与报告引用；旧报告文件不保证继续可用。";
 
   /* Merge the execution ``status`` with the judge ``result`` (verdict) into one
      label. A finished-but-failing run carries status ``failed``; split a genuine
@@ -235,7 +237,7 @@
 
   global.LMTaskRow = {
     esc, STATUS_ZH, FINAL, LIVE_STATUS,
-    canCancel, canRetest, canDownload,
+    canCancel, canRetest, canDownload, retestConfirmationBody,
     mergedVerdict, mergedBadge, fmtTime, fmtFinished,
     REVIEW_ZH, reviewBadge, reviewHref, reviewCell, reviewRank,
     cmp, signature, rowHtml, ICO,

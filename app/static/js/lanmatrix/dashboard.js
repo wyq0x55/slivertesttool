@@ -274,6 +274,9 @@
     untestable: "无法测试",
   };
   let comparePage = 1;
+  let historyPage = 1;
+  let historyTestId = "";
+  let historyRequestId = 0;
 
   function outcomeText(value) {
     if (!value) return "\u2014";
@@ -292,7 +295,9 @@
     const testCell = href
       ? '<a href="' + esc(href) + '">' + label + "</a>"
       : label;
-    return "<tr><td>" + testCell + "</td><td>"
+    const historyButton = '<button type="button" class="btn" data-history-test-id="'
+      + esc(item.test_id) + '" aria-controls="lm-vc-history">历史</button>';
+    return "<tr><td>" + testCell + " " + historyButton + "</td><td>"
       + esc(outcomeText(item.left_outcome)) + "</td><td>"
       + esc(outcomeText(item.right_outcome)) + "</td><td>"
       + esc(COMPARE_LABELS[item.change] || item.change || "")
@@ -335,7 +340,122 @@
     box.textContent = message;
   }
 
+  function renderRunHistoryRow(item) {
+    const rowHref = matrixRowHref(item.row_uuid);
+    const rowLink = rowHref
+      ? '<a href="' + esc(rowHref) + '">打开矩阵</a>'
+      : "—";
+    const model = item.model_version
+      ? String(item.model_name || "") + "@" + String(item.model_version)
+      : String(item.model_name || "—");
+    return "<tr><td>" + esc(item.executed_at || item.executed_on || "—")
+      + "</td><td>" + esc(outcomeText(item.outcome || item.verdict))
+      + "</td><td>" + esc(model)
+      + "</td><td>" + esc(item.executor_name || "—")
+      + "</td><td>" + rowLink + "</td></tr>";
+  }
+
+  function renderRunHistory(data) {
+    const title = $("lm-vc-history-title");
+    const status = $("lm-vc-history-status");
+    const body = $("lm-vc-history-rows");
+    const items = data.items || [];
+    if (title) title.textContent = "用例运行历史 · " + (data.test_id || historyTestId);
+    if (body) {
+      body.innerHTML = items.length
+        ? items.map(renderRunHistoryRow).join("")
+        : '<tr><td colspan="5" class="lm-muted">此用例暂无矩阵运行记录。</td></tr>';
+    }
+    const page = data.page || historyPage;
+    const size = data.page_size || 50;
+    const total = data.total || 0;
+    if (status) status.textContent = "共 " + total + " 条记录，第 " + page + " 页";
+    const previous = $("lm-vc-history-prev");
+    const next = $("lm-vc-history-next");
+    if (previous) previous.hidden = page <= 1;
+    if (next) next.hidden = page * size >= total;
+  }
+
+  function showRunHistoryError(message) {
+    const status = $("lm-vc-history-status");
+    const box = $("lm-vc-history-error");
+    if (status) status.textContent = "";
+    if (box) {
+      box.hidden = false;
+      box.textContent = message;
+    }
+  }
+
+  async function loadRunHistory(page) {
+    const panel = $("lm-vc-history");
+    if (!panel || !historyTestId) return;
+    const requestId = ++historyRequestId;
+    const requestedTestId = historyTestId;
+    panel.hidden = false;
+    historyPage = page || 1;
+    const error = $("lm-vc-history-error");
+    const status = $("lm-vc-history-status");
+    const body = $("lm-vc-history-rows");
+    if (error) error.hidden = true;
+    if (status) status.textContent = "正在加载运行历史…";
+    if (body) body.innerHTML = "";
+    try {
+      const query = new URLSearchParams({
+        test_id: historyTestId,
+        page: String(historyPage),
+        page_size: "50",
+      });
+      const resp = await fetch(
+        "/api/v1/projects/" + encodeURIComponent(projectId)
+          + "/test-run-history?" + query.toString(),
+        { credentials: "same-origin" },
+      );
+      let payload = null;
+      try { payload = await resp.json(); } catch (ignore) { payload = null; }
+      if (requestId !== historyRequestId || requestedTestId !== historyTestId) return;
+      if (resp.status === 401) {
+        showRunHistoryError("登录已过期，请刷新页面后重新登录。");
+        return;
+      }
+      if (!payload || !payload.success) {
+        const failure = (payload && payload.error) || {};
+        showRunHistoryError(failure.message || "读取运行历史失败");
+        return;
+      }
+      renderRunHistory(payload.data || {});
+    } catch (ignore) {
+      if (requestId === historyRequestId && requestedTestId === historyTestId) {
+        showRunHistoryError("读取运行历史失败");
+      }
+    }
+  }
+
+  function bindRunHistory() {
+    const rows = $("lm-vc-rows");
+    if (rows) {
+      rows.addEventListener("click", (event) => {
+        const target = event.target;
+        if (!target || typeof target.closest !== "function") return;
+        const button = target.closest("[data-history-test-id]");
+        if (!button) return;
+        historyTestId = button.dataset.historyTestId || "";
+        historyPage = 1;
+        loadRunHistory(1);
+      });
+    }
+    const previous = $("lm-vc-history-prev");
+    const next = $("lm-vc-history-next");
+    if (previous) previous.addEventListener("click", () => {
+      loadRunHistory(Math.max(1, historyPage - 1));
+    });
+    if (next) next.addEventListener("click", () => {
+      loadRunHistory(historyPage + 1);
+    });
+  }
+
   async function loadVersionCompare(page) {
+    const historyPanel = $("lm-vc-history");
+    if (historyPanel) historyPanel.hidden = true;
     const left = ($("lm-vc-left") && $("lm-vc-left").value.trim()) || "";
     const right = ($("lm-vc-right") && $("lm-vc-right").value.trim()) || "";
     if (!left || !right) {
@@ -393,6 +513,7 @@
     if (btn) btn.addEventListener("click", load);
     load();
     bindVersionCompare();
+    bindRunHistory();
   });
 
   global.LMDashboard = { reload: load };

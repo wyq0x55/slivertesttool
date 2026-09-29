@@ -30,6 +30,7 @@ HOME_JS = (JS / "home.js").read_text(encoding="utf-8")
 TASKS_JS = (JS / "project_tasks.js").read_text(encoding="utf-8")
 ROW_JS = (JS / "task_row.js").read_text(encoding="utf-8")
 UI_JS = (JS / "ui.js").read_text(encoding="utf-8")
+EDITOR_JS = (JS / "editor.js").read_text(encoding="utf-8")
 
 
 def _sort_keys(html: str) -> list[str]:
@@ -69,6 +70,19 @@ def test_workspace_offers_the_same_batch_actions():
     for verb in ("download", "cancel", "retest", "delete"):
         assert f'id="lm-h-batch-{verb}"' in HOME_HTML
         assert f'id="lm-batch-{verb}"' in TASKS_HTML
+
+
+def test_retest_confirmation_discloses_shared_execution_semantics():
+    for source in (HOME_JS, TASKS_JS):
+        assert ".retestConfirmationBody" in source
+    assert "retestConfirmationBody" in ROW_JS
+    assert "保存的 .sil 模型副本" in ROW_JS
+    assert "当前项目 test/lib/const" in ROW_JS
+    assert "清空旧结果与报告引用" in ROW_JS
+
+
+def test_import_preview_errors_cannot_be_committed_as_replace_all():
+    assert '(pendingJob.parameters && pendingJob.parameters.mode === "replace_all")' not in EDITOR_JS
 
 
 def test_workspace_has_select_all():

@@ -507,7 +507,7 @@
     if (!(await LMUI.confirm({
       level: "danger",
       title: `重测 ${eligible.length} 个任务`,
-      body: "任务将重新加入测试队列，原有结果会被覆盖。",
+      body: TR.retestConfirmationBody,
       confirmText: "重新测试",
     }))) return;
     let created = 0, skipped = 0, missing = 0, errs = 0;

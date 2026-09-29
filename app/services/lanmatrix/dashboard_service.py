@@ -56,6 +56,7 @@ from typing import Optional
 
 from ...extensions import db
 from ...models import LMUser, Project, TestItemRow, TestRunRecord
+from . import settings
 from . import exemption_service, review_service
 from .run_writeback_service import classify
 
@@ -500,6 +501,51 @@ def compare_versions(project_id: int, left: str, right: str, *,
         "page_size": page_size,
         "total": len(test_ids),
         "items": items,
+    }
+
+
+def test_run_history(project_id: int, test_id: str, *,
+                     page: int = 1, page_size: int = 100) -> dict:
+    """Return a bounded, newest-first page of matrix-backed run summaries."""
+    test_id = (test_id or "").strip()
+    page = max(1, int(page))
+    page_size = min(max(1, int(page_size)), settings.PAGE_SIZE_MAX)
+    query = TestRunRecord.query.filter(
+        TestRunRecord.project_id == project_id,
+        TestRunRecord.test_id == test_id,
+    )
+    total = query.count()
+    offset = (page - 1) * page_size
+    rows = []
+    if offset < total:
+        rows = (
+            query.order_by(TestRunRecord.executed_at.desc(), TestRunRecord.id.desc())
+            .offset(offset)
+            .limit(page_size)
+            .all()
+        )
+    return {
+        "test_id": test_id,
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "items": [
+            {
+                "id": row.id,
+                "row_uuid": row.row_uuid or "",
+                "test_id": row.test_id,
+                "verdict": row.verdict,
+                "outcome": row.outcome,
+                "model_name": row.model_name,
+                "model_version": row.model_version,
+                "executor_name": row.executor_name,
+                "executed_at": (
+                    row.executed_at.isoformat() if row.executed_at else None
+                ),
+                "executed_on": row.executed_on,
+            }
+            for row in rows
+        ],
     }
 
 

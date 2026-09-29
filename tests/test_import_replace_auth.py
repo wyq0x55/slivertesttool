@@ -277,3 +277,25 @@ def test_project_admin_commit_replace_all_is_allowed(client, replace_case):
     assert _live_case_ids(replace_case["project_id"]) == [
         replace_case["new_case_id"],
     ]
+
+
+def test_replace_all_with_invalid_rows_is_rejected_without_deleting_existing_rows(
+        app, replace_case):
+    from app.extensions import db
+    from app.models import DataJob, LMUser, Project
+    from app.services.lanmatrix.errors import ServiceError
+    from app.services.lanmatrix.excel_service import commit_import
+
+    admin = db.session.get(LMUser, replace_case["admin_id"])
+    project = db.session.get(Project, replace_case["project_id"])
+    job = db.session.get(DataJob, replace_case["job_id"])
+    job.preview = dict(job.preview, invalid=1, errors=[{"message": "bad row"}])
+    db.session.commit()
+
+    with pytest.raises(ServiceError) as caught:
+        commit_import(admin, project, job)
+
+    assert caught.value.code == "IMPORT_HAS_ERRORS"
+    assert _live_case_ids(replace_case["project_id"]) == [
+        replace_case["keep_case_id"],
+    ]

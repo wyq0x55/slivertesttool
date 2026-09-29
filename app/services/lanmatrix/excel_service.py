@@ -133,7 +133,7 @@ def commit_import(user, project: Project, job: DataJob) -> dict:
             is_system_admin=bool(user is not None and user.is_system_admin),
         )
     rows = preview.get("rows", [])
-    if preview.get("invalid", 0) > 0 and mode != "replace_all":
+    if preview.get("invalid", 0) > 0:
         raise service.ServiceError("存在校验未通过的行，无法提交", code="IMPORT_HAS_ERRORS")
 
     specs = service.field_specs(project.id)

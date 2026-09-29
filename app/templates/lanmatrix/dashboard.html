@@ -132,6 +132,22 @@
       <button type="button" class="btn" id="lm-vc-prev" hidden>上一页</button>
       <button type="button" class="btn" id="lm-vc-next" hidden>下一页</button>
     </div>
+    <section id="lm-vc-history" hidden aria-live="polite" style="margin:16px">
+      <h4 id="lm-vc-history-title">用例运行历史</h4>
+      <p class="lm-muted">只显示写回矩阵的运行摘要；历史报告文件不按次存档。</p>
+      <p id="lm-vc-history-status" class="lm-muted" role="status"></p>
+      <div class="state err" id="lm-vc-history-error" hidden></div>
+      <table class="lm-table">
+        <thead>
+          <tr><th>执行时间</th><th>结果</th><th>模型版本</th><th>执行者</th><th>矩阵行</th></tr>
+        </thead>
+        <tbody id="lm-vc-history-rows"></tbody>
+      </table>
+      <div class="lm-more-wrap" style="margin-top:12px">
+        <button type="button" class="btn" id="lm-vc-history-prev" hidden>上一页</button>
+        <button type="button" class="btn" id="lm-vc-history-next" hidden>下一页</button>
+      </div>
+    </section>
   </section>
 
   <div class="state" id="lm-dash-empty" hidden style="margin-top:16px">

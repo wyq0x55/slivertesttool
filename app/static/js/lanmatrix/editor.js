@@ -1463,8 +1463,7 @@
       document.getElementById("lm-import-summary").innerHTML =
         `<p>共 ${pv.total} 行：新增 ${pv.insert}，更新 ${pv.update}，错误 ${pv.invalid}。</p>` +
         (errRows ? `<table class="lm-table lm-preview"><thead><tr><th>行</th><th>列</th><th>问题</th></tr></thead><tbody>${errRows}</tbody></table>` : "");
-      document.getElementById("lm-import-commit").disabled =
-        !(pv.invalid === 0 || (pendingJob.parameters && pendingJob.parameters.mode === "replace_all"));
+      document.getElementById("lm-import-commit").disabled = pv.invalid > 0;
     } catch (ex) {
       err.textContent = ex.message; err.hidden = false;
     }
