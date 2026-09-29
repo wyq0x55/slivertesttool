@@ -259,10 +259,140 @@
     }
   }
 
+    const COMPARE_LABELS = {
+    only_left: "仅左侧",
+    only_right: "仅右侧",
+    unchanged: "无变化",
+    pass_to_fail: "通过转失败",
+    fail_to_pass: "失败转通过",
+    other: "其他",
+  };
+  const OUTCOME_LABELS = {
+    pass: "通过",
+    fail: "失败",
+    error: "错误",
+    untestable: "无法测试",
+  };
+  let comparePage = 1;
+
+  function outcomeText(value) {
+    if (!value) return "\u2014";
+    return OUTCOME_LABELS[value] || value;
+  }
+
+  function matrixRowHref(rowUuid) {
+    if (!rowUuid) return "";
+    return "/lanmatrix/projects/" + encodeURIComponent(projectId)
+      + "?row=" + encodeURIComponent(rowUuid);
+  }
+
+  function renderCompareRow(item) {
+    const href = matrixRowHref(item.row_uuid);
+    const label = esc(item.test_id);
+    const testCell = href
+      ? '<a href="' + esc(href) + '">' + label + "</a>"
+      : label;
+    return "<tr><td>" + testCell + "</td><td>"
+      + esc(outcomeText(item.left_outcome)) + "</td><td>"
+      + esc(outcomeText(item.right_outcome)) + "</td><td>"
+      + esc(COMPARE_LABELS[item.change] || item.change || "")
+      + "</td></tr>";
+  }
+
+  function renderCompare(data) {
+    const summary = data.summary || {};
+    const summaryEl = $("lm-vc-summary");
+    if (summaryEl) {
+      summaryEl.textContent = [
+        "仅左侧 " + (summary.only_left || 0),
+        "仅右侧 " + (summary.only_right || 0),
+        "无变化 " + (summary.unchanged || 0),
+        "通过转失败 " + (summary.pass_to_fail || 0),
+        "失败转通过 " + (summary.fail_to_pass || 0),
+        "其他 " + (summary.other || 0),
+      ].join("，");
+    }
+    const body = $("lm-vc-rows");
+    const items = data.items || [];
+    if (body) {
+      body.innerHTML = items.length
+        ? items.map(renderCompareRow).join("")
+        : '<tr><td colspan="4" class="lm-muted">没有可对比的用例。</td></tr>';
+    }
+    const size = data.page_size || 50;
+    const page = data.page || comparePage;
+    const total = data.total || 0;
+    const prev = $("lm-vc-prev");
+    const next = $("lm-vc-next");
+    if (prev) prev.hidden = page <= 1;
+    if (next) next.hidden = page * size >= total;
+  }
+
+  function showCompareError(message) {
+    const box = $("lm-vc-err");
+    if (!box) return;
+    box.hidden = false;
+    box.textContent = message;
+  }
+
+  async function loadVersionCompare(page) {
+    const left = ($("lm-vc-left") && $("lm-vc-left").value.trim()) || "";
+    const right = ($("lm-vc-right") && $("lm-vc-right").value.trim()) || "";
+    if (!left || !right) {
+      showCompareError("请填写左侧和右侧模型，格式为 name@version，没有版本时只填名称。");
+      return;
+    }
+    comparePage = page || 1;
+    const button = $("lm-vc-run");
+    if (button) button.disabled = true;
+    try {
+      const query = new URLSearchParams({
+        left: left,
+        right: right,
+        page: String(comparePage),
+        page_size: "50",
+      });
+      const resp = await fetch(
+        "/api/v1/projects/" + encodeURIComponent(projectId) + "/version-compare?" + query.toString(),
+        { credentials: "same-origin" },
+      );
+      let payload = null;
+      try { payload = await resp.json(); } catch (ignore) { payload = null; }
+      if (resp.status === 401) return;
+      if (!payload || !payload.success) {
+        const failure = (payload && payload.error) || {};
+        showCompareError(failure.message || "对比失败");
+        return;
+      }
+      const errBox = $("lm-vc-err");
+      if (errBox) errBox.hidden = true;
+      renderCompare(payload.data || {});
+    } catch (ignore) {
+      showCompareError("对比失败");
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
+  function bindVersionCompare() {
+    const form = $("lm-vc-form");
+    if (form) {
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        loadVersionCompare(1);
+      });
+    }
+    const prev = $("lm-vc-prev");
+    const next = $("lm-vc-next");
+    if (prev) prev.addEventListener("click", () => loadVersionCompare(Math.max(1, comparePage - 1)));
+    if (next) next.addEventListener("click", () => loadVersionCompare(comparePage + 1));
+  }
+
   document.addEventListener("DOMContentLoaded", () => {
     const btn = $("lm-dash-refresh");
     if (btn) btn.addEventListener("click", load);
     load();
+    bindVersionCompare();
   });
 
   global.LMDashboard = { reload: load };

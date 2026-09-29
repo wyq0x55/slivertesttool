@@ -101,6 +101,39 @@
     </div>
   </div>
 
+    {# Read-only left-to-right compare. The link uses row_uuid. #}
+  <section class="lm-chart-card" id="lm-version-compare" style="margin-top:16px">
+    <div class="lm-chart-head">
+      <h3>版本结果对比</h3>
+      <span class="muted">按模型名称和版本比较。没有版本的模型填裸名称。取消的运行不计入。</span>
+    </div>
+    <form id="lm-vc-form" class="lm-filters" style="margin:12px 16px">
+      <div class="lm-filter">
+        <label for="lm-vc-left">左侧</label>
+        <input id="lm-vc-left" name="left" type="text" maxlength="200" placeholder="name@version" autocomplete="off" style="width:240px">
+      </div>
+      <div class="lm-filter">
+        <label for="lm-vc-right">右侧</label>
+        <input id="lm-vc-right" name="right" type="text" maxlength="200" placeholder="name@version" autocomplete="off" style="width:240px">
+      </div>
+      <div class="lm-filter lm-filter-actions">
+        <button class="btn btn-primary" id="lm-vc-run" type="submit">对比</button>
+      </div>
+    </form>
+    <p id="lm-vc-summary" class="lm-muted" role="status" style="margin:0 16px 8px"></p>
+    <div class="state err" id="lm-vc-err" hidden></div>
+    <table class="lm-table" id="lm-vc-table">
+      <thead>
+        <tr><th>用例</th><th>左侧结果</th><th>右侧结果</th><th>变化</th></tr>
+      </thead>
+      <tbody id="lm-vc-rows"><tr><td colspan="4" class="lm-muted">选择左右模型后对比。</td></tr></tbody>
+    </table>
+    <div class="lm-more-wrap" style="margin:12px 16px">
+      <button type="button" class="btn" id="lm-vc-prev" hidden>上一页</button>
+      <button type="button" class="btn" id="lm-vc-next" hidden>下一页</button>
+    </div>
+  </section>
+
   <div class="state" id="lm-dash-empty" hidden style="margin-top:16px">
     <h3>还没有数据</h3>
     <p>导入测试用例并完成一次运行后，这里会显示项目进度。</p>
