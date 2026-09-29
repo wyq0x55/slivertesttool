@@ -272,6 +272,35 @@ def test_latest_non_cancelled_run_wins(env):
     assert tie["row_uuid"] == "tie-right"
 
 
+def test_latest_lookup_ranks_attempts_in_the_database(env):
+    from sqlalchemy import event
+
+    from app.extensions import db
+    from app.services.lanmatrix import dashboard_service as ds
+
+    _add(env, test_id="TC-RANK", model_name="ecu", model_version="v1",
+         outcome="fail", row_uuid="old", hours=1)
+    _add(env, test_id="TC-RANK", model_name="ecu", model_version="v1",
+         outcome="pass", row_uuid="latest", hours=2)
+    _add(env, test_id="TC-RANK", model_name="ecu", model_version="v1",
+         outcome="cancelled", row_uuid="cancelled", hours=3)
+
+    statements = []
+
+    def capture(_conn, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement.lower())
+
+    event.listen(db.engine, "before_cursor_execute", capture)
+    try:
+        latest = ds._latest_non_cancelled(env["project"].id, "ecu", "v1")
+    finally:
+        event.remove(db.engine, "before_cursor_execute", capture)
+
+    assert latest["TC-RANK"].outcome == "pass"
+    assert latest["TC-RANK"].row_uuid == "latest"
+    assert any("row_number() over" in statement for statement in statements)
+
+
 def test_same_version_label_does_not_merge_models(env):
     _add(env, test_id="TC-1", model_name="alpha", model_version="1",
          outcome="pass", row_uuid="alpha-row", hours=1)
@@ -345,6 +374,30 @@ def test_summary_ignores_pagination(env):
     assert first["page"] == 1
     assert second["page"] == 2
     assert first["page_size"] == 1
+
+
+def test_pagination_builds_detail_rows_only_for_the_requested_page(env, monkeypatch):
+    from app.services.lanmatrix import dashboard_service as ds
+
+    for index in range(3):
+        _add(env, test_id=f"TC-PAGE-{index}", model_name="ecu",
+             model_version="v1", outcome="pass", row_uuid=f"row-{index}",
+             hours=index + 1)
+
+    original = ds._compare_row_uuid
+    calls = []
+
+    def track_detail_builds(left, right):
+        calls.append((left, right))
+        return original(left, right)
+
+    monkeypatch.setattr(ds, "_compare_row_uuid", track_detail_builds)
+    data = ds.compare_versions(
+        env["project"].id, "ecu@v1", "ecu@v2", page=2, page_size=1)
+
+    assert data["total"] == 3
+    assert len(data["items"]) == 1
+    assert len(calls) == 1
 
 
 def test_other_project_runs_stay_out(env):
