@@ -36,21 +36,57 @@ def _stub_pkg(name):
 
 
 def _load_export():
-    for pkg in ("app", "app.models", "app.runners", "app.runners.silver_json",
-                "app.services", "app.services.lanmatrix"):
-        if pkg not in sys.modules:
-            _stub_pkg(pkg)
-    models_pkg = sys.modules["app.models"]
-    if not hasattr(models_pkg, "TestItemRow"):
-        models_pkg.TestItemRow = object
-    sys.modules["app.runners"].silver_json = sys.modules["app.runners.silver_json"]
+    packages = (
+        "app", "app.models", "app.runners", "app.runners.silver_json",
+        "app.services", "app.services.lanmatrix",
+    )
     name = "app.services.lanmatrix.silver_json_export"
-    spec = importlib.util.spec_from_file_location(name, _EXPORT_PATH)
-    mod = importlib.util.module_from_spec(spec)
-    mod.__package__ = "app.services.lanmatrix"
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
+    missing = object()
+    module_names = packages + (name,)
+    previous_modules = {
+        module_name: sys.modules.get(module_name, missing)
+        for module_name in module_names
+    }
+    parent_bindings = []
+    for parent_name, attribute in (
+        ("app", "models"), ("app", "runners"), ("app", "services"),
+        ("app.models", "TestItemRow"), ("app.runners", "silver_json"),
+        ("app.services", "lanmatrix"),
+        ("app.services.lanmatrix", "silver_json_export"),
+    ):
+        parent = previous_modules.get(parent_name, missing)
+        if parent is not missing:
+            parent_bindings.append(
+                (parent, attribute, getattr(parent, attribute, missing)))
+
+    try:
+        for pkg in packages:
+            if pkg not in sys.modules:
+                _stub_pkg(pkg)
+        models_pkg = sys.modules["app.models"]
+        if not hasattr(models_pkg, "TestItemRow"):
+            models_pkg.TestItemRow = object
+        runners_pkg = sys.modules["app.runners"]
+        runners_pkg.silver_json = sys.modules["app.runners.silver_json"]
+        spec = importlib.util.spec_from_file_location(name, _EXPORT_PATH)
+        mod = importlib.util.module_from_spec(spec)
+        mod.__package__ = "app.services.lanmatrix"
+        sys.modules[name] = mod
+        spec.loader.exec_module(mod)
+        return mod
+    finally:
+        for parent, attribute, previous in reversed(parent_bindings):
+            if previous is missing:
+                if hasattr(parent, attribute):
+                    delattr(parent, attribute)
+            else:
+                setattr(parent, attribute, previous)
+        for module_name in reversed(module_names):
+            previous = previous_modules[module_name]
+            if previous is missing:
+                sys.modules.pop(module_name, None)
+            else:
+                sys.modules[module_name] = previous
 
 
 def _load_runner_defs():
@@ -71,6 +107,8 @@ def _load_runner_defs():
 
 
 def test_export_loader_preserves_the_live_model_class():
+    from app.models import TestItemRow
+
     module_names = (
         "app",
         "app.models",
@@ -81,7 +119,6 @@ def test_export_loader_preserves_the_live_model_class():
         "app.services.lanmatrix.silver_json_export",
     )
     before = {name: sys.modules.get(name) for name in module_names}
-    from app.models import TestItemRow
 
     _load_export()
 
