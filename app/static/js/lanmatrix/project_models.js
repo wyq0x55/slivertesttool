@@ -55,21 +55,21 @@
       ? `<div class="mnote" title="版本说明">${esc(m.version_note)}</div>` : "";
     let actions = "";
     if (canManage && !cur) {
-      actions += `<button class="btn btn-sm btn-primary lm-model-cur" data-name="${esc(m.name)}">设为当前</button>`;
+      actions += `<button class="btn btn-sm btn-primary lm-model-cur" data-model-id="${m.id}" data-name="${esc(m.name)}">设为当前</button>`;
     }
     if (canManage) {
-      actions += `<button class="btn btn-sm lm-model-ver" data-name="${esc(m.name)}">${
+      actions += `<button class="btn btn-sm lm-model-ver" data-model-id="${m.id}">${
         m.version ? "改版本" : "设版本"}</button>`;
       if (m.kind === "bundle") {
-        actions += `<button class="btn btn-sm lm-model-sbs" data-name="${esc(m.name)}">编辑 SBS</button>`;
+        actions += `<button class="btn btn-sm lm-model-sbs" data-model-id="${m.id}" data-name="${esc(m.name)}">编辑 SBS</button>`;
       }
-      actions += `<button class="btn btn-sm btn-danger lm-model-del" data-name="${esc(m.name)}">删除</button>`;
+      actions += `<button class="btn btn-sm btn-danger lm-model-del" data-model-id="${m.id}" data-name="${esc(m.name)}">删除</button>`;
     }
     // Managers can click anywhere on a (non-current) card to make it current;
     // the inner action buttons stop propagation so they keep their own intent.
     const selectable = canManage && !cur;
     return `
-      <div class="mcard${cur ? " current" : ""}${selectable ? " selectable" : ""}" data-name="${esc(m.name)}"
+      <div class="mcard${cur ? " current" : ""}${selectable ? " selectable" : ""}" data-model-id="${m.id}" data-name="${esc(m.name)}"
            ${selectable ? 'role="button" tabindex="0" title="设为当前模型"' : ""}>
         <div class="top">
           <span class="mico">${CUBE}</span>
@@ -95,31 +95,31 @@
     }
     rowsEl.innerHTML = models.map(modelCard).join("");
     rowsEl.querySelectorAll(".lm-model-del").forEach((b) =>
-      b.addEventListener("click", (e) => { e.stopPropagation(); removeModel(b.dataset.name); }));
+      b.addEventListener("click", (e) => { e.stopPropagation(); removeModel(b.dataset.modelId, b.dataset.name); }));
     rowsEl.querySelectorAll(".lm-model-sbs").forEach((b) =>
       b.addEventListener("click", (e) => {
         e.stopPropagation();
-        if (window.LMSbsModal) { window.LMSbsModal.open(pid, b.dataset.name); }
+        if (window.LMSbsModal) { window.LMSbsModal.open(pid, b.dataset.modelId, b.dataset.name); }
       }));
     rowsEl.querySelectorAll(".lm-model-ver").forEach((b) =>
       b.addEventListener("click", (e) => {
         e.stopPropagation();
-        openVersion(models.find((m) => m.name === b.dataset.name));
+        openVersion(models.find((m) => m.id === Number(b.dataset.modelId)));
       }));
     rowsEl.querySelectorAll(".lm-model-cur").forEach((b) =>
-      b.addEventListener("click", (e) => { e.stopPropagation(); setCurrent(b.dataset.name); }));
+      b.addEventListener("click", (e) => { e.stopPropagation(); setCurrent(b.dataset.modelId, b.dataset.name); }));
     // Whole-card selection for managers (buttons above stop propagation).
     rowsEl.querySelectorAll(".mcard.selectable").forEach((c) => {
-      c.addEventListener("click", () => setCurrent(c.dataset.name));
+      c.addEventListener("click", () => setCurrent(c.dataset.modelId, c.dataset.name));
       c.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setCurrent(c.dataset.name); }
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setCurrent(c.dataset.modelId, c.dataset.name); }
       });
     });
   }
 
-  async function setCurrent(name) {
+  async function setCurrent(modelId, name) {
     try {
-      const data = await LMApi.setCurrentProjectModel(pid, name);
+      const data = await LMApi.setCurrentProjectModel(pid, modelId);
       render(data.models || []);
       toast(`已将「${name}」设为当前模型`, true);
     } catch (ex) {
@@ -187,7 +187,7 @@
     }
   }
 
-  async function removeModel(name) {
+  async function removeModel(modelId, name) {
     if (!(await LMUI.confirm({
       level: "danger",
       title: `删除模型「${name}」`,
@@ -195,7 +195,7 @@
       confirmText: "删除",
     }))) { return; }
     try {
-      const data = await LMApi.removeProjectModel(pid, name);
+      const data = await LMApi.removeProjectModel(pid, modelId);
       render(data.models || []);
       toast("已删除", true);
     } catch (ex) {
@@ -213,6 +213,7 @@
    * ----------------------------------------------------------------------- */
   const verModal = $("lm-ver-modal");
   let verTarget = null;
+  let verTargetName = "";
 
   function verError(msg) {
     const box = $("lm-ver-err");
@@ -223,13 +224,15 @@
 
   function closeVersion() {
     verTarget = null;
+    verTargetName = "";
     if (verModal) { verModal.hidden = true; }
     verError("");
   }
 
   function openVersion(model) {
     if (!model || !verModal) { return; }
-    verTarget = model.name;
+    verTarget = model.id;
+    verTargetName = model.name;
     $("lm-ver-title").textContent = ` — ${model.name}`;
     $("lm-ver-input").value = model.version || "";
     $("lm-ver-note").value = model.version_note || "";
@@ -249,7 +252,7 @@
     btn.disabled = true;
     try {
       const data = await LMApi.updateProjectModelVersion(pid, verTarget, version, note);
-      const name = verTarget;
+      const name = verTargetName;
       closeVersion();
       render(data.models || []);
       toast(version ? `「${name}」版本已设为 ${version}` : `已清除「${name}」的版本号`, true);

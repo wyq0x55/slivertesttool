@@ -50,14 +50,11 @@ def _form_items(files_field: str, paths_field: str):
 def _resolve_model_ref(project_id: int, ref: str):
     """Resolve a ``name@version`` model reference for a run submission.
 
-    Returns ``(name, version, absolute_sil_path)``. Version mismatches are
-    answered with 409 rather than silently falling back to whatever is
-    registered now: a run that quietly used a different build than the one the
-    user submitted produces evidence stamped with the wrong commit, which is
-    strictly worse than a refused submission.
+    Returns ``(model_id, name, version, absolute_sil_path)``. A pinned version
+    selects that saved copy and is not replaced by a newer registration.
     """
-    name, version, path = project_model_service.resolve_ref(project_id, ref)
-    return name, version, str(Path(path).resolve())
+    model_id, name, version, path = project_model_service.resolve_ref(project_id, ref)
+    return model_id, name, version, str(Path(path).resolve())
 
 
 def _task_reviews(tasks) -> dict:
@@ -153,7 +150,7 @@ def upload_project_tree(project_id):
         return err("NO_MODEL", "该项目尚未添加 .sil 模型，请先在“模型管理”中添加", status=409)
 
     try:
-        model_name, _model_version, sil_ref = _resolve_model_ref(
+        _model_id, model_name, model_version, sil_ref = _resolve_model_ref(
             project_id, request.form.get("model") or "")
     except project_model_service.ModelVersionMismatch as exc:
         return err("MODEL_VERSION_MISMATCH", str(exc), status=409)
@@ -196,7 +193,8 @@ def upload_project_tree(project_id):
                 task = task_service.create_task(
                     task_name=test_id, file_name=folder_name,
                     submitter=submitter, test_id=test_id,
-                    sil_relpath=sil_ref, sil_name=model_name, workspace="",
+                    sil_relpath=sil_ref, sil_name=model_name,
+                    sil_version=model_version, sil_model_id=_model_id, workspace="",
                     project_id=project.id, submitter_id=g.user.id)
                 proj_root = run_layout.project_root(cfg, project)
                 case_dir = run_layout.staging_dir(proj_root, test_id) / test_id
@@ -244,7 +242,7 @@ def run_selected_tasks(project_id):
     selected = [str(t).strip() for t in raw_ids if str(t).strip()]
 
     try:
-        model_name, _model_version, sil_ref = _resolve_model_ref(
+        model_id, model_name, model_version, sil_ref = _resolve_model_ref(
             project_id, body.get("model") or "")
     except project_model_service.ModelVersionMismatch as exc:
         return err("MODEL_VERSION_MISMATCH", str(exc), status=409)
@@ -269,18 +267,22 @@ def run_selected_tasks(project_id):
             by_test_id.setdefault(tid, row)
 
     submitter = g.user.username
-    created, missing, errors = [], [], []
+    created, missing, errors, duplicates = [], [], [], []
     for test_id in selected:
         row = by_test_id.get(test_id)
         if row is None:
             missing.append(test_id)
             continue
         try:
-            task = task_service.upsert_task(
+            task, started = task_service.upsert_task(
                 task_name=test_id, file_name="(json runner)",
                 submitter=submitter, test_id=test_id,
-                sil_relpath=sil_ref, sil_name=model_name, workspace="",
+                sil_relpath=sil_ref, sil_name=model_name,
+                sil_version=model_version, sil_model_id=model_id, workspace="",
                 project_id=project.id, submitter_id=g.user.id)
+            if not started:
+                duplicates.append({"test_id": test_id, "task_id": task.task_key})
+                continue
             # Results are keyed by project + test_id (not the synthetic task
             # key). Run scripts are materialised into a short-lived staging dir;
             # the worker copies them into the runtime pool-instance dir and
@@ -297,7 +299,8 @@ def run_selected_tasks(project_id):
             db.session.rollback()
             errors.append({"test_id": test_id, "error": str(exc)})
 
-    return ok({"created": created, "missing": missing, "errors": errors},
+    return ok({"created": created, "missing": missing, "errors": errors,
+               "duplicates": duplicates},
               status=201)
 
 @bp.post("/projects/<int:project_id>/tasks/rerun-selected")
@@ -347,9 +350,6 @@ def rerun_selected_tasks(project_id):
         if tid:
             by_test_id.setdefault(tid, row)
 
-    default = project_model_service.default_model(project_id)
-    default_name = default["name"] if default else ""
-
     submitter = g.user.username
     created, skipped, missing, errors = [], [], [], []
     for key in keys:
@@ -367,27 +367,16 @@ def rerun_selected_tasks(project_id):
                             "error": "test id 已不在项目表中"})
             continue
 
-        # A re-run keeps the model the task was originally submitted with, so
-        # the retest is comparable with the run it is meant to reproduce. The
-        # version is intentionally NOT pinned here: the model may legitimately
-        # have been re-cut since, and the new run records whichever build it
-        # actually used.
-        model_name = (task.sil_name or "").strip() or default_name
-        try:
-            model_name, _version, sil_ref = _resolve_model_ref(
-                project_id, model_name)
-        except project_model_service.ModelError:
-            if not default_name or model_name == default_name:
-                errors.append({"task_id": key, "test_id": test_id,
-                               "error": "找不到该任务使用的 .sil 模型"})
-                continue
-            try:
-                model_name, _version, sil_ref = _resolve_model_ref(
-                    project_id, default_name)
-            except project_model_service.ModelError as exc:
-                errors.append({"task_id": key, "test_id": test_id,
-                               "error": str(exc)})
-                continue
+        # A retest is a new enqueue of the copy this task already captured.
+        # It does not follow a newer registration of the same model name.
+        model_name = (task.sil_name or "").strip()
+        model_version = (task.sil_version or "").strip()
+        model_id = task.sil_model_id
+        sil_ref = (task.sil_relpath or "").strip()
+        if not sil_ref or not Path(sil_ref).is_file():
+            errors.append({"task_id": key, "test_id": test_id,
+                           "error": "保存的模型副本不存在"})
+            continue
 
         try:
             # requeue_task (not upsert_task): upsert resolves its target by
@@ -396,6 +385,7 @@ def rerun_selected_tasks(project_id):
             proj_root = run_layout.project_root(cfg, project)
             task_service.requeue_task(
                 task, sil_relpath=sil_ref, sil_name=model_name,
+                sil_version=model_version, sil_model_id=model_id,
                 workspace=str(proj_root), task_name=test_id,
                 submitter=submitter, submitter_id=g.user.id, commit=False)
             case_dir = run_layout.staging_dir(proj_root, test_id) / test_id

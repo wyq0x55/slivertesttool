@@ -37,7 +37,7 @@ from typing import Any
 from flask import current_app
 
 from ...extensions import db
-from ...models import (LMUser, Project, ProjectModel, Task, TestItemRow,
+from ...models import (LMUser, Project, Task, TestItemRow,
                        TestRunRecord)
 from ...collab import writeback
 from . import review_service, silver_json_export as sje
@@ -104,24 +104,12 @@ def _executor_name(task: Task) -> str:
 
 
 def _model_identity(task: Task) -> tuple[str, str]:
-    """Return ``(model_name, model_version)`` for the model this run used.
+    """Return the model name and version captured when the task was queued.
 
-    Matching is by the model *name* recorded on the task (``sil_name``): the
-    task does not hold a foreign key to the registry, and back-filling one would
-    rewrite history whenever a model is re-registered. When no registry entry
-    matches -- a legacy in-bundle run -- the version is reported as empty rather
-    than guessed, so the dashboard can show "unversioned" honestly.
+    The registry is intentionally not consulted. A later relabel or a new
+    version must not rewrite this run.
     """
-    name = (task.sil_name or "").strip()
-    if not name or not task.project_id:
-        return name, ""
-    model = (ProjectModel.query
-             .filter_by(project_id=task.project_id, name=name)
-             .order_by(ProjectModel.id.desc())
-             .first())
-    if model is None:
-        return name, ""
-    return model.name or name, (model.version or "").strip()
+    return (task.sil_name or "").strip(), (task.sil_version or "").strip()
 
 
 def build_row_values(task: Task, verdict: str) -> dict[str, Any]:

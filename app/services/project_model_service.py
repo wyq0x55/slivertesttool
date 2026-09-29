@@ -189,7 +189,7 @@ def has_models(project_id: int) -> bool:
 def get_model_path(project_id: int, name: str) -> Optional[Path]:
     if not name:
         return None
-    row = _query(project_id).filter_by(name=name).first()
+    row = _select_model(project_id, name)
     if row is not None and row.sil_path:
         return Path(row.sil_path)
     return None
@@ -205,17 +205,26 @@ def default_model(project_id: int) -> Optional[dict]:
            .order_by(ProjectModel.id.asc()).first())
     if row is None:
         row = _query(project_id).order_by(ProjectModel.id.asc()).first()
-    return {"name": row.name} if row is not None else None
+    if row is None:
+        return None
+    return {
+        "id": row.id,
+        "name": row.name,
+        "version": row.version or "",
+        "ref": format_ref(row.name, row.version),
+    }
 
 
-def set_current(project_id: int, name: str) -> List[dict]:
+def set_current(project_id: int, name: str,
+                model_id: Optional[int] = None) -> List[dict]:
     """Mark *name* as the project's current model (clearing any previous one).
 
     Exactly one row per project ends up current. Raises :class:`ModelError` if no
     model with that name exists in the project.
     """
     name = (name or "").strip()
-    target = _query(project_id).filter_by(name=name).first() if name else None
+    target = (_select_model(project_id, name, model_id=model_id)
+              if name or model_id is not None else None)
     if target is None:
         raise ModelError("未找到该模型，请刷新后重试。")
     for row in _query(project_id).all():
@@ -227,9 +236,110 @@ def set_current(project_id: int, name: str) -> List[dict]:
 # --------------------------------------------------------------------------- #
 # Writes
 # --------------------------------------------------------------------------- #
+
+_MODULE_PATH_RE = re.compile(
+    r"(?P<path>(?:[A-Za-z]:[\\/]|\\\\)?[^\s\"']+\.(?:dll|sbs|pdb))",
+    re.IGNORECASE,
+)
+
+
+def _version_dir_name(name: str, version: str) -> str:
+    """Directory segment for one saved name@version copy."""
+    base = _safe_segment(name, "model")
+    token = _safe_segment(version or "unversioned", "unversioned")
+    return f"{base}__{token}"
+
+
+def _select_model(project_id: int, name: str, version: Optional[str] = None,
+                  model_id: Optional[int] = None):
+    """Pick one saved version of ``name``.
+
+    A pinned version must match exactly. With no pin, the current row wins,
+    otherwise the newest row.
+    """
+    if model_id is not None:
+        try:
+            model_id = int(model_id)
+        except (TypeError, ValueError):
+            return None
+        return _query(project_id).filter_by(id=model_id).first()
+
+    wanted = (version if version is not None else "").strip().lower()
+    rows = _query(project_id).filter_by(name=(name or "").strip()).all()
+    if version is not None and version != "":
+        return next((row for row in rows
+                     if (row.version or "").lower() == wanted), None)
+    if not rows:
+        return None
+    if len(rows) == 1:
+        return rows[0]
+    current = [row for row in rows if row.is_current]
+    if current:
+        return current[0]
+    return max(rows, key=lambda row: row.id)
+
+
+def _validate_identity(project_id: int, name: str, version: str) -> None:
+    """Reject only the same name and version. Another version is a new copy."""
+    rows = _query(project_id).filter_by(name=name).all()
+    for row in rows:
+        if (row.version or "") == (version or ""):
+            label = version or "未标注"
+            raise ModelError(f"该项目已存在模型 '{name}' 版本 '{label}'。")
+
+
 def _validate_name(project_id: int, name: str) -> None:
-    if _query(project_id).filter_by(name=name).first() is not None:
-        raise ModelError(f"该项目已存在名为 '{name}' 的模型。")
+    _validate_identity(project_id, name, "")
+
+
+def _materialise_saved_model(config, project_id: int, name: str, version: str,
+                             source_sil: Path) -> Path:
+    """Copy a remote or external model into this version's local directory."""
+    dest_root = _models_root(config, project_id) / _version_dir_name(name, version)
+    if dest_root.exists():
+        shutil.rmtree(dest_root, ignore_errors=True)
+    dest_root.mkdir(parents=True, exist_ok=True)
+    try:
+        original = source_sil.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        original = None
+
+    def _existing(raw: str) -> Optional[Path]:
+        candidate = Path(raw)
+        if candidate.is_file():
+            return candidate
+        for base in (source_sil.parent, Path.cwd()):
+            joined = (base / raw)
+            if joined.is_file():
+                return joined
+        return None
+
+    if original and " -S " in original:
+        def _replace(match):
+            raw = match.group("path")
+            src = _existing(raw)
+            if src is None:
+                return raw
+            target = dest_root / src.name
+            if src.resolve() != target.resolve():
+                shutil.copy2(src, target)
+            if src.suffix.lower() == ".dll":
+                pdb = src.with_suffix(".pdb")
+                if pdb.is_file():
+                    shutil.copy2(pdb, dest_root / pdb.name)
+            return _module_ref(target)
+
+        sil_dest = dest_root / source_sil.name
+        sil_dest.write_text(_MODULE_PATH_RE.sub(_replace, original), encoding="utf-8")
+        return sil_dest
+
+    sil_dest = dest_root / source_sil.name
+    shutil.copy2(source_sil, sil_dest)
+    for ext in (".dll", ".sbs", ".pdb"):
+        companion = source_sil.with_name(source_sil.stem + ext)
+        if companion.is_file():
+            shutil.copy2(companion, dest_root / companion.name)
+    return sil_dest
 
 
 # --------------------------------------------------------------------------- #
@@ -316,34 +426,34 @@ class ModelVersionMismatch(ModelError):
             "请刷新页面后重新选择模型。")
 
 
-def resolve_ref(project_id: int, ref: str) -> tuple[str, str, Path]:
-    """Resolve a ``name@version`` reference to ``(name, version, sil_path)``.
+def resolve_ref(project_id: int, ref: str) -> tuple[int, str, str, Path]:
+    """Resolve a ``name@version`` reference to ``(id, name, version, sil_path)``.
 
-    When the reference pins a version, that version must equal the one the
-    registry currently holds -- otherwise :class:`ModelVersionMismatch` is
-    raised instead of quietly running against whatever is registered now. The
-    silent-substitution behaviour is worse than an error: the run completes, the
-    row is stamped, and the recorded commit is simply wrong.
-
-    An empty ``ref`` resolves the project's default model.
+    A pinned version selects that saved copy. It is not rewritten to a newer
+    registration of the same name.
     """
     name, wanted = parse_ref(ref)
+    default_id = None
     if not name:
         default = default_model(project_id)
         if not default:
             raise ModelError("该项目尚未添加 .sil 模型。")
         name = default["name"]
-        wanted = ""
+        default_id = default["id"]
 
-    row = _query(project_id).filter_by(name=name).first()
-    actual = (row.version or "") if row is not None else ""
-    if wanted and actual.lower() != wanted.lower():
-        raise ModelVersionMismatch(name, wanted, actual)
-
-    path = get_model_path(project_id, name)
-    if path is None:
+    row = _select_model(project_id, name, wanted or None,
+                        model_id=default_id)
+    if row is None:
+        if wanted:
+            actual = ""
+            existing = _query(project_id).filter_by(name=name).first()
+            if existing is not None:
+                actual = existing.version or ""
+            raise ModelVersionMismatch(name, wanted, actual)
         raise ModelError("未知模型，请选择该项目已添加的 .sil 模型。")
-    return name, actual, path
+    if not row.sil_path:
+        raise ModelError("未知模型，请选择该项目已添加的 .sil 模型。")
+    return row.id, row.name, (row.version or ""), Path(row.sil_path)
 
 
 def normalise_version(version: Optional[str]) -> str:
@@ -382,7 +492,8 @@ def normalise_version(version: Optional[str]) -> str:
 
 def update_version(project_id: int, name: str, version: Optional[str],
                    note: Optional[str] = None,
-                   updated_by: Optional[int] = None) -> dict:
+                   updated_by: Optional[int] = None,
+                   model_id: Optional[int] = None) -> dict:
     """Change a registered model's version label / release note.
 
     Editing an existing label rewrites the meaning of test evidence that was
@@ -391,11 +502,14 @@ def update_version(project_id: int, name: str, version: Optional[str],
     run records keep the value they were stamped with -- only future runs use
     the new label.
     """
-    target = _query(project_id).filter_by(name=(name or "").strip()).first()
+    target = _select_model(project_id, name, model_id=model_id)
     if target is None:
         raise ModelError("未找到该模型，请刷新后重试。")
 
     new_version = normalise_version(version)
+    clash = _select_model(project_id, target.name, new_version or None)
+    if clash is not None and clash.id != target.id and (clash.version or "") == new_version:
+        raise ModelError("该版本已存在，不能把另一个副本改成同一版本。")
     old_version = target.version or ""
     target.version = new_version or None
     if note is not None:
@@ -408,14 +522,15 @@ def update_version(project_id: int, name: str, version: Optional[str],
     return target.to_dict(include_path=True)
 
 
-def set_deprecated(project_id: int, name: str, deprecated: bool) -> dict:
+def set_deprecated(project_id: int, name: str, deprecated: bool,
+                   model_id: Optional[int] = None) -> dict:
     """Hide (or restore) a model without deleting the history that cites it.
 
     Deleting a retired model would orphan every run record and every row that
     names it, so a superseded model is flagged instead: it disappears from the
     pickers but stays fully resolvable for existing evidence.
     """
-    target = _query(project_id).filter_by(name=(name or "").strip()).first()
+    target = _select_model(project_id, name, model_id=model_id)
     if target is None:
         raise ModelError("未找到该模型，请刷新后重试。")
     target.deprecated_at = _dt.datetime.utcnow() if deprecated else None
@@ -461,10 +576,16 @@ def add_path_model(project_id: int, name: str, path: str,
         raise ModelError("路径必须指向 Silver 模型文件 (*.sil)。")
     if not name:
         name = Path(path).stem or Path(path).name
-    _validate_name(project_id, name)
+    _validate_identity(project_id, name, version)
+    source = Path(path)
+    if not source.is_file():
+        raise ModelError("找不到 .sil 文件。")
+    from flask import current_app
+    saved = _materialise_saved_model(
+        current_app.config_obj, project_id, name, version, source)
     first = not has_models(project_id)
     row = ProjectModel(project_id=project_id, name=name, kind="path",
-                       sil_path=str(Path(path)), created_by=created_by,
+                       sil_path=str(saved), created_by=created_by,
                        is_current=first, version=version or None,
                        version_note=(version_note or "").strip())
     db.session.add(row)
@@ -510,9 +631,9 @@ def add_bundle_model(project_id: int, name: str, dll: FileStorage,
         raise ModelError("第三个文件必须是 .pdb。")
     if not name:
         name = Path(dll_name).stem or "model"
-    _validate_name(project_id, name)
+    _validate_identity(project_id, name, version)
 
-    seg = _safe_segment(name, f"model_{Path(dll_name).stem}")
+    seg = _version_dir_name(name, version)
     model_dir = _models_root(config, project_id) / seg
     if model_dir.exists():
         shutil.rmtree(model_dir, ignore_errors=True)
@@ -541,9 +662,10 @@ def add_bundle_model(project_id: int, name: str, dll: FileStorage,
     return row.to_dict(include_path=True)
 
 
-def remove_model(project_id: int, name: str) -> bool:
+def remove_model(project_id: int, name: str,
+                 model_id: Optional[int] = None) -> bool:
     """Remove a project model. Bundle files on disk are deleted too."""
-    row = _query(project_id).filter_by(name=(name or "").strip()).first()
+    row = _select_model(project_id, name, model_id=model_id)
     if row is None:
         return False
     was_current = bool(row.is_current)

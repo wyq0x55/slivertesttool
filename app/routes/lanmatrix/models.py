@@ -95,7 +95,8 @@ def set_current_project_model(project_id):
     body = request.get_json(silent=True) or {}
     try:
         models = project_model_service.set_current(
-            project_id, (body.get("name") or "").strip())
+            project_id, (body.get("name") or "").strip(),
+            model_id=body.get("model_id"))
     except project_model_service.ModelError as exc:
         return err("VALIDATION_ERROR", str(exc), status=400)
     return ok({"models": models})
@@ -116,7 +117,7 @@ def update_project_model_version(project_id):
         entry = project_model_service.update_version(
             project_id, (body.get("name") or "").strip(),
             body.get("version"), body.get("version_note"),
-            updated_by=g.user.id)
+            updated_by=g.user.id, model_id=body.get("model_id"))
     except project_model_service.ModelError as exc:
         return err("VALIDATION_ERROR", str(exc), status=400)
     return ok({"model": entry,
@@ -132,7 +133,8 @@ def deprecate_project_model(project_id):
     try:
         entry = project_model_service.set_deprecated(
             project_id, (body.get("name") or "").strip(),
-            bool(body.get("deprecated", True)))
+            bool(body.get("deprecated", True)),
+            model_id=body.get("model_id"))
     except project_model_service.ModelError as exc:
         return err("VALIDATION_ERROR", str(exc), status=400)
     return ok({"model": entry,
@@ -145,7 +147,8 @@ def remove_project_model(project_id):
     _project_and_role(project_id, "model.manage")
     body = request.get_json(silent=True) or {}
     removed = project_model_service.remove_model(
-        project_id, (body.get("name") or "").strip())
+        project_id, (body.get("name") or "").strip(),
+        model_id=body.get("model_id"))
     return ok({"removed": removed,
                "models": project_model_service.list_models(
                    project_id, include_path=True)})
@@ -158,7 +161,8 @@ def remove_project_model(project_id):
 def get_model_sbs(project_id):
     _project_and_role(project_id, "model.manage")
     name = (request.args.get("name") or "").strip()
-    return ok({"sbs": sbs_service.read_sbs(project_id, name)})
+    return ok({"sbs": sbs_service.read_sbs(
+        project_id, name, model_id=request.args.get("model_id"))})
 
 @bp.put("/projects/<int:project_id>/models/sbs")
 @login_required
@@ -170,6 +174,7 @@ def save_model_sbs(project_id):
         result = sbs_service.write_sbs(
             project_id, name, body.get("content"),
             (body.get("base_version") or "").strip(),
+            model_id=body.get("model_id"),
             author_id=g.user.id, client_ip=_client_ip())
     except sbs_service.SbsConflict as exc:
         return err(exc.code, str(exc), details=exc.server_data, status=409)
@@ -180,14 +185,17 @@ def save_model_sbs(project_id):
 def list_model_sbs_revisions(project_id):
     _project_and_role(project_id, "model.manage")
     name = (request.args.get("name") or "").strip()
-    return ok({"revisions": sbs_service.list_revisions(project_id, name)})
+    return ok({"revisions": sbs_service.list_revisions(
+        project_id, name, model_id=request.args.get("model_id"))})
 
 @bp.get("/projects/<int:project_id>/models/sbs/revisions/<int:revision_id>")
 @login_required
 def get_model_sbs_revision(project_id, revision_id):
     _project_and_role(project_id, "model.manage")
     name = (request.args.get("name") or "").strip()
-    return ok({"revision": sbs_service.get_revision(project_id, name, revision_id)})
+    return ok({"revision": sbs_service.get_revision(
+        project_id, name, revision_id,
+        model_id=request.args.get("model_id"))})
 
 @bp.post("/projects/<int:project_id>/models/sbs/revisions/<int:revision_id>/restore")
 @login_required
@@ -198,6 +206,7 @@ def restore_model_sbs_revision(project_id, revision_id):
     try:
         result = sbs_service.restore_revision(
             project_id, name, revision_id,
+            model_id=body.get("model_id"),
             author_id=g.user.id, client_ip=_client_ip())
     except sbs_service.SbsConflict as exc:
         return err(exc.code, str(exc), details=exc.server_data, status=409)
