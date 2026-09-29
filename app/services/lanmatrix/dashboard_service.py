@@ -380,13 +380,30 @@ def _latest_non_cancelled(project_id: int, model_name: str,
     label does not merge two models. A cancelled row is not a result: an older
     non-cancelled run is kept, and a test id with only cancelled runs is absent.
     """
-    rows = (
-        TestRunRecord.query.filter(
+    test_id_key = db.func.trim(TestRunRecord.test_id)
+    normalized_outcome = db.func.lower(db.func.trim(TestRunRecord.outcome))
+    ranked = (
+        db.session.query(
+            TestRunRecord.id.label("record_id"),
+            db.func.row_number().over(
+                partition_by=test_id_key,
+                order_by=(TestRunRecord.executed_at.desc(),
+                          TestRunRecord.id.desc()),
+            ).label("run_rank"),
+        )
+        .filter(
             TestRunRecord.project_id == project_id,
             TestRunRecord.model_name == model_name,
             TestRunRecord.model_version == model_version,
+            test_id_key != "",
+            normalized_outcome.notin_(("", "cancelled")),
         )
-        .order_by(TestRunRecord.executed_at.desc(), TestRunRecord.id.desc())
+        .subquery()
+    )
+    rows = (
+        TestRunRecord.query.join(
+            ranked, TestRunRecord.id == ranked.c.record_id)
+        .filter(ranked.c.run_rank == 1)
         .all()
     )
     chosen: dict[str, TestRunRecord] = {}
@@ -456,30 +473,33 @@ def compare_versions(project_id: int, left: str, right: str, *,
 
     summary = {key: 0 for key in COMPARE_CHANGES}
     items = []
-    for test_id in sorted(set(left_rows) | set(right_rows)):
+    test_ids = sorted(set(left_rows) | set(right_rows))
+    start = (page - 1) * page_size
+    stop = start + page_size
+    for index, test_id in enumerate(test_ids):
         left_row = left_rows.get(test_id)
         right_row = right_rows.get(test_id)
         left_outcome = _compare_outcome(left_row)
         right_outcome = _compare_outcome(right_row)
         change = _compare_change(left_outcome, right_outcome)
         summary[change] += 1
-        items.append({
-            "test_id": test_id,
-            "left_outcome": left_outcome,
-            "right_outcome": right_outcome,
-            "change": change,
-            "row_uuid": _compare_row_uuid(left_row, right_row),
-        })
+        if start <= index < stop:
+            items.append({
+                "test_id": test_id,
+                "left_outcome": left_outcome,
+                "right_outcome": right_outcome,
+                "change": change,
+                "row_uuid": _compare_row_uuid(left_row, right_row),
+            })
 
-    start = (page - 1) * page_size
     return {
         "left": left_ref,
         "right": right_ref,
         "summary": summary,
         "page": page,
         "page_size": page_size,
-        "total": len(items),
-        "items": items[start:start + page_size],
+        "total": len(test_ids),
+        "items": items,
     }
 
 
