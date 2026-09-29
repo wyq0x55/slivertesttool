@@ -112,14 +112,14 @@ def test_model_management_targets_the_requested_saved_version(app, tmp_path):
     second = pms.add_path_model(project.id, "engine", str(sil), version="v2")
 
     pms.set_current(project.id, "", model_id=first["id"])
-    assert ProjectModel.query.get(first["id"]).is_current is True
-    assert ProjectModel.query.get(second["id"]).is_current is False
+    assert db.session.get(ProjectModel, first["id"]).is_current is True
+    assert db.session.get(ProjectModel, second["id"]).is_current is False
 
     pms.update_version(project.id, "", "v2.1", model_id=second["id"])
     pms.set_deprecated(project.id, "", True, model_id=second["id"])
-    assert ProjectModel.query.get(second["id"]).deprecated_at is not None
+    assert db.session.get(ProjectModel, second["id"]).deprecated_at is not None
     assert pms.remove_model(project.id, "", model_id=second["id"]) is True
-    assert ProjectModel.query.get(second["id"]) is None
+    assert db.session.get(ProjectModel, second["id"]) is None
 
 
 def test_sbs_reads_the_requested_saved_version_by_id(app, tmp_path):
@@ -152,7 +152,7 @@ def test_sbs_reads_the_requested_saved_version_by_id(app, tmp_path):
 
 def test_default_resolution_uses_the_selected_default_row(app, tmp_path):
     from app.extensions import db
-    from app.models import Project
+    from app.models import Project, ProjectModel
     from app.services import project_model_service as pms
 
     project = Project(code="SNAPDEF", name="Snapshot default", owner_id=None)
@@ -161,8 +161,7 @@ def test_default_resolution_uses_the_selected_default_row(app, tmp_path):
     sil = _remote_model(tmp_path)
     first = pms.add_path_model(project.id, "engine", str(sil), version="v1")
     pms.add_path_model(project.id, "engine", str(sil), version="v2")
-    from app.models import ProjectModel
-    ProjectModel.query.get(first["id"]).is_current = False
+    db.session.get(ProjectModel, first["id"]).is_current = False
     db.session.commit()
 
     model_id, _, version, _ = pms.resolve_ref(project.id, "")

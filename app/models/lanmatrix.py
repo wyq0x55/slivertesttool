@@ -329,11 +329,6 @@ class FieldDefinition(db.Model):
 # --------------------------------------------------------------------------- #
 class ProjectModel(db.Model):
     __tablename__ = "lm_project_models"
-    __table_args__ = (
-        db.UniqueConstraint(
-            "project_id", "name", "version",
-            name="uq_model_project_name_version"),
-    )
 
     id = db.Column(db.Integer, primary_key=True)
     project_id = db.Column(
@@ -396,6 +391,15 @@ class ProjectModel(db.Model):
         if include_path:
             entry["path"] = self.sil_path
         return entry
+
+
+db.Index(
+    "uq_model_project_name_version_norm",
+    ProjectModel.project_id,
+    ProjectModel.name,
+    db.func.coalesce(ProjectModel.version, ""),
+    unique=True,
+)
 
 
 # --------------------------------------------------------------------------- #

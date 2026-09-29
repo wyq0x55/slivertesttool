@@ -228,7 +228,7 @@ def _migrate_model_version_identity(existing_tables) -> None:
             "ALTER TABLE lm_project_models "
             "DROP CONSTRAINT IF EXISTS uq_model_project_name"))
         conn.execute(text(
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_model_project_name_version "
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_model_project_name_version_norm "
             "ON lm_project_models (project_id, name, COALESCE(version, ''))"))
 
 

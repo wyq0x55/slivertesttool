@@ -205,17 +205,26 @@ def default_model(project_id: int) -> Optional[dict]:
            .order_by(ProjectModel.id.asc()).first())
     if row is None:
         row = _query(project_id).order_by(ProjectModel.id.asc()).first()
-    return {"name": row.name} if row is not None else None
+    if row is None:
+        return None
+    return {
+        "id": row.id,
+        "name": row.name,
+        "version": row.version or "",
+        "ref": format_ref(row.name, row.version),
+    }
 
 
-def set_current(project_id: int, name: str) -> List[dict]:
+def set_current(project_id: int, name: str,
+                model_id: Optional[int] = None) -> List[dict]:
     """Mark *name* as the project's current model (clearing any previous one).
 
     Exactly one row per project ends up current. Raises :class:`ModelError` if no
     model with that name exists in the project.
     """
     name = (name or "").strip()
-    target = _select_model(project_id, name) if name else None
+    target = (_select_model(project_id, name, model_id=model_id)
+              if name or model_id is not None else None)
     if target is None:
         raise ModelError("未找到该模型，请刷新后重试。")
     for row in _query(project_id).all():
@@ -241,12 +250,20 @@ def _version_dir_name(name: str, version: str) -> str:
     return f"{base}__{token}"
 
 
-def _select_model(project_id: int, name: str, version: Optional[str] = None):
+def _select_model(project_id: int, name: str, version: Optional[str] = None,
+                  model_id: Optional[int] = None):
     """Pick one saved version of ``name``.
 
     A pinned version must match exactly. With no pin, the current row wins,
     otherwise the newest row.
     """
+    if model_id is not None:
+        try:
+            model_id = int(model_id)
+        except (TypeError, ValueError):
+            return None
+        return _query(project_id).filter_by(id=model_id).first()
+
     wanted = (version if version is not None else "").strip().lower()
     rows = _query(project_id).filter_by(name=(name or "").strip()).all()
     if version is not None and version != "":
@@ -416,14 +433,16 @@ def resolve_ref(project_id: int, ref: str) -> tuple[int, str, str, Path]:
     registration of the same name.
     """
     name, wanted = parse_ref(ref)
+    default_id = None
     if not name:
         default = default_model(project_id)
         if not default:
             raise ModelError("该项目尚未添加 .sil 模型。")
         name = default["name"]
-        wanted = ""
+        default_id = default["id"]
 
-    row = _select_model(project_id, name, wanted or None)
+    row = _select_model(project_id, name, wanted or None,
+                        model_id=default_id)
     if row is None:
         if wanted:
             actual = ""
@@ -473,7 +492,8 @@ def normalise_version(version: Optional[str]) -> str:
 
 def update_version(project_id: int, name: str, version: Optional[str],
                    note: Optional[str] = None,
-                   updated_by: Optional[int] = None) -> dict:
+                   updated_by: Optional[int] = None,
+                   model_id: Optional[int] = None) -> dict:
     """Change a registered model's version label / release note.
 
     Editing an existing label rewrites the meaning of test evidence that was
@@ -482,7 +502,7 @@ def update_version(project_id: int, name: str, version: Optional[str],
     run records keep the value they were stamped with -- only future runs use
     the new label.
     """
-    target = _select_model(project_id, name)
+    target = _select_model(project_id, name, model_id=model_id)
     if target is None:
         raise ModelError("未找到该模型，请刷新后重试。")
 
@@ -502,14 +522,15 @@ def update_version(project_id: int, name: str, version: Optional[str],
     return target.to_dict(include_path=True)
 
 
-def set_deprecated(project_id: int, name: str, deprecated: bool) -> dict:
+def set_deprecated(project_id: int, name: str, deprecated: bool,
+                   model_id: Optional[int] = None) -> dict:
     """Hide (or restore) a model without deleting the history that cites it.
 
     Deleting a retired model would orphan every run record and every row that
     names it, so a superseded model is flagged instead: it disappears from the
     pickers but stays fully resolvable for existing evidence.
     """
-    target = _query(project_id).filter_by(name=(name or "").strip()).first()
+    target = _select_model(project_id, name, model_id=model_id)
     if target is None:
         raise ModelError("未找到该模型，请刷新后重试。")
     target.deprecated_at = _dt.datetime.utcnow() if deprecated else None
@@ -641,9 +662,10 @@ def add_bundle_model(project_id: int, name: str, dll: FileStorage,
     return row.to_dict(include_path=True)
 
 
-def remove_model(project_id: int, name: str) -> bool:
+def remove_model(project_id: int, name: str,
+                 model_id: Optional[int] = None) -> bool:
     """Remove a project model. Bundle files on disk are deleted too."""
-    row = _select_model(project_id, name)
+    row = _select_model(project_id, name, model_id=model_id)
     if row is None:
         return False
     was_current = bool(row.is_current)
