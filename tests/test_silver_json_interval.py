@@ -68,6 +68,14 @@ def _load_runner_defs():
     return types.SimpleNamespace(**ns)
 
 
+def test_export_loader_preserves_the_live_model_class():
+    from app.models import TestItemRow
+
+    _load_export()
+
+    assert sys.modules["app.models"].TestItemRow is TestItemRow
+
+
 def test_split_cell_recognises_prefixed_and_bare_intervals():
     exp = _load_export()
     split = exp._split_cell
