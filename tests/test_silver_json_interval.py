@@ -40,7 +40,9 @@ def _load_export():
                 "app.services", "app.services.lanmatrix"):
         if pkg not in sys.modules:
             _stub_pkg(pkg)
-    sys.modules["app.models"].TestItemRow = object
+    models_pkg = sys.modules["app.models"]
+    if not hasattr(models_pkg, "TestItemRow"):
+        models_pkg.TestItemRow = object
     sys.modules["app.runners"].silver_json = sys.modules["app.runners.silver_json"]
     name = "app.services.lanmatrix.silver_json_export"
     spec = importlib.util.spec_from_file_location(name, _EXPORT_PATH)
@@ -69,11 +71,22 @@ def _load_runner_defs():
 
 
 def test_export_loader_preserves_the_live_model_class():
+    module_names = (
+        "app",
+        "app.models",
+        "app.runners",
+        "app.runners.silver_json",
+        "app.services",
+        "app.services.lanmatrix",
+        "app.services.lanmatrix.silver_json_export",
+    )
+    before = {name: sys.modules.get(name) for name in module_names}
     from app.models import TestItemRow
 
     _load_export()
 
     assert sys.modules["app.models"].TestItemRow is TestItemRow
+    assert all(sys.modules.get(name) is module for name, module in before.items())
 
 
 def test_split_cell_recognises_prefixed_and_bare_intervals():
