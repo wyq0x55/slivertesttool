@@ -33,7 +33,8 @@ def field_specs(project_id: int, *, active_only: bool = True) -> list[FieldSpec]
             for f in list_fields(project_id, active_only=active_only)]
 
 
-def add_field(user: LMUser, project: Project, data: dict[str, Any]) -> FieldDefinition:
+def add_field(user: LMUser, project: Project, data: dict[str, Any],
+              *, commit: bool = True) -> FieldDefinition:
     field_key = (data.get("field_key") or "").strip()
     if not field_key:
         raise ServiceError("字段标识不能为空", code="VALIDATION_ERROR")
@@ -76,12 +77,13 @@ def add_field(user: LMUser, project: Project, data: dict[str, Any]) -> FieldDefi
     db.session.add(fdef)
     audit.record("field.create", actor_id=user.id, object_type="field",
                  object_id=field_key, project_id=project.id, new_value=data)
-    db.session.commit()
+    if commit:
+        db.session.commit()
     return fdef
 
 
 def ensure_fields(user: LMUser, project: Project,
-                  specs: list[dict[str, Any]]) -> int:
+                  specs: list[dict[str, Any]], *, commit: bool = True) -> int:
     """Create any of ``specs`` that the project does not yet have.
 
     Used by the Lib / Const importers to provision their field set on the target
@@ -102,9 +104,10 @@ def ensure_fields(user: LMUser, project: Project,
             if have.deleted_at is not None:
                 restore_field(user, project, have, commit=False)
             continue
-        add_field(user, project, spec)
+        add_field(user, project, spec, commit=False)
         created += 1
-    db.session.commit()
+    if commit:
+        db.session.commit()
     return created
 
 

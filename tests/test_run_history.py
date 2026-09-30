@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import importlib
+import csv
+import io
 import os
 import tempfile
 from datetime import datetime, timedelta
@@ -126,6 +128,15 @@ def _url(project_id):
     return f"/api/v1/projects/{project_id}/test-run-history"
 
 
+def _csv_url(project_id):
+    return f"/api/v1/projects/{project_id}/test-run-history.csv"
+
+
+def _csv_rows(response):
+    text = response.get_data().decode("utf-8-sig")
+    return list(csv.reader(io.StringIO(text, newline="")))
+
+
 def test_run_history_route_is_registered(history_app):
     rules = [
         rule for rule in history_app.url_map.iter_rules()
@@ -134,6 +145,140 @@ def test_run_history_route_is_registered(history_app):
     assert len(rules) == 1
     assert "GET" in rules[0].methods
     assert rules[0].endpoint == "lanmatrix_projects.test_run_history"
+
+
+def test_run_history_csv_route_is_registered(history_app):
+    rules = [
+        rule for rule in history_app.url_map.iter_rules()
+        if rule.rule == "/api/v1/projects/<int:project_id>/test-run-history.csv"
+    ]
+    assert len(rules) == 1
+    assert "GET" in rules[0].methods
+    assert rules[0].endpoint == "lanmatrix_projects.test_run_history_csv"
+
+
+def test_run_history_csv_requires_login_and_export_permission(history_env):
+    client = history_env["client"]
+    url = _csv_url(history_env["project"].id)
+
+    assert client.get(url).status_code == 401
+
+    _login(client, history_env["outsider"].id)
+    assert client.get(url).status_code == 403
+
+    _login(client, history_env["reader"].id)
+    response = client.get(url)
+    assert response.status_code == 200
+
+
+def test_run_history_csv_exports_all_project_records_newest_first(history_env):
+    from app.services.lanmatrix.settings import PAGE_SIZE
+
+    project = history_env["project"]
+    own_records = [
+        _record(
+            history_env,
+            test_id=f"TC-{index:04d}",
+            row_uuid=f"row-{index:04d}",
+            outcome="cancelled" if index == 0 else "pass",
+            hours=index,
+        )
+        for index in range(PAGE_SIZE + 1)
+    ]
+    tied_newest = _record(
+        history_env,
+        test_id="TC-TIE",
+        row_uuid="row-tie",
+        hours=PAGE_SIZE,
+    )
+    _record(
+        history_env,
+        project=history_env["other"],
+        test_id="FOREIGN-CASE",
+        row_uuid="foreign-row",
+        hours=PAGE_SIZE + 10,
+    )
+
+    client = history_env["client"]
+    _login(client, history_env["reader"].id)
+    response = client.get(_csv_url(project.id))
+
+    assert response.status_code == 200
+    assert response.is_streamed
+    assert response.mimetype == "text/csv"
+    assert "charset=utf-8" in response.content_type.lower()
+    assert response.headers["Content-Disposition"] == (
+        f'attachment; filename="project-{project.id}-test-run-history.csv"'
+    )
+    assert "no-store" in response.headers["Cache-Control"].lower()
+
+    body = response.get_data()
+    assert body.startswith(b"\xef\xbb\xbf")
+    assert body.count(b"\r\n") == body.count(b"\n")
+    assert b"T000321" not in body
+    rows = _csv_rows(response)
+    assert rows[0] == [
+        "project_code",
+        "project_name",
+        "test_id",
+        "row_uuid",
+        "verdict",
+        "outcome",
+        "model_name",
+        "model_version",
+        "executor_name",
+        "executed_at",
+        "executed_on",
+    ]
+    assert len(rows) == len(own_records) + 2
+    expected_test_ids = ["TC-TIE", f"TC-{PAGE_SIZE:04d}"] + [
+        f"TC-{index:04d}" for index in range(PAGE_SIZE - 1, -1, -1)
+    ]
+    assert [row[2] for row in rows[1:]] == expected_test_ids
+    assert rows[1] == [
+        project.code,
+        project.name,
+        tied_newest.test_id,
+        tied_newest.row_uuid,
+        tied_newest.verdict,
+        tied_newest.outcome,
+        tied_newest.model_name,
+        tied_newest.model_version,
+        tied_newest.executor_name,
+        tied_newest.executed_at.isoformat(),
+        tied_newest.executed_on,
+    ]
+    assert rows[-1][5] == "cancelled"
+    assert "executor_id" not in rows[0]
+    assert "task_key" not in rows[0]
+    assert "workspace_path" not in rows[0]
+    assert "report_path" not in rows[0]
+    assert all("FOREIGN-CASE" not in row for row in rows)
+
+
+def test_run_history_csv_neutralizes_formulas_after_leading_whitespace(history_env):
+    project = history_env["project"]
+    project.code = " \t=1+1"
+    project.name = "  +SUM(1,1)"
+    from app.extensions import db
+
+    db.session.commit()
+    _record(
+        history_env,
+        test_id="\t=2+2",
+        model_name="  @SUM(3,3)",
+    )
+
+    client = history_env["client"]
+    _login(client, history_env["reader"].id)
+    response = client.get(_csv_url(project.id))
+
+    assert response.status_code == 200
+    row = _csv_rows(response)[1]
+    assert row[0] == "' \t=1+1"
+    assert row[1] == "'  +SUM(1,1)"
+    assert row[2] == "'\t=2+2"
+    assert row[6] == "'  @SUM(3,3)"
 
 
 def test_reader_can_page_exact_project_and_test_history(history_env):

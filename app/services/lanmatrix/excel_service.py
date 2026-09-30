@@ -10,7 +10,10 @@ import datetime as _dt
 from typing import Any, BinaryIO, Optional, Union
 
 from ...extensions import db
-from . import audit, excel_io, permissions, service, settings, validation
+from . import (
+    audit, excel_io, import_job_service, permissions, service, settings,
+    validation,
+)
 from ...models import DataJob, Project, TestItemRow
 from .validation import FieldSpec
 
@@ -34,7 +37,12 @@ def create_import_preview(
 ) -> DataJob:
     if mode not in IMPORT_MODES:
         raise service.ServiceError(f"未知导入模式: {mode}", code="VALIDATION_ERROR")
-    specs_defs = [f.to_dict() for f in service.list_fields(project.id, active_only=True)]
+    if not project.is_editable:
+        raise service.ServiceError("项目当前不可编辑", code="PROJECT_LOCKED")
+    specs_defs = [
+        f.to_dict() for f in service.list_fields(project.id, active_only=True)
+        if f.sheet == "test"
+    ]
     specs = [FieldSpec.from_definition(d) for d in specs_defs]
 
     try:
@@ -50,7 +58,7 @@ def create_import_preview(
 
     existing_ids = {
         r.case_id for r in TestItemRow.query.filter_by(
-            project_id=project.id, deleted_at=None).all()
+            project_id=project.id, sheet="test", deleted_at=None).all()
     }
 
     errors: list[dict] = []
@@ -108,7 +116,11 @@ def create_import_preview(
     }
     job = DataJob(
         project_id=project.id, job_type="import", status="previewed",
-        original_filename=original_filename, parameters={"mode": mode},
+        original_filename=original_filename,
+        parameters={
+            "mode": mode,
+            "_snapshot": import_job_service.capture_snapshot(project.id, "test"),
+        },
         preview=preview, total_count=len(parsed["rows"]),
         error_count=len(errors), created_by=user.id,
         expires_at=_utcnow() + _dt.timedelta(days=1),
@@ -124,6 +136,17 @@ def create_import_preview(
 def commit_import(user, project: Project, job: DataJob) -> dict:
     if job.job_type != "import" or job.status != "previewed":
         raise service.ServiceError("导入任务状态无效", code="VALIDATION_ERROR")
+    if (job.parameters or {}).get("format"):
+        return import_job_service.commit_special_import(user, project, job)
+    if not project.is_editable:
+        raise service.ServiceError("项目当前不可编辑", code="PROJECT_LOCKED")
+    if job.expires_at is None:
+        raise service.ServiceError(
+            "导入预览缺少有效期，请重新上传",
+            code="IMPORT_PREVIEW_INVALID",
+        )
+    if _expired(job.expires_at):
+        raise service.ServiceError("导入预览已过期，请重新上传", code="IMPORT_PREVIEW_EXPIRED")
     preview = job.preview or {}
     mode = (job.parameters or {}).get("mode", "upsert")
     if mode == "replace_all":
@@ -135,22 +158,39 @@ def commit_import(user, project: Project, job: DataJob) -> dict:
     rows = preview.get("rows", [])
     if preview.get("invalid", 0) > 0:
         raise service.ServiceError("存在校验未通过的行，无法提交", code="IMPORT_HAS_ERRORS")
+    expected_snapshot = (job.parameters or {}).get("_snapshot")
+    if (not isinstance(expected_snapshot, dict) or
+            not isinstance(expected_snapshot.get("rows"), list) or
+            not isinstance(expected_snapshot.get("fields"), list) or
+            not isinstance(expected_snapshot.get("project"), dict)):
+        raise service.ServiceError(
+            "导入预览缺少数据快照，请重新上传",
+            code="IMPORT_PREVIEW_INVALID",
+        )
+    if expected_snapshot != import_job_service.capture_snapshot(project.id, "test"):
+        raise service.ServiceError(
+            "预览后的数据或字段已变化，请重新上传并预览",
+            code="IMPORT_PREVIEW_STALE",
+        )
 
-    specs = service.field_specs(project.id)
+    specs = [spec for spec in service.field_specs(project.id)
+             if spec.sheet == "test"]
     inserted = updated = 0
     try:
         if mode == "replace_all":
-            for it in TestItemRow.query.filter_by(project_id=project.id, deleted_at=None):
+            for it in TestItemRow.query.filter_by(
+                    project_id=project.id, sheet="test", deleted_at=None):
                 it.deleted_at = _utcnow()
             db.session.flush()
 
         by_case = {}
         if mode in ("upsert", "update_only"):
             for it in TestItemRow.query.filter_by(project_id=project.id, deleted_at=None):
-                by_case[it.case_id] = it
+                if it.sheet == "test":
+                    by_case[it.case_id] = it
 
         max_order = db.session.query(db.func.max(TestItemRow.row_order)) \
-            .filter_by(project_id=project.id).scalar() or 0
+            .filter_by(project_id=project.id, sheet="test").scalar() or 0
 
         for row in rows:
             values = row["values"]
@@ -167,7 +207,8 @@ def commit_import(user, project: Project, job: DataJob) -> dict:
             else:
                 max_order += 1
                 item = TestItemRow(project_id=project.id, row_order=max_order,
-                                   created_by=user.id, updated_by=user.id, version=1)
+                                   sheet="test", created_by=user.id,
+                                   updated_by=user.id, version=1)
                 for spec in specs:
                     if not spec.is_readonly and spec.field_key in values:
                         item.set_field(spec.field_key, values[spec.field_key])
@@ -187,6 +228,14 @@ def commit_import(user, project: Project, job: DataJob) -> dict:
         db.session.commit()
         raise service.ServiceError(f"导入失败并已回滚: {exc}", code="IMPORT_FAILED")
     return {"inserted": inserted, "updated": updated}
+
+
+def _expired(expires_at) -> bool:
+    if expires_at is None:
+        return False
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=_dt.timezone.utc)
+    return expires_at <= _utcnow()
 
 
 def export_project(project: Project, *, columns: Optional[list[str]] = None,

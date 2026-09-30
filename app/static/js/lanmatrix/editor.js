@@ -1362,22 +1362,78 @@
   // --- Import dialog ---
   const importDialog = document.getElementById("lm-import-dialog");
   const importFormatSel = document.getElementById("lm-import-format");
-  let pendingJob = null;   // generic two-step preview job
-  let pendingTMFile = null; // one-step file (test_matrix / libfunc / const)
-  let pendingImportFormat = null; // which one-step format the file belongs to
+  const importModeSel = document.getElementById("lm-import-mode");
+  const importFileInput = document.getElementById("lm-import-dialog-file");
+  const importSummary = document.getElementById("lm-import-summary");
+  const importError = document.getElementById("lm-import-error");
+  const importCommitButton = document.getElementById("lm-import-commit");
+  let pendingJob = null;
+  let pendingFile = null;
+  let previewRequest = 0;
 
-  // One-step formats parse straight to create/update (no preview job), keyed by
-  // the API call and the label shown in the confirmation prompt.
-  const ONE_STEP = {
-    test_matrix: { call: (id, f, m) => LMApi.importTestMatrix(id, f, m),
+  const IMPORT_FORMATS = {
+    generic: { call: (id, file, mode) => LMApi.createImport(id, file, mode),
+               label: "通用模板" },
+    test_matrix: { call: (id, file, mode) => LMApi.importTestMatrix(id, file, mode),
                    label: "日文测试表头" },
-    libfunc: { call: (id, f, m) => LMApi.importLibFunc(id, f, m),
+    libfunc: { call: (id, file, mode) => LMApi.importLibFunc(id, file, mode),
                label: "Lib 函数库 (lib_Func + 手順明细)" },
-    const: { call: (id, f, m) => LMApi.importConst(id, f, m),
+    const: { call: (id, file, mode) => LMApi.importConst(id, file, mode),
              label: "Const 常量表 (No. / 識別子名)" },
-    io: { call: (id, f, m) => LMApi.importIo(id, f, m),
+    io: { call: (id, file, mode) => LMApi.importIo(id, file, mode),
           label: "入出力信号池 (名称 / 路径)" },
   };
+  const IMPORT_SHEETS = {
+    test_matrix: "test",
+    libfunc: "lib",
+    const: "const",
+    io: "io",
+  };
+
+  async function previewImport(file, notice = "") {
+    const requestId = ++previewRequest;
+    const format = importFormatSel ? importFormatSel.value : "generic";
+    const mode = importModeSel.value;
+    const spec = IMPORT_FORMATS[format] || IMPORT_FORMATS.generic;
+    pendingFile = file;
+    pendingJob = null;
+    importCommitButton.disabled = true;
+    importError.textContent = notice;
+    importError.hidden = !notice;
+    importSummary.innerHTML = "<p>正在生成导入预览…</p>";
+
+    try {
+      const data = await spec.call(pid, file, mode);
+      if (requestId !== previewRequest) return;
+      pendingJob = data.job || null;
+      if (!pendingJob) throw new Error("服务器未返回导入预览任务");
+
+      const preview = pendingJob.preview || {};
+      const invalid = Number(preview.invalid) || 0;
+      const errors = (preview.errors || []).slice(0, 20).map((row) =>
+        `<tr><td>${esc(row.row ?? "-")}</td>` +
+        `<td>${esc(row.column || row.field || "-")}</td>` +
+        `<td>${esc(row.message || "未知错误")}</td></tr>`).join("");
+      const replaceWarning = mode === "replace_all"
+        ? `<p class="lm-error"><strong>整表替换：</strong>确认后将替换该格式对应工作表的现有数据；被替换行将移入回收站。</p>`
+        : "";
+      importSummary.innerHTML =
+        `<p>《${esc(file.name)}》按${esc(spec.label)}预览：共 ${Number(preview.total) || 0} 行，` +
+        `新增 ${Number(preview.insert) || 0}，更新 ${Number(preview.update) || 0}，` +
+        `错误 ${invalid}。</p>` + replaceWarning +
+        (errors ? `<table class="lm-table lm-preview"><thead><tr><th>行</th><th>列</th><th>问题</th></tr></thead><tbody>${errors}</tbody></table>` : "") +
+        ((preview.errors || []).length > 20
+          ? `<p class="lm-muted">仅显示前 20 项错误。</p>` : "");
+      importCommitButton.disabled = pendingJob.status !== "previewed" ||
+        invalid > 0 || !(Number(preview.total) > 0);
+    } catch (ex) {
+      if (requestId !== previewRequest) return;
+      pendingJob = null;
+      importSummary.innerHTML = "";
+      importError.textContent = ex.message;
+      importError.hidden = false;
+    }
+  }
 
   function applyFormatUI() {
     const oneStep = importFormatSel && importFormatSel.value !== "generic";
@@ -1394,34 +1450,27 @@
   }
   if (importFormatSel) importFormatSel.addEventListener("change", () => {
     applyFormatUI();
-    document.getElementById("lm-import-summary").innerHTML = "";
-    document.getElementById("lm-import-commit").disabled = true;
-    document.getElementById("lm-import-dialog-file").value = "";
-    pendingJob = null; pendingTMFile = null; pendingImportFormat = null;
+    previewRequest += 1;
+    importSummary.innerHTML = "";
+    importError.hidden = true;
+    importCommitButton.disabled = true;
+    importFileInput.value = "";
+    pendingJob = null;
+    pendingFile = null;
   });
 
-  // Refresh the Test-Matrix destructive-replace warning when the mode changes
-  // after a file was already picked (the generic path re-previews on file change
-  // instead, so it only needs the warning re-rendered for the one-step TM flow).
-  const importModeSel = document.getElementById("lm-import-mode");
   if (importModeSel) importModeSel.addEventListener("change", () => {
-    if (!pendingTMFile) return;
-    const mode = importModeSel.value;
-    const warn = mode === "replace_all"
-      ? `<p class="lm-error"><strong>整表替换：</strong>确认后将先删除本项目现有全部测试项，再导入该文件的全部行。此操作不可撤销（旧数据进入回收站）。</p>`
-      : "";
-    const label = (ONE_STEP[pendingImportFormat] || {}).label || "该格式";
-    document.getElementById("lm-import-summary").innerHTML =
-      `<p>已选择《${esc(pendingTMFile.name)}》。将按${esc(label)}解析并生成/更新测试项，点“确认导入”继续。</p>` + warn;
+    if (pendingFile) previewImport(pendingFile);
   });
 
   document.getElementById("lm-import").addEventListener("click", () => {
-    document.getElementById("lm-import-summary").innerHTML = "";
-    document.getElementById("lm-import-error").hidden = true;
-    document.getElementById("lm-import-commit").disabled = true;
-    document.getElementById("lm-import-dialog-file").value = "";
+    previewRequest += 1;
+    importSummary.innerHTML = "";
+    importError.hidden = true;
+    importCommitButton.disabled = true;
+    importFileInput.value = "";
     pendingJob = null;
-    pendingTMFile = null;
+    pendingFile = null;
     // Preselect the import format that matches the active sheet.
     if (importFormatSel) {
       const pref = currentSheet === "const" ? "const"
@@ -1433,124 +1482,55 @@
     importDialog.showModal();
   });
 
-  document.getElementById("lm-import-dialog-file").addEventListener("change", async (e) => {
+  importFileInput.addEventListener("change", async (e) => {
     const file = e.target.files[0];
-    if (!file) return;
-    const err = document.getElementById("lm-import-error");
-    err.hidden = true;
-    const format = importFormatSel ? importFormatSel.value : "generic";
-    if (ONE_STEP[format]) {
-      pendingTMFile = file;
-      pendingImportFormat = format;
+    if (!file) {
+      previewRequest += 1;
       pendingJob = null;
-      const mode = document.getElementById("lm-import-mode").value;
-      const warn = mode === "replace_all"
-        ? `<p class="lm-error"><strong>整表替换：</strong>确认后将先删除本项目现有全部测试项，再导入该文件的全部行。此操作不可撤销（旧数据进入回收站）。</p>`
-        : "";
-      document.getElementById("lm-import-summary").innerHTML =
-        `<p>已选择《${esc(file.name)}》。将按${esc(ONE_STEP[format].label)}解析并生成/更新测试项，点“确认导入”继续。</p>` + warn;
-      document.getElementById("lm-import-commit").disabled = false;
+      pendingFile = null;
+      importSummary.innerHTML = "";
+      importCommitButton.disabled = true;
       return;
     }
-    try {
-      const mode = document.getElementById("lm-import-mode").value;
-      const data = await LMApi.createImport(pid, file, mode);
-      pendingJob = data.job;
-      pendingTMFile = null;
-      const pv = pendingJob.preview || {};
-      const errRows = (pv.errors || []).slice(0, 20).map((x) =>
-        `<tr><td>${x.row}</td><td>${esc(x.column)}</td><td>${esc(x.message)}</td></tr>`).join("");
-      document.getElementById("lm-import-summary").innerHTML =
-        `<p>共 ${pv.total} 行：新增 ${pv.insert}，更新 ${pv.update}，错误 ${pv.invalid}。</p>` +
-        (errRows ? `<table class="lm-table lm-preview"><thead><tr><th>行</th><th>列</th><th>问题</th></tr></thead><tbody>${errRows}</tbody></table>` : "");
-      document.getElementById("lm-import-commit").disabled = pv.invalid > 0;
-    } catch (ex) {
-      err.textContent = ex.message; err.hidden = false;
-    }
+    await previewImport(file);
   });
 
-  document.getElementById("lm-import-commit").addEventListener("click", async (e) => {
+  importCommitButton.addEventListener("click", async (e) => {
     e.preventDefault();
-    const err = document.getElementById("lm-import-error");
-    err.hidden = true;
-    const commitBtn = document.getElementById("lm-import-commit");
-    commitBtn.disabled = true;
+    importError.hidden = true;
+    importCommitButton.disabled = true;
     try {
-      if (pendingTMFile) {
-        const mode = document.getElementById("lm-import-mode").value;
-        const spec = ONE_STEP[pendingImportFormat] || ONE_STEP.test_matrix;
-        const data = await spec.call(pid, pendingTMFile, mode);
-        const s = data.summary || {};
-        const rowErrors = s.errors || [];
-        // Jump to the sheet the imported rows landed on so they're visible.
-        const targetSheet = pendingImportFormat === "libfunc" ? "lib"
-          : pendingImportFormat === "const" ? "const"
-          : pendingImportFormat === "io" ? "io" : "test";
-        if (targetSheet !== currentSheet) {
-          if (isUniver() && typeof grid.setActiveSheetKey === "function") {
-            grid.setActiveSheetKey(targetSheet);
-          }
-          await applySheetContext(targetSheet, false);
+      if (!pendingJob) return;
+      const job = pendingJob;
+      const format = job.parameters?.format || job.preview?.format ||
+        (importFormatSel ? importFormatSel.value : "generic");
+      const targetSheet = IMPORT_SHEETS[format] || currentSheet;
+      const result = await LMApi.commitImport(job.id);
+      pendingJob = null;
+      pendingFile = null;
+      if (targetSheet !== currentSheet) {
+        if (isUniver() && typeof grid.setActiveSheetKey === "function") {
+          grid.setActiveSheetKey(targetSheet);
         }
-        await loadFields();
-        // Collab: fold the imported DB rows into the shared Y.Doc first, else
-        // loadItems (reading the Y.Doc) shows nothing and they get materialized
-        // away. No-op when collaboration is inactive.
-        if (collabActive()) await resyncSheetFromDb(targetSheet);
-        await loadItems();
-        if (rowErrors.length) {
-          // Keep the dialog open and list every failed row (行号 + case_id + 消息),
-          // grouped by identical cause so common failure reasons stand out.
-          const byMsg = new Map();
-          rowErrors.forEach((er) => {
-            const m = er.message || "未知错误";
-            if (!byMsg.has(m)) byMsg.set(m, []);
-            byMsg.get(m).push(er);
-          });
-          // Most-common cause first.
-          const groups = [...byMsg.entries()]
-            .sort((a, b) => b[1].length - a[1].length)
-            .map(([m, ers]) => {
-              const rowsHtml = ers
-                .slice()
-                .sort((a, b) => (a.row || 0) - (b.row || 0))
-                .map((er) =>
-                  `<li>第 ${esc(er.row)} 行 · <code>${esc(er.case_id || "-")}</code></li>`)
-                .join("");
-              return `<li class="lm-import-errgroup"><b>${esc(m)}</b>` +
-                `<span class="lm-muted">（${ers.length} 行）</span>` +
-                `<ul class="lm-import-errrows">${rowsHtml}</ul></li>`;
-            }).join("");
-          // One-line summary of causes so the shared reason is obvious at a glance.
-          const summaryLine = [...byMsg.entries()]
-            .sort((a, b) => b[1].length - a[1].length)
-            .map(([m, ers]) => `${esc(m)}（${ers.length}）`)
-            .join("；");
-          const delPart = s.deleted ? `删除 ${s.deleted}，` : "";
-          document.getElementById("lm-import-summary").innerHTML =
-            `<p>导入完成：${delPart}新增 ${s.created}，更新 ${s.updated}，` +
-            `<b style="color:var(--danger,#c0392b)">失败 ${rowErrors.length}</b>。</p>` +
-            `<p class="lm-muted">失败原因归类：${summaryLine}</p>` +
-            `<ul class="lm-import-errlist">${groups}</ul>`;
-          document.getElementById("lm-import-commit").disabled = true;
-          toast(`导入完成，但有 ${rowErrors.length} 行失败，请查看失败原因`, false);
-          return;
-        }
-        importDialog.close();
-        toast(
-          `导入完成：${s.deleted ? `删除 ${s.deleted}，` : ""}` +
-          `新增 ${s.created}，更新 ${s.updated}`, true);
+        await applySheetContext(targetSheet, false);
+      }
+      await loadFields();
+      if (collabActive()) await resyncSheetFromDb(targetSheet);
+      await loadItems();
+      importDialog.close();
+      toast(
+        `导入完成：${result.deleted ? `删除 ${result.deleted}，` : ""}` +
+        `新增 ${result.inserted}，更新 ${result.updated}`, true);
+    } catch (ex) {
+      if ((ex.code === "IMPORT_PREVIEW_STALE" ||
+          ex.code === "IMPORT_PREVIEW_EXPIRED") && pendingFile) {
+        await previewImport(pendingFile, `${ex.message} 已重新生成预览，请复核后再次确认。`);
         return;
       }
-      if (!pendingJob) return;
-      const r = await LMApi.commitImport(pendingJob.id);
-      importDialog.close();
-      if (collabActive()) await resyncSheetFromDb(currentSheet);
-      await loadItems();
-      toast(`导入完成：新增 ${r.inserted}，更新 ${r.updated}`, true);
-    } catch (ex) {
-      err.textContent = ex.message; err.hidden = false;
-      commitBtn.disabled = false;
+      importError.textContent = ex.message;
+      importError.hidden = false;
+      importCommitButton.disabled = !pendingJob ||
+        (Number(pendingJob.preview?.invalid) || 0) > 0;
     }
   });
 

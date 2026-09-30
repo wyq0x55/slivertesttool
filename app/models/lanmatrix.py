@@ -929,7 +929,10 @@ class DataJob(db.Model):
         }
         if with_preview:
             data["preview"] = self.preview
-            data["parameters"] = self.parameters
+            data["parameters"] = {
+                key: value for key, value in (self.parameters or {}).items()
+                if not str(key).startswith("_")
+            }
         return data
 
 

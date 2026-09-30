@@ -58,6 +58,7 @@ from ...extensions import db
 from ...models import LMUser, Project, TestItemRow, TestRunRecord
 from . import settings
 from . import exemption_service, review_service
+from .comments_service import csv_cell
 from .run_writeback_service import classify
 
 logger = logging.getLogger(__name__)
@@ -547,6 +548,45 @@ def test_run_history(project_id: int, test_id: str, *,
             for row in rows
         ],
     }
+
+
+TEST_RUN_HISTORY_CSV_HEADER = (
+    "project_code",
+    "project_name",
+    "test_id",
+    "row_uuid",
+    "verdict",
+    "outcome",
+    "model_name",
+    "model_version",
+    "executor_name",
+    "executed_at",
+    "executed_on",
+)
+
+
+def test_run_history_csv_rows(project: Project):
+    """Yield every run record for a project in stable newest-first order."""
+    yield [csv_cell(value) for value in TEST_RUN_HISTORY_CSV_HEADER]
+    query = (
+        TestRunRecord.query.filter(TestRunRecord.project_id == project.id)
+        .order_by(TestRunRecord.executed_at.desc(), TestRunRecord.id.desc())
+        .yield_per(500)
+    )
+    for record in query:
+        yield [
+            csv_cell(project.code),
+            csv_cell(project.name),
+            csv_cell(record.test_id),
+            csv_cell(record.row_uuid),
+            csv_cell(record.verdict),
+            csv_cell(record.outcome),
+            csv_cell(record.model_name),
+            csv_cell(record.model_version),
+            csv_cell(record.executor_name),
+            csv_cell(record.executed_at.isoformat() if record.executed_at else None),
+            csv_cell(record.executed_on),
+        ]
 
 
 def snapshot(project: Project) -> dict:

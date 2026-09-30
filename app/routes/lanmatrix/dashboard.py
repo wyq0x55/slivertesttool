@@ -159,3 +159,39 @@ def test_run_history(project_id: int):
         project_id, test_id, page=page, page_size=page_size,
     ))
 
+
+@bp.get("/projects/<int:project_id>/test-run-history.csv")
+@login_required
+def test_run_history_csv(project_id: int):
+    """Stream the complete project-scoped run history as a safe CSV."""
+    from ...services.lanmatrix import dashboard_service
+
+    project, _role = _project_and_role(project_id, "export.run")
+
+    def generate():
+        yield "\ufeff"
+        buffer = io.StringIO(newline="")
+        writer = csv.writer(buffer, lineterminator="\r\n")
+        pending = 0
+        for row in dashboard_service.test_run_history_csv_rows(project):
+            writer.writerow(row)
+            pending += 1
+            if pending >= 200:
+                yield buffer.getvalue()
+                buffer.seek(0)
+                buffer.truncate(0)
+                pending = 0
+        if pending:
+            yield buffer.getvalue()
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="project-{project_id}-test-run-history.csv"'
+            ),
+            "Cache-Control": "no-store",
+        },
+    )
+
