@@ -58,3 +58,25 @@ These checks extend the previous 942-test baseline. The final follow-up suite wa
 - `py_compile` passed for changed Python modules; the changed-lines scan found no secret-like strings or `console.log` calls.
 - The existing `silver_test_platform.lane_b` instance was not touched; its local service required a password that was not configured. The PostgreSQL run used an isolated temporary cluster and therefore verifies PostgreSQL behavior, not the real Silver database instance.
 - Browser E2E, coverage, Ruff, and Pyright were not run. `pytest-cov`/`coverage.py` and frontend `node_modules` are unavailable; the preview wizard received syntax validation, not browser E2E validation.
+
+## Follow-up: Task Report ZIP Downloads
+
+### Journeys
+
+- A project reader downloads one task report or selected reports as ZIP files, limited to the authorized project and the selected result trees.
+- A result tree linked outside its expected workspace is not downloadable; linked files outside the tree are never included.
+
+### RED/GREEN Evidence
+
+| Guarantee | RED evidence | GREEN evidence |
+| --- | --- | --- |
+| Report ZIPs do not include files reached through a symlink or Windows directory junction | `test_report_download_does_not_follow_symlinks_outside_result_tree` failed after exposing the linked file | The same test passed after result-file containment checks |
+| A result directory resolving outside `<workspace>/log/<test_id>` is rejected | `test_report_download_rejects_a_result_directory_link` returned 200 instead of 404 | The same test passed after validating the resolved result directory |
+| Single and batch downloads enforce project membership, preserve selected files, and omit stored `report.zip` snapshots | Added route-level regression coverage | `tests/test_report_download.py`: 5 passed |
+
+### Verification
+
+- RED: the two path-boundary regressions reproduced external-file disclosure through Windows junctions.
+- GREEN: `python -m pytest -q tests/test_report_download.py` — 5 passed.
+- GREEN: Full suite against the disposable local PostgreSQL 18 `postgres.lane_b` target — 983 passed, 4 skipped, 4 existing SQLAlchemy warnings in 76.74 seconds.
+- The `jdgrslt.log` lookup now shares the validated result-directory boundary and ignores symlink files. The real `silver_test_platform.lane_b` database was not used.
