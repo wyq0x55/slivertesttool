@@ -801,7 +801,7 @@
     }
     if (Array.isArray(value)) return value.map(aiStoredValue);
     if (typeof value === "object") {
-      const sorted = {};
+      const sorted = Object.create(null);
       Object.keys(value).sort().forEach((key) => { sorted[key] = aiStoredValue(value[key]); });
       return sorted;
     }
@@ -859,6 +859,7 @@
         const liveById = new Map(collab.getItems("test").map((item) => [item.id, item]));
         const keys = Array.from(new Set((sheetFields.test || fields).map((field) => field.field_key)
           .concat(["title", "module", "precondition", "expected_result", "case_id", "workflow_status"])));
+        if (keys.includes("test_name")) keys.splice(keys.indexOf("title"), 1);
         const dirty = ids.some((id) => {
           const live = liveById.get(id);
           const saved = byId.get(id);
