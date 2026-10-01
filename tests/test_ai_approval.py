@@ -538,3 +538,83 @@ def test_direct_apply_preserves_fail_closed_crdt_guard(approval_env, monkeypatch
     with pytest.raises(ai_apply.ApplyError):
         ai_apply.apply_draft(draft, env["user"])
     assert draft.status == "pending" and ItemRow.query.count() == 2
+
+
+def test_partial_decision_records_input_refs_with_no_generated_output(approval_env):
+    env = approval_env
+    output = procedure_output()
+    output["procedures"] = output["procedures"][:1]
+    output["failed_refs"] = ["R2"]
+    draft = make_draft(env, output=output)
+    result = ai_apply.apply_draft(draft, env["user"], refs=["R1"])
+    assert [entry["ref"] for entry in result["applied"]] == ["R1"]
+    assert [entry["ref"] for entry in result["skipped"]] == ["R2"]
+    assert result["failed_refs"] == ["R2"]
+
+
+def test_legacy_single_format_requires_context_version_and_applies_atomically(approval_env):
+    env = approval_env
+    payload = procedure_payload()
+    payload.pop("viewpoints")
+    payload["item_id"] = env["rows"][0].id
+    payload["_context"].update(project_id=env["project"].id,
+                                 items=[{"id": env["rows"][0].id, "version": 1}])
+    draft = make_draft(env, payload=payload, output={"steps_doc": steps_doc()})
+    result = ai_apply.apply_draft(draft, env["user"])
+    assert result["item_id"] == env["rows"][0].id and draft.status == "approved"
+
+
+def test_http_review_requires_project_permission_and_csrf(approval_env):
+    env = approval_env
+    draft = make_draft(env)
+    outsider = LMUser(username="outsider", display_name="Outsider", is_system_admin=False)
+    db.session.add(outsider)
+    db.session.commit()
+    client, headers = login(env)
+    assert client.post(f"/api/v1/ai/drafts/{draft.id}/approve").status_code == 403
+    with client.session_transaction() as session:
+        session["lm_user_id"] = outsider.id
+    for method, suffix, body in (("put", "", {"output": procedure_output()}),
+                                 ("post", "/approve", {"refs": ["R1"]}),
+                                 ("post", "/reject", {"note": "No"})):
+        response = getattr(client, method)(f"/api/v1/ai/drafts/{draft.id}{suffix}", headers=headers, json=body)
+        assert response.status_code == 403
+    from app.services.lanmatrix.permissions import PermissionDenied
+    with pytest.raises(PermissionDenied):
+        ai_apply.apply_draft(draft, outsider)
+    assert draft.status == "pending" and not env["rows"][0].get_field("steps")
+
+
+def test_valid_http_edit_preserves_context_then_reject_is_terminal(approval_env):
+    env = approval_env
+    draft = make_draft(env)
+    context = draft.input_json
+    edited = procedure_output()
+    edited["procedures"][0]["steps_doc"]["steps"][0]["inputs"] = ["150"]
+    client, headers = login(env)
+    response = client.put(f"/api/v1/ai/drafts/{draft.id}", headers=headers, json={"output": edited})
+    assert response.status_code == 200
+    db.session.refresh(draft)
+    assert json.loads(draft.output_json) == edited and draft.input_json == context
+    assert json.loads(draft.meta_json)["edited"] is True
+    response = client.post(f"/api/v1/ai/drafts/{draft.id}/reject", headers=headers, json={"note": "Need rework"})
+    assert response.status_code == 200
+    db.session.refresh(draft)
+    assert draft.status == "rejected" and draft.review_note == "Need rework"
+    assert client.post(f"/api/v1/ai/drafts/{draft.id}/approve", headers=headers).status_code == 409
+
+
+def test_unchanged_optional_source_snapshots_allow_approval(approval_env):
+    env = approval_env
+    from app.services.ai import signal_dict
+    dependency = items_service.create_item(env["user"], env["project"], {"lib_func": "existing", "lib_stb": json.dumps(steps_doc())},
+                                           draft=True, sheet="lib")
+    draft = make_draft(env)
+    payload = json.loads(draft.input_json)
+    payload["_context"]["dependencies"] = [{"id": dependency.id, "version": dependency.version}]
+    encoded = json.dumps(signal_dict.entries_for(env["project"].id), ensure_ascii=False, sort_keys=True)
+    payload["_context"]["signal_dict_sha256"] = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+    draft.input_json = json.dumps(payload)
+    db.session.commit()
+    result = ai_apply.apply_draft(draft, env["user"], refs=["R1"])
+    assert draft.status == "approved" and result["source_dependencies"] == payload["_context"]["dependencies"]
