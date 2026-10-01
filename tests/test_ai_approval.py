@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import datetime
+import hashlib
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -11,7 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.extensions import db
-from app.models import AiDraft, CellComment, LMUser, Project, ProjectModel, SbsRevision, TestItemRow as ItemRow
+from app.models import AiDraft, AiSignalDict, CellComment, LMUser, Project, ProjectModel, SbsRevision, TestItemRow as ItemRow
 from app.services.ai import apply as ai_apply, validators
 from app.services.lanmatrix import fields, fields_service, items_service, projects_service
 from app.services.lanmatrix.errors import ServiceError
@@ -480,3 +481,60 @@ def test_applied_assets_keep_draft_and_source_provenance(approval_env, scenario)
         return
     assert f'"draft_id": {draft.id}' in evidence
     assert "engine.c" in evidence and "abc123" in evidence and "a" * 64 in evidence
+
+
+@pytest.mark.parametrize("scenario", ["procedure", "lib"])
+@pytest.mark.parametrize("mutation", ["stale", "deleted", "foreign", "missing"])
+def test_approval_rejects_changed_source_dependencies(approval_env, scenario, mutation):
+    env = approval_env
+    dependency = items_service.create_item(env["user"], env["project"], {"lib_func": "existing", "lib_stb": json.dumps(steps_doc())},
+                                           draft=True, sheet="lib")
+    draft = make_draft(env, scenario)
+    payload = json.loads(draft.input_json)
+    payload["_context"]["dependencies"] = [{"id": dependency.id, "version": dependency.version}]
+    draft.input_json = json.dumps(payload)
+    if mutation == "stale":
+        dependency.version += 1
+    elif mutation == "deleted":
+        dependency.deleted_at = datetime.datetime.utcnow()
+    elif mutation == "foreign":
+        other = projects_service.create_project(env["user"], code="OTHER", name="Other")
+        dependency.project_id = other.id
+    else:
+        db.session.delete(dependency)
+    db.session.commit()
+    with pytest.raises(ai_apply.ApplyError):
+        ai_apply.apply_draft(draft, env["user"], refs=["R1"] if scenario == "procedure" else None)
+    assert draft.status == "pending" and not env["rows"][0].get_field("steps")
+
+
+@pytest.mark.parametrize("scenario", ["procedure", "lib"])
+def test_approval_rejects_changed_signal_dictionary(approval_env, scenario):
+    env = approval_env
+    from app.services.ai import signal_dict
+    draft = make_draft(env, scenario)
+    payload = json.loads(draft.input_json)
+    encoded = json.dumps(signal_dict.entries_for(env["project"].id), ensure_ascii=False, sort_keys=True)
+    payload["_context"]["signal_dict_sha256"] = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+    draft.input_json = json.dumps(payload)
+    db.session.add(AiSignalDict(project_id=env["project"].id, path="new_path", display="New", type="int"))
+    db.session.commit()
+    with pytest.raises(ai_apply.ApplyError):
+        ai_apply.apply_draft(draft, env["user"])
+    assert draft.status == "pending" and not env["rows"][0].get_field("steps")
+
+
+@pytest.mark.parametrize("scenario", ["viewpoint", "procedure", "lib"])
+@pytest.mark.parametrize("state", ["active", "unavailable"])
+def test_direct_apply_preserves_fail_closed_crdt_guard(approval_env, monkeypatch, scenario, state):
+    env = approval_env
+    draft = make_draft(env, scenario)
+    from app.collab import presence
+    def collab_state(project_id):
+        if state == "unavailable":
+            raise RuntimeError("Presence unavailable")
+        return True
+    monkeypatch.setattr(presence, "is_collab_active", collab_state)
+    with pytest.raises(ai_apply.ApplyError):
+        ai_apply.apply_draft(draft, env["user"])
+    assert draft.status == "pending" and ItemRow.query.count() == 2
