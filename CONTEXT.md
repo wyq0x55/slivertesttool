@@ -60,14 +60,22 @@ it and creates a clean replacement.
 ### Models and evidence
 
 **Project model**:
-A `.sil` model registered against exactly one project, carrying a version label.
-It is the only model source; no global registry exists.
-_Avoid_: Global model, default model
+A `.sil` model owned by exactly one project and stored as a local runnable copy.
+It is the only model source.
+_Avoid_: Global model, remote path
 
 **Model version**:
-The validated label stamped onto every run record the model produces, and the
-grouping key for per-version comparisons.
+The validated label of one project model.
 _Avoid_: Revision
+
+**Submitted model**:
+The saved project model name, model version, and local files bound to a task
+when that task is queued. A later registration does not change it.
+_Avoid_: Current model, live version
+
+**Version comparison**:
+Each test id's latest non-cancelled outcome on two chosen submitted models.
+_Avoid_: Version chart, adjacent diff
 
 **Writeback**:
 Copying a finished run's evidence (result, version, executor, execution date,
@@ -78,6 +86,13 @@ _Avoid_: Sync
 A project's collaboration session with at least one connected client. Only live
 rooms claim queued writebacks.
 _Avoid_: Session
+
+### Project roles
+
+**Reader**:
+A project member who can view matrix content and run, cancel, and download test
+tasks, but cannot edit matrix content or administer the project.
+_Avoid_: Read-only member
 
 ### Test Matrix
 

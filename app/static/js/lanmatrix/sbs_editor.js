@@ -9,7 +9,7 @@
  *    to load the server version or force-overwrite;
  *  - browses / loads / restores the last 50 revisions.
  *
- * Exposes window.LMSbsModal = { open(projectId, modelName) }.
+ * Exposes window.LMSbsModal = { open(projectId, modelId, modelName) }.
  */
 (function () {
   "use strict";
@@ -68,7 +68,7 @@
   }
 
   const state = {
-    pid: null, name: null, editor: null, baseVersion: "",
+    pid: null, modelId: null, name: null, editor: null, baseVersion: "",
     filename: "", dirty: false, historyOpen: false,
     // True while the "discard unsaved changes?" dialog is open. close() is
     // bound to both the close button and Esc, and Esc still reaches document
@@ -90,8 +90,9 @@
     if (dirty) { setStatus("有未保存的修改", "warn"); }
   }
 
-  async function open(projectId, modelName) {
+  async function open(projectId, modelId, modelName) {
     state.pid = projectId;
+    state.modelId = modelId;
     state.name = modelName;
     state.dirty = false;
     state.historyOpen = false;
@@ -108,7 +109,7 @@
 
     let data;
     try {
-      data = await LMApi.getModelSbs(projectId, modelName);
+      data = await LMApi.getModelSbs(projectId, modelId);
     } catch (ex) {
       setStatus("载入失败：" + ex.message, "err");
       return;
@@ -190,7 +191,7 @@
     setStatus("保存中…");
     try {
       const res = await LMApi.saveModelSbs(state.pid, {
-        name: state.name, content: content, base_version: state.baseVersion,
+        model_id: state.modelId, content: content, base_version: state.baseVersion,
       });
       const sbs = res.sbs || {};
       state.baseVersion = sbs.version || state.baseVersion;
@@ -216,7 +217,7 @@
     list.innerHTML = '<li class="lm-muted">加载中…</li>';
     let data;
     try {
-      data = await LMApi.listModelSbsRevisions(state.pid, state.name);
+      data = await LMApi.listModelSbsRevisions(state.pid, state.modelId);
     } catch (ex) {
       list.innerHTML = '<li class="lm-err">' + esc(ex.message) + "</li>";
       return;
@@ -245,7 +246,7 @@
 
   async function loadRevision(revId) {
     try {
-      const data = await LMApi.getModelSbsRevision(state.pid, state.name, revId);
+      const data = await LMApi.getModelSbsRevision(state.pid, state.modelId, revId);
       const rev = data.revision || {};
       state.editor.setValue(rev.content || "");
       markDirty(true);
@@ -265,11 +266,11 @@
       return;
     }
     try {
-      const res = await LMApi.restoreModelSbsRevision(state.pid, state.name, revId);
+      const res = await LMApi.restoreModelSbsRevision(state.pid, state.modelId, revId);
       const sbs = res.sbs || {};
       state.baseVersion = sbs.version || state.baseVersion;
       // Reflect restored content in the editor.
-      const rev = await LMApi.getModelSbsRevision(state.pid, state.name, revId);
+      const rev = await LMApi.getModelSbsRevision(state.pid, state.modelId, revId);
       state.editor.setValue((rev.revision || {}).content || "");
       markDirty(false);
       setStatus("已恢复到版本 #" + revId, "ok");
@@ -305,7 +306,7 @@
           confirmText: "丢弃并重载",
           cancelText: "继续编辑",
         }))) { return; }
-        open(state.pid, state.name);
+        open(state.pid, state.modelId, state.name);
       });
     }
     const histBtn = $("lm-sbs-history-toggle");

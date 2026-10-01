@@ -289,20 +289,20 @@
             { body: { name, path, version: version || "", version_note: versionNote || "" } });
     },
     uploadProjectModel(id, formData) { return request("POST", `/projects/${id}/models/upload`, { body: formData }); },
-    removeProjectModel(id, name) { return request("DELETE", `/projects/${id}/models`, { body: { name } }); },
-    setCurrentProjectModel(id, name) { return request("POST", `/projects/${id}/models/current`, { body: { name } }); },
+    removeProjectModel(id, modelId) { return request("DELETE", `/projects/${id}/models`, { body: { model_id: modelId } }); },
+    setCurrentProjectModel(id, modelId) { return request("POST", `/projects/${id}/models/current`, { body: { model_id: modelId } }); },
     // Version labels are usually decided *after* a model has been uploaded and
     // smoke-tested, so relabelling is its own audited call rather than a
     // re-upload. Sending "" clears the label back to unversioned.
-    updateProjectModelVersion(id, name, version, versionNote) {
+    updateProjectModelVersion(id, modelId, version, versionNote) {
         return request("PATCH", `/projects/${id}/models/version`,
-            { body: { name, version: version || "", version_note: versionNote || "" } });
+            { body: { model_id: modelId, version: version || "", version_note: versionNote || "" } });
     },
-    getModelSbs(id, name) { return request("GET", `/projects/${id}/models/sbs`, { query: { name } }); },
+    getModelSbs(id, modelId) { return request("GET", `/projects/${id}/models/sbs`, { query: { model_id: modelId } }); },
     saveModelSbs(id, body) { return request("PUT", `/projects/${id}/models/sbs`, { body }); },
-    listModelSbsRevisions(id, name) { return request("GET", `/projects/${id}/models/sbs/revisions`, { query: { name } }); },
-    getModelSbsRevision(id, name, rev) { return request("GET", `/projects/${id}/models/sbs/revisions/${rev}`, { query: { name } }); },
-    restoreModelSbsRevision(id, name, rev) { return request("POST", `/projects/${id}/models/sbs/revisions/${rev}/restore`, { body: { name } }); },
+    listModelSbsRevisions(id, modelId) { return request("GET", `/projects/${id}/models/sbs/revisions`, { query: { model_id: modelId } }); },
+    getModelSbsRevision(id, modelId, rev) { return request("GET", `/projects/${id}/models/sbs/revisions/${rev}`, { query: { model_id: modelId } }); },
+    restoreModelSbsRevision(id, modelId, rev) { return request("POST", `/projects/${id}/models/sbs/revisions/${rev}/restore`, { body: { model_id: modelId } }); },
 
     // --- Project Upload Tasks (test execution) --------------------------- //
     listProjectTasks(id, limit) {

@@ -44,13 +44,27 @@ def result_dir(task: Task) -> Optional[Path]:
         return None
     from ..runners import run_layout
     path = run_layout.log_dir(task.workspace, task.test_id)
-    return path if path.is_dir() else None
+    if not path.is_dir():
+        return None
+    try:
+        expected_parent = Path(task.workspace).resolve() / "log"
+        if path.resolve(strict=True).parent != expected_parent:
+            return None
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return path
 
 
 def _iter_result_files(log_dir: Path) -> Iterator[Path]:
+    resolved_root = log_dir.resolve()
     for path in sorted(log_dir.rglob("*")):
-        if path.is_file() and path.name not in _SKIP_NAMES:
-            yield path
+        if path.name in _SKIP_NAMES or path.is_symlink() or not path.is_file():
+            continue
+        try:
+            path.resolve(strict=True).relative_to(resolved_root)
+        except (OSError, RuntimeError, ValueError):
+            continue
+        yield path
 
 
 def has_result(task: Task) -> bool:
@@ -100,11 +114,11 @@ def jdgrslt_path(task: Task) -> Optional[Path]:
     It is written into the per-test log directory
     ``<workspace>/log/<test_id>/jdgrslt.log`` during execution.
     """
-    if not task.workspace:
+    log_dir = result_dir(task)
+    if log_dir is None:
         return None
-    from ..runners import run_layout
-    path = run_layout.log_dir(task.workspace, task.test_id) / "jdgrslt.log"
-    return path if path.is_file() else None
+    path = log_dir / "jdgrslt.log"
+    return path if path.is_file() and not path.is_symlink() else None
 
 
 def report_path(task: Task) -> Optional[Path]:

@@ -56,7 +56,9 @@ from typing import Optional
 
 from ...extensions import db
 from ...models import LMUser, Project, TestItemRow, TestRunRecord
+from . import settings
 from . import exemption_service, review_service
+from .comments_service import csv_cell
 from .run_writeback_service import classify
 
 logger = logging.getLogger(__name__)
@@ -338,6 +340,253 @@ def by_version(project_id: int, *, limit: int = MAX_VERSIONS) -> dict:
         "series": {k: [tally[v][k] for v in versions] for k in OUTCOMES},
         "folded": len(folded),
     }
+
+
+#: Left-to-right classes. ``other`` is any paired difference that is not
+#: pass to fail/error, or fail/error to pass.
+COMPARE_CHANGES = (
+    "only_left",
+    "only_right",
+    "unchanged",
+    "pass_to_fail",
+    "fail_to_pass",
+    "other",
+)
+
+_FAIL_OUTCOMES = frozenset({"fail", "error"})
+
+
+def _parse_compare_ref(ref: str) -> tuple[str, str]:
+    """Split ``name@version``. A bare name keeps an empty version.
+
+    The last ``@`` is the separator, so a model name that contains ``@`` still
+    resolves to one identity.
+    """
+    from ..project_model_service import parse_ref
+    from .errors import ServiceError
+
+    name, version = parse_ref(ref)
+    if not name:
+        raise ServiceError(
+            "参数必须是 name@version，没有版本时只填模型名",
+            code="VALIDATION_ERROR",
+        )
+    return name, version
+
+
+def _latest_non_cancelled(project_id: int, model_name: str,
+                          model_version: str) -> dict[str, TestRunRecord]:
+    """Latest non-cancelled run of each test id for one model identity.
+
+    The identity is ``model_name`` plus ``model_version``. Sharing a version
+    label does not merge two models. A cancelled row is not a result: an older
+    non-cancelled run is kept, and a test id with only cancelled runs is absent.
+    """
+    test_id_key = db.func.trim(TestRunRecord.test_id)
+    normalized_outcome = db.func.lower(db.func.trim(TestRunRecord.outcome))
+    ranked = (
+        db.session.query(
+            TestRunRecord.id.label("record_id"),
+            db.func.row_number().over(
+                partition_by=test_id_key,
+                order_by=(TestRunRecord.executed_at.desc(),
+                          TestRunRecord.id.desc()),
+            ).label("run_rank"),
+        )
+        .filter(
+            TestRunRecord.project_id == project_id,
+            TestRunRecord.model_name == model_name,
+            TestRunRecord.model_version == model_version,
+            test_id_key != "",
+            normalized_outcome.notin_(("", "cancelled")),
+        )
+        .subquery()
+    )
+    rows = (
+        TestRunRecord.query.join(
+            ranked, TestRunRecord.id == ranked.c.record_id)
+        .filter(ranked.c.run_rank == 1)
+        .all()
+    )
+    chosen: dict[str, TestRunRecord] = {}
+    for row in rows:
+        test_id = (row.test_id or "").strip()
+        if not test_id or test_id in chosen:
+            continue
+        outcome = (row.outcome or "").strip().lower()
+        if not outcome or outcome == "cancelled":
+            continue
+        chosen[test_id] = row
+    return chosen
+
+
+def _compare_change(left_outcome: Optional[str],
+                    right_outcome: Optional[str]) -> str:
+    """Classify one test id. Direction is left to right."""
+    if left_outcome is None:
+        return "only_right"
+    if right_outcome is None:
+        return "only_left"
+    if left_outcome == right_outcome:
+        return "unchanged"
+    if left_outcome == "pass" and right_outcome in _FAIL_OUTCOMES:
+        return "pass_to_fail"
+    if left_outcome in _FAIL_OUTCOMES and right_outcome == "pass":
+        return "fail_to_pass"
+    return "other"
+
+
+def _compare_outcome(row: Optional[TestRunRecord]) -> Optional[str]:
+    if row is None:
+        return None
+    outcome = (row.outcome or "").strip().lower()
+    return outcome or None
+
+
+def _compare_row_uuid(left: Optional[TestRunRecord],
+                      right: Optional[TestRunRecord]) -> str:
+    """Matrix row locator. Prefer the right-hand uuid when it exists."""
+    for record in (right, left):
+        if record is None:
+            continue
+        token = (record.row_uuid or "").strip()
+        if token:
+            return token
+    return ""
+
+
+def compare_versions(project_id: int, left: str, right: str, *,
+                     page: int = 1, page_size: int = 100) -> dict:
+    """Compare the latest non-cancelled result of each test id.
+
+    ``left`` and ``right`` are ``name@version`` references. A model with no
+    version is the bare name. ``summary`` counts every test id; ``page`` only
+    slices ``items``.
+    """
+    left_ref = (left or "").strip()
+    right_ref = (right or "").strip()
+    left_name, left_version = _parse_compare_ref(left_ref)
+    right_name, right_version = _parse_compare_ref(right_ref)
+    page = 1 if page < 1 else int(page)
+    page_size = 1 if page_size < 1 else int(page_size)
+
+    left_rows = _latest_non_cancelled(project_id, left_name, left_version)
+    right_rows = _latest_non_cancelled(project_id, right_name, right_version)
+
+    summary = {key: 0 for key in COMPARE_CHANGES}
+    items = []
+    test_ids = sorted(set(left_rows) | set(right_rows))
+    start = (page - 1) * page_size
+    stop = start + page_size
+    for index, test_id in enumerate(test_ids):
+        left_row = left_rows.get(test_id)
+        right_row = right_rows.get(test_id)
+        left_outcome = _compare_outcome(left_row)
+        right_outcome = _compare_outcome(right_row)
+        change = _compare_change(left_outcome, right_outcome)
+        summary[change] += 1
+        if start <= index < stop:
+            items.append({
+                "test_id": test_id,
+                "left_outcome": left_outcome,
+                "right_outcome": right_outcome,
+                "change": change,
+                "row_uuid": _compare_row_uuid(left_row, right_row),
+            })
+
+    return {
+        "left": left_ref,
+        "right": right_ref,
+        "summary": summary,
+        "page": page,
+        "page_size": page_size,
+        "total": len(test_ids),
+        "items": items,
+    }
+
+
+def test_run_history(project_id: int, test_id: str, *,
+                     page: int = 1, page_size: int = 100) -> dict:
+    """Return a bounded, newest-first page of matrix-backed run summaries."""
+    test_id = (test_id or "").strip()
+    page = max(1, int(page))
+    page_size = min(max(1, int(page_size)), settings.PAGE_SIZE_MAX)
+    query = TestRunRecord.query.filter(
+        TestRunRecord.project_id == project_id,
+        TestRunRecord.test_id == test_id,
+    )
+    total = query.count()
+    offset = (page - 1) * page_size
+    rows = []
+    if offset < total:
+        rows = (
+            query.order_by(TestRunRecord.executed_at.desc(), TestRunRecord.id.desc())
+            .offset(offset)
+            .limit(page_size)
+            .all()
+        )
+    return {
+        "test_id": test_id,
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "items": [
+            {
+                "id": row.id,
+                "row_uuid": row.row_uuid or "",
+                "test_id": row.test_id,
+                "verdict": row.verdict,
+                "outcome": row.outcome,
+                "model_name": row.model_name,
+                "model_version": row.model_version,
+                "executor_name": row.executor_name,
+                "executed_at": (
+                    row.executed_at.isoformat() if row.executed_at else None
+                ),
+                "executed_on": row.executed_on,
+            }
+            for row in rows
+        ],
+    }
+
+
+TEST_RUN_HISTORY_CSV_HEADER = (
+    "project_code",
+    "project_name",
+    "test_id",
+    "row_uuid",
+    "verdict",
+    "outcome",
+    "model_name",
+    "model_version",
+    "executor_name",
+    "executed_at",
+    "executed_on",
+)
+
+
+def test_run_history_csv_rows(project: Project):
+    """Yield every run record for a project in stable newest-first order."""
+    yield [csv_cell(value) for value in TEST_RUN_HISTORY_CSV_HEADER]
+    query = (
+        TestRunRecord.query.filter(TestRunRecord.project_id == project.id)
+        .order_by(TestRunRecord.executed_at.desc(), TestRunRecord.id.desc())
+        .yield_per(500)
+    )
+    for record in query:
+        yield [
+            csv_cell(project.code),
+            csv_cell(project.name),
+            csv_cell(record.test_id),
+            csv_cell(record.row_uuid),
+            csv_cell(record.verdict),
+            csv_cell(record.outcome),
+            csv_cell(record.model_name),
+            csv_cell(record.model_version),
+            csv_cell(record.executor_name),
+            csv_cell(record.executed_at.isoformat() if record.executed_at else None),
+            csv_cell(record.executed_on),
+        ]
 
 
 def snapshot(project: Project) -> dict:

@@ -200,10 +200,9 @@ def import_workbook(user, project, source, *, mode: str = "upsert",
 
     * ``upsert`` — match existing rows by テストID, else insert.
     * ``insert_only`` — always insert new rows.
-    * ``replace_all`` — soft-delete every existing row in the project first, then
-      insert all rows from the workbook (a whole-table replacement, mirroring the
-      generic ``excel_service`` import). Requires the ``import.replace`` permission,
-      which the calling route enforces.
+    * ``replace_all`` — soft-delete every existing Test-Matrix row first, then
+      insert all rows from the workbook. Requires the ``import.replace``
+      permission, which the calling route enforces.
 
     Returns a summary dict.
     """
@@ -246,16 +245,12 @@ def import_workbook(user, project, source, *, mode: str = "upsert",
     # nowhere to be stored (``create_item`` only keeps values whose field exists).
     fields_service.ensure_fields(user, project, fld.TEST_FIELDS)
 
-    # ``replace_all``: clear the whole table before inserting. Soft-delete every
-    # live row in one shot (same semantics as ``excel_service`` replace_all) so
-    # the freshly parsed workbook fully supersedes the previous content. This is
-    # committed up-front so the subsequent per-row inserts can reuse the same
-    # テストID values without colliding with the old rows.
+    # ``replace_all`` only replaces the Test-Matrix sheet.
     deleted = 0
     if mode == "replace_all":
         now = _dt.datetime.now(_dt.timezone.utc)
         live = TestItemRow.query.filter_by(
-            project_id=project.id, deleted_at=None).all()
+            project_id=project.id, sheet="test", deleted_at=None).all()
         for row in live:
             row.deleted_at = now
         deleted = len(live)
@@ -263,14 +258,15 @@ def import_workbook(user, project, source, *, mode: str = "upsert",
             audit.record("import.replace_all", actor_id=user.id,
                          object_type="import", project_id=project.id,
                          new_value={"deleted": deleted,
-                                    "source": original_filename})
+                                    "source": original_filename,
+                                    "sheet": "test"})
         db.session.commit()
 
     existing = {}
     if mode == "upsert":
         existing = {
             r.case_id: r for r in TestItemRow.query.filter_by(
-                project_id=project.id, deleted_at=None).all()
+                project_id=project.id, sheet="test", deleted_at=None).all()
         }
 
     created = updated = 0

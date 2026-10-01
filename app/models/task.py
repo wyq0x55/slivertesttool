@@ -56,6 +56,9 @@ class Task(db.Model):
     sil_relpath = db.Column(db.String(500), nullable=False, default="model.sil")
     # Display name of the chosen registered model (empty for legacy bundles).
     sil_name = db.Column(db.String(128), nullable=False, default="")
+    # Captured when the task is queued. Later registry edits must not change it.
+    sil_version = db.Column(db.String(64), nullable=False, default="")
+    sil_model_id = db.Column(db.Integer, nullable=True)
 
     status = db.Column(
         db.String(16), nullable=False, default=TaskStatus.QUEUED.value, index=True
@@ -104,6 +107,7 @@ class Task(db.Model):
             "project_id": self.project_id,
             "test_id": self.test_id,
             "sil_name": self.sil_name,
+            "sil_version": self.sil_version or "",
             "status": self.status,
             # Judge verdict parsed from jdgrslt.log (PASS/FAIL/ERROR/...). This
             # is the *test* result, distinct from the execution ``status``: a run

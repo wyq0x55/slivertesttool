@@ -93,9 +93,12 @@ EXPECTED = [
     ("/api/v1/projects/<int:project_id>/reviews/bulk", ("POST",), "lanmatrix_projects.review_items_bulk", "review_items_bulk"),
     ("/api/v1/projects/<int:project_id>/testmatrix/export", ("GET",), "lanmatrix_projects.export_test_matrix", "export_test_matrix"),
     ("/api/v1/projects/<int:project_id>/testmatrix/import", ("POST",), "lanmatrix_projects.import_test_matrix", "import_test_matrix"),
+    ("/api/v1/projects/<int:project_id>/test-run-history", ("GET",), "lanmatrix_projects.test_run_history", "test_run_history"),
+    ("/api/v1/projects/<int:project_id>/test-run-history.csv", ("GET",), "lanmatrix_projects.test_run_history_csv", "test_run_history_csv"),
     ("/api/v1/projects/<int:project_id>/trash", ("GET",), "lanmatrix_projects.list_trash", "list_trash"),
     ("/api/v1/projects/<int:project_id>/trash/purge", ("POST",), "lanmatrix_projects.purge_from_trash", "purge_from_trash"),
     ("/api/v1/projects/<int:project_id>/trash/restore", ("POST",), "lanmatrix_projects.restore_from_trash", "restore_from_trash"),
+    ("/api/v1/projects/<int:project_id>/version-compare", ("GET",), "lanmatrix_projects.version_compare", "version_compare"),
 ]
 
 

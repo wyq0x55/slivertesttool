@@ -97,3 +97,7 @@ jobs:
       - name: Build frontend bundles
         working-directory: frontend
         run: npm run build
+
+      - name: Run frontend delivery regressions
+        working-directory: frontend
+        run: npm test

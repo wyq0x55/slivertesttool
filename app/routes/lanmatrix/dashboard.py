@@ -109,3 +109,89 @@ def project_dashboard_data(project_id: int):
         "project.edit", role, is_system_admin=g.user.is_system_admin)
     return ok(data)
 
+@bp.get("/projects/<int:project_id>/version-compare")
+@login_required
+def version_compare(project_id: int):
+    """Compare latest non-cancelled results for two model identities.
+
+    ``project.view`` is enough, so a reader can open it. ``left`` and ``right``
+    are ``name@version``; a model with no version is the bare name. Detail rows
+    carry ``row_uuid`` for the matrix, not a task key.
+    """
+    from ...services.lanmatrix import dashboard_service
+
+    _project_and_role(project_id, "project.view")
+    left = arg_str("left", max_length=200)
+    right = arg_str("right", max_length=200)
+    if not left or not right:
+        return err(
+            "VALIDATION_ERROR",
+            "参数 left 和 right 都必须是 name@version 或裸模型名",
+            status=400,
+        )
+    page = arg_int("page", 1, minimum=1)
+    page_size = arg_int(
+        "page_size", settings.PAGE_SIZE, minimum=1,
+        maximum=settings.PAGE_SIZE_MAX,
+    )
+    data = dashboard_service.compare_versions(
+        project_id, left, right, page=page, page_size=page_size,
+    )
+    return ok(data)
+
+
+@bp.get("/projects/<int:project_id>/test-run-history")
+@login_required
+def test_run_history(project_id: int):
+    """Return paged matrix-backed run summaries for one exact test id."""
+    from ...services.lanmatrix import dashboard_service
+
+    _project_and_role(project_id, "project.view")
+    test_id = arg_str("test_id", max_length=128)
+    if not test_id:
+        return err("VALIDATION_ERROR", "参数 test_id 必填", status=400)
+    page = arg_int("page", 1, minimum=1)
+    page_size = arg_int(
+        "page_size", settings.PAGE_SIZE, minimum=1,
+        maximum=settings.PAGE_SIZE_MAX,
+    )
+    return ok(dashboard_service.test_run_history(
+        project_id, test_id, page=page, page_size=page_size,
+    ))
+
+
+@bp.get("/projects/<int:project_id>/test-run-history.csv")
+@login_required
+def test_run_history_csv(project_id: int):
+    """Stream the complete project-scoped run history as a safe CSV."""
+    from ...services.lanmatrix import dashboard_service
+
+    project, _role = _project_and_role(project_id, "export.run")
+
+    def generate():
+        yield "\ufeff"
+        buffer = io.StringIO(newline="")
+        writer = csv.writer(buffer, lineterminator="\r\n")
+        pending = 0
+        for row in dashboard_service.test_run_history_csv_rows(project):
+            writer.writerow(row)
+            pending += 1
+            if pending >= 200:
+                yield buffer.getvalue()
+                buffer.seek(0)
+                buffer.truncate(0)
+                pending = 0
+        if pending:
+            yield buffer.getvalue()
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="project-{project_id}-test-run-history.csv"'
+            ),
+            "Cache-Control": "no-store",
+        },
+    )
+

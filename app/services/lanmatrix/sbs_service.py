@@ -56,10 +56,18 @@ def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
 
 
-def _model(project_id: int, name: str) -> ProjectModel:
-    row = (ProjectModel.query
-           .filter_by(project_id=project_id, name=(name or "").strip())
-           .first())
+def _model(project_id: int, name: str,
+           model_id: Optional[int] = None) -> ProjectModel:
+    query = ProjectModel.query.filter_by(project_id=project_id)
+    if model_id is not None:
+        try:
+            model_id = int(model_id)
+        except (TypeError, ValueError):
+            model_id = -1
+        query = query.filter_by(id=model_id)
+    else:
+        query = query.filter_by(name=(name or "").strip())
+    row = query.first()
     if row is None:
         raise SbsError("模型不存在。", code="NOT_FOUND")
     if row.kind != "bundle" or not row.bundle_dir:
@@ -84,9 +92,10 @@ def _read_text(path: Path) -> str:
 # --------------------------------------------------------------------------- #
 # Public API
 # --------------------------------------------------------------------------- #
-def read_sbs(project_id: int, name: str) -> dict:
+def read_sbs(project_id: int, name: str,
+             *, model_id: Optional[int] = None) -> dict:
     """Return ``{model, filename, content, version, size}`` for the model's sbs."""
-    row = _model(project_id, name)
+    row = _model(project_id, name, model_id=model_id)
     path = _sbs_path(row)
     content = _read_text(path)
     return {
@@ -100,7 +109,8 @@ def read_sbs(project_id: int, name: str) -> dict:
 
 
 def write_sbs(project_id: int, name: str, content: str, base_version: str,
-              *, author_id: Optional[int] = None,
+              *, model_id: Optional[int] = None,
+              author_id: Optional[int] = None,
               client_ip: Optional[str] = None) -> dict:
     """Overwrite the model's ``.sbs`` under an optimistic lock.
 
@@ -116,7 +126,7 @@ def write_sbs(project_id: int, name: str, content: str, base_version: str,
     if len(encoded) > MAX_SBS_BYTES:
         raise SbsError("SBS 文件过大（超过 4 MB）。")
 
-    row = _model(project_id, name)
+    row = _model(project_id, name, model_id=model_id)
     path = _sbs_path(row)
     current = _read_text(path)
     current_sha = _sha(current)
@@ -173,9 +183,10 @@ def write_sbs(project_id: int, name: str, content: str, base_version: str,
     }
 
 
-def list_revisions(project_id: int, name: str) -> List[dict]:
+def list_revisions(project_id: int, name: str,
+                   *, model_id: Optional[int] = None) -> List[dict]:
     """History (newest first), metadata only -- no content."""
-    row = _model(project_id, name)
+    row = _model(project_id, name, model_id=model_id)
     revs = (SbsRevision.query
             .filter_by(model_id=row.id)
             .order_by(SbsRevision.created_at.desc(), SbsRevision.id.desc())
@@ -190,9 +201,10 @@ def list_revisions(project_id: int, name: str) -> List[dict]:
     return out
 
 
-def get_revision(project_id: int, name: str, revision_id: int) -> dict:
+def get_revision(project_id: int, name: str, revision_id: int,
+                 *, model_id: Optional[int] = None) -> dict:
     """A single revision including its full content."""
-    row = _model(project_id, name)
+    row = _model(project_id, name, model_id=model_id)
     rev = db.session.get(SbsRevision, int(revision_id))
     if rev is None or rev.model_id != row.id:
         raise SbsError("历史版本不存在。", code="NOT_FOUND")
@@ -200,7 +212,8 @@ def get_revision(project_id: int, name: str, revision_id: int) -> dict:
 
 
 def restore_revision(project_id: int, name: str, revision_id: int,
-                     *, author_id: Optional[int] = None,
+                     *, model_id: Optional[int] = None,
+                     author_id: Optional[int] = None,
                      client_ip: Optional[str] = None) -> dict:
     """Restore a past revision by saving its content as a new revision.
 
@@ -208,12 +221,13 @@ def restore_revision(project_id: int, name: str, revision_id: int,
     restore is an explicit overwrite; it still records a fresh history entry and
     ``.sbs.bak`` backup).
     """
-    row = _model(project_id, name)
+    row = _model(project_id, name, model_id=model_id)
     rev = db.session.get(SbsRevision, int(revision_id))
     if rev is None or rev.model_id != row.id:
         raise SbsError("历史版本不存在。", code="NOT_FOUND")
     current_sha = _sha(_read_text(_sbs_path(row)))
     result = write_sbs(project_id, name, rev.content, current_sha,
+                       model_id=model_id,
                        author_id=author_id, client_ip=client_ip)
     result["restored_from"] = rev.id
     return result

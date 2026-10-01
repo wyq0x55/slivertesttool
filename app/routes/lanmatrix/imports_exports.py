@@ -24,8 +24,8 @@ from ...services import (
 )
 from ...services.upload_service import UploadError
 from ...services.lanmatrix import (
-    audit, dbadmin, excel_service, fields, permissions, sbs_service, service,
-    settings, trash_service,
+    audit, dbadmin, excel_service, fields, import_job_service, permissions,
+    sbs_service, service, settings, trash_service,
 )
 from ...services.lanmatrix.permissions import PermissionDenied
 from ...services.lanmatrix.service import ServiceError, VersionConflict
@@ -54,6 +54,8 @@ def excel_template(project_id):
 @login_required
 def create_import(project_id):
     project, _ = _project_and_role(project_id, "import.run")
+    if not project.is_editable:
+        return err("PROJECT_LOCKED", "项目当前不可编辑", status=409)
     mode = request.form.get("mode", "upsert")
     if mode == "replace_all":
         _project_and_role(project_id, "import.replace")
@@ -83,16 +85,17 @@ def commit_import(job_id):
     if job is None or job.job_type != "import":
         return err("NOT_FOUND", "任务不存在", status=404)
     project, _ = _project_and_role(job.project_id, "import.run")
+    if not project.is_editable:
+        return err("PROJECT_LOCKED", "项目当前不可编辑", status=409)
+    if (job.parameters or {}).get("mode") == "replace_all":
+        _project_and_role(job.project_id, "import.replace")
     result = excel_service.commit_import(g.user, project, job)
     return ok(result)
 
 @bp.post("/projects/<int:project_id>/testmatrix/import")
 @login_required
 def import_test_matrix(project_id):
-    """Import the fixed Japanese Test-Matrix workbook, mapping its columns onto
-    the editor's Test-Matrix based fields (one-step: parse → create/update)."""
-    from ...services.lanmatrix import testmatrix_bridge
-
+    """Create a validated preview job for the Japanese Test-Matrix workbook."""
     project, _ = _project_and_role(project_id, "import.run")
     if not project.is_editable:
         return err("PROJECT_LOCKED", "项目当前不可编辑", status=409)
@@ -104,41 +107,32 @@ def import_test_matrix(project_id):
         return err("VALIDATION_ERROR", "未上传文件", status=400)
     if not file.filename.lower().endswith(".xlsx"):
         return err("VALIDATION_ERROR", "仅支持 .xlsx 文件", status=400)
-    try:
-        summary = testmatrix_bridge.import_workbook(
-            g.user, project, file.stream, mode=mode,
-            original_filename=file.filename)
-    except (ServiceError, PermissionDenied, VersionConflict):
-        raise  # handled by the dedicated errorhandlers (return JSON + reason)
-    except Exception as exc:  # noqa: BLE001 - never leak an opaque HTML 500
-        current_app.logger.exception("Test-matrix import crashed")
-        return err("IMPORT_PARSE_ERROR",
-                   f"导入失败：{type(exc).__name__}: {exc}", status=400)
-    return ok({"summary": summary}, status=201)
+    job = import_job_service.create_special_preview(
+        g.user, project, file.stream, import_format="test_matrix",
+        mode=mode, original_filename=file.filename,
+    )
+    return ok({"job": job.to_dict(with_preview=True)}, status=201)
 
 @bp.post("/projects/<int:project_id>/libfunc/import")
 @login_required
 def import_libfunc(project_id):
     """Import a Lib(Func) workbook: one function block -> one editor row
     (lib_* fields + shared step-detail JSON)."""
-    from ...services.lanmatrix import libconst_bridge
-    return _import_libconst(project_id, libconst_bridge.import_libfunc)
+    return _import_special(project_id, "libfunc")
 
 @bp.post("/projects/<int:project_id>/const/import")
 @login_required
 def import_const(project_id):
     """Import a Const workbook: one constant definition -> one editor row
     (const_* fields)."""
-    from ...services.lanmatrix import libconst_bridge
-    return _import_libconst(project_id, libconst_bridge.import_const)
+    return _import_special(project_id, "const")
 
 @bp.post("/projects/<int:project_id>/io/import")
 @login_required
 def import_io(project_id):
     """Import an 入出力 (I/O signal pool) workbook: one signal -> one editor row
     (io_name / io_path / io_note), keeping name AND path unique."""
-    from ...services.lanmatrix import libconst_bridge
-    return _import_libconst(project_id, libconst_bridge.import_io)
+    return _import_special(project_id, "io")
 
 @bp.post("/projects/<int:project_id>/io/extract")
 @login_required
@@ -174,10 +168,8 @@ def extract_io(project_id):
                    f"抽取失败：{type(exc).__name__}: {exc}", status=400)
     return ok({"summary": summary}, status=201)
 
-def _import_libconst(project_id, importer):
-    """Shared request handling for the Lib / Const one-step imports (mirrors the
-    Test-Matrix import: parse -> create/update, with replace_all guarded by the
-    ``import.replace`` permission)."""
+def _import_special(project_id, import_format):
+    """Create a DataJob preview for one of the dedicated workbook formats."""
     project, _ = _project_and_role(project_id, "import.run")
     if not project.is_editable:
         return err("PROJECT_LOCKED", "项目当前不可编辑", status=409)
@@ -189,16 +181,11 @@ def _import_libconst(project_id, importer):
         return err("VALIDATION_ERROR", "未上传文件", status=400)
     if not file.filename.lower().endswith(".xlsx"):
         return err("VALIDATION_ERROR", "仅支持 .xlsx 文件", status=400)
-    try:
-        summary = importer(g.user, project, file.stream, mode=mode,
-                           original_filename=file.filename)
-    except (ServiceError, PermissionDenied, VersionConflict):
-        raise
-    except Exception as exc:  # noqa: BLE001 - never leak an opaque HTML 500
-        current_app.logger.exception("Lib/Const import crashed")
-        return err("IMPORT_PARSE_ERROR",
-                   f"导入失败：{type(exc).__name__}: {exc}", status=400)
-    return ok({"summary": summary}, status=201)
+    job = import_job_service.create_special_preview(
+        g.user, project, file.stream, import_format=import_format,
+        mode=mode, original_filename=file.filename,
+    )
+    return ok({"job": job.to_dict(with_preview=True)}, status=201)
 
 @bp.get("/projects/<int:project_id>/testmatrix/export")
 @login_required
