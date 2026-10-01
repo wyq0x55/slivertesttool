@@ -274,6 +274,7 @@
     untestable: "无法测试",
   };
   let comparePage = 1;
+  let compareRequestId = 0;
   let historyPage = 1;
   let historyTestId = "";
   let historyRequestId = 0;
@@ -454,16 +455,20 @@
   }
 
   async function loadVersionCompare(page) {
-    const historyPanel = $("lm-vc-history");
-    if (historyPanel) historyPanel.hidden = true;
+    const requestId = ++compareRequestId;
+    clearCompareResults();
     const left = ($("lm-vc-left") && $("lm-vc-left").value.trim()) || "";
     const right = ($("lm-vc-right") && $("lm-vc-right").value.trim()) || "";
+    const button = $("lm-vc-run");
+    const isCurrent = () => requestId === compareRequestId &&
+      left === ($("lm-vc-left")?.value.trim() || "") &&
+      right === ($("lm-vc-right")?.value.trim() || "");
     if (!left || !right) {
+      if (button) button.disabled = false;
       showCompareError("请填写左侧和右侧模型，格式为 name@version，没有版本时只填名称。");
       return;
     }
     comparePage = page || 1;
-    const button = $("lm-vc-run");
     if (button) button.disabled = true;
     try {
       const query = new URLSearchParams({
@@ -478,8 +483,12 @@
       );
       let payload = null;
       try { payload = await resp.json(); } catch (ignore) { payload = null; }
-      if (resp.status === 401) return;
-      if (!payload || !payload.success) {
+      if (!isCurrent()) return;
+      if (resp.status === 401) {
+        showCompareError("登录已过期，请刷新页面后重新登录。");
+        return;
+      }
+      if (!resp.ok || !payload || !payload.success) {
         const failure = (payload && payload.error) || {};
         showCompareError(failure.message || "对比失败");
         return;
@@ -488,13 +497,38 @@
       if (errBox) errBox.hidden = true;
       renderCompare(payload.data || {});
     } catch (ignore) {
-      showCompareError("对比失败");
+      if (isCurrent()) showCompareError("对比失败");
     } finally {
-      if (button) button.disabled = false;
+      if (requestId === compareRequestId && button) button.disabled = false;
     }
   }
 
+  function clearCompareResults() {
+    const summary = $("lm-vc-summary");
+    const rows = $("lm-vc-rows");
+    const error = $("lm-vc-err");
+    if (summary) summary.textContent = "";
+    if (rows) rows.innerHTML = "";
+    if (error) error.hidden = true;
+    ["lm-vc-prev", "lm-vc-next", "lm-vc-history"].forEach((id) => {
+      const element = $(id);
+      if (element) element.hidden = true;
+    });
+    historyRequestId += 1;
+    historyTestId = "";
+  }
+
   function bindVersionCompare() {
+    ["lm-vc-left", "lm-vc-right"].forEach((id) => {
+      const input = $(id);
+      if (input) input.addEventListener("input", () => {
+        compareRequestId += 1;
+        comparePage = 1;
+        clearCompareResults();
+        const button = $("lm-vc-run");
+        if (button) button.disabled = false;
+      });
+    });
     const form = $("lm-vc-form");
     if (form) {
       form.addEventListener("submit", (event) => {

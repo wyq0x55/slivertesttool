@@ -1370,6 +1370,24 @@
   let pendingJob = null;
   let pendingFile = null;
   let previewRequest = 0;
+  let importCommitActive = false;
+
+  function updateImportCommitButton() {
+    const preview = pendingJob?.preview || {};
+    importCommitButton.disabled = importCommitActive ||
+      pendingJob?.status !== "previewed" ||
+      (Number(preview.invalid) || 0) > 0 || !(Number(preview.total) > 0);
+  }
+
+  importDialog.addEventListener("cancel", (event) => {
+    if (importCommitActive) event.preventDefault();
+  });
+  importDialog.addEventListener("close", () => {
+    previewRequest += 1;
+    pendingJob = null;
+    pendingFile = null;
+    updateImportCommitButton();
+  });
 
   const IMPORT_FORMATS = {
     generic: { call: (id, file, mode) => LMApi.createImport(id, file, mode),
@@ -1390,7 +1408,8 @@
     io: "io",
   };
 
-  async function previewImport(file, notice = "") {
+  async function previewImport(file, notice = "", refreshAfterCommit = false) {
+    if (importCommitActive && !refreshAfterCommit) return;
     const requestId = ++previewRequest;
     const format = importFormatSel ? importFormatSel.value : "generic";
     const mode = importModeSel.value;
@@ -1424,8 +1443,7 @@
         (errors ? `<table class="lm-table lm-preview"><thead><tr><th>行</th><th>列</th><th>问题</th></tr></thead><tbody>${errors}</tbody></table>` : "") +
         ((preview.errors || []).length > 20
           ? `<p class="lm-muted">仅显示前 20 项错误。</p>` : "");
-      importCommitButton.disabled = pendingJob.status !== "previewed" ||
-        invalid > 0 || !(Number(preview.total) > 0);
+      updateImportCommitButton();
     } catch (ex) {
       if (requestId !== previewRequest) return;
       pendingJob = null;
@@ -1449,6 +1467,7 @@
     }
   }
   if (importFormatSel) importFormatSel.addEventListener("change", () => {
+    if (importCommitActive) return;
     applyFormatUI();
     previewRequest += 1;
     importSummary.innerHTML = "";
@@ -1460,10 +1479,12 @@
   });
 
   if (importModeSel) importModeSel.addEventListener("change", () => {
+    if (importCommitActive) return;
     if (pendingFile) previewImport(pendingFile);
   });
 
   document.getElementById("lm-import").addEventListener("click", () => {
+    if (importCommitActive) return;
     previewRequest += 1;
     importSummary.innerHTML = "";
     importError.hidden = true;
@@ -1483,6 +1504,7 @@
   });
 
   importFileInput.addEventListener("change", async (e) => {
+    if (importCommitActive) return;
     const file = e.target.files[0];
     if (!file) {
       previewRequest += 1;
@@ -1497,15 +1519,25 @@
 
   importCommitButton.addEventListener("click", async (e) => {
     e.preventDefault();
+    if (importCommitActive || importCommitButton.disabled || !pendingJob) return;
+    const job = pendingJob;
+    const file = pendingFile;
+    const requestId = previewRequest;
+    const controls = [importFormatSel, importModeSel, importFileInput,
+      document.getElementById("lm-import"),
+      document.getElementById("lm-import-extract-io"),
+      ...importDialog.querySelectorAll('button[value="cancel"]')]
+      .filter(Boolean).map((control) => ({ control, disabled: control.disabled }));
+    importCommitActive = true;
+    controls.forEach(({ control }) => { control.disabled = true; });
     importError.hidden = true;
-    importCommitButton.disabled = true;
+    updateImportCommitButton();
     try {
-      if (!pendingJob) return;
-      const job = pendingJob;
       const format = job.parameters?.format || job.preview?.format ||
         (importFormatSel ? importFormatSel.value : "generic");
       const targetSheet = IMPORT_SHEETS[format] || currentSheet;
       const result = await LMApi.commitImport(job.id);
+      if (requestId !== previewRequest || pendingJob !== job) return;
       pendingJob = null;
       pendingFile = null;
       if (targetSheet !== currentSheet) {
@@ -1517,20 +1549,24 @@
       await loadFields();
       if (collabActive()) await resyncSheetFromDb(targetSheet);
       await loadItems();
+      if (requestId !== previewRequest) return;
       importDialog.close();
       toast(
         `导入完成：${result.deleted ? `删除 ${result.deleted}，` : ""}` +
         `新增 ${result.inserted}，更新 ${result.updated}`, true);
     } catch (ex) {
+      if (requestId !== previewRequest) return;
       if ((ex.code === "IMPORT_PREVIEW_STALE" ||
-          ex.code === "IMPORT_PREVIEW_EXPIRED") && pendingFile) {
-        await previewImport(pendingFile, `${ex.message} 已重新生成预览，请复核后再次确认。`);
+          ex.code === "IMPORT_PREVIEW_EXPIRED") && file) {
+        await previewImport(file, `${ex.message} 已重新生成预览，请复核后再次确认。`, true);
         return;
       }
       importError.textContent = ex.message;
       importError.hidden = false;
-      importCommitButton.disabled = !pendingJob ||
-        (Number(pendingJob.preview?.invalid) || 0) > 0;
+    } finally {
+      importCommitActive = false;
+      controls.forEach(({ control, disabled }) => { control.disabled = disabled; });
+      updateImportCommitButton();
     }
   });
 
