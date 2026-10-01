@@ -77,3 +77,25 @@ def test_list_arguments_and_defaults_are_validated(tmp_path):
         [row(const_name="BASE", const_value="2")], [library])
     case = json.loads(manifest["testcase_json"].read_text(encoding="utf-8"))
     assert case["steps"][0]["actions"][0]["args"] == ["BASE+1"]
+
+
+@pytest.mark.parametrize("expression,operation", [("2**1000000000", "pow"),
+                                                   ("1<<1000000000", "lshift"),
+                                                   ("'X'*1000000000", "mul")])
+def test_validation_rejects_unbounded_expression_before_native_operation(monkeypatch, expression, operation):
+    from app.services import run_validation_service as validation
+    calls = []
+
+    def forbidden(left, right):
+        calls.append((left, right))
+        raise ValueError("unsafe native operation reached")
+
+    monkeypatch.setattr(validation.operator, operation, forbidden)
+    validation._parser.cache_clear()
+    try:
+        with pytest.raises(ValueError):
+            validation.validate_documents({"steps": [{"no": 1, "inputs": [{"var": "IN", "value": expression}]}]},
+                                          {"constants": {}}, {"subroutines": {}})
+        assert calls == []
+    finally:
+        validation._parser.cache_clear()

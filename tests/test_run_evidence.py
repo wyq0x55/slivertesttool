@@ -56,6 +56,20 @@ def test_pin_preserves_inputs_and_saved_model_after_edit(tmp_path):
         evidence.pin_attempt(task, source)
 
 
+def test_evidence_log_budget_is_shared_across_all_files(tmp_path):
+    task, source, _model = prepared(tmp_path)
+    evidence = service()
+    root = evidence.pin_attempt(task, source)
+    results = root / "results"
+    results.mkdir()
+    for number in range(3):
+        (results / f"case-{number}.log").write_text("0123456789", encoding="utf-8")
+    evidence.seal_attempt(task, status="failed", verdict="FAIL", message="failure")
+    data = evidence.read_evidence(task, max_log_bytes=12)
+    assert sum(len(value.encode("utf-8")) for value in data["logs"].values()) <= 12
+    assert len(data["artifacts"]) == 3
+
+
 def test_saved_companions_are_pinned_and_references_rewritten(tmp_path):
     evidence = service()
     task, source, model = prepared(tmp_path)
