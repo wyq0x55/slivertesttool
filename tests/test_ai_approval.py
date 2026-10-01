@@ -453,3 +453,30 @@ def test_edit_and_reject_reload_locked_terminal_status(approval_env, monkeypatch
     assert response.status_code == 409
     db.session.refresh(draft)
     assert draft.status == "approved"
+
+
+@pytest.mark.parametrize("scenario", ["viewpoint", "lib", "failure", "sbs"])
+def test_applied_assets_keep_draft_and_source_provenance(approval_env, scenario):
+    env = approval_env
+    draft = make_draft(env, scenario)
+    payload = json.loads(draft.input_json)
+    sources = [{"kind": "submitted_source", "name": "engine.c", "revision": "abc123", "sha256": "a" * 64}]
+    payload["_context"]["provenance"] = sources
+    draft.input_json = json.dumps(payload)
+    db.session.commit()
+    result = ai_apply.apply_draft(draft, env["user"])
+    assert result["draft_id"] == draft.id
+    assert result["provenance"]["sources"] == sources
+    assert len(result["provenance"]["sha256"]) == 64
+    if scenario == "viewpoint":
+        evidence = db.session.get(ItemRow, result["created_item_ids"][0]).get_field("remark")
+    elif scenario == "lib":
+        evidence = db.session.get(ItemRow, result["lib_item_id"]).get_field("lib_note")
+    elif scenario == "failure":
+        evidence = db.session.get(CellComment, result["comment_id"]).content
+    else:
+        assert result["model_snapshot"] == payload["_context"]["model"]
+        assert result["sbs_base_sha256"] == payload["_context"]["model"]["sbs_sha256"]
+        return
+    assert f'"draft_id": {draft.id}' in evidence
+    assert "engine.c" in evidence and "abc123" in evidence and "a" * 64 in evidence
