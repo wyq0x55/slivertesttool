@@ -248,6 +248,7 @@ def execute(app, config, task: Task, pool=None, instance=None,
     """Validate and claim the pinned attempt before invoking either backend."""
     task._evidence_kind = "synthetic" if config.RUNNER_BACKEND == "mock" or pool is not None and pool.is_mock else "silver_runtime"
     task._runner_backend = config.RUNNER_BACKEND
+    task._attempt_run_count = task.run_count or 1
     try:
         root = evidence.attempt_dir(task)
         if not (root / "manifest.json").exists():
@@ -504,6 +505,8 @@ def _cancel_project_queue_on_error(task: Task, detail: str) -> None:
 
 
 def _finalise(task: Task, status: TaskStatus, message: str, verdict: str, *, archive=True) -> None:
+    task_id = task.id
+    run_count = getattr(task, "_attempt_run_count", task.run_count or 1)
     if archive:
         try:
             evidence.seal_attempt(task, status=status.value, verdict=verdict, message=message,
@@ -513,14 +516,13 @@ def _finalise(task: Task, status: TaskStatus, message: str, verdict: str, *, arc
             logger.exception("Could not seal evidence for task %s", task.task_key)
             status, verdict = TaskStatus.FAILED, "ERROR"
             message = f"Evidence archive failed: {exc}"
-    task.status = status.value
-    task.message = message
-    task.result = verdict
-    task.finished_at = _utcnow()
-    db.session.add(task)
-    db.session.commit()
-    _write_row_result(task, verdict)
-    _notify_submitter(task, status, verdict)
+            archive = False
+        else:
+            db.session.commit()
+    from ..services.run_finalisation_service import finalise_attempt
+    if finalise_attempt(task_id, run_count, status.value, verdict, message,
+                        writeback=_write_row_result, trusted_outcome=archive):
+        _notify_submitter(task, status, verdict)
 
 
 def _notify_submitter(task: Task, status: TaskStatus, verdict: str) -> None:
@@ -557,7 +559,7 @@ def _notify_submitter(task: Task, status: TaskStatus, verdict: str) -> None:
         logger.exception("failed to notify submitter for task %s", task.task_key)
 
 
-def _write_row_result(task: Task, verdict: str) -> None:
+def _write_row_result(task: Task, verdict: str, *, commit=True) -> int:
     """Mirror the finished run onto the matching Test-Matrix row(s).
 
     Delegates to :mod:`app.services.lanmatrix.run_writeback_service`, which
@@ -568,8 +570,9 @@ def _write_row_result(task: Task, verdict: str) -> None:
     """
     from ..services.lanmatrix import run_writeback_service
 
-    written = run_writeback_service.record_run(task, verdict)
+    written = run_writeback_service.record_run(task, verdict, commit=commit)
     if written < 0:
         logger.warning("evidence write-back failed for task %s (verdict=%r); "
                        "see run_writeback_service log above",
                        getattr(task, "task_key", None), verdict)
+    return written

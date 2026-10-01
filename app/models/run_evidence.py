@@ -10,3 +10,4 @@ class RunEvidence(db.Model):
     run_count = db.Column(db.Integer, primary_key=True)
     manifest_sha256 = db.Column(db.String(64), nullable=False)
     outcome_sha256 = db.Column(db.String(64), nullable=False, default="")
+    finalised = db.Column(db.Boolean, nullable=False, default=False)

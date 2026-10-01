@@ -268,7 +268,7 @@ def test_runner_uses_snapshot_archives_all_outcomes_and_writes_back(submitted, m
             raise RunnerCancelled()
 
     monkeypatch.setattr(test_runner, "build_runner", lambda backend: SimpleNamespace(run=run))
-    monkeypatch.setattr(test_runner, "_write_row_result", lambda current, verdict: writes.append(verdict))
+    monkeypatch.setattr(test_runner, "_write_row_result", lambda current, verdict, **kwargs: writes.append(verdict))
     test_runner.execute(application, application.config_obj, task)
     assert len(calls) == 1
     assert task.result == {None: "PASS", "error": "ERROR", "cancelled": "CANCELLED"}[failure]
