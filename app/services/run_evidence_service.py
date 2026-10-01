@@ -209,6 +209,8 @@ def _manifest(task, root, run_count):
 
 def read_evidence(task, run_count=None, *, max_log_bytes=262144):
     """Server-side schema-1 context; callers must enforce project permissions."""
+    if type(max_log_bytes) is not int or not 0 <= max_log_bytes <= 1_048_576:
+        raise EvidenceError("Log budget must be between zero and 1048576 bytes")
     task = _task(task)
     attempt = (task.run_count or 1) if run_count is None else run_count
     root = attempt_dir(task, attempt)
@@ -221,6 +223,7 @@ def read_evidence(task, run_count=None, *, max_log_bytes=262144):
     outcome = None
     artifacts = []
     logs = {}
+    remaining = max_log_bytes
     if (root / "outcome.json").exists():
         outcome = _read_json(root, "outcome.json")
         if _hashes(root / "results") != outcome["result_files"]:
@@ -229,10 +232,12 @@ def read_evidence(task, run_count=None, *, max_log_bytes=262144):
             artifacts.append({"path": path.relative_to(root).as_posix(),
                               "sha256": outcome["result_files"][path.relative_to(root / "results").as_posix()],
                               "size": path.stat().st_size})
-            if path.suffix.lower() in (".log", ".txt"):
+            if remaining and path.suffix.lower() in (".log", ".txt"):
                 with path.open("rb") as stream:
-                    stream.seek(max(0, path.stat().st_size - max_log_bytes))
-                    logs[path.relative_to(root / "results").as_posix()] = stream.read(max_log_bytes).decode("utf-8", errors="replace")
+                    stream.seek(max(0, path.stat().st_size - remaining))
+                    content = stream.read(remaining)
+                    remaining -= len(content)
+                    logs[path.relative_to(root / "results").as_posix()] = content.decode("utf-8", errors="replace")
     return {**manifest, "archive_path": str(root), "documents": documents,
             "outcome": outcome, "artifacts": artifacts, "logs": logs}
 

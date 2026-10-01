@@ -8,6 +8,7 @@ import math
 import operator
 import re
 import unicodedata
+from functools import partial
 from functools import lru_cache
 from pathlib import Path
 
@@ -16,6 +17,22 @@ from ..runners.silver_json import silver_test_framework as framework
 
 class ConversionError(ValueError):
     """An approved procedure cannot be executed without changing its meaning."""
+
+
+def _bounded_binary(kind, operation, left, right):
+    if not isinstance(left, (int, float)) or not isinstance(right, (int, float)):
+        raise ConversionError("Expression arithmetic requires numeric operands")
+    _finite((left, right), "expression")
+    if kind is ast.Pow and abs(left) > 1 and right > 0 and math.log2(abs(left)) * right > 4096:
+        raise ConversionError("Expression exponent exceeds the numeric budget")
+    if kind is ast.LShift and (not isinstance(right, int) or right < 0 or right > 4096
+                               or isinstance(left, int) and left.bit_length() + right > 4096):
+        raise ConversionError("Expression shift exceeds the numeric budget")
+    result = operation(left, right)
+    if isinstance(result, complex):
+        raise ConversionError("Complex expression values are not executable")
+    _finite(result, "expression")
+    return result
 
 
 @lru_cache(maxsize=1)
@@ -43,10 +60,14 @@ def _parser():
                     isinstance(target, ast.Name) and target.id in assignments
                     for target in node.targets))]
     exec(compile(ast.Module(body=selected, type_ignores=[]), str(root), "exec"), namespace)
+    namespace["_BIN_OPS"] = {kind: partial(_bounded_binary, kind, operation)
+                             for kind, operation in namespace["_BIN_OPS"].items()}
     return namespace
 
 
 def _finite(value, label):
+    if isinstance(value, int) and value.bit_length() > 4096:
+        raise ConversionError(f"{label}: integer exceeds the numeric budget")
     if isinstance(value, float) and not math.isfinite(value):
         raise ConversionError(f"{label}: value must be finite")
     if isinstance(value, (dict, list, tuple)):
