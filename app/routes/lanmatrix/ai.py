@@ -35,6 +35,7 @@ from ...extensions import db
 from ...models import AiDraft
 from ...services.ai import apply as ai_apply
 from ...services.ai import config as ai_config
+from ...services.ai import context as ai_context
 from ...services.ai import scenarios as ai_scenarios
 from ...services.ai import signal_dict as ai_signal_dict
 from ...services.ai.base import GenerationError
@@ -82,7 +83,7 @@ def create_draft():
     payload = body.get("payload")
     if not scenario:
         return err("BAD_REQUEST", "scenario 不能为空", status=400)
-    if not isinstance(project_id, int):
+    if type(project_id) is not int or project_id < 1:
         return err("BAD_REQUEST", "project_id 必须是整数", status=400)
     if not isinstance(payload, dict):
         return err("BAD_REQUEST", "payload 必须是对象", status=400)
@@ -94,6 +95,11 @@ def create_draft():
         return err("AI_NOT_CONFIGURED",
                    "AI 未配置：请管理员先设置 api_base / api_key / model", status=503)
     _require_edit(project_id)
+
+    try:
+        payload = ai_context.build_payload(project_id, scenario, payload)
+    except ValueError as exc:
+        return err("BAD_REQUEST", str(exc), status=400)
 
     draft = AiDraft(project_id=project_id, scenario=scenario,
                     input_json=json.dumps(payload, ensure_ascii=False),
