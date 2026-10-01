@@ -10,6 +10,7 @@ were never in the source or SBS.
 from __future__ import annotations
 
 import re
+import math
 from typing import Any
 
 _STEP_KEYS = {"no", "purpose", "operation", "subroutine", "args",
@@ -47,6 +48,9 @@ def validate_steps_doc(doc: Any, *, known_paths: set[str] | None = None,
     in_pairs = _signal_pairs(doc.get("input_signals"), "input_signals", problems)
     exp_pairs = _signal_pairs(doc.get("expected_signals"), "expected_signals", problems)
     paths = {p for _n, p in in_pairs + exp_pairs}
+    for field, pairs in (("input_signals", in_pairs), ("expected_signals", exp_pairs)):
+        if len({path for _name, path in pairs}) != len(pairs):
+            problems.append(f"{field} contains duplicate signal paths")
     if not paths:
         problems.append("input_signals/expected_signals 至少要有一个信号")
     if known_paths is not None:
@@ -60,6 +64,7 @@ def validate_steps_doc(doc: Any, *, known_paths: set[str] | None = None,
     if not isinstance(steps, list) or not steps:
         problems.append("steps 必须是非空数组")
         return problems
+    seen_numbers: set[int] = set()
     for i, step in enumerate(steps):
         if not isinstance(step, dict):
             problems.append(f"steps[{i}] 必须是对象")
@@ -67,12 +72,25 @@ def validate_steps_doc(doc: Any, *, known_paths: set[str] | None = None,
         unknown = set(step) - _STEP_KEYS
         if unknown:
             problems.append(f"steps[{i}] 含未知字段：{sorted(unknown)}")
-        if not isinstance(step.get("no"), int):
-            problems.append(f"steps[{i}].no 必须是整数")
+        number = step.get("no")
+        if type(number) is not int or number < 1 or number in seen_numbers:
+            problems.append(f"steps[{i}].no must be a distinct positive integer")
+        else:
+            seen_numbers.add(number)
         for key in ("inputs", "expecteds"):
             cells = step.get(key)
             if cells is not None and not isinstance(cells, list):
                 problems.append(f"steps[{i}].{key} 必须是数组")
+            elif isinstance(cells, list):
+                width = len(in_pairs if key == "inputs" else exp_pairs)
+                if len(cells) > width:
+                    problems.append(f"steps[{i}].{key} exceeds the signal column count")
+                if any(cell is not None and (type(cell) not in (str, int, float)
+                       or isinstance(cell, float) and not math.isfinite(cell)) for cell in cells):
+                    problems.append(f"steps[{i}].{key} cells must be text or finite numbers")
+        for key in ("purpose", "operation", "args", "timing"):
+            if step.get(key) is not None and not isinstance(step[key], str):
+                problems.append(f"steps[{i}].{key} must be text")
         sub = step.get("subroutine")
         if sub:
             if not isinstance(sub, str) or known_subs is not None and sub not in known_subs:
@@ -191,3 +209,8 @@ def validate_failure(parsed: Any) -> list[str]:
             "code_bug", "spec_gap", "test_error", "environment"):
         problems.append("classification 必须是 code_bug|spec_gap|test_error|environment 之一")
     return problems
+
+
+def validate_output(scenario, payload, output, *, refs=None, for_apply=False) -> list[str]:
+    from .output_validation import validate_output as validate
+    return validate(scenario, payload, output, refs=refs, for_apply=for_apply)
