@@ -306,30 +306,6 @@ def recover_queued_attempts(enqueue, *, is_pending, limit=100):
     attempt identity for deduplication and atomic worker claims. The callback
     must enqueue asynchronously, not execute a runner in this transaction.
     """
-    from ..extensions import db
-    from ..models import Task, TaskStatus
-    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
-        raise ValueError("Recovery limit must be between 1 and 1000")
-    result = {"recovered": [], "skipped": [], "errors": []}
-    tasks = (Task.query.filter_by(status=TaskStatus.QUEUED.value, deleted_at=None,
-                                 cancel_requested=False)
-             .order_by(Task.id).limit(limit).with_for_update(skip_locked=True).all())
-    try:
-        for task in tasks:
-            identity = (task.id, task.run_count or 1)
-            try:
-                data = read_evidence(task)
-                if data["outcome"] is not None or is_pending(*identity):
-                    result["skipped"].append(identity)
-                    continue
-                from .run_validation_service import validate_run_directory
-                case = attempt_dir(task) / "inputs" / task.test_id
-                if list(case.glob("testcase_*.json")):
-                    validate_run_directory(case)
-                enqueue(*identity)
-                result["recovered"].append(identity)
-            except Exception as exc:
-                result["errors"].append({"task_id": task.id, "run_count": identity[1], "error": str(exc)})
-        return result
-    finally:
-        db.session.rollback()
+    from .run_recovery_service import recover_queued_attempts as recover
+
+    return recover(enqueue, is_pending=is_pending, limit=limit)
