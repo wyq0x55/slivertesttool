@@ -130,3 +130,59 @@ def test_worker_exception_preserves_durable_pending_writeback(submitted, monkeyp
     assert task.status == "running"
     record = db.session.get(RunEvidence, (task.id, 1))
     assert record.outcome_sha256 and not record.finalised
+
+
+@pytest.mark.parametrize("cancel_requested", [False, True])
+def test_periodic_worker_reconciles_sealed_outcome_and_crdt_once(submitted, monkeypatch, cancel_requested):
+    from pycrdt import Doc
+    from app.collab import doc_model, writeback
+    from app.extensions import db
+    from app.models import RowWriteback, RunEvidence, TestRunRecord
+    from app.jobqueue import tasks
+    from app.runners import test_runner
+    from app.services import run_evidence_service as evidence
+
+    application, task, _source, _model = submitted
+    row = matching_row(task)
+    document = Doc()
+    doc_model.bootstrap_doc(document, task.project_id)
+    task.cancel_requested = cancel_requested
+    evidence.seal_attempt(task, status="passed", verdict="PASS", message="Sealed completion")
+    db.session.commit()
+    monkeypatch.setattr(test_runner, "execute", lambda *args, **kwargs: pytest.fail("Recovery must not run Silver"))
+    tasks.huey.flush()
+    result = tasks.recover_run_attempts()
+    assert (task.id, 1) in result["recovered"]
+    assert task.status == "passed" and row.result == "PASS"
+    assert db.session.get(RunEvidence, (task.id, 1)).finalised
+    assert TestRunRecord.query.count() == 1
+    assert RowWriteback.query.count() == 1
+    pending = writeback.claim_pending([task.project_id])
+    with document.transaction():
+        assert doc_model.write_row_fields(document, "test", pending[task.project_id]) == 1
+    assert doc_model.snapshot_sheet(document, "test")[0]["result"] == "PASS"
+    assert tasks.recover_run_attempts()["recovered"] == []
+    assert TestRunRecord.query.count() == 1 and RowWriteback.query.count() == 1
+    assert tasks.huey.pending() == []
+
+
+@pytest.mark.parametrize("cancel_requested", [False, True])
+def test_startup_worker_fails_unsealed_interruption_without_reexecution(submitted, monkeypatch, cancel_requested):
+    from app.extensions import db
+    from app.models import TestRunRecord
+    from app.jobqueue import tasks
+    from app.runners import test_runner
+
+    application, task, _source, _model = submitted
+    row = matching_row(task)
+    task.cancel_requested = cancel_requested
+    db.session.commit()
+    monkeypatch.setattr(test_runner, "execute", lambda *args, **kwargs: pytest.fail("Interrupted runs require manual retry"))
+    tasks.huey.flush()
+    assert tasks.recover_run_attempts()["recovered"] == []
+    assert task.status == "running"
+    assert (task.id, 1) in tasks.recover_run_attempts(startup=True)["recovered"]
+    assert task.status == "failed" and row.result == "ERROR"
+    assert "manual retry" in task.message
+    assert TestRunRecord.query.count() == 1
+    assert tasks.huey.pending() == []

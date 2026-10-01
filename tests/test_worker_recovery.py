@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.services import run_evidence_service as evidence
+from test_run_recovery import recovery_context
 
 
 def test_worker_recovery_dispatches_asynchronously_and_deduplicates(app_ctx, tmp_path, monkeypatch):
@@ -41,7 +42,7 @@ def test_worker_recovery_dispatches_asynchronously_and_deduplicates(app_ctx, tmp
 
 def test_worker_startup_calls_attempt_recovery_without_owning_bootstrap():
     source = (Path(__file__).parents[1] / "run_worker.py").read_text(encoding="utf-8")
-    assert "tasks.recover_run_attempts()" in source
+    assert "tasks.recover_run_attempts(startup=True)" in source
     assert "bootstrap_app(" not in source
 
 
@@ -50,3 +51,19 @@ def test_run_recovery_is_registered_as_periodic():
     assert hasattr(tasks, "recover_run_attempts_job")
     assert any(isinstance(task, tasks.recover_run_attempts_job.task_class)
                for task in tasks.huey._registry.periodic_tasks)
+
+
+def test_startup_recovery_visits_more_than_one_bounded_page(recovery_context):
+    from app.extensions import db
+    from app.models import Setting, Task
+    from app.jobqueue import tasks
+    from test_run_recovery import make_attempt
+
+    attempts = [make_attempt(recovery_context, number, status="running") for number in range(1, 102)]
+    db.session.add(Setting(key="run_recovery_cursor_running", value=str(attempts[49].id)))
+    db.session.commit()
+    tasks.huey.flush()
+    result = tasks.recover_run_attempts(startup=True)
+    assert len(result["recovered"]) == 101
+    assert Task.query.filter_by(status="running").count() == 0
+    assert tasks.huey.pending() == []
