@@ -43,19 +43,20 @@ The dates below are planning windows, not delivery guarantees.
 
 ## Current delivery state
 
-M0 fixes and isolated acceptance are implemented on
-`codex/integration-next-phase`, based on `c26976c`. See
+M0 fixes and isolated acceptance landed in PR #34 at `dde8513`, with green PR
+and main CI. See
 [`../verification/m0-delivery-2026-10-01.md`](../verification/m0-delivery-2026-10-01.md).
-The user approved committing and pushing the verified patch on October 1, 2026.
-PR integration and any main update remain separate delivery gates.
+The user authorized autonomous M1-M4 engineering delivery, including commits,
+pushes and green-CI-only integration. Current engineering work is isolated on
+`codex/ai-first-roadmap`. Local M1-M4 engineering verification is recorded;
+GitHub PR and main checks are the authoritative integration record.
 The existing root worktree changes to `CONTEXT.md` and ADR 0003 are preserved.
 
-The following are explicit follow-ups, not completed M0 claims:
+Implementation and exact test checkpoints are recorded in
+[engineering delivery](ai-first-delivery.md) and
+[engineering verification](../verification/ai-first-engineering-2026-10-01.md).
+The original milestone windows are not a runtime or efficiency proof.
 
-- Real pilot module/viewpoint selection and manual timing have not been recorded.
-- Report-download rejection still navigates away from the application; matrix
-  row links do not yet consume the row UUID for editor focus.
-- Caught enqueue failures are retryable; durable crash recovery between database
-  commit and queue publication is M3 work, not guaranteed by exception handling.
-- Active staging aliases are protected. Immutable per-run archives and full
-  isolation of historical artifacts remain M2 work.
+The real two-module/20-approved-viewpoint pilot and manual timing remain
+human-owned rollout gates. Formal asset approval, candidate SBS activation and
+real Silver execution are never inferred from engineering completion.
