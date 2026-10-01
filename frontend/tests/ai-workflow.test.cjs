@@ -193,10 +193,11 @@ function editorHarness(options = {}) {
     setInterval: () => 1, clearInterval() {}, console,
     testGrid: grid, testCollab: collab, testRows: persisted, testSheet: options.sheet || "test",
     testConn: options.disconnected ? "disconnected" : "connected",
+    testFields: options.fields || [{ field_key: "title" }],
   });
   const source = read("app/static/js/lanmatrix/editor.js").replace("  init();", `
     grid = testGrid; collab = testCollab; currentSheet = testSheet;
-    sheetItems.test = testRows; sheetFields.test = [{ field_key: "title" }];
+    sheetItems.test = testRows; sheetFields.test = testFields;
     fields = sheetFields.test; collabConn = testConn;
     window.testLoadProject = loadProject; window.testSaveCell = saveCell;
     window.testSelection = updateSelectionUI;
@@ -719,4 +720,145 @@ test("permission loading fails closed and readers have no recovery actions", asy
       await reader.click(`lm-ai-d-${action}`);
     }
   }
+});
+
+test("materialized test_name aliases do not conflict with legacy CRDT title mirrors", async () => {
+  const persisted = [{ id: 12, uuid: "row-12", version: 4, test_name: "New title", title: "New title" }];
+  const live = [{ ...persisted[0], title: "Legacy title" }];
+  const harness = editorHarness({ persisted, live, collab: true, fields: [{ field_key: "test_name" }] });
+  await harness.ready();
+  await harness.click();
+  assert.equal(harness.calls.length, 1);
+});
+
+test("nested step JSON ignores key order while detecting unsaved signal values", async () => {
+  const persisted = [{ id: 12, uuid: "row-12", version: 3,
+    steps: '{"input_signals":[{"name":"speed","value":2}],"expected_signals":[]}' }];
+  const live = [{ ...persisted[0], steps: '{"expected_signals":[],"input_signals":[{"value":2,"name":"speed"}]}' }];
+  const harness = editorHarness({ persisted, live, collab: true, fields: [{ field_key: "steps" }] });
+  await harness.ready();
+  await harness.click();
+  assert.equal(harness.calls.length, 1);
+  live[0].steps = '{"expected_signals":[],"input_signals":[{"value":3,"name":"speed"}]}';
+  await harness.click();
+  assert.equal(harness.calls.length, 1);
+});
+
+test("normalizing a prototype-like step property cannot ignore a dirty value", async () => {
+  const persisted = [{ id: 12, uuid: "row-12", version: 3, steps: '{"__proto__":{"value":1}}' }];
+  const live = [{ ...persisted[0], steps: '{"__proto__":{"value":2}}' }];
+  const harness = editorHarness({ persisted, live, collab: true, fields: [{ field_key: "steps" }] });
+  await harness.ready();
+  await harness.click();
+  assert.equal(harness.calls.length, 0);
+});
+
+test("draft list escapes document errors and distinguishes queued from generating", async () => {
+  const harness = draftHarness({ listAiDrafts: async () => [
+    draft(1, "running", { meta: { job: { state: "queued" } }, error: '<img src=x onerror="attack()">' }),
+    draft(2, "running", { meta: { job: { state: "running" } } }), draft(3, "cancelled") ] });
+  await settle();
+  const html = harness.get("lm-ai-rows").innerHTML;
+  assert.match(html, /排队中/);
+  assert.match(html, /生成中/);
+  assert.match(html, /已取消/);
+  assert.ok(!html.includes("<img"));
+  assert.match(html, /&lt;img/);
+  harness.get("lm-ai-rows").children[0].listeners.click();
+  await settle();
+  assert.match(harness.get("lm-ai-d-title").textContent, /#1/);
+});
+
+test("terminal drafts disable every write decision including retry", async () => {
+  for (const status of ["approved", "rejected", "pending"]) {
+    const harness = draftHarness({ getAiDraft: async (id) => draft(id, status) });
+    await settle();
+    await harness.open(1);
+    for (const action of ["cancel", "retry"]) {
+      assert.equal(harness.get(`lm-ai-d-${action}`).disabled, true);
+      await harness.click(`lm-ai-d-${action}`);
+    }
+    if (status !== "pending") {
+      for (const action of ["edit", "approve", "reject"]) {
+        assert.equal(harness.get(`lm-ai-d-${action}`).disabled, true);
+        await harness.click(`lm-ai-d-${action}`);
+      }
+    }
+  }
+});
+
+test("inline validation failures preserve edits and prevent duplicate saves", async () => {
+  const updating = deferred();
+  let updates = 0;
+  const harness = draftHarness({ updateAiDraft: () => { updates++; return updating.promise; } });
+  await settle();
+  await harness.open(1);
+  await harness.click("lm-ai-d-edit");
+  harness.get("lm-ai-d-output-edit").value = "broken";
+  await harness.click("lm-ai-d-edit");
+  assert.equal(updates, 0);
+  harness.get("lm-ai-d-output-edit").value = '{"procedures":[]}';
+  const saving = harness.click("lm-ai-d-edit");
+  await harness.click("lm-ai-d-edit");
+  assert.equal(updates, 1);
+  updating.reject(new Error("output invalid"));
+  await saving;
+  assert.match(harness.get("lm-ai-d-action-status").textContent, /output invalid/);
+  assert.ok(harness.get("lm-ai-d-output-edit"));
+  assert.equal(harness.get("lm-ai-d-approve").disabled, true);
+});
+
+test("stale approval reports regeneration guidance and empty rejection requires a note", async () => {
+  const harness = draftHarness({ approveAiDraft: async () => { throw new Error("VERSION_CONFLICT"); } });
+  await settle();
+  await harness.open(1);
+  await harness.click("lm-ai-d-approve");
+  assert.match(harness.get("lm-ai-d-action-status").textContent, /VERSION_CONFLICT.*重新生成/);
+  harness.context.LMUI.prompt = async () => " ";
+  await harness.click("lm-ai-d-reject");
+  assert.match(harness.toasts.at(-1).message, /原因/);
+});
+
+test("cancel completion cannot replace or close another inspected draft", async () => {
+  const cancelling = deferred();
+  const harness = draftHarness({ getAiDraft: async (id) => draft(id, "running"),
+    cancelAiDraft: () => cancelling.promise });
+  await settle();
+  await harness.open(1);
+  const recovering = harness.click("lm-ai-d-cancel");
+  await harness.open(2);
+  cancelling.resolve(draft(1, "cancelled"));
+  await recovering;
+  assert.match(harness.get("lm-ai-d-title").textContent, /#2/);
+});
+
+test("draft form enforces source sizes and model integer identity", async () => {
+  const payloads = ['[]', 'broken', '{"source_files":[]}',
+    JSON.stringify({ source_files: { "a.c": "a".repeat(256001) } })];
+  for (const raw of payloads) {
+    const harness = draftHarness();
+    await settle();
+    harness.get("lm-ai-gen-payload").value = raw;
+    await harness.click("lm-ai-gen-submit");
+    assert.equal(harness.calls.length, 0);
+    assert.ok(harness.get("lm-ai-gen-status").textContent);
+  }
+  const harness = draftHarness();
+  await settle();
+  harness.get("lm-ai-gen-model-id").value = "1.5";
+  await harness.click("lm-ai-gen-submit");
+  assert.equal(harness.calls.length, 0);
+});
+
+test("matrix failed creation links a durable draft that can be recovered", async () => {
+  const harness = editorHarness({ create: async () => {
+    const error = new Error("queue unavailable");
+    error.details = { draft_id: 51 };
+    throw error;
+  } });
+  await harness.ready();
+  await harness.click();
+  assert.equal(harness.get("lm-ai-draft-link").href, "/lanmatrix/projects/1/ai?draft=51");
+  assert.equal(harness.get("lm-ai-draft-link").hidden, false);
+  assert.match(harness.get("lm-ai-status").textContent, /queue unavailable/);
 });
