@@ -640,3 +640,96 @@ def test_unchanged_optional_source_snapshots_allow_approval(approval_env):
     db.session.commit()
     result = ai_apply.apply_draft(draft, env["user"], refs=["R1"])
     assert draft.status == "approved" and result["source_dependencies"] == payload["_context"]["dependencies"]
+
+
+def approval_snapshot():
+    from app.models import AuditLog
+
+    return {
+        model.__tablename__: [
+            {attribute.key: copy.deepcopy(getattr(row, attribute.key))
+             for attribute in db.inspect(model).column_attrs}
+            for row in model.query.order_by(model.id).all()
+        ]
+        for model in (ItemRow, ProjectModel, SbsRevision, CellComment, AuditLog, AiDraft)
+    }
+
+
+@pytest.mark.parametrize("scenario", AiDraft.SCENARIOS)
+@pytest.mark.parametrize("project_status", ["frozen", "archived"])
+@pytest.mark.parametrize("through_http", [False, True])
+def test_approval_rejects_project_frozen_after_generation(approval_env, scenario, project_status, through_http):
+    env = approval_env
+    draft = make_draft(env, scenario)
+    assert validators.validate_output(scenario, json.loads(draft.input_json),
+                                      json.loads(draft.output_json), for_apply=True) == []
+    before = approval_snapshot()
+    cached_status = env["project"].status
+    with Session(db.engine) as concurrent:
+        concurrent.get(Project, env["project"].id).status = project_status
+        concurrent.commit()
+    assert env["project"].status == cached_status
+    if through_http:
+        client, headers = login(env)
+        response = client.post(f"/api/v1/ai/drafts/{draft.id}/approve", headers=headers, json={})
+        assert response.status_code == 409, response.get_json()
+        assert "editable" in response.get_json()["error"]["message"]
+    else:
+        with pytest.raises(ai_apply.ApplyError, match="editable"):
+            ai_apply.apply_draft(draft, env["user"])
+    db.session.expire_all()
+    assert approval_snapshot() == before
+
+
+@pytest.mark.parametrize("scenario", ["procedure", "lib"])
+@pytest.mark.parametrize("decision", ["edit", "approve"])
+def test_cross_scenario_input_cannot_authorise_unregistered_signal(approval_env, scenario, decision):
+    from app.services.ai import context, signal_dict
+
+    env = approval_env
+    row = env["rows"][0]
+    clean_doc = steps_doc()
+    injected_doc = copy.deepcopy(clean_doc)
+    injected_doc["input_signals"] = [["Injected signal", "injected_signal"]]
+    row.set_field("steps", json.dumps(clean_doc))
+    db.session.commit()
+    submitted = {"item_ids": [row.id], "source_files": {"engine.c": "int speed; int warning;"}}
+    if scenario == "procedure":
+        submitted["procedures"] = [{"item_id": row.id, "steps_doc": injected_doc}]
+        clean_output = {"procedures": [{"ref": str(row.id), "steps_doc": clean_doc}], "failed_refs": []}
+        injected_output = {"procedures": [{"ref": str(row.id), "steps_doc": injected_doc}], "failed_refs": []}
+    else:
+        submitted["viewpoints"] = [{"item_id": row.id, "variables": [["injected_signal", "Injected signal"]]}]
+        clean_output = {"lib_name": "set_speed", "lib_para": [], "lib_stb": clean_doc,
+                        "rewritten": [{"item_id": row.id, "steps_doc": clean_doc}]}
+        injected_output = {**clean_output, "lib_stb": injected_doc,
+                           "rewritten": [{"item_id": row.id, "steps_doc": injected_doc}]}
+    payload = context.build_payload(env["project"].id, scenario, submitted)
+    assert validators.validate_output(scenario, payload, clean_output, for_apply=True) == []
+    draft = make_draft(env, scenario, payload=payload,
+                       output=clean_output if decision == "edit" else injected_output)
+    before = approval_snapshot()
+    client, headers = login(env)
+    if decision == "edit":
+        response = client.put(f"/api/v1/ai/drafts/{draft.id}", headers=headers, json={"output": injected_output})
+        assert response.status_code == 400, response.get_json()
+        assert "injected_signal" in json.dumps(response.get_json(), ensure_ascii=False)
+    else:
+        response = client.post(f"/api/v1/ai/drafts/{draft.id}/approve", headers=headers, json={})
+        assert response.status_code == 409, response.get_json()
+        assert "injected_signal" in response.get_json()["error"]["message"]
+    db.session.expire_all()
+    assert approval_snapshot() == before
+
+    signal_dict.replace_entries(env["project"].id, env["user"].id,
+                                [["Injected signal", "injected_signal"]])
+    registered_payload = context.build_payload(env["project"].id, scenario, submitted)
+    registered = make_draft(env, scenario, payload=registered_payload,
+                            output=clean_output if decision == "edit" else injected_output)
+    if decision == "edit":
+        response = client.put(f"/api/v1/ai/drafts/{registered.id}", headers=headers, json={"output": injected_output})
+        assert response.status_code == 200, response.get_json()
+    response = client.post(f"/api/v1/ai/drafts/{registered.id}/approve", headers=headers, json={})
+    assert response.status_code == 200, response.get_json()
+    db.session.refresh(registered)
+    assert registered.status == "approved"

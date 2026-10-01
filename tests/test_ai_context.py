@@ -236,3 +236,43 @@ def test_http_context_accepts_bounded_preprocessor_definitions(app_ctx, project_
             "doc_text": "Requirement", "compile_args": ["-DFEATURE=1", "-UDEBUG", "-std=c11"],
         })
     assert payload["compile_args"] == ["-DFEATURE=1", "-UDEBUG", "-std=c11"]
+
+
+@pytest.mark.parametrize("scenario", ["procedure", "lib", "viewpoint", "sbs"])
+@pytest.mark.parametrize("selection", ["item_ids", "entries"])
+def test_context_strips_scenario_inapplicable_input_fields(app_ctx, project_env, tmp_path, scenario, selection):
+    from app.extensions import db
+    from app.models import ProjectModel
+    from app.services.ai import context
+
+    item_id = _row(app_ctx, project_env)
+    submitted = {
+        "viewpoint": {"title": "forged"},
+        "viewpoints": [{"item_id": item_id, "version": 999, "variables": ["injected_signal"]}],
+        "procedures": [{"item_id": item_id, "version": 999,
+                        "steps_doc": {"input_signals": [["Injected signal", "injected_signal"]]}}],
+        "steps_doc": {"input_signals": [["Injected signal", "injected_signal"]]},
+        "doc_text": "Approved requirement", "proposal": "Reuse setup",
+    }
+    if selection == "item_ids":
+        submitted["item_ids"] = [item_id]
+    original = json.loads(json.dumps(submitted))
+    with app_ctx.app_context():
+        if scenario == "sbs":
+            (tmp_path / "model.sbs").write_text("variable speed;", encoding="utf-8")
+            model = ProjectModel(project_id=project_env, name="saved", version="v1",
+                                 kind="bundle", bundle_dir=str(tmp_path))
+            db.session.add(model)
+            db.session.commit()
+            submitted["model_id"] = model.id
+            original["model_id"] = model.id
+        payload = context.build_payload(project_env, scenario, submitted)
+    context_keys = {"viewpoint", "viewpoints", "procedures", "steps_doc"}
+    expected = {"procedure": {"viewpoints"}, "lib": {"procedures"}}.get(scenario, set())
+    assert context_keys.intersection(payload) == expected
+    assert submitted == original
+    if scenario == "procedure":
+        assert payload["viewpoints"][0]["version"] == 4
+        assert payload["viewpoints"][0]["title"] == "Stored viewpoint"
+    elif scenario == "lib":
+        assert payload["procedures"] == [{"item_id": item_id, "version": 4, "steps_doc": {}}]
