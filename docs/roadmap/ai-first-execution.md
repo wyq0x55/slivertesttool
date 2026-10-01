@@ -47,9 +47,12 @@ M0 fixes and isolated acceptance landed in PR #34 at `dde8513`, with green PR
 and main CI. See
 [`../verification/m0-delivery-2026-10-01.md`](../verification/m0-delivery-2026-10-01.md).
 The user authorized autonomous M1-M4 engineering delivery, including commits,
-pushes and green-CI-only integration. Current engineering work is isolated on
-`codex/ai-first-roadmap`. Local M1-M4 engineering verification is recorded;
-GitHub PR and main checks are the authoritative integration record.
+pushes and green-CI-only integration. M1-M4 landed in PR #35 at `c7ee963`,
+with successful PR and main CI. The follow-up real-Silver release lane is
+isolated on `codex/real-silver-acceptance`; its reproduced defects, real runtime
+evidence and remaining boundaries are recorded in
+[Silver release verification](../verification/silver-release-2026-10-02.md).
+GitHub PR and main checks remain the authoritative integration record.
 The existing root worktree changes to `CONTEXT.md` and ADR 0003 are preserved.
 
 Implementation and exact test checkpoints are recorded in
@@ -59,4 +62,5 @@ The original milestone windows are not a runtime or efficiency proof.
 
 The real two-module/20-approved-viewpoint pilot and manual timing remain
 human-owned rollout gates. Formal asset approval, candidate SBS activation and
-real Silver execution are never inferred from engineering completion.
+real Silver execution are never inferred from engineering completion. The
+isolated historical Silver acceptance is not the two-module efficiency pilot.
