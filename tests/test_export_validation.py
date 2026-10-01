@@ -38,6 +38,56 @@ def test_valid_export_uses_actual_runner_parser(tmp_path):
     assert steps[0].timeout == 0.1
 
 
+@pytest.mark.parametrize("number", [1.0, 2.0])
+def test_export_accepts_integral_step_numbers_from_imported_rows(tmp_path, number):
+    from app.services.run_validation_service import validate_documents
+
+    manifest = exporter.materialise_run_dir(
+        tmp_path / "TC-1", row(steps=body(steps=[{"no": number, "inputs": ["BASE"]}])),
+        [row(const_name="BASE", const_value="2")], [])
+    testcase = json.loads(manifest["testcase_json"].read_text(encoding="utf-8"))
+    constants = json.loads(manifest["constants_json"].read_text(encoding="utf-8"))
+    library = json.loads(manifest["lib_json"].read_text(encoding="utf-8"))
+
+    steps = validate_documents(testcase, constants, library)
+
+    assert steps[0].no == number
+    assert steps[0].inputs[0].value == 2
+
+
+@pytest.mark.parametrize("initialisation", [False, True])
+def test_export_accepts_integral_step_numbers_in_existing_libraries(tmp_path, initialisation):
+    from app.services.run_validation_service import validate_documents
+
+    procedure = body(steps=[{"no": 1.0, "subroutine": "Set"}])
+    existing_library = row(lib_func="Set", isinit=initialisation,
+                           lib_stb=body(steps=[{"no": 1.0, "inputs": ["BASE"]}]))
+    manifest = exporter.materialise_run_dir(
+        tmp_path / "TC-1", row(steps=procedure),
+        [row(const_name="BASE", const_value="2")], [existing_library])
+    testcase = json.loads(manifest["testcase_json"].read_text(encoding="utf-8"))
+    constants = json.loads(manifest["constants_json"].read_text(encoding="utf-8"))
+    library = json.loads(manifest["lib_json"].read_text(encoding="utf-8"))
+
+    assert validate_documents(testcase, constants, library)[0].no == 1
+    assert validate_documents(library["subroutines"]["Set"], constants, library)[0].inputs[0].value == 2
+
+
+@pytest.mark.parametrize("numbers", [
+    [True], [False], [0.0], [-1.0], [0.5], [1.5], ["1"], [None],
+    [float("inf")], [float("nan")], [1, 1.0], [2.0, 2.0],
+])
+def test_export_rejects_invalid_or_duplicate_step_numbers(tmp_path, numbers):
+    procedure = body(steps=[{"no": number, "inputs": ["BASE"]} for number in numbers])
+
+    with pytest.raises(ValueError):
+        exporter.materialise_run_dir(
+            tmp_path / "TC-1", row(steps=procedure),
+            [row(const_name="BASE", const_value="2")], [])
+
+    assert not (tmp_path / "TC-1").exists()
+
+
 @pytest.mark.parametrize("procedure,libraries,constants", [
     ("{broken", [], []),
     (body(steps=[]), [], []),

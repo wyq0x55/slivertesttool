@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import subprocess
+import xml.etree.ElementTree as ET
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -86,6 +87,97 @@ def test_saved_companions_are_pinned_and_references_rewritten(tmp_path):
     sbs.write_bytes(b"sbs-v2")
     assert (pinned.parent / dll.name).read_bytes() == b"dll-v1"
     assert (pinned.parent / sbs.name).read_bytes() == b"sbs-v1"
+
+
+@pytest.mark.parametrize("quote", ["", '"', "'"])
+def test_real_silver_xml_dependencies_are_pinned_without_xml_tag_prefix(tmp_path, quote):
+    evidence = service()
+    task, source, model = prepared(tmp_path)
+    dll, sbs, symbols = model.with_suffix(".dll"), model.with_suffix(".sbs"), model.with_suffix(".pdb")
+    dll.write_bytes(b"dll-v1")
+    sbs.write_bytes(b"sbs-v1")
+    symbols.write_bytes(b"symbols-v1")
+    original = (
+        '<configuration><module><sil-line>'
+        f'{quote}{dll.as_posix()}{quote} -S {quote}{sbs.as_posix()}{quote}'
+        '</sil-line></module></configuration>')
+    model.write_text(original, encoding="utf-8")
+
+    evidence.pin_attempt(task, source)
+    data = evidence.read_evidence(task)
+    pinned = Path(data["model"]["execution_path"])
+    module_line = ET.fromstring(pinned.read_text(encoding="utf-8")).find("module/sil-line").text
+
+    assert module_line == (
+        f'{quote}{(pinned.parent / dll.name).as_posix()}{quote}'
+        f' -S {quote}{(pinned.parent / sbs.name).as_posix()}{quote}')
+    assert (pinned.parent / dll.name).read_bytes() == b"dll-v1"
+    assert (pinned.parent / sbs.name).read_bytes() == b"sbs-v1"
+    assert (pinned.parent / symbols.name).read_bytes() == b"symbols-v1"
+    assert (pinned.parent / "approved.sil").read_text(encoding="utf-8") == original
+    assert model.read_text(encoding="utf-8") == original
+
+
+def test_silver_xml_only_rewrites_module_dependencies_not_embedded_python(tmp_path):
+    evidence = service()
+    task, source, model = prepared(tmp_path)
+    dll, sbs = model.with_suffix(".dll"), model.with_suffix(".sbs")
+    dll.write_bytes(b"dll-v1")
+    sbs.write_bytes(b"sbs-v1")
+    script = "import ctypes; ctypes.CDLL('x86/a2laccess.dll')"
+    configuration = ET.Element("configuration")
+    ET.SubElement(configuration, "property", name="script").text = script
+    module = ET.SubElement(configuration, "module")
+    ET.SubElement(module, "sil-line").text = f"{dll.as_posix()} -S {sbs.as_posix()}"
+    original = ET.tostring(configuration, encoding="unicode").replace("'", "&apos;")
+    model.write_text(original, encoding="utf-8")
+
+    evidence.pin_attempt(task, source)
+    data = evidence.read_evidence(task)
+    pinned = Path(data["model"]["execution_path"])
+    execution = ET.fromstring(pinned.read_text(encoding="utf-8"))
+
+    assert execution.find("property").text == script
+    assert execution.find("module/sil-line").text == (
+        f"{(pinned.parent / dll.name).as_posix()} -S {(pinned.parent / sbs.name).as_posix()}")
+    assert (pinned.parent / "approved.sil").read_text(encoding="utf-8") == original
+    assert model.read_text(encoding="utf-8") == original
+    assert set(data["model"]["files"]) == {"approved.sil", "plant.sil", "plant.dll", "plant.sbs"}
+    assert pinned.read_text(encoding="utf-8") == original.replace(
+        f"{dll.as_posix()} -S {sbs.as_posix()}",
+        f"{(pinned.parent / dll.name).as_posix()} -S {(pinned.parent / sbs.name).as_posix()}")
+
+
+def test_malformed_silver_xml_is_not_treated_as_plain_text_model(tmp_path):
+    evidence = service()
+    task, source, model = prepared(tmp_path)
+    model.write_text("<configuration><module>", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="XML"):
+        evidence.pin_attempt(task, source)
+
+    assert not evidence.attempt_dir(task).exists()
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_pinned_silver_xml_preserves_original_newline_bytes(tmp_path, newline):
+    evidence = service()
+    task, source, model = prepared(tmp_path)
+    dll, sbs = model.with_suffix(".dll"), model.with_suffix(".sbs")
+    dll.write_bytes(b"dll-v1")
+    sbs.write_bytes(b"sbs-v1")
+    module_line = f"{dll.as_posix()} -S {sbs.as_posix()}"
+    original = newline.join([
+        "<workspace>", '<property name="label">日本語 &apos;label&apos;</property>',
+        f"<module><sil-line>{module_line}</sil-line></module>", "</workspace>"]).encode("utf-8")
+    model.write_bytes(original)
+
+    evidence.pin_attempt(task, source)
+    pinned = Path(evidence.read_evidence(task)["model"]["execution_path"])
+    replacement = f"{(pinned.parent / dll.name).as_posix()} -S {(pinned.parent / sbs.name).as_posix()}"
+
+    assert pinned.read_bytes() == original.replace(module_line.encode("utf-8"), replacement.encode("utf-8"))
+    assert (pinned.parent / "approved.sil").read_bytes() == original
 
 
 def test_retest_from_pinned_model_keeps_original_identity_hash(tmp_path):
@@ -504,6 +596,39 @@ def test_pooled_console_is_sliced_before_sealing_all_outcomes(submitted, monkeyp
     assert task.result == ("ERROR" if failure else "FAIL")
     console.write_bytes(b"subsequent case\n")
     assert service().read_evidence(task)["logs"] == data["logs"]
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_pooled_late_csv_flush_cannot_change_sealed_results(submitted, monkeypatch, failure):
+    from app.runners import test_runner
+    from app.runners.silver_runner import RunnerError
+
+    application, task, _source, _model = submitted
+    instance = SimpleNamespace(uid=1, handle=object(), console_log=None)
+    writers = []
+
+    def run(current, context):
+        (context.log_dir / "jdgrslt.log").write_text("Test is Passed.", encoding="utf-8")
+        writer = (context.log_dir / "output.csv").open("wb")
+        writer.write(b"completed simulation\n")
+        writer.flush()
+        writers.append(writer)
+        if failure:
+            raise RunnerError("synthetic pooled failure")
+
+    pool = SimpleNamespace(is_mock=True, configure_and_run=run, force_stop=lambda current: None)
+    try:
+        test_runner.execute(application, application.config_obj, task, pool=pool, instance=instance)
+        sealed = service().read_evidence(task)
+        writers[0].write(b"native writer teardown\n")
+        writers[0].flush()
+
+        assert service().read_evidence(task) == sealed
+        assert (Path(sealed["archive_path"]) / "results" / "output.csv").read_bytes() == b"completed simulation\n"
+        assert task.result == ("ERROR" if failure else "PASS")
+    finally:
+        for writer in writers:
+            writer.close()
 
 
 def test_purge_removes_only_its_task_archive_and_soft_delete_preserves_it(tmp_path):

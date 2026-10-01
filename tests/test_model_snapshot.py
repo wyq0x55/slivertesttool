@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib
 import os
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -75,6 +76,110 @@ def test_registering_another_version_keeps_the_saved_copy(app, tmp_path):
     with pytest.raises(pms.ModelError):
         pms.add_path_model(project.id, "engine", str(sil), version="v1")
     assert ProjectModel.query.filter_by(project_id=project.id, name="engine").count() == 2
+
+
+def test_xml_saved_copy_preserves_non_module_script_paths(app, tmp_path):
+    from app.extensions import db
+    from app.models import Project
+    from app.services import project_model_service as models
+
+    project = Project(code="SNAPXML", name="XML snapshot", owner_id=None)
+    db.session.add(project)
+    db.session.commit()
+    source = _remote_model(tmp_path)
+    (source.parent / "a2laccess.dll").write_bytes(b"runtime-plugin")
+    script = "import ctypes; ctypes.CDLL('a2laccess.dll')"
+    configuration = ET.Element("workspace")
+    ET.SubElement(configuration, "property", name="script").text = script
+    module = ET.SubElement(configuration, "module")
+    ET.SubElement(module, "sil-line").text = (
+        f"{(source.parent / 'host.dll').as_posix()} -S {(source.parent / 'host.sbs').as_posix()}")
+    original = ET.tostring(configuration, encoding="unicode")
+    source.write_text(original, encoding="utf-8")
+
+    registered = models.add_path_model(project.id, "engine", str(source), version="v1")
+    saved = Path(registered["path"])
+    execution = ET.fromstring(saved.read_text(encoding="utf-8"))
+
+    assert execution.find("property").text == script
+    assert execution.find("module/sil-line").text == (
+        f"{(saved.parent / 'host.dll').resolve().as_posix()} -S {(saved.parent / 'host.sbs').resolve().as_posix()}")
+    assert (saved.parent / "host.dll").read_bytes() == b"dll"
+    assert (saved.parent / "host.sbs").read_bytes() == b"sbs"
+    assert (saved.parent / "host.pdb").read_bytes() == b"pdb"
+    assert not (saved.parent / "a2laccess.dll").exists()
+    assert source.read_text(encoding="utf-8") == original
+    assert saved.read_text(encoding="utf-8") == original.replace(
+        f"{(source.parent / 'host.dll').as_posix()} -S {(source.parent / 'host.sbs').as_posix()}",
+        f"{(saved.parent / 'host.dll').resolve().as_posix()} -S {(saved.parent / 'host.sbs').resolve().as_posix()}")
+
+
+@pytest.mark.parametrize("declaration", ["", '<?xml version="1.0" encoding="UTF-8"?>\n'])
+def test_xml_module_rewrite_preserves_native_format_and_ignores_cdata(declaration):
+    from app.services import project_model_service as models
+
+    original = (
+        declaration + '<workspace>\n  <gui-module/>\n'
+        '<!-- keep the native layout -->\n'
+        '<property name="script"><![CDATA[<sil-line>script.dll</sil-line>]]></property>\n'
+        '<property name="label">日本語 &apos;label&apos;</property>\n'
+        '<module><sil-line mode="a>b">host.dll -S host.sbs</sil-line></module>\n'
+        '<module><sil-line/></module>\n</workspace>')
+    paths = []
+
+    def replace(match):
+        paths.append(match.group("path"))
+        return "saved&model/" + match.group("path")
+
+    rewritten = models.rewrite_model_module_paths(original, replace)
+
+    assert rewritten == original.replace(
+        "host.dll -S host.sbs", "saved&amp;model/host.dll -S saved&amp;model/host.sbs")
+    assert paths == ["host.dll", "host.sbs"]
+
+
+def test_malformed_xml_cannot_be_registered_as_a_saved_model(app, tmp_path):
+    from app.extensions import db
+    from app.models import Project, ProjectModel
+    from app.services import project_model_service as models
+
+    project = Project(code="SNAPBADXML", name="Malformed XML", owner_id=None)
+    db.session.add(project)
+    db.session.commit()
+    source = _remote_model(tmp_path)
+    source.write_text("<workspace><module>", encoding="utf-8")
+    model_root = Path(app.config["MODEL_DIR"]) / project.code
+    existing = set(model_root.rglob("*"))
+
+    with pytest.raises(models.ModelError, match="XML"):
+        models.add_path_model(project.id, "engine", str(source), version="v1")
+
+    assert ProjectModel.query.filter_by(project_id=project.id).count() == 0
+    assert set(model_root.rglob("*")) == existing
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_saved_silver_xml_preserves_original_newline_bytes(app, tmp_path, newline):
+    from app.extensions import db
+    from app.models import Project
+    from app.services import project_model_service as models
+
+    project = Project(code="SNAPNEWLINE", name="Native newlines", owner_id=None)
+    db.session.add(project)
+    db.session.commit()
+    source = _remote_model(tmp_path)
+    module_line = f"{(source.parent / 'host.dll').as_posix()} -S {(source.parent / 'host.sbs').as_posix()}"
+    original = newline.join([
+        "<workspace>", "<gui-module/>",
+        f"<module><sil-line>{module_line}</sil-line></module>", "</workspace>"]).encode("utf-8")
+    source.write_bytes(original)
+
+    registered = models.add_path_model(project.id, "engine", str(source), version="v1")
+    saved = Path(registered["path"])
+    replacement = f"{(saved.parent / 'host.dll').resolve().as_posix()} -S {(saved.parent / 'host.sbs').resolve().as_posix()}"
+
+    assert saved.read_bytes() == original.replace(module_line.encode("utf-8"), replacement.encode("utf-8"))
+    assert source.read_bytes() == original
 
 
 def test_database_rejects_duplicate_unversioned_models(app):

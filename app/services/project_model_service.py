@@ -30,6 +30,8 @@ import datetime as _dt
 import re
 import shutil
 import tempfile
+import xml.parsers.expat as expat
+from html import escape
 from pathlib import Path
 from typing import List, Optional
 
@@ -239,9 +241,55 @@ def set_current(project_id: int, name: str,
 # --------------------------------------------------------------------------- #
 
 _MODULE_PATH_RE = re.compile(
-    r"(?P<path>(?:[A-Za-z]:[\\/]|\\\\)?[^\s\"']+\.(?:dll|sbs|pdb))",
+    r"(?P<path>(?:[A-Za-z]:[\\/]|\\\\)?[^\s\"'<>]+\.(?:dll|sbs|pdb))",
     re.IGNORECASE,
 )
+
+
+def rewrite_model_module_paths(original: str, replace) -> str:
+    if not original.lstrip("\ufeff \t\r\n").startswith("<"):
+        return _MODULE_PATH_RE.sub(replace, original)
+    content = original.encode("utf-8")
+    parser = expat.ParserCreate()
+    elements = []
+    module_start = 0
+    module_text = []
+    modules = []
+
+    def start_element(name, attributes):
+        nonlocal module_start
+        if elements and elements[-1] == "sil-line":
+            raise ModelError("Saved model XML module line contains nested elements")
+        elements.append(name)
+        if name == "sil-line":
+            module_start = parser.CurrentByteIndex
+            module_text.clear()
+
+    def character_data(value):
+        if elements and elements[-1] == "sil-line":
+            module_text.append(value)
+
+    def end_element(name):
+        if name == "sil-line":
+            end = parser.CurrentByteIndex
+            raw = content[module_start:end]
+            if not raw.endswith(b"/>"):
+                opening = re.match(rb"<sil-line(?:[^>\"']|\"[^\"]*\"|'[^']*')*>", raw)
+                modules.append((module_start + opening.end(), end, "".join(module_text)))
+        elements.pop()
+
+    parser.StartElementHandler = start_element
+    parser.CharacterDataHandler = character_data
+    parser.EndElementHandler = end_element
+    try:
+        parser.Parse(content, True)
+    except expat.ExpatError as exc:
+        raise ModelError("Saved model XML is malformed") from exc
+    for start, end, text in reversed(modules):
+        rewritten = _MODULE_PATH_RE.sub(replace, text)
+        if rewritten != text:
+            content = content[:start] + escape(rewritten, quote=False).encode("utf-8") + content[end:]
+    return content.decode("utf-8")
 
 
 def _version_dir_name(name: str, version: str) -> str:
@@ -304,11 +352,13 @@ def _validate_name(project_id: int, name: str) -> None:
 def _materialise_saved_model(config, project_id: int, name: str, version: str,
                              source_sil: Path) -> Path:
     """Copy a remote or external model into this version's local directory."""
-    dest_root = _new_model_dir(config, project_id, name, version)
     try:
-        original = source_sil.read_text(encoding="utf-8")
+        original = source_sil.read_bytes().decode("utf-8")
     except (OSError, UnicodeError):
         original = None
+    if original and original.lstrip("\ufeff \t\r\n").startswith("<"):
+        rewrite_model_module_paths(original, lambda match: match.group("path"))
+    dest_root = _new_model_dir(config, project_id, name, version)
 
     def _existing(raw: str) -> Optional[Path]:
         candidate = Path(raw)
@@ -320,7 +370,7 @@ def _materialise_saved_model(config, project_id: int, name: str, version: str,
                 return joined
         return None
 
-    if original and " -S " in original:
+    if original and (" -S " in original or original.lstrip("\ufeff \t\r\n").startswith("<")):
         def _replace(match):
             raw = match.group("path")
             src = _existing(raw)
@@ -336,7 +386,7 @@ def _materialise_saved_model(config, project_id: int, name: str, version: str,
             return _module_ref(target)
 
         sil_dest = dest_root / source_sil.name
-        sil_dest.write_text(_MODULE_PATH_RE.sub(_replace, original), encoding="utf-8")
+        sil_dest.write_bytes(rewrite_model_module_paths(original, _replace).encode("utf-8"))
         return sil_dest
 
     sil_dest = dest_root / source_sil.name
