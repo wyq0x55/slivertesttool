@@ -30,6 +30,7 @@ import datetime as _dt
 import re
 import shutil
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import List, Optional
 
@@ -244,6 +245,18 @@ _MODULE_PATH_RE = re.compile(
 )
 
 
+def rewrite_model_module_paths(original: str, replace) -> str:
+    if not original.lstrip("\ufeff \t\r\n").startswith("<"):
+        return _MODULE_PATH_RE.sub(replace, original)
+    try:
+        root = ET.fromstring(original)
+    except ET.ParseError as exc:
+        raise ModelError("Saved model XML is malformed") from exc
+    for module_line in root.iter("sil-line"):
+        module_line.text = _MODULE_PATH_RE.sub(replace, module_line.text or "")
+    return ET.tostring(root, encoding="unicode", xml_declaration=True)
+
+
 def _version_dir_name(name: str, version: str) -> str:
     """Directory segment for one saved name@version copy."""
     base = _safe_segment(name, "model")
@@ -320,7 +333,7 @@ def _materialise_saved_model(config, project_id: int, name: str, version: str,
                 return joined
         return None
 
-    if original and " -S " in original:
+    if original and (" -S " in original or original.lstrip("\ufeff \t\r\n").startswith("<")):
         def _replace(match):
             raw = match.group("path")
             src = _existing(raw)
@@ -336,7 +349,7 @@ def _materialise_saved_model(config, project_id: int, name: str, version: str,
             return _module_ref(target)
 
         sil_dest = dest_root / source_sil.name
-        sil_dest.write_text(_MODULE_PATH_RE.sub(_replace, original), encoding="utf-8")
+        sil_dest.write_text(rewrite_model_module_paths(original, _replace), encoding="utf-8")
         return sil_dest
 
     sil_dest = dest_root / source_sil.name

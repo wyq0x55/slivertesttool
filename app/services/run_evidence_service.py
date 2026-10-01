@@ -148,7 +148,7 @@ def _pin_model(task, source, root, workspace):
         text = execution_text.decode("utf-8")
     except UnicodeError as exc:
         raise EvidenceError("Only text saved .sil configurations can be pinned safely") from exc
-    from .project_model_service import _MODULE_PATH_RE
+    from .project_model_service import ModelError, rewrite_model_module_paths
     from ..config import BASE_DIR
 
     def replace(match):
@@ -171,7 +171,11 @@ def _pin_model(task, source, root, workspace):
                 shutil.copy2(symbols, target_root / symbols.name)
         return destination.resolve().as_posix()
 
-    executable.write_text(_MODULE_PATH_RE.sub(replace, text), encoding="utf-8")
+    try:
+        execution = rewrite_model_module_paths(text, replace)
+    except ModelError as exc:
+        raise EvidenceError(str(exc)) from exc
+    executable.write_text(execution, encoding="utf-8")
     return {"id": getattr(task, "sil_model_id", None), "name": task.sil_name or "",
             "version": task.sil_version or "", "source_path": source_path,
             "sha256": hashlib.sha256(original).hexdigest(),

@@ -103,7 +103,7 @@ def test_xml_saved_copy_preserves_non_module_script_paths(app, tmp_path):
 
     assert execution.find("property").text == script
     assert execution.find("module/sil-line").text == (
-        f"{(saved.parent / 'host.dll').as_posix()} -S {(saved.parent / 'host.sbs').as_posix()}")
+        f"{(saved.parent / 'host.dll').resolve().as_posix()} -S {(saved.parent / 'host.sbs').resolve().as_posix()}")
     assert (saved.parent / "host.dll").read_bytes() == b"dll"
     assert (saved.parent / "host.sbs").read_bytes() == b"sbs"
     assert (saved.parent / "host.pdb").read_bytes() == b"pdb"
