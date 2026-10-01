@@ -10,12 +10,12 @@ from typing import Any
 from flask import current_app
 
 from ...extensions import db
-from ...models import CellComment, Project, ProjectModel, SbsRevision, TestItemRow
+from ...models import AiSignalDict, CellComment, Project, ProjectModel, SbsRevision, TestItemRow
 from ...models.ai_draft import AiDraft
 from ..lanmatrix import items_service, permissions, service, sbs_service
 from ..lanmatrix.service import ServiceError
 from . import validators
-from .output_validation import item_snapshots, procedure_entries
+from .output_validation import context_digest, item_snapshots, procedure_entries
 
 _KIND_JP = {"normal": "正例", "abnormal": "反例", "boundary": "境界値", "combination": "組合せ"}
 
@@ -52,18 +52,35 @@ def _guard_row_writes(project_id):
         raise ApplyError("Active collaboration owns row mutations; approval is blocked")
 
 
-def _lock_items(project, snapshots):
-    if not snapshots:
+def _lock_items(project, snapshots, dependencies):
+    versions = dict(snapshots)
+    for entry in dependencies:
+        identity, version = entry["id"], entry["version"]
+        if identity in versions and versions[identity] != version:
+            raise ApplyError("Inconsistent generation source versions; regenerate this draft")
+        versions[identity] = version
+    if not versions:
         return {}
-    rows = (TestItemRow.query.filter(TestItemRow.id.in_(sorted(snapshots)))
+    rows = (TestItemRow.query.filter(TestItemRow.id.in_(sorted(versions)))
             .order_by(TestItemRow.id).populate_existing().with_for_update().all())
     by_id = {row.id: row for row in rows}
-    for identity, version in snapshots.items():
+    for identity, version in versions.items():
         row = by_id.get(identity)
         if (row is None or row.project_id != project.id or row.deleted_at is not None
-                or row.sheet != "test" or row.version != version):
+                or identity in snapshots and row.sheet != "test" or row.version != version):
             raise ApplyError(f"Generation item {identity} is stale, deleted or unavailable; regenerate this draft")
     return by_id
+
+
+def _check_dictionary(project_id, context):
+    if "signal_dict_sha256" not in context:
+        return
+    from . import signal_dict
+    (AiSignalDict.query.filter_by(project_id=project_id).order_by(AiSignalDict.path)
+     .populate_existing().with_for_update().all())
+    actual = context_digest(signal_dict.entries_for(project_id))
+    if actual != context["signal_dict_sha256"]:
+        raise ApplyError("Signal dictionary changed; regenerate this draft")
 
 
 def _lock_model(project, payload, scenario):
@@ -109,7 +126,9 @@ def _provenance(draft, payload):
     encoded = json.dumps(sources, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return {"draft_id": draft.id, "provenance": {
         "sources": sources, "sha256": hashlib.sha256(encoded.encode("utf-8")).hexdigest()},
-        "model_snapshot": payload["_context"].get("model")}
+        "model_snapshot": payload["_context"].get("model"),
+        "source_dependencies": payload["_context"].get("dependencies", []),
+        "signal_dict_sha256": payload["_context"].get("signal_dict_sha256")}
 
 
 def apply_draft(draft: AiDraft, reviewer, refs: list[str] | None = None) -> dict[str, Any]:
@@ -133,7 +152,11 @@ def apply_draft(draft: AiDraft, reviewer, refs: list[str] | None = None) -> dict
         if draft.scenario in ("viewpoint", "procedure", "lib"):
             _guard_row_writes(project.id)
         snapshots, _problems = item_snapshots(draft.scenario, payload, output, refs)
-        rows = _lock_items(project, snapshots)
+        dependencies = []
+        if draft.scenario in ("procedure", "lib"):
+            dependencies = payload["_context"].get("dependencies", [])
+            _check_dictionary(project.id, payload["_context"])
+        rows = _lock_items(project, snapshots, dependencies)
         model = _lock_model(project, payload, draft.scenario)
         if draft.scenario == "lib":
             existing_rows = (TestItemRow.query.filter_by(project_id=project.id, sheet="lib", deleted_at=None)
@@ -146,6 +169,8 @@ def apply_draft(draft: AiDraft, reviewer, refs: list[str] | None = None) -> dict
         applier = {"viewpoint": _apply_viewpoint, "procedure": _apply_procedure,
                    "sbs": _apply_sbs, "lib": _apply_lib, "failure": _apply_failure}[draft.scenario]
         result = applier(draft, reviewer, project, payload, output, rows, snapshots, model, evidence, refs)
+        if draft.scenario in ("procedure", "lib"):
+            _check_dictionary(project.id, payload["_context"])
         result.update(evidence)
         draft.status = AiDraft.STATUS_APPROVED
         draft.reviewed_by = reviewer.id

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import math
 import re
+import hashlib
+import json
 
 from . import c_index, registry, validators
 
@@ -42,6 +44,11 @@ def _positive_integer(value):
     return type(value) is int and value > 0
 
 
+def context_digest(value):
+    encoded = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
 def item_snapshots(scenario, payload, output, refs=None):
     context = payload.get("_context")
     if (not isinstance(context, dict) or context.get("schema_version") != 1
@@ -49,6 +56,13 @@ def item_snapshots(scenario, payload, output, refs=None):
             or not isinstance(context.get("items"), list)
             or not isinstance(context.get("provenance"), list)):
         return {}, ["Missing server generation context; regenerate this draft"]
+    if scenario in ("procedure", "lib") and "dependencies" in context:
+        dependencies = context["dependencies"]
+        if (not isinstance(dependencies, list)
+                or any(not isinstance(entry, dict) or not _positive_integer(entry.get("id"))
+                       or not _positive_integer(entry.get("version")) for entry in dependencies)
+                or len({entry["id"] for entry in dependencies}) != len(dependencies)):
+            return {}, ["Invalid generation source dependencies; regenerate this draft"]
     source = []
     if scenario == "procedure":
         entries, problems = procedure_entries(output, refs)
