@@ -577,6 +577,39 @@ def test_pooled_console_is_sliced_before_sealing_all_outcomes(submitted, monkeyp
     assert service().read_evidence(task)["logs"] == data["logs"]
 
 
+@pytest.mark.parametrize("failure", [False, True])
+def test_pooled_late_csv_flush_cannot_change_sealed_results(submitted, monkeypatch, failure):
+    from app.runners import test_runner
+    from app.runners.silver_runner import RunnerError
+
+    application, task, _source, _model = submitted
+    instance = SimpleNamespace(uid=1, handle=object(), console_log=None)
+    writers = []
+
+    def run(current, context):
+        (context.log_dir / "jdgrslt.log").write_text("Test is Passed.", encoding="utf-8")
+        writer = (context.log_dir / "output.csv").open("wb")
+        writer.write(b"completed simulation\n")
+        writer.flush()
+        writers.append(writer)
+        if failure:
+            raise RunnerError("synthetic pooled failure")
+
+    pool = SimpleNamespace(is_mock=True, configure_and_run=run, force_stop=lambda current: None)
+    try:
+        test_runner.execute(application, application.config_obj, task, pool=pool, instance=instance)
+        sealed = service().read_evidence(task)
+        writers[0].write(b"native writer teardown\n")
+        writers[0].flush()
+
+        assert service().read_evidence(task) == sealed
+        assert (Path(sealed["archive_path"]) / "results" / "output.csv").read_bytes() == b"completed simulation\n"
+        assert task.result == ("ERROR" if failure else "PASS")
+    finally:
+        for writer in writers:
+            writer.close()
+
+
 def test_purge_removes_only_its_task_archive_and_soft_delete_preserves_it(tmp_path):
     from app.services import task_service
     task, source, model = prepared(tmp_path)
