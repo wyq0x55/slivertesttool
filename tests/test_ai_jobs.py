@@ -147,3 +147,38 @@ def test_failed_publication_stays_recoverable(app_ctx, project_env):
         published = []
         jobs.recover(published.append)
         assert published == [draft_id]
+
+
+def test_cancel_stops_generation_before_validation_retry(app_ctx, project_env, monkeypatch):
+    from app.extensions import db
+    from app.models import AiDraft
+    from app.services.ai import jobs, provider
+    from app.jobqueue import tasks
+
+    monkeypatch.setattr(tasks, "_get_app", lambda: app_ctx)
+    with app_ctx.app_context():
+        draft_id, attempt = _draft(app_ctx, project_env)
+        calls = []
+
+        def cancelled_provider(*args, **kwargs):
+            calls.append(True)
+            jobs.cancel(draft_id)
+            return "invalid json"
+
+        monkeypatch.setattr(provider, "chat", cancelled_provider)
+        tasks.run_ai_generation(draft_id, attempt)
+        assert calls == [True]
+        assert db.session.get(AiDraft, draft_id).status == "cancelled"
+
+
+def test_pending_review_cannot_be_retried_or_cancelled(app_ctx, project_env):
+    from app.services.ai import jobs
+
+    with app_ctx.app_context():
+        draft_id, attempt = _draft(app_ctx, project_env)
+        jobs.claim(draft_id, attempt)
+        jobs.finish(draft_id, attempt, output={"module_id": "M"})
+        with pytest.raises(ValueError):
+            jobs.retry(draft_id)
+        with pytest.raises(ValueError):
+            jobs.cancel(draft_id)

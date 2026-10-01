@@ -140,3 +140,76 @@ def test_create_rejects_non_object_json(client):
     headers = _login(client, _admin(client))
     response = client.post("/api/v1/ai/drafts", json=[{"scenario": "viewpoint"}], headers=headers)
     assert response.status_code == 400
+
+
+def test_library_proposal_snapshots_stored_steps(app_ctx, project_env):
+    from app.extensions import db
+    from app.models import TestItemRow
+    from app.services.ai import context
+
+    item_id = _row(app_ctx, project_env)
+    with app_ctx.app_context():
+        row = db.session.get(TestItemRow, item_id)
+        row.custom_values = {"steps": json.dumps({"steps": [{"no": 1}]})}
+        db.session.commit()
+        payload = context.build_payload(project_env, "lib", {
+            "item_ids": [item_id], "proposal": "Reuse setup",
+            "procedures": [{"item_id": item_id, "version": 999, "steps_doc": {"forged": True}}],
+        })
+    assert payload["procedures"] == [{"item_id": item_id, "version": 4,
+                                      "steps_doc": {"steps": [{"no": 1}]}}]
+
+
+def test_sbs_proposal_reads_saved_base_without_mutation(app_ctx, project_env, tmp_path):
+    from app.extensions import db
+    from app.models import ProjectModel
+    from app.services.ai import context
+
+    sbs_path = tmp_path / "model.sbs"
+    sbs_path.write_text("int speed;", encoding="utf-8")
+    with app_ctx.app_context():
+        model = ProjectModel(project_id=project_env, name="saved", version="v1",
+                             kind="bundle", bundle_dir=str(tmp_path))
+        db.session.add(model)
+        db.session.commit()
+        payload = context.build_payload(project_env, "sbs", {
+            "model_id": model.id, "current_sbs": "forged base",
+            "source_files": {"engine.c": "int speed;"},
+        })
+        assert payload["_context"]["model"]["id"] == model.id
+        assert payload["_context"]["model"]["sbs_sha256"] == hashlib.sha256(b"int speed;").hexdigest()
+    assert payload["current_sbs"] == "int speed;"
+    assert sbs_path.read_text(encoding="utf-8") == "int speed;"
+
+
+@pytest.mark.parametrize("fields", [
+    {"model_id": True}, {"model_id": 999999}, {"source_files": {"file.c": 1}},
+    {"doc_text": 1}, {"doc_text": "x" * 256001},
+])
+def test_context_rejects_invalid_sources_and_models(app_ctx, project_env, fields):
+    from app.services.ai import context
+
+    with app_ctx.app_context(), pytest.raises(ValueError):
+        context.build_payload(project_env, "viewpoint", fields)
+
+
+def test_history_and_input_pool_are_server_owned(app_ctx, project_env):
+    from app.extensions import db
+    from app.models import TestItemRow
+    from app.services.ai import context
+
+    item_id = _row(app_ctx, project_env)
+    history_id = _row(app_ctx, project_env, case_id="H1")
+    with app_ctx.app_context():
+        history = db.session.get(TestItemRow, history_id)
+        history.workflow_status = "Ready"
+        history.custom_values = {"steps": json.dumps({"input_signals": [["Speed", "speed"]]})}
+        db.session.add(TestItemRow(project_id=project_env, sheet="io",
+                                  custom_values={"io_name": "Flag", "io_path": "flag"}))
+        db.session.add(TestItemRow(project_id=project_env, sheet="const",
+                                  custom_values={"const_name": "LIMIT"}))
+        db.session.commit()
+        payload = context.build_payload(project_env, "procedure", {"item_ids": [item_id]})
+    assert payload["sbs_variables"] == [["Flag", "flag"]]
+    assert payload["historical_pairs"] == [["Speed", "speed"]]
+    assert payload["constant_names"] == ["LIMIT"]

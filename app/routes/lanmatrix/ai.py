@@ -79,6 +79,8 @@ def list_scenarios():
 @login_required
 def create_draft():
     body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return err("BAD_REQUEST", "请求必须是 JSON 对象", status=400)
     scenario = str(body.get("scenario") or "").strip()
     project_id = body.get("project_id")
     payload = body.get("payload")
