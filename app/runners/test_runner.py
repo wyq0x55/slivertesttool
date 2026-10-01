@@ -313,6 +313,8 @@ def _execute_backend(app, config, task: Task, pool=None, instance=None,
         shutil.copytree(staging, run_dir)
     else:
         run_dir.mkdir(parents=True, exist_ok=True)
+    live_log_dir = evidence.checked_path(config.POOL_DIR, run_dir / ".results")
+    live_log_dir.mkdir()
     # ``sil_relpath`` holds either an absolute server-side model path (the
     # admin-registered model registry) or a path relative to the run directory
     # (the legacy in-bundle flow).
@@ -326,7 +328,7 @@ def _execute_backend(app, config, task: Task, pool=None, instance=None,
     # A reused instance writes its console to a stable per-instance file that
     # grows across runs; tail (and later slice) it from the current end so this
     # run only sees its own output. A dedicated instance logs into log_dir.
-    console_path = log_dir / "Console.log"
+    console_path = live_log_dir / "Console.log"
     start_offset = 0
     if pooled and getattr(instance, "console_log", None) is not None:
         console_path = Path(instance.console_log)
@@ -359,6 +361,10 @@ def _execute_backend(app, config, task: Task, pool=None, instance=None,
         stop_threads.set()
         monitor.join(timeout=2)
         tailer.join(timeout=2)
+        for path in evidence._files(live_log_dir):
+            destination = evidence.checked_path(log_dir, log_dir / path.relative_to(live_log_dir))
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, destination)
         if pooled and console_path != log_dir / "Console.log":
             _slice_console(console_path, start_offset, log_dir / "Console.log")
         logs_finished = True
@@ -379,7 +385,7 @@ def _execute_backend(app, config, task: Task, pool=None, instance=None,
     ctx = RunContext(
         test_id=task.test_id,
         run_dir=run_dir,
-        log_dir=log_dir,
+        log_dir=live_log_dir,
         sil_path=sil_path,
         gui=eff_gui,
         timeout=eff_timeout,
