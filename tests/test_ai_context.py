@@ -110,3 +110,27 @@ def test_context_snapshot_schema(app_ctx, project_env):
         assert set(schema["properties"]["items"]["items"]["required"]).issubset(entry)
         assert all(type(entry[key]) is int and entry[key] >= 1 for key in ("id", "version"))
     assert isinstance(stored["provenance"], list)
+
+
+def test_context_records_project_asset_dependencies(app_ctx, project_env):
+    from app.services.ai import context
+
+    item_id = _row(app_ctx, project_env)
+    lib_id = _row(app_ctx, project_env, sheet="lib", case_id="L1")
+    with app_ctx.app_context():
+        payload = context.build_payload(project_env, "procedure", {"item_ids": [item_id]})
+    assert {"id": lib_id, "version": 4} in payload["_context"]["dependencies"]
+
+
+def test_source_context_is_bounded_and_provenanced(app_ctx, project_env):
+    from app.services.ai import context
+
+    with app_ctx.app_context():
+        payload = context.build_payload(project_env, "viewpoint", {
+            "doc_text": "requirement", "source_context": "submitted context",
+        })
+    assert any(source["kind"] == "submitted_context" for source in payload["_context"]["provenance"])
+    with app_ctx.app_context(), pytest.raises(ValueError):
+        context.build_payload(project_env, "viewpoint", {
+            "doc_text": "requirement", "source_context": "x" * (context.MAX_SOURCE_CHARS + 1),
+        })
