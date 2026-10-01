@@ -196,6 +196,9 @@ def validate_output(scenario, payload, output, *, refs=None, for_apply=False) ->
                             if isinstance(item, dict) and isinstance(item.get("name"), str)}
                 problems.extend(validators.validate_steps_doc(entry.get("steps_doc"),
                                 known_paths=paths | (declared if not for_apply else set()), known_subs=subs))
+            if not problems:
+                from .runtime_validation import validate_runtime
+                problems.extend(validate_runtime(payload, [entry["steps_doc"] for entry in entries]))
         elif scenario == "lib":
             existing = set(payload.get("existing_lib_names") or [])
             item_ids = {entry["item_id"] for entry in payload.get("procedures") or [] if isinstance(entry, dict)}
@@ -212,6 +215,10 @@ def validate_output(scenario, payload, output, *, refs=None, for_apply=False) ->
                 problems.extend(_missing_problems(entry, for_apply))
                 problems.extend(validators.validate_steps_doc(entry.get("steps_doc"), known_paths=paths,
                                 known_subs=existing | {output.get("lib_name")}))
+            if not problems:
+                from .runtime_validation import validate_runtime
+                problems.extend(validate_runtime(payload, [entry["steps_doc"] for entry in output.get("rewritten") or []],
+                                                 candidate=output))
         return problems
     except (TypeError, ValueError, KeyError, AttributeError):
         return ["Invalid payload or output field types"]

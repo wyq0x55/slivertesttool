@@ -88,9 +88,13 @@ def validate_steps_doc(doc: Any, *, known_paths: set[str] | None = None,
                 if any(cell is not None and (type(cell) not in (str, int, float)
                        or isinstance(cell, float) and not math.isfinite(cell)) for cell in cells):
                     problems.append(f"steps[{i}].{key} cells must be text or finite numbers")
-        for key in ("purpose", "operation", "args", "timing"):
+        for key in ("purpose", "operation", "timing"):
             if step.get(key) is not None and not isinstance(step[key], str):
                 problems.append(f"steps[{i}].{key} must be text")
+        arguments = step.get("args")
+        if arguments is not None and not isinstance(arguments, str) and not (
+                isinstance(arguments, list) and all(type(value) in (str, int, float) for value in arguments)):
+            problems.append(f"steps[{i}].args must be text or a scalar array")
         sub = step.get("subroutine")
         if sub:
             if not isinstance(sub, str) or known_subs is not None and sub not in known_subs:

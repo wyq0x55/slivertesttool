@@ -114,10 +114,17 @@ def build_payload(project_id: int, scenario: str, submitted: dict[str, Any]) -> 
                            "sha256": _digest(row.to_dict())})
 
     rows = (TestItemRow.query.filter_by(project_id=project_id, deleted_at=None)
-            .order_by(TestItemRow.id).limit(2000).all())
+            .order_by(TestItemRow.id).all())
     libraries = [row for row in rows if row.sheet == "lib"]
+    payload["runtime_inputs"] = {
+        "constants": [{key: row.get_field(key) for key in ("const_name", "const_value", "const_jname", "const_note")}
+                      for row in rows if row.sheet == "const"],
+        "libraries": [{"case_id": row.case_id, **{key: row.get_field(key)
+                       for key in ("lib_func", "lib_name", "isinit", "lib_stb", "lib_para")}}
+                      for row in libraries],
+    }
     payload["lib_functions"] = [
-        {"name": row.get_field("lib_func") or "", "item_id": row.id,
+        {"name": row.get_field("lib_func") or row.get_field("lib_name") or row.case_id or "", "item_id": row.id,
          "version": row.version, "params": row.get_field("lib_para") or "",
          "steps_doc": _steps(row, "lib_stb")} for row in libraries
     ]

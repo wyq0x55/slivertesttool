@@ -52,7 +52,7 @@ def generate_viewpoint(payload: dict[str, Any]) -> base.GenerationResult:
             feedback=feedback)
 
     return base.generate_validated(build_prompt=build,
-                                   validate=validators.validate_viewpoints)
+                                   validate=lambda parsed: validators.validate_output("viewpoint", payload, parsed))
 
 
 # --------------------------------------------------------------------------- #
@@ -291,6 +291,10 @@ def generate_procedure(payload: dict[str, Any],
                 if ref in collected:
                     continue
                 doc, item_problems = _validate_item(item, plan, reg, known_subs)
+                if not item_problems:
+                    item_problems = validators.validate_output("procedure", payload, {
+                        "procedures": [{"ref": ref, "steps_doc": doc,
+                                        "missing_variables": item.get("missing_variables") or []}]})
                 if item_problems:
                     feedback.append(
                         f"ref {ref} 的问题：{'；'.join(item_problems)}。请只重新输出该条。")
@@ -357,8 +361,7 @@ def generate_sbs(payload: dict[str, Any]) -> base.GenerationResult:
 
     return base.generate_validated(
         build_prompt=build,
-        validate=lambda parsed: validators.validate_sbs(
-            parsed, known_variables=known_variables))
+        validate=lambda parsed: validators.validate_output("sbs", payload, parsed))
 
 
 # --------------------------------------------------------------------------- #
@@ -381,8 +384,7 @@ def generate_lib(payload: dict[str, Any]) -> base.GenerationResult:
 
     return base.generate_validated(
         build_prompt=build,
-        validate=lambda parsed: validators.validate_lib(
-            parsed, existing_lib_names=existing, item_ids=item_ids))
+        validate=lambda parsed: validators.validate_output("lib", payload, parsed))
 
 
 # --------------------------------------------------------------------------- #
@@ -401,7 +403,7 @@ def generate_failure(payload: dict[str, Any]) -> base.GenerationResult:
             feedback=feedback)
 
     return base.generate_validated(build_prompt=build,
-                                   validate=validators.validate_failure)
+                                   validate=lambda parsed: validators.validate_output("failure", payload, parsed))
 
 
 SCENARIOS = {

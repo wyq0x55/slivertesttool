@@ -694,20 +694,12 @@ def build_testcase(test_row: TestItemRow, *,
 # --------------------------------------------------------------------------- #
 # Run-directory materialisation
 # --------------------------------------------------------------------------- #
-def materialise_run_dir(
-    case_dir: Path,
+def build_documents(
     test_row: TestItemRow,
     const_rows: Iterable[TestItemRow],
     lib_rows: Iterable[TestItemRow],
-    task=None,
 ) -> dict:
-    """Assemble a self-contained JSON-runner directory at *case_dir*.
-
-    Writes ``testcase_<id>.json`` + ``lib.json`` + ``constants.json`` and copies
-    the runner framework files beside them. Returns a small manifest of the
-    written paths (the runner path is what ``silver_runner`` looks for).
-    """
-    case_dir = Path(case_dir)
+    """Build and validate the exact runner documents without filesystem writes."""
 
     # Materialise lib_rows once: it is consumed twice below (build_lib + the
     # CsvWriter signal list), so a bare generator would come up empty the second
@@ -777,6 +769,22 @@ def materialise_run_dir(
                 any(not _blank_cell(value) for value in step.get("inputs", []) + step.get("expecteds", []))):
             raise ConversionError("Init hoisting cannot preserve arguments or simultaneous signal cells")
     validate_documents(case_doc, const_doc, lib_doc)
+    return {"testcase": case_doc, "constants": const_doc, "library": lib_doc}
+
+
+def materialise_run_dir(
+    case_dir: Path,
+    test_row: TestItemRow,
+    const_rows: Iterable[TestItemRow],
+    lib_rows: Iterable[TestItemRow],
+    task=None,
+) -> dict:
+    """Write validated runner documents and optionally pin the approved attempt."""
+    case_dir = Path(case_dir)
+    lib_rows = list(lib_rows)
+    documents = build_documents(test_row, const_rows, lib_rows)
+    case_doc, const_doc, lib_doc = (documents[key] for key in ("testcase", "constants", "library"))
+    used_names = collect_used_subroutines(test_row, lib_rows)
 
     from .. import run_evidence_service as evidence
     evidence.validate_segment(row_test_id(test_row))
@@ -814,8 +822,8 @@ def materialise_run_dir(
     if task is not None:
         evidence.pin_attempt(task, case_dir, workspace=case_dir.parent.parent.parent,
                              approved_inputs={
-                                 "test": strict_body(test_row, TEST_STEPS),
-                                 "libraries": {name: strict_body(row, LIB_STEPS)
+                                 "test": _parse_json_field(test_row.get_field(TEST_STEPS)),
+                                 "libraries": {name: _parse_json_field(row.get_field(LIB_STEPS))
                                                for name, row in _lib_rows_by_name(lib_rows).items()
                                                if name in used_names},
                                  "constants": const_doc,
