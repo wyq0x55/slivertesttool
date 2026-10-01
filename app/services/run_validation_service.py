@@ -108,7 +108,8 @@ def validate_documents(testcase: dict, constants: dict, library: dict) -> list:
             numbers = set()
             for step in spec["steps"]:
                 number = step.get("no")
-                if isinstance(number, bool) or not isinstance(number, int) or number < 1 or number in numbers:
+                if (isinstance(number, bool) or not isinstance(number, (int, float))
+                        or number < 1 or number != int(number) or number in numbers):
                     raise ConversionError(f"{name}: step numbers must be unique positive integers")
                 numbers.add(number)
                 _duration(step.get("timeout", spec.get("default_timeout", 5)), name)
