@@ -68,7 +68,8 @@ def _steps(row: TestItemRow, key: str = "steps") -> dict:
 
 
 def _sources(payload: dict, provenance: list[dict]) -> None:
-    for key, kind in (("doc_text", "submitted_document"), ("log_text", "submitted_log")):
+    for key, kind in (("doc_text", "submitted_document"), ("log_text", "submitted_log"),
+                      ("source_context", "submitted_context")):
         value = payload.get(key)
         if value is None:
             continue
@@ -120,10 +121,12 @@ def build_payload(project_id: int, scenario: str, submitted: dict[str, Any]) -> 
                                  row.get_field("io_path")]
                                 for row in rows if row.sheet == "io" and row.get_field("io_path")]
     history = []
+    dependencies = [row for row in rows if row.sheet in ("const", "lib", "io")]
     for row in rows:
         if row.sheet != "test" or row.workflow_status == "Draft":
             continue
         doc = _steps(row)
+        dependencies.append(row)
         for key in ("input_signals", "expected_signals"):
             if isinstance(doc.get(key), list):
                 history.extend(doc[key])
@@ -164,5 +167,7 @@ def build_payload(project_id: int, scenario: str, submitted: dict[str, Any]) -> 
         payload["steps_doc"] = _steps(selected[0])
     payload["_context"] = {"schema_version": 1, "project_id": project_id,
                            "items": [{"id": row.id, "version": row.version} for row in selected],
+                           "dependencies": [{"id": row.id, "version": row.version} for row in dependencies],
+                           "signal_dict_sha256": _digest(payload["signal_dict"]),
                            "model": model_context, "provenance": provenance}
     return payload
