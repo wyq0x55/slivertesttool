@@ -108,17 +108,34 @@ def _current_limit(app) -> int:
         return license_service.get_limit()
 
 
+def _claim_run(database, task_pk: int, expected_run_count: int):
+    from ..models import Task, TaskStatus
+
+    task = (Task.query.filter_by(id=task_pk, run_count=expected_run_count,
+                                 status=TaskStatus.QUEUED.value, deleted_at=None,
+                                 cancel_requested=False)
+            .populate_existing().with_for_update().first())
+    if task is None:
+        database.session.rollback()
+        return None
+    task.status = TaskStatus.RUNNING.value
+    task.started_at = _utcnow()
+    task.message = "Running on Silver."
+    database.session.commit()
+    return task
+
+
 @huey.task()
-def run_task(task_pk: int) -> None:
+def run_task(task_pk: int, expected_run_count: int | None = None) -> None:
     app = _get_app()
     config = app.config_obj
     if _pooling_enabled(config, app):
-        _run_task_pooled(app, config, task_pk)
+        _run_task_pooled(app, config, task_pk, expected_run_count)
     else:
-        _run_task_dedicated(app, config, task_pk)
+        _run_task_dedicated(app, config, task_pk, expected_run_count)
 
 
-def _run_task_pooled(app, config, task_pk: int) -> None:
+def _run_task_pooled(app, config, task_pk: int, expected_run_count=None) -> None:
     """Execute a task on a pre-warmed, reusable pooled Silver instance."""
     from ..extensions import db
     from ..models import Task, TaskStatus
@@ -136,6 +153,10 @@ def _run_task_pooled(app, config, task_pk: int) -> None:
             logger.info("Task %s no longer queued (%s); skipping",
                         task.task_key, task.status)
             return
+        if expected_run_count is None:
+            expected_run_count = task.run_count or 1
+        if task.deleted_at is not None or task.run_count != expected_run_count:
+            return
         from ..runners import run_layout
         sil_ref = Path(task.sil_relpath)
         # Model path is normally absolute (admin registry); the legacy in-bundle
@@ -148,14 +169,16 @@ def _run_task_pooled(app, config, task_pk: int) -> None:
         with app.app_context():
             db.session.expire_all()
             t = db.session.get(Task, task_pk)
-            return t is None or t.cancel_requested or TaskStatus(t.status).is_final
+            return (t is None or t.cancel_requested or t.deleted_at is not None
+                    or t.status != TaskStatus.QUEUED.value or t.run_count != expected_run_count)
 
     instance = pool.acquire(sil_path, should_cancel=_should_cancel,
                             poll=_LICENSE_POLL_SECONDS)
     if instance is None:
         with app.app_context():
             task = db.session.get(Task, task_pk)
-            if task is not None:
+            if (task is not None and task.run_count == expected_run_count
+                    and task.status == TaskStatus.QUEUED.value and task.cancel_requested):
                 _mark_cancelled(db, task)
         return
 
@@ -163,23 +186,17 @@ def _run_task_pooled(app, config, task_pk: int) -> None:
     with app.app_context():
         license_service.mark_busy()
         try:
-            task = db.session.get(Task, task_pk)
+            task = _claim_run(db, task_pk, expected_run_count)
             if task is None:
                 return
-            if task.cancel_requested:
-                _mark_cancelled(db, task)
-                return
-            task.status = TaskStatus.RUNNING.value
-            task.started_at = _utcnow()
-            task.message = "Running on Silver."
-            db.session.commit()
             event_service.emit_status(task, "running", "Running on Silver.")
 
             test_runner.execute(app, config, task, pool=pool, instance=instance)
         except Exception as exc:  # noqa: BLE001
             logger.exception("run_task failed for pk=%s", task_pk)
             task = db.session.get(Task, task_pk)
-            if task is not None and not TaskStatus(task.status).is_final:
+            if (task is not None and task.run_count == expected_run_count
+                    and not TaskStatus(task.status).is_final):
                 task.status = TaskStatus.FAILED.value
                 task.message = f"Internal error: {exc}"
                 task.finished_at = _utcnow()
@@ -189,7 +206,7 @@ def _run_task_pooled(app, config, task_pk: int) -> None:
             license_service.mark_idle()
 
 
-def _run_task_dedicated(app, config, task_pk: int) -> None:
+def _run_task_dedicated(app, config, task_pk: int, expected_run_count=None) -> None:
     """Classic path: launch a dedicated Silver instance per task."""
     from ..extensions import db
     from ..models import Task, TaskStatus
@@ -204,6 +221,10 @@ def _run_task_dedicated(app, config, task_pk: int) -> None:
         if TaskStatus(task.status) != TaskStatus.QUEUED:
             logger.info("Task %s no longer queued (%s); skipping", task.task_key, task.status)
             return
+        if expected_run_count is None:
+            expected_run_count = task.run_count or 1
+        if task.deleted_at is not None or task.run_count != expected_run_count:
+            return
 
         # --- Phase 1: wait for a license slot, cancellable while queued. ---
         acquired = False
@@ -212,7 +233,10 @@ def _run_task_dedicated(app, config, task_pk: int) -> None:
             task = db.session.get(Task, task_pk)
             if task is None:
                 return
-            if task.cancel_requested or TaskStatus(task.status).is_final:
+            if (task.deleted_at is not None or task.run_count != expected_run_count
+                    or task.status != TaskStatus.QUEUED.value):
+                return
+            if task.cancel_requested:
                 _mark_cancelled(db, task)
                 return
             acquired = license_service.try_acquire()
@@ -226,23 +250,17 @@ def _run_task_dedicated(app, config, task_pk: int) -> None:
         from ..runners.slots import dedicated_allocator
         slot = dedicated_allocator().acquire()
         try:
-            task = db.session.get(Task, task_pk)
+            task = _claim_run(db, task_pk, expected_run_count)
             if task is None:
                 return
-            if task.cancel_requested:
-                _mark_cancelled(db, task)
-                return
-            task.status = TaskStatus.RUNNING.value
-            task.started_at = _utcnow()
-            task.message = "Running on Silver."
-            db.session.commit()
             event_service.emit_status(task, "running", "Running on Silver.")
 
             test_runner.execute(app, app.config_obj, task, dedicated_slot=slot)
         except Exception as exc:  # noqa: BLE001
             logger.exception("run_task failed for pk=%s", task_pk)
             task = db.session.get(Task, task_pk)
-            if task is not None and not TaskStatus(task.status).is_final:
+            if (task is not None and task.run_count == expected_run_count
+                    and not TaskStatus(task.status).is_final):
                 task.status = TaskStatus.FAILED.value
                 task.message = f"Internal error: {exc}"
                 task.finished_at = _utcnow()
