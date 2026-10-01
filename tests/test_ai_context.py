@@ -213,3 +213,26 @@ def test_history_and_input_pool_are_server_owned(app_ctx, project_env):
     assert payload["sbs_variables"] == [["Flag", "flag"]]
     assert payload["historical_pairs"] == [["Speed", "speed"]]
     assert payload["constant_names"] == ["LIMIT"]
+
+
+@pytest.mark.parametrize("arguments", [
+    ["-Xclang", "-load", "plugin.dll"], ["@private.rsp"],
+    ["-I", "C:/private"], "-DDEBUG", [True],
+])
+def test_http_context_rejects_native_plugin_and_filesystem_compiler_options(app_ctx, project_env, arguments):
+    from app.services.ai import context
+
+    with app_ctx.app_context(), pytest.raises(ValueError):
+        context.build_payload(project_env, "viewpoint", {
+            "doc_text": "Requirement", "compile_args": arguments,
+        })
+
+
+def test_http_context_accepts_bounded_preprocessor_definitions(app_ctx, project_env):
+    from app.services.ai import context
+
+    with app_ctx.app_context():
+        payload = context.build_payload(project_env, "viewpoint", {
+            "doc_text": "Requirement", "compile_args": ["-DFEATURE=1", "-UDEBUG", "-std=c11"],
+        })
+    assert payload["compile_args"] == ["-DFEATURE=1", "-UDEBUG", "-std=c11"]
