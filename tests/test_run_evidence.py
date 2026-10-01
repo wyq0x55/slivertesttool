@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import zipfile
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -71,6 +72,23 @@ def test_saved_companions_are_pinned_and_references_rewritten(tmp_path):
     sbs.write_bytes(b"sbs-v2")
     assert (pinned.parent / dll.name).read_bytes() == b"dll-v1"
     assert (pinned.parent / sbs.name).read_bytes() == b"sbs-v1"
+
+
+def test_retest_from_pinned_model_keeps_original_identity_hash(tmp_path):
+    task, source, model = prepared(tmp_path)
+    dll, sbs = model.with_suffix(".dll"), model.with_suffix(".sbs")
+    dll.write_bytes(b"dll-v1")
+    sbs.write_bytes(b"sbs-v1")
+    model.write_text(f'{dll.as_posix()} -S {sbs.as_posix()}\n', encoding="utf-8")
+    evidence = service()
+    evidence.pin_attempt(task, source)
+    first = evidence.read_evidence(task)
+    task.run_count = 2
+    evidence.pin_attempt(task, source)
+    second = evidence.read_evidence(task)
+    assert second["model"]["sha256"] == first["model"]["sha256"]
+    assert second["model"]["source_path"] == first["model"]["source_path"]
+    assert Path(second["model"]["execution_path"]).parent != Path(first["model"]["execution_path"]).parent
 
 
 def test_reports_remain_attempt_specific_for_retest_and_same_case_tasks(tmp_path):
@@ -224,7 +242,7 @@ def test_recovery_only_dispatches_pinned_current_queued_attempt(submitted):
     pending.clear()
     for changes in [{"status": "running"}, {"status": "passed"},
                     {"status": "queued", "cancel_requested": True},
-                    {"cancel_requested": False, "deleted_at": __import__("datetime").datetime.now()},
+                    {"cancel_requested": False, "deleted_at": datetime.now()},
                     {"deleted_at": None, "run_count": 2}]:
         for name, value in changes.items():
             setattr(task, name, value)
@@ -235,3 +253,86 @@ def test_recovery_only_dispatches_pinned_current_queued_attempt(submitted):
     db.session.commit()
     assert recover()["recovered"] == []
     assert dispatched == [(task.id, 1)]
+
+
+def test_submission_export_pins_before_commit_and_history_resolves_after_retest(app_ctx, tmp_path, monkeypatch):
+    from app.extensions import db
+    from app.models import Project, Task, TestItemRow, TestRunRecord
+    from app.runners import test_runner
+    from app.services.lanmatrix import silver_json_export as exporter
+    from app.services import task_service
+    with app_ctx.app_context():
+        project = Project(code="EVIDENCE", name="Evidence", owner_id=None)
+        db.session.add(project)
+        db.session.commit()
+        matrix_row = TestItemRow(project_id=project.id, case_id="TC-1", custom_values={
+            "steps": {"input_signals": [["input", "IN"]], "steps": [{"no": 1, "inputs": ["1"]}]}})
+        db.session.add(matrix_row)
+        db.session.commit()
+        prototype, source, model = prepared(tmp_path)
+        task = task_service.create_task(task_name="case", file_name="json", submitter="tester",
+                                        test_id="TC-1", sil_relpath=str(model), sil_name="plant",
+                                        sil_version="v1", project_id=project.id, workspace="", commit=False)
+        exporter.materialise_run_dir(source, matrix_row, [], [])
+        assert service().read_evidence(task)["documents"]["testcase_TC-1.json"]["steps"][0]["inputs"][0]["value"] == 1
+        db.session.commit()
+
+        def run(context):
+            (context.log_dir / "jdgrslt.log").write_text("Test is Passed.", encoding="utf-8")
+
+        monkeypatch.setattr(test_runner, "build_runner", lambda backend: SimpleNamespace(run=run))
+        test_runner.execute(app_ctx, app_ctx.config_obj, task)
+        record = TestRunRecord.query.filter_by(task_key=task.task_key).one()
+        assert record.run_count == 1
+        assert record.to_dict()["run_count"] == 1
+        assert matrix_row.result == "PASS"
+        old = service().read_record_evidence(record)
+        task.run_count = 2
+        task.status = "queued"
+        task.report_path = ""
+        matrix_row.custom_values = {"steps": {"input_signals": [["input", "IN"]],
+                                              "steps": [{"no": 1, "inputs": ["2"]}]}}
+        exporter.materialise_run_dir(source, matrix_row, [], [], task=task)
+        db.session.commit()
+        assert service().read_record_evidence(record) == old
+        assert service().read_evidence(task.task_key)["documents"]["testcase_TC-1.json"]["steps"][0]["inputs"][0]["value"] == 2
+
+
+def test_explicit_schema_upgrade_does_not_invent_legacy_attempts(app_ctx):
+    from sqlalchemy import text, inspect
+    from app.bootstrap import _migrate_schema
+    from app.extensions import db
+    with app_ctx.app_context():
+        with db.engine.begin() as connection:
+            connection.execute(text("ALTER TABLE lm_test_run_records DROP COLUMN run_count"))
+        _migrate_schema()
+        _migrate_schema()
+        column = next(item for item in inspect(db.engine).get_columns("lm_test_run_records")
+                      if item["name"] == "run_count")
+        assert column["nullable"] is True
+
+
+def test_recovery_returns_enqueue_failure_without_changing_attempt(submitted):
+    _app, task, _source, _model = submitted
+    before = service().read_evidence(task)
+
+    def fail(task_id, attempt):
+        raise RuntimeError("queue unavailable")
+
+    result = service().recover_queued_attempts(fail, is_pending=lambda *args: False)
+    assert result["recovered"] == []
+    assert result["errors"][0]["error"] == "queue unavailable"
+    assert service().read_evidence(task) == before
+
+
+def test_sealed_results_reject_late_mutation(tmp_path):
+    task, source, _model = prepared(tmp_path)
+    evidence = service()
+    root = evidence.pin_attempt(task, source)
+    result = root / "results"
+    result.mkdir()
+    (result / "Console.log").write_text("original", encoding="utf-8")
+    evidence.seal_attempt(task, status="failed", verdict="ERROR", message="failure")
+    (result / "Console.log").write_text("changed", encoding="utf-8")
+    with pytest.raises(ValueError, match="integrity"):
+        evidence.read_evidence(task)

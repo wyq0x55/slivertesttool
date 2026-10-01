@@ -45,6 +45,8 @@ def test_valid_export_uses_actual_runner_parser(tmp_path):
     (body(steps=[{"no": 1, "expecteds": ["[10, 2]"]}]), [], []),
     (body(steps=[{"no": 1, "expecteds": ["1"], "timing": "-10ms以内"}]), [], []),
     (body(default_timeout=float("inf")), [], []),
+    (body(steps=[{"no": 1, "expecteds": ["1"], "timing": "unknown 10ms"}]), [], []),
+    (body(steps=[{"no": 1, "expecteds": ["1"], "timing": "-.5ms以内"}]), [], []),
     (body(steps=[{"no": 1, "inputs": ["1", "2"]}]), [], []),
     (body(input_signals=[["in", ""]]), [], []),
     (body(steps=[{"no": 1, "subroutine": "Missing"}]), [], []),
