@@ -109,6 +109,33 @@ def test_xml_saved_copy_preserves_non_module_script_paths(app, tmp_path):
     assert (saved.parent / "host.pdb").read_bytes() == b"pdb"
     assert not (saved.parent / "a2laccess.dll").exists()
     assert source.read_text(encoding="utf-8") == original
+    assert saved.read_text(encoding="utf-8") == original.replace(
+        f"{(source.parent / 'host.dll').as_posix()} -S {(source.parent / 'host.sbs').as_posix()}",
+        f"{(saved.parent / 'host.dll').resolve().as_posix()} -S {(saved.parent / 'host.sbs').resolve().as_posix()}")
+
+
+@pytest.mark.parametrize("declaration", ["", '<?xml version="1.0" encoding="UTF-8"?>\n'])
+def test_xml_module_rewrite_preserves_native_format_and_ignores_cdata(declaration):
+    from app.services import project_model_service as models
+
+    original = (
+        declaration + '<workspace>\n  <gui-module/>\n'
+        '<!-- keep the native layout -->\n'
+        '<property name="script"><![CDATA[<sil-line>script.dll</sil-line>]]></property>\n'
+        '<property name="label">日本語 &apos;label&apos;</property>\n'
+        '<module><sil-line mode="a>b">host.dll -S host.sbs</sil-line></module>\n'
+        '<module><sil-line/></module>\n</workspace>')
+    paths = []
+
+    def replace(match):
+        paths.append(match.group("path"))
+        return "saved&model/" + match.group("path")
+
+    rewritten = models.rewrite_model_module_paths(original, replace)
+
+    assert rewritten == original.replace(
+        "host.dll -S host.sbs", "saved&amp;model/host.dll -S saved&amp;model/host.sbs")
+    assert paths == ["host.dll", "host.sbs"]
 
 
 def test_malformed_xml_cannot_be_registered_as_a_saved_model(app, tmp_path):
@@ -121,11 +148,14 @@ def test_malformed_xml_cannot_be_registered_as_a_saved_model(app, tmp_path):
     db.session.commit()
     source = _remote_model(tmp_path)
     source.write_text("<workspace><module>", encoding="utf-8")
+    model_root = models._models_root(app.config, project.id)
+    existing = set(model_root.rglob("*"))
 
     with pytest.raises(models.ModelError, match="XML"):
         models.add_path_model(project.id, "engine", str(source), version="v1")
 
     assert ProjectModel.query.filter_by(project_id=project.id).count() == 0
+    assert set(model_root.rglob("*")) == existing
 
 
 def test_database_rejects_duplicate_unversioned_models(app):

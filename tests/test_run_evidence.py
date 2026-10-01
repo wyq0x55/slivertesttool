@@ -143,6 +143,9 @@ def test_silver_xml_only_rewrites_module_dependencies_not_embedded_python(tmp_pa
     assert (pinned.parent / "approved.sil").read_text(encoding="utf-8") == original
     assert model.read_text(encoding="utf-8") == original
     assert set(data["model"]["files"]) == {"approved.sil", "plant.sil", "plant.dll", "plant.sbs"}
+    assert pinned.read_text(encoding="utf-8") == original.replace(
+        f"{dll.as_posix()} -S {sbs.as_posix()}",
+        f"{(pinned.parent / dll.name).as_posix()} -S {(pinned.parent / sbs.name).as_posix()}")
 
 
 def test_malformed_silver_xml_is_not_treated_as_plain_text_model(tmp_path):
