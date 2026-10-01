@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import subprocess
+import xml.etree.ElementTree as ET
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -86,6 +87,35 @@ def test_saved_companions_are_pinned_and_references_rewritten(tmp_path):
     sbs.write_bytes(b"sbs-v2")
     assert (pinned.parent / dll.name).read_bytes() == b"dll-v1"
     assert (pinned.parent / sbs.name).read_bytes() == b"sbs-v1"
+
+
+@pytest.mark.parametrize("quote", ["", '"', "'"])
+def test_real_silver_xml_dependencies_are_pinned_without_xml_tag_prefix(tmp_path, quote):
+    evidence = service()
+    task, source, model = prepared(tmp_path)
+    dll, sbs, symbols = model.with_suffix(".dll"), model.with_suffix(".sbs"), model.with_suffix(".pdb")
+    dll.write_bytes(b"dll-v1")
+    sbs.write_bytes(b"sbs-v1")
+    symbols.write_bytes(b"symbols-v1")
+    original = (
+        '<configuration><module><sil-line>'
+        f'{quote}{dll.as_posix()}{quote} -S {quote}{sbs.as_posix()}{quote}'
+        '</sil-line></module></configuration>')
+    model.write_text(original, encoding="utf-8")
+
+    evidence.pin_attempt(task, source)
+    data = evidence.read_evidence(task)
+    pinned = Path(data["model"]["execution_path"])
+    module_line = ET.fromstring(pinned.read_text(encoding="utf-8")).find("module/sil-line").text
+
+    assert module_line == (
+        f'{quote}{(pinned.parent / dll.name).as_posix()}{quote}'
+        f' -S {quote}{(pinned.parent / sbs.name).as_posix()}{quote}')
+    assert (pinned.parent / dll.name).read_bytes() == b"dll-v1"
+    assert (pinned.parent / sbs.name).read_bytes() == b"sbs-v1"
+    assert (pinned.parent / symbols.name).read_bytes() == b"symbols-v1"
+    assert (pinned.parent / "approved.sil").read_text(encoding="utf-8") == original
+    assert model.read_text(encoding="utf-8") == original
 
 
 def test_retest_from_pinned_model_keeps_original_identity_hash(tmp_path):
