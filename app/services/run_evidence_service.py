@@ -175,7 +175,7 @@ def _pin_model(task, source, root, workspace):
         execution = rewrite_model_module_paths(text, replace)
     except ModelError as exc:
         raise EvidenceError(str(exc)) from exc
-    executable.write_text(execution, encoding="utf-8")
+    executable.write_bytes(execution.encode("utf-8"))
     return {"id": getattr(task, "sil_model_id", None), "name": task.sil_name or "",
             "version": task.sil_version or "", "source_path": source_path,
             "sha256": hashlib.sha256(original).hexdigest(),

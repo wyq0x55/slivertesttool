@@ -353,7 +353,7 @@ def _materialise_saved_model(config, project_id: int, name: str, version: str,
                              source_sil: Path) -> Path:
     """Copy a remote or external model into this version's local directory."""
     try:
-        original = source_sil.read_text(encoding="utf-8")
+        original = source_sil.read_bytes().decode("utf-8")
     except (OSError, UnicodeError):
         original = None
     if original and original.lstrip("\ufeff \t\r\n").startswith("<"):
@@ -386,7 +386,7 @@ def _materialise_saved_model(config, project_id: int, name: str, version: str,
             return _module_ref(target)
 
         sil_dest = dest_root / source_sil.name
-        sil_dest.write_text(rewrite_model_module_paths(original, _replace), encoding="utf-8")
+        sil_dest.write_bytes(rewrite_model_module_paths(original, _replace).encode("utf-8"))
         return sil_dest
 
     sil_dest = dest_root / source_sil.name
