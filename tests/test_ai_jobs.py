@@ -42,6 +42,27 @@ def test_ai_slots_are_bounded_and_independent():
                 jobs.release_slot()
 
 
+def test_draft_summary_exposes_bounded_progress_without_large_logs(app_ctx, project_env):
+    from app.extensions import db
+    from app.models import AiDraft
+    from app.services.ai import jobs
+
+    with app_ctx.app_context():
+        draft_id, attempt = _draft(app_ctx, project_env)
+        assert jobs.claim(draft_id, attempt)
+        jobs.touch(draft_id, attempt, {"phase": "procedures", "chunk": 1, "round": 2})
+        draft = db.session.get(AiDraft, draft_id)
+        meta = jobs.metadata(draft)
+        meta.update(log=[{"raw": "private provider response"}], rounds=2)
+        draft.meta_json = json.dumps(meta)
+        summary = draft.to_dict(include_payload=False)
+        assert summary["meta"]["job"]["state"] == "running"
+        assert summary["meta"]["rounds"] == 2
+        assert summary["meta"]["progress"]["round"] == 2
+        assert "log" not in summary["meta"]
+        assert "input" not in summary and "output" not in summary
+
+
 def test_cancel_cannot_be_overwritten_by_late_result(app_ctx, project_env):
     from app.extensions import db
     from app.models import AiDraft
