@@ -149,8 +149,6 @@ def _run_task_pooled(app, config, task_pk: int, expected_run_count=None) -> None
     from ..runners import test_runner
     from ..services import event_service, license_service
 
-    pool = get_pool(app, config)
-
     with app.app_context():
         task = db.session.get(Task, task_pk)
         if task is None:
@@ -161,7 +159,7 @@ def _run_task_pooled(app, config, task_pk: int, expected_run_count=None) -> None
                         task.task_key, task.status)
             return
         if expected_run_count is None:
-            expected_run_count = task.run_count or 1
+            expected_run_count = 1
         if task.deleted_at is not None or task.run_count != expected_run_count:
             return
         from ..runners import run_layout
@@ -170,6 +168,8 @@ def _run_task_pooled(app, config, task_pk: int, expected_run_count=None) -> None
         # flow resolves it against the enqueue-time staging scripts.
         staged = run_layout.staging_dir(task.workspace, task.test_id) / task.test_id
         sil_path = sil_ref if sil_ref.is_absolute() else (staged / sil_ref).resolve()
+
+    pool = get_pool(app, config)
 
     # --- Phase 1: borrow a pooled instance, cancellable while queued. ---
     def _should_cancel() -> bool:
@@ -230,7 +230,7 @@ def _run_task_dedicated(app, config, task_pk: int, expected_run_count=None) -> N
             logger.info("Task %s no longer queued (%s); skipping", task.task_key, task.status)
             return
         if expected_run_count is None:
-            expected_run_count = task.run_count or 1
+            expected_run_count = 1
         if task.deleted_at is not None or task.run_count != expected_run_count:
             return
 
@@ -349,9 +349,26 @@ def recover_ai_generation_job() -> None:
         jobs.recover(publish_ai_generation)
 
 
-def recover_run_attempts() -> dict:
-    """Publish pinned approved attempts without executing within the DB lock."""
+def recover_run_attempts(*, startup=False) -> dict:
+    """Reconcile sealed outcomes and publish only pinned approved queued attempts."""
+    from ..extensions import db
+    from ..models import Task, TaskStatus
     from ..services.run_evidence_service import recover_queued_attempts
+    from ..services.run_finalisation_service import finalise_attempt
+    from ..services.run_recovery_service import recover_interrupted_attempts
+
+    if not isinstance(startup, bool):
+        raise ValueError("Recovery startup must be a boolean")
+    pages = 1
+    if startup:
+        interrupted_count = Task.query.filter_by(status=TaskStatus.RUNNING.value, deleted_at=None).count()
+        pages = max(1, (interrupted_count + 99) // 100)
+        db.session.rollback()
+    result = {"recovered": [], "skipped": [], "errors": []}
+    for _page in range(pages):
+        recovered = recover_interrupted_attempts(finalise_attempt, startup=startup)
+        for key in result:
+            result[key].extend(recovered[key])
 
     pending = {tuple(task.args) for task in huey.pending(limit=1000)
                if isinstance(task, run_task.task_class)}
@@ -360,7 +377,10 @@ def recover_run_attempts() -> dict:
         message = run_task.s(task_id, run_count)
         huey.storage.enqueue(huey.serialize_task(message), message.priority)
 
-    return recover_queued_attempts(enqueue, is_pending=lambda task_id, run_count: (task_id, run_count) in pending)
+    queued = recover_queued_attempts(enqueue, is_pending=lambda task_id, run_count: (task_id, run_count) in pending)
+    for key in result:
+        result[key].extend(queued[key])
+    return result
 
 
 @huey.periodic_task(crontab(minute="*"))

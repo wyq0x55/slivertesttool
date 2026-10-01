@@ -237,14 +237,12 @@ def test_interrupted_never_finalises_nonrunning_attempt(recovery_context, status
     finalise.assert_not_called()
 
 
-@pytest.mark.parametrize("change", ["cancelled", "deleted", "new_attempt", "unpinned"])
+@pytest.mark.parametrize("change", ["deleted", "new_attempt", "unpinned"])
 def test_interrupted_never_finalises_ineligible_attempt(recovery_context, change):
     from app.extensions import db
 
     task = make_attempt(recovery_context, 1, status="running", kind="unpinned" if change == "unpinned" else "generated")
-    if change == "cancelled":
-        task.cancel_requested = True
-    elif change == "deleted":
+    if change == "deleted":
         task.deleted_at = datetime.now()
     elif change == "new_attempt":
         task.run_count = 2

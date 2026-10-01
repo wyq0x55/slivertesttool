@@ -35,9 +35,10 @@ def _scan_attempts(status, limit):
         except (TypeError, ValueError):
             cursor = 0
         candidates = (select(Task.id, Task.run_count)
-                      .where(Task.status == status, Task.deleted_at.is_(None),
-                             Task.cancel_requested.is_(False))
+                      .where(Task.status == status, Task.deleted_at.is_(None))
                       .order_by(Task.id))
+        if status == TaskStatus.QUEUED.value:
+            candidates = candidates.where(Task.cancel_requested.is_(False))
         page = list(cursor_session.execute(candidates.where(Task.id > cursor).limit(limit)))
         if cursor and len(page) < limit:
             page.extend(cursor_session.execute(
@@ -48,7 +49,9 @@ def _scan_attempts(status, limit):
 
 def _current_attempt(identity, status, *, lock=False):
     query = Task.query.filter_by(id=identity[0], run_count=identity[1], status=status,
-                                 deleted_at=None, cancel_requested=False).populate_existing()
+                                 deleted_at=None).populate_existing()
+    if status == TaskStatus.QUEUED.value:
+        query = query.filter_by(cancel_requested=False)
     if lock:
         query = query.with_for_update(skip_locked=True)
     return query.first()
