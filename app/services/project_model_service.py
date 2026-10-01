@@ -239,7 +239,7 @@ def set_current(project_id: int, name: str,
 # --------------------------------------------------------------------------- #
 
 _MODULE_PATH_RE = re.compile(
-    r"(?P<path>(?:[A-Za-z]:[\\/]|\\\\)?[^\s\"']+\.(?:dll|sbs|pdb))",
+    r"(?P<path>(?:[A-Za-z]:[\\/]|\\\\)?[^\s\"'<>]+\.(?:dll|sbs|pdb))",
     re.IGNORECASE,
 )
 
