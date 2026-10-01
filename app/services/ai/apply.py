@@ -154,6 +154,8 @@ def apply_draft(draft: AiDraft, reviewer, refs: list[str] | None = None) -> dict
             raise ApplyError("Project is unavailable")
         permissions.require("item.edit", service.role_in_project(project.id, reviewer),
                             is_system_admin=reviewer.is_system_admin)
+        if not project.is_editable:
+            raise ApplyError("Project is not editable")
         payload = _json_object(draft.input_json, "generation input")
         output = _json_object(draft.output_json, "output")
         problems = validators.validate_output(draft.scenario, payload, output, refs=refs, for_apply=True)

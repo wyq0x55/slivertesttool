@@ -145,6 +145,8 @@ def build_payload(project_id: int, scenario: str, submitted: dict[str, Any]) -> 
         selected = _selected(project_id, _selection_ids(payload, "viewpoints" if scenario == "procedure" else "procedures"))
     elif scenario == "failure":
         selected = _selected(project_id, [payload.get("item_id")])
+    for key in ("viewpoint", "viewpoints", "procedures", "steps_doc"):
+        payload.pop(key, None)
     for row in selected:
         provenance.append({"kind": "matrix_row", "id": row.id, "version": row.version,
                            "sha256": _digest(row.to_dict())})
