@@ -28,7 +28,7 @@ function dom(template) {
     const node = {
       id, value: "", textContent: "", hidden: false, disabled: false,
       checked: false, open: false, dataset: {}, listeners: {}, children: [],
-      className: attrs.class || "", href: "", selectedOptions: [], style: {},
+      className: attrs.class || "", href: "", selectedOptions: [], style: {}, tagName: "",
       classList: {
         contains: (name) => classes.has(name),
         add: (name) => classes.add(name),
@@ -68,14 +68,20 @@ function dom(template) {
     });
     return node;
   }
-  for (const match of template.matchAll(/<\w+\b([^>]*\bid="[^"]+"[^>]*)>/g)) {
-    const attrs = attributes(match[1]);
-    const node = element(attrs.id, attrs);
-    node.hidden = /\bhidden\b/.test(match[1]);
-    node.disabled = /\bdisabled\b/.test(match[1]);
+  let groupCount = 0;
+  for (const match of template.matchAll(/<(\w+)\b([^>]*)>/g)) {
+    const attrs = attributes(match[2]);
+    if (!attrs.id && !attrs["data-ai-scenarios"]) continue;
+    const node = element(attrs.id || `group-${++groupCount}`, attrs);
+    node.tagName = match[1].toUpperCase();
+    node.hidden = /\bhidden\b/.test(match[2]);
+    node.disabled = /\bdisabled\b/.test(match[2]);
     nodes.set(node.id, node);
   }
+  const templateIds = new Set(nodes.keys());
   const get = (id) => {
+    if (id === "lm-ai-settings") return null;
+    if (id === "lm-ai-d-output-edit" && !nodes.has(id)) return null;
     if (!nodes.has(id)) nodes.set(id, element(id));
     return nodes.get(id);
   };
@@ -89,12 +95,17 @@ function dom(template) {
       if (selector === ".lm-ai-drafts" || selector === ".lm-editor") return list;
       return null;
     },
-    querySelectorAll() { return []; },
+    querySelectorAll(selector) {
+      if (selector === "[data-ai-scenarios]") return [...nodes.values()].filter((node) => node.dataset.aiScenarios);
+      if (selector.includes("#lm-ai-gen-panel")) return [...nodes.values()].filter((node) =>
+        node.id.startsWith("lm-ai-gen-") && ["INPUT", "SELECT", "TEXTAREA"].includes(node.tagName));
+      return [];
+    },
     addEventListener() {},
     createElement: () => element(), createTextNode: (text) => ({ textContent: text }),
   };
   get("lm-ai-d-refs").querySelectorAll = (selector) => get("lm-ai-refs-list").querySelectorAll(selector);
-  return { get, document, list, nodes };
+  return { get, document, list, nodes, templateIds };
 }
 
 function draft(id, status = "pending", extra = {}) {
@@ -103,7 +114,7 @@ function draft(id, status = "pending", extra = {}) {
     output: { procedures: [{ ref: "12", steps_doc: {} }] }, meta: {}, ...extra };
 }
 
-function draftHarness(overrides = {}, role = "editor") {
+function draftHarness(overrides = {}, role = "editor", search = "") {
   const environment = dom(read("app/templates/lanmatrix/ai_drafts.html"));
   const timers = new Map();
   let timerId = 0;
@@ -124,7 +135,8 @@ function draftHarness(overrides = {}, role = "editor") {
     approveAiDraft: async () => ({}), rejectAiDraft: async () => ({}),
     ...overrides,
   };
-  const window = { location: { search: "", hash: "" }, addEventListener() {} };
+  const window = { location: { search, hash: "" }, listeners: {},
+    addEventListener(type, callback) { this.listeners[type] = callback; } };
   const context = vm.createContext({ window, document: environment.document,
     LM: { user: {} }, LMApi: api, LMReady: Promise.resolve({}), URLSearchParams,
     LMUI: { toast: (message, ok) => toasts.push({ message, ok }),
@@ -134,7 +146,7 @@ function draftHarness(overrides = {}, role = "editor") {
   });
   const source = read("app/static/js/lanmatrix/ai_drafts.js").replace("  bindGenerate();",
     "  window.testOpenDetail = openDetail;\n  bindGenerate();");
-  vm.runInContext(source, context, { filename: "ai_drafts.js" });
+  vm.runInContext(source, context, { filename: path.join(root, "app/static/js/lanmatrix/ai_drafts.js") });
   environment.get("lm-ai-gen-scenario").value = "procedure";
   environment.get("lm-ai-gen-payload").value = "";
   environment.get("lm-ai-gen-item-ids").value = "12, 13";
@@ -163,7 +175,7 @@ function editorHarness(options = {}) {
   const api = {
     getProject: async () => ({ project: { code: "P", name: "Project", is_editable: options.editable !== false },
       role: options.role || "editor" }),
-    listItems: async () => ({ items: persisted, total: persisted.length }),
+    listItems: options.listItems || (async () => ({ items: persisted, total: persisted.length })),
     createAiDraft(scenario, projectId, payload) {
       calls.push({ scenario, projectId, payload: plain(payload) });
       return options.create ? options.create() : Promise.resolve(draft(50, "running"));
@@ -175,7 +187,7 @@ function editorHarness(options = {}) {
   const collab = options.collab ? { isActive: () => true, getItems: () => options.live || persisted } : null;
   const window = { location: { href: "" }, addEventListener() {} };
   const context = vm.createContext({ document: environment.document, window, URLSearchParams,
-    LMApi: api, LM: { user: {}, urls: {} }, LMReady: Promise.resolve({}),
+    LMApi: api, LM: { user: {}, urls: {} }, LMReady: options.ready || Promise.resolve({}),
     LMPill: { apply() {}, PROJECT_ZH: {} }, LMUI: { toast: (message, ok) => toasts.push({ message, ok }) },
     setTimeout: (callback) => setImmediate(callback), clearTimeout: clearImmediate,
     setInterval: () => 1, clearInterval() {}, console,
@@ -189,7 +201,7 @@ function editorHarness(options = {}) {
     window.testLoadProject = loadProject; window.testSaveCell = saveCell;
     window.testSelection = updateSelectionUI;
   `);
-  vm.runInContext(source, context, { filename: "editor.js" });
+  vm.runInContext(source, context, { filename: path.join(root, "app/static/js/lanmatrix/editor.js") });
   return { ...environment, api, grid, window, calls, toasts,
     async ready() { await window.testLoadProject(); window.testSelection(grid.getSelectedIds()); },
     async click() {
@@ -211,7 +223,8 @@ test("cancel and retry API use CSRF POST envelopes and return the same draft", a
         data: url.endsWith("/me") ? { user: {}, csrf_token: "csrf-test" } : draft(7, "cancelled") }) };
     },
   });
-  vm.runInContext(read("app/static/js/lanmatrix/api.js"), context);
+  vm.runInContext(read("app/static/js/lanmatrix/api.js"), context,
+    { filename: path.join(root, "app/static/js/lanmatrix/api.js") });
   await window.LMReady;
   assert.equal((await window.LMApi.cancelAiDraft(7)).id, 7);
   assert.equal((await window.LMApi.retryAiDraft(7)).id, 7);
@@ -464,6 +477,7 @@ test("stale approval confirmation never decides a draft after switching details"
   await settle();
   await harness.open(1);
   const deciding = harness.click("lm-ai-d-approve");
+  assert.equal(harness.get("lm-ai-d-approve").disabled, true);
   await harness.open(2);
   confirmation.resolve(true);
   await deciding;
@@ -480,4 +494,229 @@ test("readers can inspect drafts but cannot generate, edit, cancel or retry", as
   }
   await harness.click("lm-ai-gen-submit");
   assert.equal(harness.calls.length, 0);
+});
+
+test("a successful save on another row cannot hide a selected row save failure", async () => {
+  const harness = editorHarness({ patch: async (_pid, id) => {
+    if (id === 12) throw new Error("selected row failed");
+    return { item: { id, version: 4 } };
+  } });
+  await harness.ready();
+  await harness.window.testSaveCell({ id: 12, version: 3 }, {}).catch(() => {});
+  await harness.window.testSaveCell({ id: 13, version: 3 }, {});
+  await harness.click();
+  assert.equal(harness.calls.length, 0);
+  assert.match(harness.get("lm-ai-status").textContent, /保存/);
+});
+
+test("collaborative changes arriving during CSRF readiness cannot bypass sync verification", async () => {
+  const readiness = deferred();
+  const live = [{ id: 12, uuid: "row-12", version: 3, title: "Saved" }];
+  const harness = editorHarness({ collab: true, live, ready: readiness.promise });
+  await harness.ready();
+  const submitting = harness.click();
+  await settle();
+  await settle();
+  live[0].title = "New unsynced content";
+  readiness.resolve({});
+  await submitting;
+  assert.equal(harness.calls.length, 0);
+});
+
+test("switching from source generation to document extraction ignores hidden source excerpts", async () => {
+  const harness = draftHarness();
+  await settle();
+  harness.get("lm-ai-gen-payload").value = '{"source_files":{"engine.c":"int speed;"}}';
+  harness.get("lm-ai-gen-scenario").value = "viewpoint";
+  harness.get("lm-ai-gen-doc-text").value = "Design";
+  harness.get("lm-ai-gen-source-name").value = "spec.md";
+  harness.get("lm-ai-gen-source-revision").value = "r1";
+  await harness.click("lm-ai-gen-submit");
+  assert.equal(harness.calls.length, 1);
+  assert.equal(harness.calls[0].payload.source_files, undefined);
+});
+
+test("template controls and scenario visibility follow the executable form", async () => {
+  const harness = draftHarness();
+  await settle();
+  for (const id of ["lm-ai-gen-item-ids", "lm-ai-gen-doc-text", "lm-ai-gen-proposal", "lm-ai-gen-task-key",
+    "lm-ai-d-cancel", "lm-ai-d-retry"]) assert.ok(harness.templateIds.has(id), id);
+  harness.get("lm-ai-gen-scenario").value = "lib";
+  harness.get("lm-ai-gen-scenario").listeners.change();
+  const groups = harness.document.querySelectorAll("[data-ai-scenarios]");
+  for (const group of groups) assert.equal(group.hidden, !group.dataset.aiScenarios.split(" ").includes("lib"));
+});
+
+test("matrix verifies optional saved model and surfaces server errors", async () => {
+  const harness = editorHarness({ create: async () => { throw new Error("model unavailable"); } });
+  await harness.ready();
+  harness.get("lm-ai-model-id").value = "4";
+  await harness.click();
+  assert.deepEqual(harness.calls[0].payload, { item_ids: [12], model_id: 4 });
+  assert.match(harness.get("lm-ai-status").textContent, /model unavailable/);
+  assert.equal(harness.get("lm-ai-generate").disabled, false);
+});
+
+test("matrix refuses an unfinished grid edit and a failed persisted-row read", async () => {
+  for (const options of [{ grid: { isEditing: () => true } },
+    { listItems: async () => { throw new Error("database read unavailable"); } }]) {
+    const harness = editorHarness(options);
+    await harness.ready();
+    await harness.click();
+    assert.equal(harness.calls.length, 0);
+    assert.ok(harness.get("lm-ai-status").textContent);
+  }
+});
+
+test("matrix rejects CRDT identity mismatches and unmaterialized versions", async () => {
+  for (const change of [{ uuid: "other-row" }, { version: 0 }]) {
+    const harness = editorHarness({ collab: true,
+      live: [{ id: 12, uuid: "row-12", version: 3, title: "Saved", ...change }] });
+    await harness.ready();
+    await harness.click();
+    assert.equal(harness.calls.length, 0);
+  }
+});
+
+test("SBS, library and archived-failure forms enforce required source controls", async () => {
+  for (const scenario of ["sbs", "lib", "failure", "viewpoint"]) {
+    const harness = draftHarness();
+    await settle();
+    harness.get("lm-ai-gen-scenario").value = scenario;
+    if (scenario === "failure") harness.get("lm-ai-gen-item-ids").value = "12";
+    await harness.click("lm-ai-gen-submit");
+    assert.equal(harness.calls.length, 0);
+    assert.ok(harness.get("lm-ai-gen-status").textContent);
+  }
+});
+
+test("draft deep link opens its detail and pagehide prevents further polling", async () => {
+  const harness = draftHarness({ getAiDraft: async (id) => draft(id, "running") }, "editor", "?draft=8");
+  await settle();
+  assert.match(harness.get("lm-ai-d-title").textContent, /#8/);
+  assert.equal(harness.timers.size, 1);
+  harness.window.listeners.pagehide();
+  assert.equal(harness.timers.size, 0);
+});
+
+test("late generation completion cannot replace an inspected draft", async () => {
+  const creating = deferred();
+  const harness = draftHarness({ createAiDraft: () => creating.promise });
+  await settle();
+  const submitting = harness.click("lm-ai-gen-submit");
+  await harness.open(9);
+  creating.resolve(draft(10));
+  await submitting;
+  assert.match(harness.get("lm-ai-d-title").textContent, /#9/);
+});
+
+test("failed detail polling is visible and the active draft remains inspectable", async () => {
+  let fetches = 0;
+  const harness = draftHarness({ getAiDraft: async (id) => {
+    if (++fetches > 1) throw new Error("poll unavailable");
+    return draft(id, "running");
+  } });
+  await harness.open(1);
+  await harness.tick();
+  assert.match(harness.get("lm-ai-d-action-status").textContent, /poll unavailable/);
+  assert.match(harness.get("lm-ai-d-title").textContent, /#1/);
+});
+
+test("in-flight old polling cannot overwrite a cancellation response", async () => {
+  const polling = deferred();
+  let fetches = 0;
+  const harness = draftHarness({ getAiDraft: async (id) => ++fetches === 1 ? draft(id, "running") : polling.promise });
+  await settle();
+  await harness.open(1);
+  const ticking = harness.tick();
+  await harness.click("lm-ai-d-cancel");
+  polling.resolve(draft(1, "running"));
+  await ticking;
+  assert.match(harness.get("lm-ai-d-status").textContent, /已取消/);
+});
+
+test("cancel and retry failures remain visible and release the action buttons", async () => {
+  for (const action of ["cancel", "retry"]) {
+    const harness = draftHarness({ getAiDraft: async (id) => draft(id, action === "cancel" ? "running" : "error"),
+      cancelAiDraft: async () => { throw new Error("cancel failed"); },
+      retryAiDraft: async () => { throw new Error("retry failed"); } });
+    await settle();
+    await harness.open(1);
+    await harness.click(`lm-ai-d-${action}`);
+    assert.match(harness.get("lm-ai-d-action-status").textContent, /failed/);
+    assert.equal(harness.get(`lm-ai-d-${action}`).disabled, false);
+  }
+});
+
+test("partial approval sends only checked refs and never starts a run", async () => {
+  const approvals = [];
+  const harness = draftHarness({ getAiDraft: async (id) => draft(id, "pending",
+    { output: { procedures: [{ ref: "12" }, { ref: "13" }] } }),
+    approveAiDraft: async (id, refs) => approvals.push({ id, refs: plain(refs) }) });
+  await settle();
+  await harness.open(1);
+  harness.get("lm-ai-refs-list").children[1].checked = false;
+  await harness.click("lm-ai-d-approve");
+  assert.deepEqual(approvals, [{ id: 1, refs: ["12"] }]);
+  assert.equal(harness.get("lm-ai-detail").hidden, true);
+});
+
+test("empty partial approval and invalid inline output are blocked visibly", async () => {
+  let approvals = 0;
+  const harness = draftHarness({ approveAiDraft: async () => { approvals++; } });
+  await settle();
+  await harness.open(1);
+  harness.get("lm-ai-refs-list").children[0].checked = false;
+  await harness.click("lm-ai-d-approve");
+  assert.equal(approvals, 0);
+  assert.ok(harness.get("lm-ai-d-action-status").textContent);
+  await harness.click("lm-ai-d-edit");
+  harness.get("lm-ai-d-output-edit").value = "[]";
+  await harness.click("lm-ai-d-edit");
+  assert.match(harness.toasts.at(-1).message, /JSON 对象/);
+});
+
+test("stale rejection prompt and old decision success cannot close a different detail", async () => {
+  const prompting = deferred();
+  const rejecting = deferred();
+  let rejects = 0;
+  const harness = draftHarness({ rejectAiDraft: () => { rejects++; return rejecting.promise; } });
+  harness.context.LMUI.prompt = () => prompting.promise;
+  await settle();
+  await harness.open(1);
+  const stalePrompt = harness.click("lm-ai-d-reject");
+  await harness.open(2);
+  prompting.resolve("reason");
+  await stalePrompt;
+  assert.equal(rejects, 0);
+  harness.context.LMUI.prompt = async () => "reason";
+  const staleResponse = harness.click("lm-ai-d-reject");
+  await settle();
+  assert.equal(rejects, 1);
+  await harness.open(3);
+  rejecting.resolve({});
+  await staleResponse;
+  assert.match(harness.get("lm-ai-d-title").textContent, /#3/);
+  assert.equal(harness.get("lm-ai-detail").hidden, false);
+});
+
+test("permission loading fails closed and readers have no recovery actions", async () => {
+  const permissions = deferred();
+  const harness = draftHarness({ getProject: () => permissions.promise });
+  await harness.open(1);
+  await harness.click("lm-ai-gen-submit");
+  assert.equal(harness.calls.length, 0);
+  assert.equal(harness.get("lm-ai-d-approve").disabled, true);
+  permissions.reject(new Error("permission unavailable"));
+  await settle();
+  assert.match(harness.get("lm-ai-gen-status").textContent, /permission unavailable/);
+  for (const status of ["running", "cancelled", "error"]) {
+    const reader = draftHarness({ getAiDraft: async (id) => draft(id, status) }, "reader");
+    await settle();
+    await reader.open(1);
+    for (const action of ["cancel", "retry"]) {
+      assert.equal(reader.get(`lm-ai-d-${action}`).disabled, true);
+      await reader.click(`lm-ai-d-${action}`);
+    }
+  }
 });
