@@ -20,7 +20,7 @@
   let projectEditable = true;
   let aiEditable = false;
   let aiSubmitting = false;
-  let aiSaveFailed = false;
+  const aiSaveFailures = new Set();
   let aiEditEpoch = 0;
   const collabAvailable = root.dataset.collab === "1";  // server shipped the collab bundle + flag
   const collabActive = () => !!(collab && collab.isActive());
@@ -326,10 +326,10 @@
     savingCount++;
     try {
       const data = await LMApi.patchItem(pid, item.id, item.version, changes);
-      aiSaveFailed = false;
+      aiSaveFailures.delete(item.id);
       return data.item;
     } catch (ex) {
-      aiSaveFailed = true;
+      aiSaveFailures.add(item.id);
       throw ex;
     } finally {
       savingCount--;
@@ -843,7 +843,8 @@
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       if (!grid || busy()) throw new Error("保存尚未完成，请结束单元格编辑并等待同步后再生成。");
-      if (aiSaveFailed) throw new Error("行保存失败，请重新保存并确认成功后再生成。");
+      if (ids.some((id) => aiSaveFailures.has(id))) throw new Error("行保存失败，请重新保存并确认成功后再生成。");
+      await LMReady;
       const epoch = aiEditEpoch;
       const stored = await fetchDbItems("test");
       if (currentSheet !== "test" || aiEditEpoch !== epoch || savingCount > 0 || busy()) {
@@ -868,7 +869,6 @@
       }
       const payload = { item_ids: ids };
       if (modelRaw) payload.model_id = Number(modelRaw);
-      await LMReady;
       if (!grid || currentSheet !== "test" || aiEditEpoch !== epoch) {
         throw new Error("行已修改，请等待保存同步后重新生成。");
       }

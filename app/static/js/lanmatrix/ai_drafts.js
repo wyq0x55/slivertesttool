@@ -389,33 +389,33 @@
     status.textContent = "";
     try {
       if (action === "approve") {
-      var refs = selectedRefs();
-      if (refs && !refs.length) throw new Error("请至少勾选一条手顺后通过。");
-      var body = refs && refs.length < (d.output.procedures || []).length
-        ? "将只落库勾选的 " + refs.length + " 条手顺，其余记为「未勾选（部分通过）」。"
-        : "草稿内容将经平台服务层写入（测试行 / steps / SBS revision / lib / 评论）。";
-      var ok = await LMUI.confirm({
-        title: "通过并落库",
-        body: body,
-        confirmText: "通过"
-      });
-      if (!ok || !detailMatches(d.id, epoch)) return;
+        var refs = selectedRefs();
+        if (refs && !refs.length) throw new Error("请至少勾选一条手顺后通过。");
+        var body = refs && refs.length < (d.output.procedures || []).length
+          ? "将只落库勾选的 " + refs.length + " 条手顺，其余记为「未勾选（部分通过）」。"
+          : "草稿内容将经平台服务层写入（测试行 / steps / SBS revision / lib / 评论）。";
+        var ok = await LMUI.confirm({
+          title: "通过并落库",
+          body: body,
+          confirmText: "通过"
+        });
+        if (!ok || !detailMatches(d.id, epoch)) return;
         await LMApi.approveAiDraft(d.id, refs);
         if (!detailMatches(d.id, epoch)) return;
         toast("已通过并落库", true);
         closeDetail();
         load();
-      return;
-    }
-    var note = await LMUI.prompt({
-      title: "驳回草稿（必填原因）",
-      input: { value: "" }
-    });
-    if (!detailMatches(d.id, epoch)) return;
-    if (!note || !String(note).trim()) {
-      if (note !== null) toast("驳回必须填写原因", false);
-      return;
-    }
+        return;
+      }
+      var note = await LMUI.prompt({
+        title: "驳回草稿（必填原因）",
+        input: { value: "" }
+      });
+      if (!detailMatches(d.id, epoch)) return;
+      if (!note || !String(note).trim()) {
+        if (note !== null) toast("驳回必须填写原因", false);
+        return;
+      }
       await LMApi.rejectAiDraft(d.id, String(note).trim());
       if (!detailMatches(d.id, epoch)) return;
       toast("已驳回", true);
@@ -503,7 +503,7 @@
     }
     if (scenario === "sbs" && !payload.model_id) throw new Error("请选择已保存的 bundle 模型 ID");
     var raw = value("lm-ai-gen-payload");
-    if (raw) {
+    if (raw && (scenario === "procedure" || scenario === "sbs" || scenario === "lib")) {
       var advanced;
       try { advanced = JSON.parse(raw); }
       catch (ex) { throw new Error("源码摘录 JSON 无效：" + ex.message); }
