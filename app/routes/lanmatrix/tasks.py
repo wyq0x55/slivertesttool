@@ -184,28 +184,35 @@ def upload_project_tree(project_id):
     created, duplicates, errors = [], [], []
     try:
         for test_id in selected:
-            existing = task_service.find_active_duplicate(
-                submitter, test_id, project_id=project.id)
+            task_service.lock_submission(project.id, test_id)
+            existing = task_service.active_submission(project.id, test_id)
             if existing is not None:
                 duplicates.append({"test_id": test_id, "task_id": existing.task_key})
+                db.session.rollback()
                 continue
+            committed_attempt = None
             try:
                 task = task_service.create_task(
                     task_name=test_id, file_name=folder_name,
                     submitter=submitter, test_id=test_id,
                     sil_relpath=sil_ref, sil_name=model_name,
                     sil_version=model_version, sil_model_id=_model_id, workspace="",
-                    project_id=project.id, submitter_id=g.user.id)
+                    project_id=project.id, submitter_id=g.user.id, commit=False)
                 proj_root = run_layout.project_root(cfg, project)
                 case_dir = run_layout.staging_dir(proj_root, test_id) / test_id
                 shutil.rmtree(case_dir.parent, ignore_errors=True)
                 upload_service.materialise_one(
                     cfg.WORKSPACE_DIR, info["upload_key"], case_dir, test_id)
                 task.workspace = str(proj_root)
+                submission_attempt = (task.id, task.run_count)
                 db.session.commit()
+                committed_attempt = submission_attempt
                 _enqueue_task(task)
                 created.append({"test_id": test_id, "task_id": task.task_key})
-            except UploadError as exc:
+            except Exception as exc:
+                db.session.rollback()
+                if committed_attempt is not None:
+                    task_service.fail_submission(*committed_attempt, str(exc))
                 errors.append({"test_id": test_id, "error": str(exc)})
     finally:
         upload_service.cleanup_staging(cfg.WORKSPACE_DIR, info["upload_key"])
@@ -273,15 +280,17 @@ def run_selected_tasks(project_id):
         if row is None:
             missing.append(test_id)
             continue
+        committed_attempt = None
         try:
             task, started = task_service.upsert_task(
                 task_name=test_id, file_name="(json runner)",
                 submitter=submitter, test_id=test_id,
                 sil_relpath=sil_ref, sil_name=model_name,
                 sil_version=model_version, sil_model_id=model_id, workspace="",
-                project_id=project.id, submitter_id=g.user.id)
+                project_id=project.id, submitter_id=g.user.id, commit=False)
             if not started:
                 duplicates.append({"test_id": test_id, "task_id": task.task_key})
+                db.session.rollback()
                 continue
             # Results are keyed by project + test_id (not the synthetic task
             # key). Run scripts are materialised into a short-lived staging dir;
@@ -292,11 +301,15 @@ def run_selected_tasks(project_id):
             shutil.rmtree(case_dir.parent, ignore_errors=True)
             sje.materialise_run_dir(case_dir, row, const_rows, lib_rows)
             task.workspace = str(proj_root)
+            submission_attempt = (task.id, task.run_count)
             db.session.commit()
+            committed_attempt = submission_attempt
             _enqueue_task(task)
             created.append({"test_id": test_id, "task_id": task.task_key})
         except Exception as exc:  # noqa: BLE001 - surface per-row failure
             db.session.rollback()
+            if committed_attempt is not None:
+                task_service.fail_submission(*committed_attempt, str(exc))
             errors.append({"test_id": test_id, "error": str(exc)})
 
     return ok({"created": created, "missing": missing, "errors": errors,
@@ -378,6 +391,7 @@ def rerun_selected_tasks(project_id):
                            "error": "保存的模型副本不存在"})
             continue
 
+        committed_attempt = None
         try:
             # requeue_task (not upsert_task): upsert resolves its target by
             # ``(project_id, test_id)`` and would reset the NEWEST task carrying
@@ -391,16 +405,22 @@ def rerun_selected_tasks(project_id):
             case_dir = run_layout.staging_dir(proj_root, test_id) / test_id
             shutil.rmtree(case_dir.parent, ignore_errors=True)
             sje.materialise_run_dir(case_dir, row, const_rows, lib_rows)
+            submission_attempt = (task.id, task.run_count)
             db.session.commit()
+            committed_attempt = submission_attempt
             _enqueue_task(task)
             created.append({"test_id": test_id, "task_id": task.task_key,
                             "run_count": task.run_count})
         except ValueError as exc:
             db.session.rollback()
+            if committed_attempt is not None:
+                task_service.fail_submission(*committed_attempt, str(exc))
             skipped.append({"task_id": key, "test_id": test_id,
                             "error": str(exc)})
         except Exception as exc:  # noqa: BLE001 - surface per-row failure
             db.session.rollback()
+            if committed_attempt is not None:
+                task_service.fail_submission(*committed_attempt, str(exc))
             errors.append({"task_id": key, "test_id": test_id, "error": str(exc)})
 
     return ok({"created": created, "skipped": skipped,

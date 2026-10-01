@@ -29,6 +29,7 @@ from __future__ import annotations
 import datetime as _dt
 import re
 import shutil
+import tempfile
 from pathlib import Path
 from typing import List, Optional
 
@@ -250,6 +251,14 @@ def _version_dir_name(name: str, version: str) -> str:
     return f"{base}__{token}"
 
 
+def _new_model_dir(config, project_id: int, name: str, version: str) -> Path:
+    root = _models_root(config, project_id)
+    root.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(
+        prefix=f"{_version_dir_name(name, version)}__", dir=root,
+    ))
+
+
 def _select_model(project_id: int, name: str, version: Optional[str] = None,
                   model_id: Optional[int] = None):
     """Pick one saved version of ``name``.
@@ -295,10 +304,7 @@ def _validate_name(project_id: int, name: str) -> None:
 def _materialise_saved_model(config, project_id: int, name: str, version: str,
                              source_sil: Path) -> Path:
     """Copy a remote or external model into this version's local directory."""
-    dest_root = _models_root(config, project_id) / _version_dir_name(name, version)
-    if dest_root.exists():
-        shutil.rmtree(dest_root, ignore_errors=True)
-    dest_root.mkdir(parents=True, exist_ok=True)
+    dest_root = _new_model_dir(config, project_id, name, version)
     try:
         original = source_sil.read_text(encoding="utf-8")
     except (OSError, UnicodeError):
@@ -634,10 +640,7 @@ def add_bundle_model(project_id: int, name: str, dll: FileStorage,
     _validate_identity(project_id, name, version)
 
     seg = _version_dir_name(name, version)
-    model_dir = _models_root(config, project_id) / seg
-    if model_dir.exists():
-        shutil.rmtree(model_dir, ignore_errors=True)
-    model_dir.mkdir(parents=True, exist_ok=True)
+    model_dir = _new_model_dir(config, project_id, name, version)
 
     try:
         dll.save(str(model_dir / dll_name))

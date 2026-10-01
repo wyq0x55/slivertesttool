@@ -14,7 +14,7 @@ from . import (
     audit, excel_io, import_job_service, permissions, service, settings,
     validation,
 )
-from ...models import DataJob, Project, TestItemRow
+from ...models import DataJob, Project, ProjectMember, TestItemRow
 from .validation import FieldSpec
 
 
@@ -138,6 +138,35 @@ def commit_import(user, project: Project, job: DataJob) -> dict:
         raise service.ServiceError("导入任务状态无效", code="VALIDATION_ERROR")
     if (job.parameters or {}).get("format"):
         return import_job_service.commit_special_import(user, project, job)
+    project_id = project.id
+    try:
+        job = (DataJob.query.filter_by(id=job.id)
+               .with_for_update().populate_existing().first())
+        if job is None or job.project_id != project_id:
+            raise service.ServiceError("导入任务不存在", code="NOT_FOUND")
+        project = (Project.query.filter_by(id=project_id)
+                   .with_for_update().populate_existing().first())
+        if project is None:
+            raise service.ServiceError("项目不存在", code="NOT_FOUND")
+        if user is not None and not user.is_system_admin:
+            (ProjectMember.query.filter_by(
+                project_id=project.id, user_id=user.id,
+            ).with_for_update().populate_existing().first())
+        permissions.require(
+            "import.run", service.role_in_project(project.id, user),
+            is_system_admin=bool(user is not None and user.is_system_admin),
+        )
+        import_job_service._lock_special_import_tables()
+        db.session.expire_all()
+        return _commit_generic_import(user, project, job)
+    except Exception:
+        db.session.rollback()
+        raise
+
+
+def _commit_generic_import(user, project: Project, job: DataJob) -> dict:
+    if job.job_type != "import" or job.status != "previewed":
+        raise service.ServiceError("导入任务状态无效", code="VALIDATION_ERROR")
     if not project.is_editable:
         raise service.ServiceError("项目当前不可编辑", code="PROJECT_LOCKED")
     if job.expires_at is None:

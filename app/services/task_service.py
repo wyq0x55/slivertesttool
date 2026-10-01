@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
+import os
 from typing import List, Optional
+
+from sqlalchemy import text
 
 from ..extensions import db
 from ..models import Task, TaskStatus
@@ -128,6 +132,7 @@ def create_task(
     sil_model_id: Optional[int] = None,
     project_id: Optional[int] = None,
     submitter_id: Optional[int] = None,
+    commit: bool = True,
 ) -> Task:
     """Persist a new QUEUED task and assign its public key."""
     task = Task(
@@ -149,7 +154,8 @@ def create_task(
     db.session.add(task)
     db.session.flush()  # obtain the autoincrement id
     task.task_key = next_task_key(task.id)
-    db.session.commit()
+    if commit:
+        db.session.commit()
     return task
 
 
@@ -164,7 +170,39 @@ def find_task_by_test_id(test_id: str, project_id: Optional[int] = None) -> Opti
     query = live(Task.query).filter(Task.test_id == test_id)
     if project_id is not None:
         query = query.filter(Task.project_id == project_id)
-    return query.order_by(Task.id.desc()).first()
+    return query.populate_existing().order_by(Task.id.desc()).first()
+
+
+def lock_submission(project_id: Optional[int], test_id: str) -> None:
+    """Serialize a project's staging owner until its transaction finishes."""
+    if db.engine.dialect.name == "postgresql":
+        identity = f"task-submission:{project_id}:{_staging_token(test_id)}".encode("utf-8")
+        lock_key = int.from_bytes(hashlib.sha256(identity).digest()[:8], "big", signed=True)
+        db.session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_key})
+
+
+def _staging_token(test_id: str) -> str:
+    from ..runners.run_layout import safe_tid
+    return os.path.normcase(safe_tid(test_id))
+
+
+def active_submission(project_id: Optional[int], test_id: str) -> Optional[Task]:
+    candidates = (live(Task.query).filter(
+        Task.project_id == project_id,
+        Task.status.in_([TaskStatus.QUEUED.value, TaskStatus.RUNNING.value]))
+        .populate_existing().order_by(Task.id.desc()).all())
+    token = _staging_token(test_id)
+    return next((task for task in candidates if _staging_token(task.test_id) == token), None)
+
+
+def fail_submission(task_id: int, run_count: int, message: str) -> None:
+    """Make a committed but unqueued submission visible and retryable."""
+    (Task.query.filter_by(id=task_id, run_count=run_count, status=TaskStatus.QUEUED.value).update({
+        Task.status: TaskStatus.FAILED.value,
+        Task.message: f"Submission failed: {message}",
+        Task.finished_at: _utcnow(),
+    }, synchronize_session=False))
+    db.session.commit()
 
 
 def _reset_for_run(task: Task, *, task_name: str, file_name: str,
@@ -227,7 +265,9 @@ def requeue_task(
     Raises :class:`ValueError` if the task is still queued or running; a live
     run must not be reset underneath the worker executing it.
     """
-    if TaskStatus(task.status) in (TaskStatus.QUEUED, TaskStatus.RUNNING):
+    lock_submission(task.project_id, task.test_id)
+    db.session.refresh(task)
+    if active_submission(task.project_id, task.test_id) is not None:
         raise ValueError("任务仍在队列或执行中，无需重新测试。")
     _reset_for_run(
         task,
@@ -253,6 +293,7 @@ def upsert_task(
     sil_model_id: Optional[int] = None,
     project_id: Optional[int] = None,
     submitter_id: Optional[int] = None,
+    commit: bool = True,
 ) -> tuple[Task, bool]:
     """Create or re-queue the task for ``(project_id, test_id)``.
 
@@ -262,13 +303,20 @@ def upsert_task(
     task that is currently queued/running is returned untouched so a live run is
     not clobbered mid-flight. When no task exists yet a fresh one is created.
     """
+    lock_submission(project_id, test_id)
+    active = active_submission(project_id, test_id)
+    if active is not None:
+        if commit:
+            db.session.commit()
+        return active, False
     existing = find_task_by_test_id(test_id, project_id=project_id)
     if existing is None:
         return create_task(
             task_name=task_name, file_name=file_name, submitter=submitter,
             test_id=test_id, sil_relpath=sil_relpath, sil_name=sil_name,
             sil_version=sil_version, sil_model_id=sil_model_id,
-            workspace=workspace, project_id=project_id, submitter_id=submitter_id), True
+            workspace=workspace, project_id=project_id, submitter_id=submitter_id,
+            commit=commit), True
 
     if TaskStatus(existing.status) in (TaskStatus.QUEUED, TaskStatus.RUNNING):
         return existing, False
@@ -278,7 +326,8 @@ def upsert_task(
         submitter=submitter, sil_relpath=sil_relpath, sil_name=sil_name,
         sil_version=sil_version, sil_model_id=sil_model_id,
         workspace=workspace, submitter_id=submitter_id)
-    db.session.commit()
+    if commit:
+        db.session.commit()
     return existing, True
 
 
