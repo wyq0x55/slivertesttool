@@ -226,6 +226,25 @@ def test_database_attempt_identity_binds_evidence_metadata(submitted, mutation):
         evidence.read_evidence(task)
 
 
+def test_submission_rollback_does_not_block_a_fresh_approved_attempt(submitted):
+    from app.extensions import db
+    _app, task, source, model = submitted
+    evidence = service()
+    original = evidence.read_evidence(task)
+    task.run_count = 2
+    task.sil_relpath = str(model)
+    evidence.pin_attempt(task, source, approved_inputs={"review": "aborted"})
+    db.session.flush()
+    db.session.rollback()
+    assert task.run_count == 1
+    task.run_count = 2
+    task.sil_relpath = str(model)
+    evidence.pin_attempt(task, source, approved_inputs={"review": "fresh human decision"})
+    db.session.commit()
+    assert evidence.read_evidence(task)["approved_inputs"] == {"review": "fresh human decision"}
+    assert evidence.read_evidence(task, run_count=1) == original
+
+
 @pytest.mark.parametrize("failure", [None, "error", "cancelled"])
 def test_runner_uses_snapshot_archives_all_outcomes_and_writes_back(submitted, monkeypatch, failure):
     from app.runners import test_runner
