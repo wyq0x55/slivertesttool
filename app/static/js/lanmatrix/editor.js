@@ -2028,13 +2028,7 @@
           },
           onSave: async (json) => {
             const changes = {}; changes[stepsKey] = json;
-            let merged;
-            if (collabActive()) {
-              merged = collab.setCell(currentSheet, item, changes);
-            } else {
-              const data = await LMApi.patchItem(pid, item.id, item.version, changes);
-              merged = data.item;
-            }
+            const merged = await saveCell(item, changes);
             item.version = merged.version;
             item[stepsKey] = merged[stepsKey];
             await loadItems();
