@@ -36,6 +36,7 @@ from ...models import AiDraft
 from ...services.ai import apply as ai_apply
 from ...services.ai import config as ai_config
 from ...services.ai import context as ai_context
+from ...services.ai import jobs as ai_jobs
 from ...services.ai import scenarios as ai_scenarios
 from ...services.ai import signal_dict as ai_signal_dict
 from ...services.ai.base import GenerationError
@@ -106,10 +107,11 @@ def create_draft():
                     created_by=g.user.id,
                     status=AiDraft.STATUS_RUNNING)
     db.session.add(draft)
+    attempt = ai_jobs.prepare(draft)
     db.session.commit()
     try:
         from ...jobqueue.tasks import run_ai_generation
-        run_ai_generation(draft.id)
+        run_ai_generation(draft.id, attempt)
     except (ProviderError, GenerationError, ValueError) as exc:
         # Immediate-mode (in-process) execution surfaces scenario failures
         # here; the queued path records the same state on the draft itself.
@@ -126,10 +128,11 @@ def create_draft():
         db.session.rollback()
         draft = db.session.get(AiDraft, draft.id)
         if draft is not None:
-            draft.status = AiDraft.STATUS_ERROR
-            draft.error = f"任务队列不可用：{exc}"
+            meta = ai_jobs.metadata(draft)
+            meta["publication_error"] = "Queue publication failed; worker recovery will retry"
+            draft.meta_json = json.dumps(meta, ensure_ascii=False)
             db.session.commit()
-        return err("AI_QUEUE_UNAVAILABLE", f"任务队列不可用：{exc}",
+        return err("AI_QUEUE_UNAVAILABLE", "任务已保存，队列暂不可用；worker 将恢复提交",
                    details={"draft_id": draft.id if draft else None},
                    status=503)
     # The worker (immediate mode: this process) may already have finished the
@@ -148,7 +151,7 @@ def list_drafts():
                        allowed=set(AiDraft.SCENARIOS))
     status = arg_str("status", max_length=16,
                      allowed={"running", "pending", "approved", "rejected",
-                              "error"})
+                              "error", "cancelled"})
     if project_id is None:
         # Draft listing is always project-scoped: without this the filter
         # silently becomes "every project on the server".
@@ -237,6 +240,40 @@ def reject_draft(draft_id: int):
     draft.reviewed_at = datetime.datetime.utcnow()
     db.session.commit()
     return ok({"draft_id": draft.id, "status": draft.status})
+
+
+@bp.post("/drafts/<int:draft_id>/cancel")
+@login_required
+def cancel_draft(draft_id: int):
+    draft = db.session.get(AiDraft, draft_id)
+    if draft is None:
+        return err("NOT_FOUND", "草稿不存在", status=404)
+    _require_edit(draft.project_id)
+    try:
+        draft = ai_jobs.cancel(draft_id)
+    except ValueError as exc:
+        return err("BAD_REQUEST", str(exc), status=409)
+    return ok(draft.to_dict())
+
+
+@bp.post("/drafts/<int:draft_id>/retry")
+@login_required
+def retry_draft(draft_id: int):
+    draft = db.session.get(AiDraft, draft_id)
+    if draft is None:
+        return err("NOT_FOUND", "草稿不存在", status=404)
+    _require_edit(draft.project_id)
+    try:
+        draft = ai_jobs.retry(draft_id)
+    except ValueError as exc:
+        return err("BAD_REQUEST", str(exc), status=409)
+    from ...jobqueue.tasks import publish_ai_generation
+    try:
+        publish_ai_generation(draft.id)
+    except Exception:
+        db.session.rollback()
+    db.session.expire_all()
+    return ok(db.session.get(AiDraft, draft_id).to_dict())
 
 
 @bp.get("/usage")

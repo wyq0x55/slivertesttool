@@ -66,10 +66,13 @@ def generate_validated(*,
     last_problems: list[str] = []
     usage_total = dict(result.usage) if result is not None else {}
     for round_no in range(1, max_rounds + 1):
+        from .jobs import checkpoint
+        checkpoint()
         messages = build_prompt(feedback)
         usage: dict[str, int] = {}
         text = provider.chat(messages, temperature=temperature,
                              max_tokens=max_tokens, usage=usage)
+        checkpoint()
         merge_usage(usage_total, usage)
         try:
             parsed = provider.extract_json(text)

@@ -39,6 +39,7 @@ class AiDraft(db.Model):
     STATUS_APPROVED = "approved"
     STATUS_REJECTED = "rejected"
     STATUS_ERROR = "error"
+    STATUS_CANCELLED = "cancelled"
 
     id = db.Column(db.Integer, primary_key=True)
     project_id = db.Column(

@@ -254,6 +254,8 @@ def generate_procedure(payload: dict[str, Any],
         remaining = [plans_by_ref[r] for r in chunk_refs]
         feedback: list[str] = []
         for round_no in range(1, base.DEFAULT_MAX_ROUNDS + 1):
+            from .jobs import checkpoint
+            checkpoint()
             _emit(on_event, phase="procedures", chunk=chunk_no,
                   total_chunks=total_chunks, round=round_no,
                   message=f"手顺批次 {chunk_no}/{total_chunks} 第 {round_no} 轮")
@@ -267,6 +269,7 @@ def generate_procedure(payload: dict[str, Any],
             try:
                 text = provider.chat(messages, temperature=0.2, max_tokens=8192,
                                      usage=usage)
+                checkpoint()
                 parsed = provider.extract_json(text)
                 items = (parsed or {}).get("procedures") if isinstance(parsed, dict) else None
                 if not isinstance(items, list):
