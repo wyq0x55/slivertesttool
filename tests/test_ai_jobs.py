@@ -127,3 +127,23 @@ def test_cancel_api_is_project_scoped_and_csrf_guarded(client, app_ctx, project_
     response = client.post(f"/api/v1/ai/drafts/{draft_id}/cancel", json={}, headers=headers)
     assert response.status_code == 200
     assert response.get_json()["data"]["status"] == "cancelled"
+
+
+def test_failed_publication_stays_recoverable(app_ctx, project_env):
+    from app.extensions import db
+    from app.models import AiDraft
+    from app.services.ai import jobs
+
+    with app_ctx.app_context():
+        draft_id, _attempt = _draft(app_ctx, project_env)
+
+        def unavailable(_draft_id):
+            raise ConnectionError("unavailable")
+
+        jobs.recover(unavailable)
+        draft = db.session.get(AiDraft, draft_id)
+        assert draft.status == "running"
+        assert jobs.metadata(draft)["job"]["state"] == "queued"
+        published = []
+        jobs.recover(published.append)
+        assert published == [draft_id]

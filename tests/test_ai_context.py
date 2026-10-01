@@ -134,3 +134,9 @@ def test_source_context_is_bounded_and_provenanced(app_ctx, project_env):
         context.build_payload(project_env, "viewpoint", {
             "doc_text": "requirement", "source_context": "x" * (context.MAX_SOURCE_CHARS + 1),
         })
+
+
+def test_create_rejects_non_object_json(client):
+    headers = _login(client, _admin(client))
+    response = client.post("/api/v1/ai/drafts", json=[{"scenario": "viewpoint"}], headers=headers)
+    assert response.status_code == 400
