@@ -340,6 +340,29 @@ def recover_ai_generation_job() -> None:
         jobs.recover(publish_ai_generation)
 
 
+def recover_run_attempts() -> dict:
+    """Publish pinned approved attempts without executing within the DB lock."""
+    from ..services.run_evidence_service import recover_queued_attempts
+
+    pending = {tuple(task.args) for task in huey.pending(limit=1000)
+               if isinstance(task, run_task.task_class)}
+
+    def enqueue(task_id, run_count):
+        message = run_task.s(task_id, run_count)
+        huey.storage.enqueue(huey.serialize_task(message), message.priority)
+
+    return recover_queued_attempts(enqueue, is_pending=lambda task_id, run_count: (task_id, run_count) in pending)
+
+
+@huey.periodic_task(crontab(minute="*"))
+def recover_run_attempts_job() -> None:
+    app = _get_app()
+    with app.app_context():
+        result = recover_run_attempts()
+        if result["errors"]:
+            logger.warning("Run publication recovery failed: %s", result["errors"])
+
+
 @huey.periodic_task(crontab(hour="3", minute="0"))
 def prune_task_events_job() -> None:
     """Daily off-peak sweep that bounds ``TaskEvent`` growth.

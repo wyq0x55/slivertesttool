@@ -100,6 +100,9 @@ class AiDraft(db.Model):
             entry["output"] = _load(self.output_json)
             entry["meta"] = _load(self.meta_json)
             entry["applied_result"] = _load(self.applied_result_json)
+        else:
+            meta = _load(self.meta_json)
+            entry["meta"] = {key: meta[key] for key in ("job", "progress", "rounds") if key in meta} if isinstance(meta, dict) else {}
         return entry
 
 

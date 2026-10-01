@@ -48,4 +48,5 @@ def test_worker_startup_calls_attempt_recovery_without_owning_bootstrap():
 def test_run_recovery_is_registered_as_periodic():
     from app.jobqueue import tasks
     assert hasattr(tasks, "recover_run_attempts_job")
-    assert tasks.recover_run_attempts_job.task_class in tasks.huey._registry.periodic_tasks
+    assert any(isinstance(task, tasks.recover_run_attempts_job.task_class)
+               for task in tasks.huey._registry.periodic_tasks)

@@ -97,6 +97,7 @@ def main() -> None:
         license_service.reset_in_use()
         from app.services.ai import jobs as ai_jobs
         ai_jobs.recover(tasks.publish_ai_generation, startup=True)
+        tasks.recover_run_attempts()
 
     # Pool infrastructure is started whenever the runner backend supports it, so
     # the reconcile loop is always present to honour a *live* enable/disable of
