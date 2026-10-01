@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 
 from ...extensions import db
@@ -13,6 +14,7 @@ from . import signal_dict
 
 MAX_SELECTED = 200
 MAX_SOURCE_CHARS = 256_000
+_SAFE_COMPILER_ARG = re.compile(r"(?:-D[A-Za-z_]\w*(?:=[^\r\n\x00]{0,256})?|-U[A-Za-z_]\w*|-std=(?:c|gnu)(?:89|90|99|11|17|18|23))\Z")
 
 
 def _digest(value: Any) -> str:
@@ -93,6 +95,11 @@ def _sources(payload: dict, provenance: list[dict]) -> None:
 def build_payload(project_id: int, scenario: str, submitted: dict[str, Any]) -> dict[str, Any]:
     payload = dict(submitted)
     payload.pop("_context", None)
+    arguments = payload.get("compile_args", [])
+    if (not isinstance(arguments, list) or len(arguments) > 64
+            or any(not isinstance(argument, str) or not _SAFE_COMPILER_ARG.fullmatch(argument)
+                   for argument in arguments)):
+        raise ValueError("compile_args supports bounded -D/-U definitions and C language standards only")
     provenance: list[dict] = []
     if "doc" in payload and "doc_text" not in payload:
         payload["doc_text"] = payload.pop("doc")
