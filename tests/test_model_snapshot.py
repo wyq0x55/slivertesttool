@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib
 import os
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -75,6 +76,56 @@ def test_registering_another_version_keeps_the_saved_copy(app, tmp_path):
     with pytest.raises(pms.ModelError):
         pms.add_path_model(project.id, "engine", str(sil), version="v1")
     assert ProjectModel.query.filter_by(project_id=project.id, name="engine").count() == 2
+
+
+def test_xml_saved_copy_preserves_non_module_script_paths(app, tmp_path):
+    from app.extensions import db
+    from app.models import Project
+    from app.services import project_model_service as models
+
+    project = Project(code="SNAPXML", name="XML snapshot", owner_id=None)
+    db.session.add(project)
+    db.session.commit()
+    source = _remote_model(tmp_path)
+    (source.parent / "a2laccess.dll").write_bytes(b"runtime-plugin")
+    script = "import ctypes; ctypes.CDLL('a2laccess.dll')"
+    configuration = ET.Element("workspace")
+    ET.SubElement(configuration, "property", name="script").text = script
+    module = ET.SubElement(configuration, "module")
+    ET.SubElement(module, "sil-line").text = (
+        f"{(source.parent / 'host.dll').as_posix()} -S {(source.parent / 'host.sbs').as_posix()}")
+    original = ET.tostring(configuration, encoding="unicode")
+    source.write_text(original, encoding="utf-8")
+
+    registered = models.add_path_model(project.id, "engine", str(source), version="v1")
+    saved = Path(registered["path"])
+    execution = ET.fromstring(saved.read_text(encoding="utf-8"))
+
+    assert execution.find("property").text == script
+    assert execution.find("module/sil-line").text == (
+        f"{(saved.parent / 'host.dll').as_posix()} -S {(saved.parent / 'host.sbs').as_posix()}")
+    assert (saved.parent / "host.dll").read_bytes() == b"dll"
+    assert (saved.parent / "host.sbs").read_bytes() == b"sbs"
+    assert (saved.parent / "host.pdb").read_bytes() == b"pdb"
+    assert not (saved.parent / "a2laccess.dll").exists()
+    assert source.read_text(encoding="utf-8") == original
+
+
+def test_malformed_xml_cannot_be_registered_as_a_saved_model(app, tmp_path):
+    from app.extensions import db
+    from app.models import Project, ProjectModel
+    from app.services import project_model_service as models
+
+    project = Project(code="SNAPBADXML", name="Malformed XML", owner_id=None)
+    db.session.add(project)
+    db.session.commit()
+    source = _remote_model(tmp_path)
+    source.write_text("<workspace><module>", encoding="utf-8")
+
+    with pytest.raises(models.ModelError, match="XML"):
+        models.add_path_model(project.id, "engine", str(source), version="v1")
+
+    assert ProjectModel.query.filter_by(project_id=project.id).count() == 0
 
 
 def test_database_rejects_duplicate_unversioned_models(app):

@@ -118,6 +118,44 @@ def test_real_silver_xml_dependencies_are_pinned_without_xml_tag_prefix(tmp_path
     assert model.read_text(encoding="utf-8") == original
 
 
+def test_silver_xml_only_rewrites_module_dependencies_not_embedded_python(tmp_path):
+    evidence = service()
+    task, source, model = prepared(tmp_path)
+    dll, sbs = model.with_suffix(".dll"), model.with_suffix(".sbs")
+    dll.write_bytes(b"dll-v1")
+    sbs.write_bytes(b"sbs-v1")
+    script = "import ctypes; ctypes.CDLL('x86/a2laccess.dll')"
+    configuration = ET.Element("configuration")
+    ET.SubElement(configuration, "property", name="script").text = script
+    module = ET.SubElement(configuration, "module")
+    ET.SubElement(module, "sil-line").text = f"{dll.as_posix()} -S {sbs.as_posix()}"
+    original = ET.tostring(configuration, encoding="unicode").replace("'", "&apos;")
+    model.write_text(original, encoding="utf-8")
+
+    evidence.pin_attempt(task, source)
+    data = evidence.read_evidence(task)
+    pinned = Path(data["model"]["execution_path"])
+    execution = ET.fromstring(pinned.read_text(encoding="utf-8"))
+
+    assert execution.find("property").text == script
+    assert execution.find("module/sil-line").text == (
+        f"{(pinned.parent / dll.name).as_posix()} -S {(pinned.parent / sbs.name).as_posix()}")
+    assert (pinned.parent / "approved.sil").read_text(encoding="utf-8") == original
+    assert model.read_text(encoding="utf-8") == original
+    assert set(data["model"]["files"]) == {"approved.sil", "plant.sil", "plant.dll", "plant.sbs"}
+
+
+def test_malformed_silver_xml_is_not_treated_as_plain_text_model(tmp_path):
+    evidence = service()
+    task, source, model = prepared(tmp_path)
+    model.write_text("<configuration><module>", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="XML"):
+        evidence.pin_attempt(task, source)
+
+    assert not evidence.attempt_dir(task).exists()
+
+
 def test_retest_from_pinned_model_keeps_original_identity_hash(tmp_path):
     task, source, model = prepared(tmp_path)
     dll, sbs = model.with_suffix(".dll"), model.with_suffix(".sbs")
