@@ -224,6 +224,12 @@ def _apply_procedure(draft, reviewer, project, payload, output, rows, snapshots,
     selected_refs = {entry["ref"] for entry in entries}
     skipped = [{"ref": entry.get("ref"), "reason": "未勾选（部分通过）"}
                for entry in output["procedures"] if isinstance(entry, dict) and entry.get("ref") not in selected_refs]
+    skipped_refs = {entry["ref"] for entry in skipped if isinstance(entry["ref"], str)}
+    for entry in payload["viewpoints"]:
+        ref = entry.get("ref") if isinstance(entry, dict) else None
+        if isinstance(ref, str) and ref not in selected_refs and ref not in skipped_refs:
+            skipped.append({"ref": ref, "reason": "生成失败（未应用）"})
+            skipped_refs.add(ref)
     return {"applied": applied, "skipped": skipped, "failed_refs": output.get("failed_refs") or []}
 
 
