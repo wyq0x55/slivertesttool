@@ -212,6 +212,7 @@ def record_run(task: Task, verdict: str) -> int:
                 row_uuid=row.uuid,
                 test_id=task.test_id,
                 task_key=task.task_key or "",
+                run_count=task.run_count or 1,
                 verdict=(verdict or "")[:24],
                 outcome=outcome,
                 model_name=model_name,

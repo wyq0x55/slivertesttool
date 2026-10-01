@@ -492,6 +492,8 @@ def _parse_call_args(raw: Any) -> list[str]:
     """
     if raw is None:
         return []
+    if isinstance(raw, list):
+        return [str(value).strip() for value in raw]
     text = raw if isinstance(raw, str) else str(raw)
     if text.strip() in ("", "-"):
         return []
@@ -697,6 +699,7 @@ def materialise_run_dir(
     test_row: TestItemRow,
     const_rows: Iterable[TestItemRow],
     lib_rows: Iterable[TestItemRow],
+    task=None,
 ) -> dict:
     """Assemble a self-contained JSON-runner directory at *case_dir*.
 
@@ -705,14 +708,57 @@ def materialise_run_dir(
     written paths (the runner path is what ``silver_runner`` looks for).
     """
     case_dir = Path(case_dir)
-    case_dir.mkdir(parents=True, exist_ok=True)
 
     # Materialise lib_rows once: it is consumed twice below (build_lib + the
     # CsvWriter signal list), so a bare generator would come up empty the second
     # time.
     lib_rows = list(lib_rows)
+    const_rows = list(const_rows)
+    from ..run_validation_service import ConversionError, validate_documents
 
-    runner_path = silver_json.copy_framework(case_dir)
+    def strict_body(row, field):
+        raw = row.get_field(field)
+        try:
+            body = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError) as exc:
+            raise ConversionError(f"Invalid {field} JSON") from exc
+        if not isinstance(body, dict) or not isinstance(body.get("steps"), list):
+            raise ConversionError(f"{field}: a procedure object with steps is required")
+        for step in body["steps"]:
+            if not isinstance(step, dict):
+                raise ConversionError(f"{field}: each step must be an object")
+            for cells, signals in (("inputs", "input_signals"), ("expecteds", "expected_signals")):
+                values = step.get(cells, [])
+                if not isinstance(values, list) or len(values) > len(_signal_pairs(body.get(signals))):
+                    raise ConversionError(f"{field}: signal cells do not match declared columns")
+            timing = unicodedata.normalize("NFKC", str(step.get("timing") or "")).strip()
+            if re.search(r"[-−]\s*(?:\d|\.\d)", timing) or timing.lower() in ("nan", "inf", "infinity"):
+                raise ConversionError(f"{field}: invalid timing duration")
+            if timing not in _DASH_TOKENS | {"任意"} and not any(keyword in timing for keyword, _method in _TIMING_KEYWORDS):
+                raise ConversionError(f"{field}: unrecognised timing instruction")
+        return body
+
+    strict_body(test_row, TEST_STEPS)
+    used_names = collect_used_subroutines(test_row, lib_rows)
+    names = set()
+    for row in lib_rows:
+        name = str(row.get_field(LIB_FUNC) or row.get_field(LIB_NAME) or row.case_id or "").strip()
+        if name in used_names:
+            if name in names:
+                raise ConversionError(f"Duplicate subroutine: {name}")
+            names.add(name)
+            strict_body(row, LIB_STEPS)
+            raw_params = str(row.get_field(LIB_PARA) or "")
+            declared = [token.partition("=")[0].strip()
+                        for token in _LIB_PARA_SEP_RE.split(raw_params) if token.strip()]
+            if len(declared) != len(set(declared)):
+                raise ConversionError(f"Duplicate formal parameter: {name}")
+    const_names = set()
+    for row in const_rows:
+        name = str(row.get_field(CONST_NAME) or "").strip()
+        if name and name in const_names:
+            raise ConversionError(f"Duplicate constant: {name}")
+        const_names.add(name)
 
     const_doc = build_constants(const_rows)
     # Emit only the subroutines this test case actually reaches (transitively),
@@ -725,16 +771,28 @@ def materialise_run_dir(
     }
     case_doc = build_testcase(
         test_row, init_names=init_names, lib_json_name="lib.json")
+    for step in strict_body(test_row, TEST_STEPS)["steps"]:
+        if _step_subroutine(step) in init_names and (
+                _parse_call_args(step.get("args")) or
+                any(not _blank_cell(value) for value in step.get("inputs", []) + step.get("expecteds", []))):
+            raise ConversionError("Init hoisting cannot preserve arguments or simultaneous signal cells")
+    validate_documents(case_doc, const_doc, lib_doc)
+
+    from .. import run_evidence_service as evidence
+    evidence.validate_segment(row_test_id(test_row))
+    evidence.checked_path(case_dir.parent, case_dir)
+    case_dir.mkdir(parents=True, exist_ok=True)
+    runner_path = silver_json.copy_framework(case_dir)
 
     tid = safe_test_id(row_test_id(test_row))
     testcase_name = f"testcase_{tid}.json"
 
     (case_dir / "constants.json").write_text(
-        json.dumps(const_doc, ensure_ascii=False, indent=2), encoding="utf-8")
+        json.dumps(const_doc, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
     (case_dir / "lib.json").write_text(
-        json.dumps(lib_doc, ensure_ascii=False, indent=2), encoding="utf-8")
+        json.dumps(lib_doc, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
     (case_dir / testcase_name).write_text(
-        json.dumps(case_doc, ensure_ascii=False, indent=2), encoding="utf-8")
+        json.dumps(case_doc, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
 
     # CsvWriter signal-selection list (``output.txt``). One Silver signal name
     # per line, no comments. When present, ``silver_runner`` passes it as
@@ -752,6 +810,16 @@ def materialise_run_dir(
     signal_paths = build_signal_list(test_row, used_lib_rows)
     if signal_paths:
         output_txt.write_text("\n".join(signal_paths) + "\n", encoding="utf-8")
+
+    if task is not None:
+        evidence.pin_attempt(task, case_dir, workspace=case_dir.parent.parent.parent,
+                             approved_inputs={
+                                 "test": strict_body(test_row, TEST_STEPS),
+                                 "libraries": {name: strict_body(row, LIB_STEPS)
+                                               for name, row in _lib_rows_by_name(lib_rows).items()
+                                               if name in used_names},
+                                 "constants": const_doc,
+                             })
 
     return {
         "runner": runner_path,

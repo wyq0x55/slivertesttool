@@ -173,9 +173,10 @@ def test_junction_escape_is_rejected(tmp_path):
 
 
 @pytest.fixture
-def submitted(app_ctx, tmp_path):
+def submitted(app_ctx, tmp_path, monkeypatch):
     from app.extensions import db
     from app.models import Task
+    monkeypatch.setattr(app_ctx.config_obj, "POOL_DIR", tmp_path / "pool")
     with app_ctx.app_context():
         prototype, source, model = prepared(tmp_path)
         task = Task(**{key: value for key, value in vars(prototype).items() if key != "id"})
