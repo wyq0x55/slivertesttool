@@ -287,6 +287,7 @@ def test_submission_export_pins_before_commit_and_history_resolves_after_retest(
                                         test_id="TC-1", sil_relpath=str(model), sil_name="plant",
                                         sil_version="v1", project_id=project.id, workspace="", commit=False)
         exporter.materialise_run_dir(source, matrix_row, [], [], task=task)
+        assert service().read_evidence(task)["approved_inputs"]["row"]["id"] == matrix_row.id
         assert service().read_evidence(task)["documents"]["testcase_TC-1.json"]["steps"][0]["inputs"][0]["value"] == 1
         db.session.commit()
 
