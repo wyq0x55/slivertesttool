@@ -1073,6 +1073,17 @@ export class UniverGridAdapter {
       try {
         api.onCommandExecuted((cmd: any) => {
           const id = cmd && cmd.id ? String(cmd.id) : "";
+          if (id === "sheet.operation.set-selections") {
+            const params = cmd.params || {};
+            this._onActiveSheetMaybeChanged();
+            const ctx = this.active;
+            if (ctx && params.unitId === this.fWorkbook?.getId()
+                && params.subUnitId === ctx.fSheet?.getSheetId()
+                && Array.isArray(params.selections)) {
+              this._onSelectionChanged({ selections: params.selections.map((selection: any) => selection.range) });
+            }
+            return;
+          }
           // Native "insert row" / "remove row" (context menu, toolbar) only mutate
           // Univer's in-memory grid — they create no backing server Item, so the
           // row is dropped on the next save/reload. Route them to the host's
