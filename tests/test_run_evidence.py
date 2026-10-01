@@ -130,6 +130,18 @@ def test_changed_snapshot_is_rejected_and_not_used_as_report_fallback(tmp_path):
     assert report_service.result_dir(task) is None
 
 
+def test_missing_new_attempt_never_uses_another_cases_legacy_logs(tmp_path):
+    from app.services import report_service
+    task, source, _model = prepared(tmp_path)
+    service().pin_attempt(task, source)
+    task.run_count = 2
+    task.report_path = ""
+    legacy = Path(task.workspace) / "log" / task.test_id
+    legacy.mkdir(parents=True)
+    (legacy / "jdgrslt.log").write_text("unrelated", encoding="utf-8")
+    assert report_service.result_dir(task) is None
+
+
 @pytest.mark.parametrize("attribute,value", [("task_key", ".."), ("test_id", "../outside")])
 def test_unsafe_identity_is_rejected(tmp_path, attribute, value):
     task, source, _model = prepared(tmp_path)
@@ -273,7 +285,7 @@ def test_submission_export_pins_before_commit_and_history_resolves_after_retest(
         task = task_service.create_task(task_name="case", file_name="json", submitter="tester",
                                         test_id="TC-1", sil_relpath=str(model), sil_name="plant",
                                         sil_version="v1", project_id=project.id, workspace="", commit=False)
-        exporter.materialise_run_dir(source, matrix_row, [], [])
+        exporter.materialise_run_dir(source, matrix_row, [], [], task=task)
         assert service().read_evidence(task)["documents"]["testcase_TC-1.json"]["steps"][0]["inputs"][0]["value"] == 1
         db.session.commit()
 
@@ -387,3 +399,63 @@ def test_http_submission_and_retest_enqueue_the_pinned_attempt(app_ctx, tmp_path
     assert calls[0][2]["archive_path"] != calls[1][2]["archive_path"]
     with app_ctx.app_context():
         assert service().read_evidence(task_key, 1) == calls[0][2]
+
+
+def test_recovery_preserves_pinned_legacy_upload(submitted):
+    _application, task, source, model = submitted
+    task.run_count = 2
+    task.sil_relpath = str(model)
+    for name in ("testcase_TC-1.json", "constants.json", "lib.json"):
+        (source / name).unlink()
+    (source / "judge.py").write_text("print('approved legacy script')", encoding="utf-8")
+    service().pin_attempt(task, source, approved_inputs={"source": "human submitted bundle"})
+    from app.extensions import db
+    db.session.commit()
+    calls = []
+    result = service().recover_queued_attempts(
+        lambda *identity: calls.append(identity), is_pending=lambda *identity: False)
+    assert result["recovered"] == [(task.id, 2)]
+    assert calls == [(task.id, 2)]
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_pooled_console_is_sliced_before_sealing_all_outcomes(submitted, monkeypatch, failure):
+    from app.runners import test_runner
+    from app.runners.silver_runner import RunnerError
+    application, task, _source, _model = submitted
+    console = Path(application.config_obj.POOL_DIR) / "inst_1" / "Console.log"
+    console.parent.mkdir(parents=True)
+    console.write_bytes(b"previous case\n")
+    instance = SimpleNamespace(uid=1, handle=object(), console_log=console)
+
+    def run(current, context):
+        with console.open("ab") as stream:
+            stream.write(b"this attempt only\n")
+        (context.log_dir / "jdgrslt.log").write_text("Test is failed.", encoding="utf-8")
+        if failure:
+            raise RunnerError("synthetic pooled failure")
+
+    pool = SimpleNamespace(is_mock=True, configure_and_run=run, force_stop=lambda current: None)
+    test_runner.execute(application, application.config_obj, task, pool=pool, instance=instance)
+    data = service().read_evidence(task)
+    assert data["logs"]["Console.log"] == "this attempt only\n"
+    assert data["outcome"]["evidence_kind"] == "synthetic"
+    assert data["outcome"]["runner_backend"] == "mock"
+    assert task.result == ("ERROR" if failure else "FAIL")
+    console.write_bytes(b"subsequent case\n")
+    assert service().read_evidence(task)["logs"] == data["logs"]
+
+
+def test_purge_removes_only_its_task_archive_and_soft_delete_preserves_it(tmp_path):
+    from app.services import task_service
+    task, source, model = prepared(tmp_path)
+    first = service().pin_attempt(task, source)
+    other = SimpleNamespace(**{**vars(task), "task_key": "T000002", "sil_relpath": str(model)})
+    second = service().pin_attempt(other, source)
+    task.deleted_at = datetime.now()
+    assert first.is_dir()
+    with pytest.raises(ValueError, match="deleted"):
+        service().read_evidence(task)
+    task_service.remove_task_artifacts(task)
+    assert not first.exists()
+    assert second.is_dir()
