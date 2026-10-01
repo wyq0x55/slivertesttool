@@ -201,6 +201,31 @@ def submitted(app_ctx, tmp_path, monkeypatch):
         yield app_ctx, task, source, model
 
 
+@pytest.mark.parametrize("mutation", ["manifest", "rewritten_input_hash", "outcome"])
+def test_database_attempt_identity_binds_evidence_metadata(submitted, mutation):
+    from app.extensions import db
+    _app, task, _source, _model = submitted
+    evidence = service()
+    root = evidence.attempt_dir(task)
+    if mutation == "outcome":
+        evidence.seal_attempt(task, status="failed", verdict="FAIL", message="failure")
+        db.session.commit()
+        path = root / "outcome.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["verdict"] = "PASS"
+    else:
+        path = root / "manifest.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if mutation == "manifest":
+            data["approved_inputs"] = {"review": "rewritten"}
+        else:
+            (root / "inputs" / task.test_id / "constants.json").write_text('{"constants":{"FORGED":1}}', encoding="utf-8")
+            data["input_files"] = evidence._hashes(root / "inputs")
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError, match="integrity|hash"):
+        evidence.read_evidence(task)
+
+
 @pytest.mark.parametrize("failure", [None, "error", "cancelled"])
 def test_runner_uses_snapshot_archives_all_outcomes_and_writes_back(submitted, monkeypatch, failure):
     from app.runners import test_runner
