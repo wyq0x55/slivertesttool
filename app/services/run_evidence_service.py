@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import stat
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -187,6 +188,11 @@ def pin_attempt(task, source_dir, *, approved_inputs=None, workspace=None):
     for _path in _files(source):
         pass
     root.parent.mkdir(parents=True, exist_ok=True)
+    from ..models import Task
+    if root.exists() and isinstance(task, Task) and _identity(task, task.run_count or 1) is None:
+        orphan = checked_path(workspace, root.parent / f"aborted-{task.run_count or 1}-{uuid.uuid4().hex}")
+        checked_path(workspace, root, exists=True)
+        root.rename(orphan)
     root.mkdir()
     try:
         inputs = root / "inputs"
