@@ -336,3 +336,54 @@ def test_sealed_results_reject_late_mutation(tmp_path):
     (result / "Console.log").write_text("changed", encoding="utf-8")
     with pytest.raises(ValueError, match="integrity"):
         evidence.read_evidence(task)
+
+
+def test_http_submission_and_retest_enqueue_the_pinned_attempt(app_ctx, tmp_path, monkeypatch):
+    from app.extensions import db
+    from app.models import LMUser, Project, ProjectMember, ProjectModel, Task, TestItemRow
+    from app.jobqueue import tasks as jobs
+    with app_ctx.app_context():
+        user = LMUser(username="evidence-runner", display_name="Runner", password_hash="x")
+        db.session.add(user)
+        db.session.commit()
+        project = Project(code="HTTP-EVIDENCE", name="HTTP evidence", owner_id=user.id)
+        db.session.add(project)
+        db.session.commit()
+        _prototype, _source, model = prepared(tmp_path)
+        db.session.add(ProjectMember(project_id=project.id, user_id=user.id, role="project_admin"))
+        db.session.add(ProjectModel(project_id=project.id, name="plant", version="v1",
+                                   sil_path=str(model), is_current=True, kind="path"))
+        db.session.add(TestItemRow(project_id=project.id, case_id="TC-1", sheet="test",
+                                   custom_values={"steps": {"steps": [{"no": 1}]}}))
+        db.session.commit()
+        project_id, user_id = project.id, user.id
+    calls = []
+
+    def enqueue(task_id, expected_run_count=None):
+        task = db.session.get(Task, task_id)
+        snapshot = service().read_evidence(task, expected_run_count)
+        calls.append((task_id, expected_run_count, snapshot))
+
+    monkeypatch.setattr(jobs, "run_task", enqueue)
+    client = app_ctx.test_client()
+    with client.session_transaction() as session:
+        session["lm_user_id"] = user_id
+        session["csrf_token"] = "evidence-csrf"
+    headers = {"X-CSRF-Token": "evidence-csrf"}
+    response = client.post(f"/api/v1/projects/{project_id}/tasks/run-selected",
+                           json={"test_ids": ["TC-1"], "model": "plant@v1"}, headers=headers)
+    assert response.status_code == 201
+    assert len(response.json["data"]["created"]) == 1, response.json
+    assert calls[0][1] == 1
+    with app_ctx.app_context():
+        task = db.session.get(Task, calls[0][0])
+        task.status = "passed"
+        task_key = task.task_key
+        db.session.commit()
+    response = client.post(f"/api/v1/projects/{project_id}/tasks/rerun-selected",
+                           json={"task_keys": [task_key]}, headers=headers)
+    assert len(response.json["data"]["created"]) == 1, response.json
+    assert calls[1][1] == 2
+    assert calls[0][2]["archive_path"] != calls[1][2]["archive_path"]
+    with app_ctx.app_context():
+        assert service().read_evidence(task_key, 1) == calls[0][2]
