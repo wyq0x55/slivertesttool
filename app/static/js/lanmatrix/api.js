@@ -364,6 +364,12 @@
     rejectAiDraft(id, note) {
       return request("POST", `/ai/drafts/${id}/reject`, { body: { note } });
     },
+    cancelAiDraft(id) {
+      return request("POST", `/ai/drafts/${id}/cancel`, { body: {} });
+    },
+    retryAiDraft(id) {
+      return request("POST", `/ai/drafts/${id}/retry`, { body: {} });
+    },
     aiUsage(projectId, months) {
       var q = { project_id: projectId };
       if (months) q.months = months;

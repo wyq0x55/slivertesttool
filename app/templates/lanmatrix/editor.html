@@ -32,6 +32,11 @@
               aria-label="快捷键与操作帮助">?</button>
       <button class="btn" id="lm-import">导入</button>
       <button class="btn" id="lm-export">导出</button>
+      <label class="lm-muted">模型 ID <input id="lm-ai-model-id" type="number" min="1" step="1"
+        style="width:80px" placeholder="当前" aria-label="AI 使用的已保存模型 ID（可选）"></label>
+      <button class="btn" id="lm-ai-generate" type="button" disabled
+        title="选择已保存测试行，生成手顺草稿供人工审核">AI 生成手顺</button>
+      <a class="btn" id="lm-ai-draft-link" hidden>查看草稿</a>
       <button class="btn btn-primary" id="lm-run-selected" hidden>队列测试</button>
     </div>
   </div>
@@ -40,6 +45,8 @@
        lacks native worksheet tabs (stale/builtin engine), so test/const/lib stay
        reachable. Hidden when native Univer tabs are available. -->
   <div id="lm-sheet-tabs" class="lm-sheet-tabs" hidden></div>
+
+  <p id="lm-ai-status" class="lm-muted" role="status" aria-live="polite"></p>
 
   <div id="lm-grid-host" class="lm-grid-host"></div>
 
