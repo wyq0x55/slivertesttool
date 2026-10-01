@@ -84,6 +84,18 @@ def _check_dictionary(project_id, context):
 
 
 def _lock_model(project, payload, scenario):
+    if scenario == "failure":
+        from .context import _failure_context
+        row = db.session.get(TestItemRow, payload["item_id"])
+        sources = []
+        try:
+            _failure_context(project.id, row, dict(payload), sources)
+        except (ValueError, OSError) as exc:
+            raise ApplyError(f"Archived evidence is no longer available: {exc}") from exc
+        original = [entry for entry in payload["_context"].get("provenance", []) if entry.get("kind") == "run_attempt"]
+        if len(original) != 1 or original != sources:
+            raise ApplyError("Archived evidence changed; regenerate this draft")
+        return None
     snapshot = payload["_context"].get("model")
     if snapshot is None:
         if scenario == "sbs" or payload.get("model_id") is not None:

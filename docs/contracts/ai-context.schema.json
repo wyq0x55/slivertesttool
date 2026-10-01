@@ -23,7 +23,7 @@
       "type": ["object", "null"],
       "required": ["id", "name", "version"],
       "properties": {
-        "id": {"type": "integer", "minimum": 1},
+        "id": {"type": ["integer", "null"], "minimum": 1},
         "name": {"type": "string"},
         "version": {"type": "string"},
         "sbs_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}

@@ -822,6 +822,7 @@ def materialise_run_dir(
     if task is not None:
         evidence.pin_attempt(task, case_dir, workspace=case_dir.parent.parent.parent,
                              approved_inputs={
+                                 "row": {**test_row.to_dict(), "id": test_row.id, "uuid": test_row.uuid, "version": test_row.version},
                                  "test": _parse_json_field(test_row.get_field(TEST_STEPS)),
                                  "libraries": {name: _parse_json_field(row.get_field(LIB_STEPS))
                                                for name, row in _lib_rows_by_name(lib_rows).items()

@@ -8,7 +8,7 @@ import re
 from typing import Any
 
 from ...extensions import db
-from ...models import ProjectModel, TestItemRow
+from ...models import ProjectModel, Task, TestItemRow
 from ..lanmatrix import sbs_service
 from . import signal_dict
 
@@ -92,9 +92,45 @@ def _sources(payload: dict, provenance: list[dict]) -> None:
                            "sha256": _digest(content)})
 
 
+def _failure_context(project_id, row, payload, provenance):
+    from ..run_evidence_service import read_evidence
+
+    key = payload.get("task_key")
+    if not isinstance(key, str) or not key.strip():
+        raise ValueError("Failure analysis requires an archived task_key")
+    task = Task.query.filter_by(project_id=project_id, task_key=key, deleted_at=None).first()
+    if task is None:
+        raise ValueError("Archived task is unavailable in this project")
+    data = read_evidence(task, payload.get("run_count"))
+    if data["outcome"] is None:
+        raise ValueError("Failure analysis requires sealed run evidence")
+    approved = data["approved_inputs"]
+    saved_row = approved.get("row") or {}
+    if saved_row.get("id") != row.id or saved_row.get("uuid") != row.uuid or not isinstance(approved.get("test"), dict):
+        raise ValueError("Archived approved inputs do not belong to the selected matrix row")
+    payload["task_key"] = task.task_key
+    payload["run_count"] = data["run_count"]
+    payload["viewpoint"] = {key: saved_row.get(key) or "" for key in ("title", "module", "precondition")}
+    payload["viewpoint"].update(item_id=row.id, version=saved_row["version"],
+                                case_id=saved_row.get("test_id") or saved_row["case_id"],
+                                condition=saved_row.get("purpose") or "",
+                                expected=saved_row.get("expected_result") or saved_row.get("description") or "")
+    payload["steps_doc"] = approved["test"]
+    payload["log_text"] = json.dumps(data["outcome"], ensure_ascii=False) + "\n" + "\n".join(
+        f"{name}\n{content}" for name, content in data["logs"].items())
+    model = {key: data["model"].get(key) for key in ("id", "name", "version", "sha256")}
+    provenance.append({"kind": "run_attempt", "task_key": task.task_key, "run_count": data["run_count"],
+                       "evidence_kind": data["outcome"].get("evidence_kind", "unclassified"),
+                       "sha256": _digest({key: data[key] for key in ("approved_inputs", "model", "outcome", "artifacts", "input_files")}),
+                       "artifacts": data["artifacts"]})
+    return model
+
+
 def build_payload(project_id: int, scenario: str, submitted: dict[str, Any]) -> dict[str, Any]:
     payload = dict(submitted)
     payload.pop("_context", None)
+    if scenario == "failure":
+        payload.pop("log_text", None)
     arguments = payload.get("compile_args", [])
     if (not isinstance(arguments, list) or len(arguments) > 64
             or any(not isinstance(argument, str) or not _SAFE_COMPILER_ARG.fullmatch(argument)
@@ -151,9 +187,9 @@ def build_payload(project_id: int, scenario: str, submitted: dict[str, Any]) -> 
     model_id = payload.get("model_id")
     if model_id is not None and (type(model_id) is not int or model_id < 1):
         raise ValueError("model_id must be a positive integer")
-    model = (db.session.get(ProjectModel, model_id) if model_id else
+    model = None if scenario == "failure" else (db.session.get(ProjectModel, model_id) if model_id else
              ProjectModel.query.filter_by(project_id=project_id, is_current=True, deprecated_at=None).first())
-    if model_id and (model is None or model.project_id != project_id or model.deprecated_at is not None):
+    if scenario != "failure" and model_id and (model is None or model.project_id != project_id or model.deprecated_at is not None):
         raise ValueError("Saved model is unavailable in this project")
     model_context = None
     payload["current_sbs"] = ""
@@ -177,8 +213,8 @@ def build_payload(project_id: int, scenario: str, submitted: dict[str, Any]) -> 
         payload["procedures"] = [{"item_id": row.id, "version": row.version,
                                   "steps_doc": _steps(row)} for row in selected]
     elif scenario == "failure":
-        payload["viewpoint"] = _viewpoint(selected[0])
-        payload["steps_doc"] = _steps(selected[0])
+        model_context = _failure_context(project_id, selected[0], payload, provenance)
+        payload.pop("model_id", None)
     payload["_context"] = {"schema_version": 1, "project_id": project_id,
                            "items": [{"id": row.id, "version": row.version} for row in selected],
                            "dependencies": [{"id": row.id, "version": row.version} for row in dependencies],

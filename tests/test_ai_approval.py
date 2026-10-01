@@ -152,6 +152,26 @@ def make_draft(env, scenario="procedure", payload=None, output=None):
         canonical.update(model_id=model.id, current_sbs=saved["content"])
         canonical["_context"]["model"] = {"id": model.id, "name": model.name, "version": model.version,
                                           "sbs_sha256": saved["version"]}
+    if scenario == "failure" and payload is None:
+        from pathlib import Path
+        from app.services import task_service, run_evidence_service
+        from app.services.lanmatrix import silver_json_export
+        from app.services.ai import context
+        row = rows[0]
+        row.set_field("steps", json.dumps(steps_doc()))
+        model_path = Path(model.sil_path)
+        model_path.write_text("synthetic saved model", encoding="utf-8")
+        case_dir = model_path.parent / "workspace" / ".pending" / row.get_field("test_id") / row.get_field("test_id")
+        task = task_service.create_task(task_name="Approval evidence", file_name="JSON", submitter="tester",
+                                        test_id=row.get_field("test_id"), project_id=env["project"].id,
+                                        workspace=str(case_dir.parent.parent.parent),
+                                        sil_relpath=str(model_path), sil_name=model.name,
+                                        sil_version=model.version, sil_model_id=model.id, commit=False)
+        silver_json_export.materialise_run_dir(case_dir, row, [], [], task)
+        run_evidence_service.seal_attempt(task, status="failed", verdict="FAIL", message="Synthetic failure",
+                                          evidence_kind="synthetic", runner_backend="mock")
+        db.session.commit()
+        canonical = context.build_payload(env["project"].id, "failure", {"item_id": row.id, "task_key": task.task_key})
     if payload is not None:
         canonical = payload
     defaults = {"viewpoint": viewpoint_output(), "procedure": procedure_output(),
@@ -242,6 +262,7 @@ def test_approval_commits_once_only_after_review_metadata(approval_env, monkeypa
 def test_commit_failure_rolls_back_assets_and_review(approval_env, monkeypatch, scenario):
     env = approval_env
     draft = make_draft(env, scenario)
+    original_steps = env["rows"][0].get_field("steps")
     def broken_commit():
         raise RuntimeError("commit failed")
     monkeypatch.setattr(db.session, "commit", broken_commit)
@@ -252,7 +273,7 @@ def test_commit_failure_rolls_back_assets_and_review(approval_env, monkeypatch, 
         assert observer.query(ItemRow).count() == 2
         assert observer.query(SbsRevision).count() == 0
         assert observer.query(CellComment).count() == 0
-    assert not env["rows"][0].get_field("steps")
+    assert env["rows"][0].get_field("steps") == original_steps
     assert draft.status == "pending" and draft.reviewed_by is None
 
 
@@ -461,7 +482,8 @@ def test_applied_assets_keep_draft_and_source_provenance(approval_env, scenario)
     env = approval_env
     draft = make_draft(env, scenario)
     payload = json.loads(draft.input_json)
-    sources = [{"kind": "submitted_source", "name": "engine.c", "revision": "abc123", "sha256": "a" * 64}]
+    sources = [*payload["_context"].get("provenance", []),
+               {"kind": "submitted_source", "name": "engine.c", "revision": "abc123", "sha256": "a" * 64}]
     payload["_context"]["provenance"] = sources
     draft.input_json = json.dumps(payload)
     db.session.commit()
