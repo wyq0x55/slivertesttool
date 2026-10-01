@@ -21,6 +21,7 @@ from .lanmatrix import (
     TestRunRecord,
 )
 from .setting import Setting
+from .run_evidence import RunEvidence
 from .task import Task, TaskStatus
 from .task_event import EventType, TaskEvent
 
@@ -32,6 +33,7 @@ __all__ = [
     "EventType",
     "AiDraft",
     "AiSignalDict",
+    "RunEvidence",
     # LAN Test Matrix models (merged into the platform's model layer).
     "LMUser",
     "ProjectMember",

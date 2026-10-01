@@ -102,6 +102,23 @@ def _read_json(root, name):
         raise EvidenceError(f"Cannot read evidence {name}") from exc
 
 
+def _identity(task, run_count):
+    from ..extensions import db
+    from ..models import RunEvidence, Task
+    return db.session.get(RunEvidence, (task.id, run_count)) if isinstance(task, Task) else None
+
+
+def _check_identity(task, root, run_count, *, outcome=False):
+    from ..models import Task
+    if not isinstance(task, Task):
+        return
+    record = _identity(task, run_count)
+    name = "outcome.json" if outcome else "manifest.json"
+    expected = (record.outcome_sha256 if outcome else record.manifest_sha256) if record else None
+    if not expected or _digest(checked_path(root, root / name, exists=True)) != expected:
+        raise EvidenceError(f"Evidence {name} hash integrity does not match the committed attempt")
+
+
 def _pin_model(task, source, root, workspace):
     ref = Path(task.sil_relpath)
     model = ref if ref.is_absolute() else source / ref
@@ -182,6 +199,11 @@ def pin_attempt(task, source_dir, *, approved_inputs=None, workspace=None):
                     "approved_inputs": approved_inputs or {}, "input_files": _hashes(inputs),
                     "model": model}
         _write_json(root / "manifest.json", manifest)
+        from ..extensions import db
+        from ..models import RunEvidence, Task
+        if isinstance(task, Task):
+            db.session.add(RunEvidence(task_id=task.id, run_count=task.run_count or 1,
+                                        manifest_sha256=_digest(root / "manifest.json")))
     except Exception:
         checked_path(workspace, root, exists=True)
         shutil.rmtree(root)
@@ -193,6 +215,7 @@ def pin_attempt(task, source_dir, *, approved_inputs=None, workspace=None):
 
 
 def _manifest(task, root, run_count):
+    _check_identity(task, root, run_count)
     manifest = _read_json(root, "manifest.json")
     expected = (task.id, task.task_key, run_count, task.project_id, task.test_id)
     actual = tuple(manifest.get(key) for key in ("task_id", "task_key", "run_count", "project_id", "test_id"))
@@ -225,6 +248,7 @@ def read_evidence(task, run_count=None, *, max_log_bytes=262144):
     logs = {}
     remaining = max_log_bytes
     if (root / "outcome.json").exists():
+        _check_identity(task, root, attempt, outcome=True)
         outcome = _read_json(root, "outcome.json")
         if _hashes(root / "results") != outcome["result_files"]:
             raise EvidenceError("Result archive hash integrity check failed")
@@ -255,6 +279,9 @@ def seal_attempt(task, *, status, verdict, message, evidence_kind="unclassified"
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "result_files": _hashes(results),
     })
+    record = _identity(task, task.run_count or 1)
+    if record is not None:
+        record.outcome_sha256 = _digest(root / "outcome.json")
 
 
 def read_record_evidence(record, *, max_log_bytes=262144):
