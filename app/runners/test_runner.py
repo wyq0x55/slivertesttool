@@ -259,6 +259,8 @@ def execute(app, config, task: Task, pool=None, instance=None,
             evidence.pin_attempt(task, source, approved_inputs={"source": "legacy submitted bundle"})
         data = evidence.read_evidence(task)
         if data["outcome"] is not None:
+            outcome = data["outcome"]
+            _finalise(task, TaskStatus(outcome["status"]), outcome["message"], outcome["verdict"])
             return
         from ..services.run_validation_service import validate_run_directory
         case = root / "inputs" / task.test_id
@@ -509,9 +511,13 @@ def _finalise(task: Task, status: TaskStatus, message: str, verdict: str, *, arc
     run_count = getattr(task, "_attempt_run_count", task.run_count or 1)
     if archive:
         try:
-            evidence.seal_attempt(task, status=status.value, verdict=verdict, message=message,
-                                  evidence_kind=getattr(task, "_evidence_kind", "unclassified"),
-                                  runner_backend=getattr(task, "_runner_backend", ""))
+            existing = evidence.read_evidence(task, run_count)["outcome"]
+            if existing is None:
+                evidence.seal_attempt(task, status=status.value, verdict=verdict, message=message,
+                                      evidence_kind=getattr(task, "_evidence_kind", "unclassified"),
+                                      runner_backend=getattr(task, "_runner_backend", ""))
+            else:
+                status, verdict, message = TaskStatus(existing["status"]), existing["verdict"], existing["message"]
         except (ValueError, OSError) as exc:
             logger.exception("Could not seal evidence for task %s", task.task_key)
             status, verdict = TaskStatus.FAILED, "ERROR"

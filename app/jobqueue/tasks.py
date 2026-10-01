@@ -135,6 +135,13 @@ def run_task(task_pk: int, expected_run_count: int | None = None) -> None:
         _run_task_dedicated(app, config, task_pk, expected_run_count)
 
 
+def _has_pending_outcome(task_pk, run_count):
+    from ..extensions import db
+    from ..models import RunEvidence
+    record = db.session.get(RunEvidence, (task_pk, run_count))
+    return record is not None and bool(record.outcome_sha256) and not record.finalised
+
+
 def _run_task_pooled(app, config, task_pk: int, expected_run_count=None) -> None:
     """Execute a task on a pre-warmed, reusable pooled Silver instance."""
     from ..extensions import db
@@ -194,9 +201,10 @@ def _run_task_pooled(app, config, task_pk: int, expected_run_count=None) -> None
             test_runner.execute(app, config, task, pool=pool, instance=instance)
         except Exception as exc:  # noqa: BLE001
             logger.exception("run_task failed for pk=%s", task_pk)
+            db.session.rollback()
             task = db.session.get(Task, task_pk)
             if (task is not None and task.run_count == expected_run_count
-                    and not TaskStatus(task.status).is_final):
+                    and not TaskStatus(task.status).is_final and not _has_pending_outcome(task_pk, expected_run_count)):
                 task.status = TaskStatus.FAILED.value
                 task.message = f"Internal error: {exc}"
                 task.finished_at = _utcnow()
@@ -258,9 +266,10 @@ def _run_task_dedicated(app, config, task_pk: int, expected_run_count=None) -> N
             test_runner.execute(app, app.config_obj, task, dedicated_slot=slot)
         except Exception as exc:  # noqa: BLE001
             logger.exception("run_task failed for pk=%s", task_pk)
+            db.session.rollback()
             task = db.session.get(Task, task_pk)
             if (task is not None and task.run_count == expected_run_count
-                    and not TaskStatus(task.status).is_final):
+                    and not TaskStatus(task.status).is_final and not _has_pending_outcome(task_pk, expected_run_count)):
                 task.status = TaskStatus.FAILED.value
                 task.message = f"Internal error: {exc}"
                 task.finished_at = _utcnow()
