@@ -159,6 +159,27 @@ def test_malformed_silver_xml_is_not_treated_as_plain_text_model(tmp_path):
     assert not evidence.attempt_dir(task).exists()
 
 
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_pinned_silver_xml_preserves_original_newline_bytes(tmp_path, newline):
+    evidence = service()
+    task, source, model = prepared(tmp_path)
+    dll, sbs = model.with_suffix(".dll"), model.with_suffix(".sbs")
+    dll.write_bytes(b"dll-v1")
+    sbs.write_bytes(b"sbs-v1")
+    module_line = f"{dll.as_posix()} -S {sbs.as_posix()}"
+    original = newline.join([
+        "<workspace>", '<property name="label">日本語 &apos;label&apos;</property>',
+        f"<module><sil-line>{module_line}</sil-line></module>", "</workspace>"]).encode("utf-8")
+    model.write_bytes(original)
+
+    evidence.pin_attempt(task, source)
+    pinned = Path(evidence.read_evidence(task)["model"]["execution_path"])
+    replacement = f"{(pinned.parent / dll.name).as_posix()} -S {(pinned.parent / sbs.name).as_posix()}"
+
+    assert pinned.read_bytes() == original.replace(module_line.encode("utf-8"), replacement.encode("utf-8"))
+    assert (pinned.parent / "approved.sil").read_bytes() == original
+
+
 def test_retest_from_pinned_model_keeps_original_identity_hash(tmp_path):
     task, source, model = prepared(tmp_path)
     dll, sbs = model.with_suffix(".dll"), model.with_suffix(".sbs")

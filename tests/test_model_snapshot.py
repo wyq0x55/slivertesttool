@@ -158,6 +158,30 @@ def test_malformed_xml_cannot_be_registered_as_a_saved_model(app, tmp_path):
     assert set(model_root.rglob("*")) == existing
 
 
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_saved_silver_xml_preserves_original_newline_bytes(app, tmp_path, newline):
+    from app.extensions import db
+    from app.models import Project
+    from app.services import project_model_service as models
+
+    project = Project(code="SNAPNEWLINE", name="Native newlines", owner_id=None)
+    db.session.add(project)
+    db.session.commit()
+    source = _remote_model(tmp_path)
+    module_line = f"{(source.parent / 'host.dll').as_posix()} -S {(source.parent / 'host.sbs').as_posix()}"
+    original = newline.join([
+        "<workspace>", "<gui-module/>",
+        f"<module><sil-line>{module_line}</sil-line></module>", "</workspace>"]).encode("utf-8")
+    source.write_bytes(original)
+
+    registered = models.add_path_model(project.id, "engine", str(source), version="v1")
+    saved = Path(registered["path"])
+    replacement = f"{(saved.parent / 'host.dll').resolve().as_posix()} -S {(saved.parent / 'host.sbs').resolve().as_posix()}"
+
+    assert saved.read_bytes() == original.replace(module_line.encode("utf-8"), replacement.encode("utf-8"))
+    assert source.read_bytes() == original
+
+
 def test_database_rejects_duplicate_unversioned_models(app):
     from sqlalchemy.exc import IntegrityError
 
