@@ -186,6 +186,9 @@ function editorHarness(options = {}) {
     isEditing: () => false, setData() {}, setFields() {}, ...options.grid };
   const collab = options.collab ? { isActive: () => true, getItems: () => options.live || persisted } : null;
   const window = { location: { href: "" }, addEventListener() {} };
+  let drawerOptions;
+  const stepsEditor = { open(_item, settings) { drawerOptions = settings; } };
+  window.LMStepsEditor = stepsEditor;
   const context = vm.createContext({ document: environment.document, window, URLSearchParams,
     LMApi: api, LM: { user: {}, urls: {} }, LMReady: options.ready || Promise.resolve({}),
     LMPill: { apply() {}, PROJECT_ZH: {} }, LMUI: { toast: (message, ok) => toasts.push({ message, ok }) },
@@ -193,18 +196,28 @@ function editorHarness(options = {}) {
     setInterval: () => 1, clearInterval() {}, console,
     testGrid: grid, testCollab: collab, testRows: persisted, testSheet: options.sheet || "test",
     testConn: options.disconnected ? "disconnected" : "connected",
-    testFields: options.fields || [{ field_key: "title" }],
+    testFields: options.fields || [{ field_key: "title" }], LMStepsEditor: stepsEditor,
   });
-  const source = read("app/static/js/lanmatrix/editor.js").replace("  init();", `
+  const production = read("app/static/js/lanmatrix/editor.js").replace(/\r\n/g, "\n");
+  const drawerStart = production.indexOf("      onSteps: (item) => {");
+  const drawerEnd = production.indexOf("\n      },\n    });", drawerStart);
+  assert.ok(drawerStart >= 0 && drawerEnd > drawerStart);
+  const drawerCallback = production.slice(drawerStart, drawerEnd + "\n      }".length);
+  const source = production.replace("  init();", `
     grid = testGrid; collab = testCollab; currentSheet = testSheet;
     sheetItems.test = testRows; sheetFields.test = testFields;
     fields = sheetFields.test; collabConn = testConn;
     window.testLoadProject = loadProject; window.testSaveCell = saveCell;
     window.testSelection = updateSelectionUI;
+    window.testStepsDrawer = ({${drawerCallback}}).onSteps;
   `);
   vm.runInContext(source, context, { filename: path.join(root, "app/static/js/lanmatrix/editor.js") });
   return { ...environment, api, grid, window, calls, toasts,
     async ready() { await window.testLoadProject(); window.testSelection(grid.getSelectedIds()); },
+    saveSteps(json) {
+      window.testStepsDrawer(persisted[0]);
+      return drawerOptions.onSave(json);
+    },
     async click() {
       const callback = environment.get("lm-ai-generate").listeners.click;
       assert.equal(typeof callback, "function", "matrix generation entry must be wired");
@@ -308,6 +321,37 @@ test("matrix save failure during submission blocks generation with visible feedb
   await submit;
   assert.equal(harness.calls.length, 0);
   assert.match(harness.get("lm-ai-status").textContent, /保存/);
+});
+
+test("steps drawer PATCH remains tracked after drawer closes during generation", async () => {
+  const saving = deferred();
+  const harness = editorHarness({ patch: () => saving.promise });
+  await harness.ready();
+  const save = harness.saveSteps('{"steps":[{"no":1}]}');
+  const submit = harness.click();
+  await settle();
+  assert.equal(harness.calls.length, 0);
+  saving.resolve({ item: { id: 12, version: 4, steps: '{"steps":[{"no":1}]}' } });
+  await save;
+  await submit;
+  assert.equal(harness.calls.length, 1);
+});
+
+test("rejected steps drawer PATCH prevents generation until a successful resave", async () => {
+  let failed = true;
+  const harness = editorHarness({ patch: async () => {
+    if (failed) throw new Error("steps save rejected");
+    return { item: { id: 12, version: 4, steps: "{}" } };
+  } });
+  await harness.ready();
+  await assert.rejects(harness.saveSteps("{}"), /steps save rejected/);
+  await harness.click();
+  assert.equal(harness.calls.length, 0);
+  assert.match(harness.get("lm-ai-status").textContent, /保存/);
+  failed = false;
+  await harness.saveSteps("{}");
+  await harness.click();
+  assert.equal(harness.calls.length, 1);
 });
 
 test("procedure form sends ordinary item IDs with optional saved model", async () => {
