@@ -89,3 +89,44 @@ def test_old_finalisation_cannot_mutate_a_retest_or_forge_outcome(submitted):
     assert not finalise_attempt(task.id, 1, "passed", "PASS", "forged")
     assert task.run_count == 2 and task.status == "queued"
     assert TestRunRecord.query.one().verdict == "FAIL"
+
+
+def test_duplicate_delivery_reconciles_trusted_outcome_without_backend(submitted, monkeypatch):
+    from app.extensions import db
+    from app.models import TestRunRecord
+    from app.runners import test_runner
+    from app.services import run_evidence_service as evidence
+    application, task, _source, _model = submitted
+    row = matching_row(task)
+    evidence.seal_attempt(task, status="passed", verdict="PASS", message="Passed")
+    db.session.commit()
+    monkeypatch.setattr(test_runner, "build_runner", lambda *args: pytest.fail("Sealed attempts must not execute again"))
+    test_runner.execute(application, application.config_obj, task)
+    assert task.status == "passed" and row.result == "PASS"
+    assert TestRunRecord.query.one().run_count == 1
+
+
+def test_worker_exception_preserves_durable_pending_writeback(submitted, monkeypatch):
+    from app.extensions import db
+    from app.models import RunEvidence
+    from app.jobqueue import tasks
+    from app.runners import test_runner
+    from app.services import license_service, run_evidence_service as evidence
+    application, task, _source, _model = submitted
+    matching_row(task)
+    task.status = "queued"
+    db.session.commit()
+
+    def interrupted(*args, **kwargs):
+        evidence.seal_attempt(task, status="passed", verdict="PASS", message="Passed")
+        db.session.commit()
+        raise RuntimeError("finalisation interrupted")
+
+    monkeypatch.setattr(test_runner, "execute", interrupted)
+    monkeypatch.setattr(license_service, "try_acquire", lambda: True)
+    monkeypatch.setattr(license_service, "release", lambda: None)
+    tasks._run_task_dedicated(application, application.config_obj, task.id, 1)
+    db.session.refresh(task)
+    assert task.status == "running"
+    record = db.session.get(RunEvidence, (task.id, 1))
+    assert record.outcome_sha256 and not record.finalised
