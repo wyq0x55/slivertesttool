@@ -148,7 +148,7 @@ def test_malformed_xml_cannot_be_registered_as_a_saved_model(app, tmp_path):
     db.session.commit()
     source = _remote_model(tmp_path)
     source.write_text("<workspace><module>", encoding="utf-8")
-    model_root = models._models_root(app.config, project.id)
+    model_root = Path(app.config["MODEL_DIR"]) / project.code
     existing = set(model_root.rglob("*"))
 
     with pytest.raises(models.ModelError, match="XML"):
