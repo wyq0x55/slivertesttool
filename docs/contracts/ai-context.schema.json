@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Server-owned AI generation context v1",
+  "type": "object",
+  "required": ["schema_version", "project_id", "items", "provenance"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "project_id": {"type": "integer", "minimum": 1},
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "version"],
+        "properties": {
+          "id": {"type": "integer", "minimum": 1},
+          "version": {"type": "integer", "minimum": 1}
+        }
+      }
+    },
+    "dependencies": {"$ref": "#/properties/items"},
+    "signal_dict_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "model": {
+      "type": ["object", "null"],
+      "required": ["id", "name", "version"],
+      "properties": {
+        "id": {"type": ["integer", "null"], "minimum": 1},
+        "name": {"type": "string"},
+        "version": {"type": "string"},
+        "sbs_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "provenance": {"type": "array", "items": {"type": "object"}}
+  }
+}

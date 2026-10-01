@@ -85,6 +85,16 @@ def _configure_ai(app_ctx):
         db.session.commit()
 
 
+def _configure_procedure_signals(app_ctx, project_id):
+    with app_ctx.app_context():
+        from app.models import LMUser
+        from app.services.ai import signal_dict
+
+        admin = LMUser.query.filter_by(is_system_admin=True).first()
+        signal_dict.replace_entries(project_id, admin.id,
+                                    [["車速", "veh_speed"], ["警告フラグ", "warn_flag"]])
+
+
 _GOOD_VIEWPOINT = {
     "module_id": "MDL-100",
     "viewpoints": [
@@ -211,6 +221,7 @@ class TestApproveProcedure:
     def test_apply_writes_steps(self, client, app_ctx, project_env,
                                 monkeypatch):
         _configure_ai(app_ctx)
+        _configure_procedure_signals(app_ctx, project_env)
         headers = _login(client, _admin(client))
         with app_ctx.app_context():
             from app.extensions import db
@@ -226,12 +237,12 @@ class TestApproveProcedure:
             db.session.commit()
 
         plan_reply = json.dumps({"plans": [
-            {"ref": "MDL100-01", "precond": {},
+            {"ref": str(item_id), "precond": {},
              "goal": {"veh_speed": "120"},
              "expected": {"warn_flag": "1"}, "notes": ""},
         ]}, ensure_ascii=False)
         batch_reply = json.dumps({"procedures": [
-            {"ref": "MDL100-01", "steps": [
+            {"ref": str(item_id), "steps": [
                 {"no": 1, "purpose": "設定", "operation": "120",
                  "inputs": {"veh_speed": "120"},
                  "expecteds": {"warn_flag": "1"}, "timing": "即時"}],
@@ -316,16 +327,17 @@ class TestPartialApprove:
     def _make_batch_draft(self, client, app_ctx, project_env, headers,
                           monkeypatch, item_ids):
         _configure_ai(app_ctx)
+        _configure_procedure_signals(app_ctx, project_env)
         plan_reply = json.dumps({"plans": [
-            {"ref": f"R{i}", "precond": {}, "goal": {"veh_speed": "120"},
-             "expected": {"warn_flag": "1"}} for i in (1, 2)
+            {"ref": str(item_id), "precond": {}, "goal": {"veh_speed": "120"},
+             "expected": {"warn_flag": "1"}} for item_id in item_ids
         ]}, ensure_ascii=False)
         batch_reply = json.dumps({"procedures": [
-            {"ref": f"R{i}", "steps": [
+            {"ref": str(item_id), "steps": [
                 {"no": 1, "purpose": "設定", "operation": "120",
                  "inputs": {"veh_speed": "120"},
                  "expecteds": {"warn_flag": "1"}, "timing": "即時"}],
-             "missing_variables": []} for i in (1, 2)
+             "missing_variables": []} for item_id in item_ids
         ]}, ensure_ascii=False)
         monkeypatch.setattr(
             provider, "chat", FakeSequence([plan_reply, batch_reply]))
@@ -360,11 +372,11 @@ class TestPartialApprove:
         draft_id = self._make_batch_draft(client, app_ctx, project_env,
                                           headers, monkeypatch, ids)
         resp = client.post(f"/api/v1/ai/drafts/{draft_id}/approve",
-                           headers=headers, json={"refs": ["R1"]})
+                           headers=headers, json={"refs": [str(ids[0])]})
         assert resp.status_code == 200, resp.get_data(as_text=True)
         applied = resp.get_json()["data"]["applied"]
-        assert [a["ref"] for a in applied["applied"]] == ["R1"]
-        assert applied["skipped"] == [{"ref": "R2", "reason": "未勾选（部分通过）"}]
+        assert [a["ref"] for a in applied["applied"]] == [str(ids[0])]
+        assert applied["skipped"] == [{"ref": str(ids[1]), "reason": "未勾选（部分通过）"}]
 
         with app_ctx.app_context():
             from app.extensions import db as _db
@@ -470,13 +482,22 @@ class TestSignalDictApi:
             headers=headers).get_json()["data"]
         assert ["実車速", "veh_speed", "uint16_t"] in listed
 
+        with app_ctx.app_context():
+            from app.extensions import db
+            from app.models import TestItemRow
+
+            row = TestItemRow(project_id=project_env, sheet="test", title="t")
+            db.session.add(row)
+            db.session.commit()
+            item_id = row.id
+
         # The dictionary rides into the payload server-side (highest-priority
         # registry source): the expanded steps header carries its display name.
         plan_reply = json.dumps({"plans": [
-            {"ref": "R1", "precond": {}, "goal": {"veh_speed": "120"},
+            {"ref": str(item_id), "precond": {}, "goal": {"veh_speed": "120"},
              "expected": {"warn_flag": "1"}}]}, ensure_ascii=False)
         batch_reply = json.dumps({"procedures": [
-            {"ref": "R1", "steps": [
+            {"ref": str(item_id), "steps": [
                 {"no": 1, "purpose": "設定", "operation": "120",
                  "inputs": {"veh_speed": "120"},
                  "expecteds": {"warn_flag": "1"}, "timing": "即時"}],
@@ -486,7 +507,7 @@ class TestSignalDictApi:
         resp = client.post("/api/v1/ai/drafts", headers=headers, json={
             "scenario": "procedure", "project_id": project_env,
             "payload": {
-                "viewpoints": [{"ref": "R1", "title": "t"}],
+                "item_ids": [item_id],
                 "source_files": {"engine.c": "uint16_t veh_speed; /* 車速 */"},
                 "sbs_variables": [["警告フラグ", "warn_flag"]],
             },

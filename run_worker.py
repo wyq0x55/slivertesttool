@@ -95,6 +95,11 @@ def main() -> None:
     # Recover the in-use counter in case a previous worker crashed mid-run.
     with app.app_context():
         license_service.reset_in_use()
+        from app.services.ai import jobs as ai_jobs
+        ai_jobs.recover(tasks.publish_ai_generation, startup=True)
+        recovery = tasks.recover_run_attempts(startup=True)
+        if recovery["errors"]:
+            logger.warning("Startup run recovery failed: %s", recovery["errors"])
 
     # Pool infrastructure is started whenever the runner backend supports it, so
     # the reconcile loop is always present to honour a *live* enable/disable of

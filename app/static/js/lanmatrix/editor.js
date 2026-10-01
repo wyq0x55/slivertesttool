@@ -18,6 +18,10 @@
   // before the grid finishes mounting.
   let selectedCount = 0;
   let projectEditable = true;
+  let aiEditable = false;
+  let aiSubmitting = false;
+  const aiSaveFailures = new Set();
+  let aiEditEpoch = 0;
   const collabAvailable = root.dataset.collab === "1";  // server shipped the collab bundle + flag
   const collabActive = () => !!(collab && collab.isActive());
   // Editor sheet catalogue + protocol constants. The SINGLE source of truth is
@@ -314,6 +318,7 @@
   }
 
   async function saveCell(item, changes) {
+    aiEditEpoch++;
     if (collabActive()) {
       // CRDT merge — no version check, no soft conflict. Returns the merged row.
       return collab.setCell(currentSheet, item, changes);
@@ -321,7 +326,11 @@
     savingCount++;
     try {
       const data = await LMApi.patchItem(pid, item.id, item.version, changes);
+      aiSaveFailures.delete(item.id);
       return data.item;
+    } catch (ex) {
+      aiSaveFailures.add(item.id);
+      throw ex;
     } finally {
       savingCount--;
     }
@@ -337,7 +346,11 @@
     // buttons grey out rather than producing a toast on each click. Absent flag
     // (older server) means "not told otherwise" -> stay enabled.
     projectEditable = p.is_editable !== false;
+    aiEditable = projectEditable && (data.role === "editor" ||
+      data.role === "project_admin" || data.role === "system_admin" ||
+      !!(LM.user && LM.user.is_system_admin));
     renderRowTools();
+    syncAiButton();
   }
 
   async function loadFields() {
@@ -528,6 +541,8 @@
       (grid && grid.getSelectedIds ? grid.getSelectedIds().length : 0);
     renderRowTools();
 
+    syncAiButton();
+
     if (!collabActive() || !collab.setLocalSelection) return;
     const items = sheetItems[currentSheet] || [];
     const uuidOf = {};
@@ -665,6 +680,7 @@
     }
     syncFallbackTabs();
     syncRunButton();
+    syncAiButton();
   }
 
   // ---- 行操作工具栏 + 帮助面板 (#11) ---------------------------------------
@@ -770,6 +786,113 @@
   if (runSelectedBtn) {
     runSelectedBtn.addEventListener("click", () => openQueueDialog());
   }
+
+  const aiGenerateBtn = document.getElementById("lm-ai-generate");
+  function syncAiButton() {
+    if (!aiGenerateBtn) return;
+    aiGenerateBtn.hidden = currentSheet !== "test";
+    aiGenerateBtn.disabled = !aiEditable || aiSubmitting || !selectedCount;
+  }
+
+  function aiStoredValue(value) {
+    if (value == null || value === "") return "";
+    if (typeof value === "string") {
+      try { value = JSON.parse(value); } catch (_ex) { return value; }
+    }
+    if (Array.isArray(value)) return value.map(aiStoredValue);
+    if (typeof value === "object") {
+      const sorted = Object.create(null);
+      Object.keys(value).sort().forEach((key) => { sorted[key] = aiStoredValue(value[key]); });
+      return sorted;
+    }
+    return value;
+  }
+
+  async function generateSelectedProcedure() {
+    if (aiSubmitting) return;
+    const status = document.getElementById("lm-ai-status");
+    const link = document.getElementById("lm-ai-draft-link");
+    status.textContent = "";
+    link.hidden = true;
+    if (!aiEditable || currentSheet !== "test" || !grid) {
+      status.textContent = "需要可编辑项目中的测试行及编辑权限。";
+      return;
+    }
+    const ids = grid.getSelectedIds().slice();
+    if (!ids.length || ids.length > 200 || new Set(ids).size !== ids.length ||
+        ids.some((id) => !Number.isSafeInteger(id) || id < 1)) {
+      status.textContent = "请选择 1–200 条已保存的测试行；新增行需先保存并同步。";
+      return;
+    }
+    const modelRaw = document.getElementById("lm-ai-model-id").value.trim();
+    if (modelRaw && (!/^\d+$/.test(modelRaw) || !Number.isSafeInteger(Number(modelRaw)) || Number(modelRaw) < 1)) {
+      status.textContent = "已保存模型 ID 必须为正整数。";
+      return;
+    }
+    aiSubmitting = true;
+    syncAiButton();
+    status.textContent = "等待保存并核对同步状态…";
+    try {
+      const active = document.activeElement;
+      if (active && typeof active.blur === "function") active.blur();
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      let tries = 50;
+      const busy = () => savingCount > 0 || grid.syncing || grid.syncTimer ||
+        grid.structuralPending || (grid.isEditing && grid.isEditing());
+      while (grid && busy() && tries-- > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      if (!grid || busy()) throw new Error("保存尚未完成，请结束单元格编辑并等待同步后再生成。");
+      if (ids.some((id) => aiSaveFailures.has(id))) throw new Error("行保存失败，请重新保存并确认成功后再生成。");
+      await LMReady;
+      const epoch = aiEditEpoch;
+      const stored = await fetchDbItems("test");
+      if (currentSheet !== "test" || aiEditEpoch !== epoch || savingCount > 0 || busy()) {
+        throw new Error("核对期间行发生修改，请等待保存同步后重新选择生成。");
+      }
+      const byId = new Map(stored.map((item) => [item.id, item]));
+      if (ids.some((id) => !byId.has(id))) {
+        throw new Error("选中行尚未保存或已删除，请同步矩阵后重新选择。");
+      }
+      if (collabActive()) {
+        if (collabConn !== "connected") throw new Error("协同连接未同步，请恢复连接后生成。");
+        const liveById = new Map(collab.getItems("test").map((item) => [item.id, item]));
+        const keys = Array.from(new Set((sheetFields.test || fields).map((field) => field.field_key)
+          .concat(["title", "module", "precondition", "expected_result", "case_id", "workflow_status"])));
+        if (keys.includes("test_name")) keys.splice(keys.indexOf("title"), 1);
+        const dirty = ids.some((id) => {
+          const live = liveById.get(id);
+          const saved = byId.get(id);
+          return !live || live.uuid !== saved.uuid || live.version !== saved.version ||
+            keys.some((key) => JSON.stringify(aiStoredValue(live[key])) !== JSON.stringify(aiStoredValue(saved[key])));
+        });
+        if (dirty) throw new Error("选中协同行包含尚未保存或同步的修改，请等待同步后再生成。");
+      }
+      const payload = { item_ids: ids };
+      if (modelRaw) payload.model_id = Number(modelRaw);
+      if (!grid || currentSheet !== "test" || aiEditEpoch !== epoch) {
+        throw new Error("行已修改，请等待保存同步后重新生成。");
+      }
+      const draft = await LMApi.createAiDraft("procedure", pid, payload);
+      link.href = `/lanmatrix/projects/${pid}/ai?draft=${encodeURIComponent(draft.id)}`;
+      link.textContent = `查看草稿 #${draft.id}`;
+      link.hidden = false;
+      status.textContent = draft.status === "error"
+        ? (draft.error || "生成失败，请打开草稿查看并重试。")
+        : "已创建手顺草稿；请人工审核后落库。";
+    } catch (ex) {
+      status.textContent = ex.message;
+      if (ex.details && Number.isSafeInteger(ex.details.draft_id) && ex.details.draft_id > 0) {
+        link.href = `/lanmatrix/projects/${pid}/ai?draft=${ex.details.draft_id}`;
+        link.textContent = `查看草稿 #${ex.details.draft_id}`;
+        link.hidden = false;
+      }
+    } finally {
+      aiSubmitting = false;
+      syncAiButton();
+    }
+  }
+  if (aiGenerateBtn) aiGenerateBtn.addEventListener("click", generateSelectedProcedure);
 
   // ---- 队列测试选择弹窗 ------------------------------------------------------
   // Instead of enqueuing whatever rows happen to be selected in the grid, the
@@ -1905,13 +2028,7 @@
           },
           onSave: async (json) => {
             const changes = {}; changes[stepsKey] = json;
-            let merged;
-            if (collabActive()) {
-              merged = collab.setCell(currentSheet, item, changes);
-            } else {
-              const data = await LMApi.patchItem(pid, item.id, item.version, changes);
-              merged = data.item;
-            }
+            const merged = await saveCell(item, changes);
             item.version = merged.version;
             item[stepsKey] = merged[stepsKey];
             await loadItems();

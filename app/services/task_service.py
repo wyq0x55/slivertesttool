@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as _dt
 import hashlib
 import os
+from pathlib import Path
 from typing import List, Optional
 
 from sqlalchemy import text
@@ -433,6 +434,14 @@ def remove_task_artifacts(task: Task) -> None:
     import shutil
 
     from ..runners import run_layout
+    from .run_evidence_service import checked_path, validate_segment
+    archive = checked_path(workspace, Path(workspace) / ".evidence" / validate_segment(task.task_key))
+    if archive.exists():
+        shutil.rmtree(archive)
+        return
+    validate_segment(test_id)
+    checked_path(workspace, run_layout.log_dir(workspace, test_id))
+    checked_path(workspace, run_layout.staging_dir(workspace, test_id))
     shutil.rmtree(run_layout.log_dir(workspace, test_id), ignore_errors=True)
     shutil.rmtree(run_layout.staging_dir(workspace, test_id), ignore_errors=True)
 

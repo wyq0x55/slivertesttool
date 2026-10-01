@@ -1,22 +1,4 @@
-"""Apply an approved draft through the *existing* service layer.
-
-This is the single write path: AI never mutates rows directly, it goes
-through ``items_service`` / ``SbsRevision`` / ``CellComment`` exactly like
-the web editor does, so field validation, row ordering and audit all keep
-working unchanged.
-
-Apply semantics per scenario:
-
-    viewpoint  → create one Draft test row per viewpoint (sheet=test), mapped
-                 onto the provisioned Test-Matrix fields (test_id / test_name /
-                 viewpoint / purpose / description / traceability_id)
-    procedure  → write ``steps`` onto the target ``TestItemRow``
-    sbs        → append an ``SbsRevision`` snapshot for the target model
-                 (activation/restoration stays with the existing revision UI)
-    lib        → create a lib row (sheet=lib, callable name in ``lib_func``)
-                 + rewrite referenced procedures
-    failure    → attach the analysis as a ``CellComment`` on the target item
-"""
+"""Apply one human decision atomically through the existing asset services."""
 
 from __future__ import annotations
 
@@ -25,224 +7,293 @@ import hashlib
 import json
 from typing import Any
 
-from ...extensions import db
-from ...models import CellComment, ProjectModel, SbsRevision, TestItemRow
-from ...models.ai_draft import AiDraft
-from ..lanmatrix import items_service
-from ..lanmatrix.service import ServiceError
+from flask import current_app
 
-# viewpoint kind → テスト観点 display value
-_KIND_JP = {"normal": "正例", "abnormal": "反例",
-            "boundary": "境界値", "combination": "組合せ"}
+from ...extensions import db
+from ...models import AiSignalDict, CellComment, Project, ProjectModel, SbsRevision, TestItemRow
+from ...models.ai_draft import AiDraft
+from ..lanmatrix import items_service, permissions, service, sbs_service
+from ..lanmatrix.service import ServiceError
+from . import validators
+from .output_validation import context_digest, item_snapshots, procedure_entries
+
+_KIND_JP = {"normal": "正例", "abnormal": "反例", "boundary": "境界値", "combination": "組合せ"}
 
 
 class ApplyError(RuntimeError):
     pass
 
 
-def apply_draft(draft: AiDraft, reviewer,
-                refs: list[str] | None = None) -> dict[str, Any]:
-    """Apply an approved draft through the existing service layer.
+def lock_draft(draft_id: int) -> AiDraft | None:
+    with db.session.no_autoflush:
+        return (AiDraft.query.filter_by(id=draft_id).populate_existing()
+                .with_for_update().first())
 
-    ``refs`` enables partial approval for batch outputs: when given, only the
-    procedure entries whose ``ref`` is listed are applied — the rest are
-    recorded as skipped so the draft still lands as one reviewable decision.
-    """
-    from ...models import Project
-    project = db.session.get(Project, draft.project_id)
-    if project is None:
-        raise ApplyError("项目不存在")
-    if draft.status not in (AiDraft.STATUS_PENDING, AiDraft.STATUS_ERROR):
-        raise ApplyError(f"草稿已处理（{draft.status}）")
-    output = json.loads(draft.output_json) if draft.output_json else {}
-    applier = {
-        "viewpoint": _apply_viewpoint,
-        "procedure": _apply_procedure,
-        "sbs": _apply_sbs,
-        "lib": _apply_lib,
-        "failure": _apply_failure,
-    }.get(draft.scenario)
-    if applier is None:
-        raise ApplyError(f"未知场景：{draft.scenario}")
+
+def _json_object(raw, name):
     try:
-        result = applier(draft, reviewer, project, output, refs=refs)
+        value = json.loads(raw) if raw else {}
+    except (ValueError, TypeError) as exc:
+        raise ApplyError(f"Invalid {name}; regenerate this draft") from exc
+    if not isinstance(value, dict):
+        raise ApplyError(f"Invalid {name}; regenerate this draft")
+    return value
+
+
+def _guard_row_writes(project_id):
+    if not current_app.config.get("COLLAB_REST_GUARD", True):
+        return
+    from ...collab import presence
+    try:
+        active = presence.is_collab_active(project_id)
+    except Exception as exc:
+        raise ApplyError("Collaboration state unavailable; approval is blocked") from exc
+    if active:
+        raise ApplyError("Active collaboration owns row mutations; approval is blocked")
+
+
+def _lock_items(project, snapshots, dependencies):
+    versions = dict(snapshots)
+    for entry in dependencies:
+        identity, version = entry["id"], entry["version"]
+        if identity in versions and versions[identity] != version:
+            raise ApplyError("Inconsistent generation source versions; regenerate this draft")
+        versions[identity] = version
+    if not versions:
+        return {}
+    rows = (TestItemRow.query.filter(TestItemRow.id.in_(sorted(versions)))
+            .order_by(TestItemRow.id).populate_existing().with_for_update().all())
+    by_id = {row.id: row for row in rows}
+    for identity, version in versions.items():
+        row = by_id.get(identity)
+        if (row is None or row.project_id != project.id or row.deleted_at is not None
+                or identity in snapshots and row.sheet != "test" or row.version != version):
+            raise ApplyError(f"Generation item {identity} is stale, deleted or unavailable; regenerate this draft")
+    return by_id
+
+
+def _check_dictionary(project_id, context):
+    if "signal_dict_sha256" not in context:
+        return
+    from . import signal_dict
+    (AiSignalDict.query.filter_by(project_id=project_id).order_by(AiSignalDict.path)
+     .populate_existing().with_for_update().all())
+    actual = context_digest(signal_dict.entries_for(project_id))
+    if actual != context["signal_dict_sha256"]:
+        raise ApplyError("Signal dictionary changed; regenerate this draft")
+
+
+def _lock_model(project, payload, scenario):
+    if scenario == "failure":
+        from .context import _failure_context
+        row = db.session.get(TestItemRow, payload["item_id"])
+        sources = []
+        try:
+            _failure_context(project.id, row, dict(payload), sources)
+        except (ValueError, OSError) as exc:
+            raise ApplyError(f"Archived evidence is no longer available: {exc}") from exc
+        original = [entry for entry in payload["_context"].get("provenance", []) if entry.get("kind") == "run_attempt"]
+        if len(original) != 1 or original != sources:
+            raise ApplyError("Archived evidence changed; regenerate this draft")
+        return None
+    snapshot = payload["_context"].get("model")
+    if snapshot is None:
+        if scenario == "sbs" or payload.get("model_id") is not None:
+            raise ApplyError("Missing saved-model generation snapshot; regenerate this draft")
+        return None
+    if (not isinstance(snapshot, dict) or type(snapshot.get("id")) is not int
+            or snapshot["id"] < 1 or not isinstance(snapshot.get("name"), str)
+            or not isinstance(snapshot.get("version"), str)
+            or payload.get("model_id") != snapshot["id"]):
+        raise ApplyError("Invalid saved-model generation identity; regenerate this draft")
+    model = (ProjectModel.query.filter_by(id=snapshot["id"]).populate_existing()
+             .with_for_update().first())
+    if (model is None or model.project_id != project.id or model.deprecated_at is not None
+            or model.name != snapshot["name"] or (model.version or "") != snapshot["version"]):
+        raise ApplyError("Saved model changed or is unavailable; regenerate this draft")
+    if model.kind == "bundle":
+        expected_sha = snapshot.get("sbs_sha256")
+        saved = sbs_service.read_sbs(project.id, model.name, model_id=model.id)
+        if not expected_sha or saved["version"] != expected_sha:
+            raise ApplyError("Saved SBS changed or has no generation hash; regenerate this draft")
+        if scenario == "sbs":
+            base = payload.get("current_sbs")
+            if not isinstance(base, str) or sbs_service._sha(base) != expected_sha:
+                raise ApplyError("SBS base does not match the generation snapshot; regenerate this draft")
+    elif scenario == "sbs":
+        raise ApplyError("SBS approval requires a saved bundle model")
+    return model
+
+
+def _require_fields(project, sheet, keys):
+    writable = {spec.field_key for spec in items_service.field_specs(project.id)
+                if spec.sheet == sheet and not spec.is_readonly}
+    missing = set(keys) - writable
+    if missing:
+        raise ApplyError("Required writable asset fields are unavailable: " + ", ".join(sorted(missing)))
+
+
+def _provenance(draft, payload):
+    sources = payload["_context"]["provenance"]
+    encoded = json.dumps(sources, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return {"draft_id": draft.id, "provenance": {
+        "sources": sources, "sha256": hashlib.sha256(encoded.encode("utf-8")).hexdigest()},
+        "model_snapshot": payload["_context"].get("model"),
+        "source_dependencies": payload["_context"].get("dependencies", []),
+        "signal_dict_sha256": payload["_context"].get("signal_dict_sha256")}
+
+
+def apply_draft(draft: AiDraft, reviewer, refs: list[str] | None = None) -> dict[str, Any]:
+    try:
+        draft = lock_draft(draft.id)
+        if draft is None or draft.status not in (AiDraft.STATUS_PENDING, AiDraft.STATUS_ERROR):
+            raise ApplyError("Draft is missing or already processed")
+        project = (Project.query.filter_by(id=draft.project_id).populate_existing()
+                   .with_for_update().first())
+        if project is None or project.deleted_at is not None:
+            raise ApplyError("Project is unavailable")
+        permissions.require("item.edit", service.role_in_project(project.id, reviewer),
+                            is_system_admin=reviewer.is_system_admin)
+        if not project.is_editable:
+            raise ApplyError("Project is not editable")
+        payload = _json_object(draft.input_json, "generation input")
+        output = _json_object(draft.output_json, "output")
+        problems = validators.validate_output(draft.scenario, payload, output, refs=refs, for_apply=True)
+        if problems:
+            raise ApplyError("; ".join(problems))
+        if payload["_context"]["project_id"] != project.id:
+            raise ApplyError("Generation context belongs to another project")
+        if draft.scenario in ("viewpoint", "procedure", "lib"):
+            _guard_row_writes(project.id)
+        snapshots, _problems = item_snapshots(draft.scenario, payload, output, refs)
+        dependencies = []
+        if draft.scenario in ("procedure", "lib"):
+            dependencies = payload["_context"].get("dependencies", [])
+            _check_dictionary(project.id, payload["_context"])
+        rows = _lock_items(project, snapshots, dependencies)
+        model = _lock_model(project, payload, draft.scenario)
+        if draft.scenario == "lib":
+            existing_rows = (TestItemRow.query.filter_by(project_id=project.id, sheet="lib", deleted_at=None)
+                             .populate_existing().with_for_update().all())
+            names = {str(row.get_field("lib_func") or row.get_field("lib_name") or row.case_id or "").strip()
+                     for row in existing_rows}
+            if output["lib_name"] in names:
+                raise ApplyError("Library name already exists")
+        evidence = _provenance(draft, payload)
+        applier = {"viewpoint": _apply_viewpoint, "procedure": _apply_procedure,
+                   "sbs": _apply_sbs, "lib": _apply_lib, "failure": _apply_failure}[draft.scenario]
+        result = applier(draft, reviewer, project, payload, output, rows, snapshots, model, evidence, refs)
+        if draft.scenario in ("procedure", "lib"):
+            _check_dictionary(project.id, payload["_context"])
+        result.update(evidence)
+        draft.status = AiDraft.STATUS_APPROVED
+        draft.reviewed_by = reviewer.id
+        draft.reviewed_at = datetime.datetime.utcnow()
+        draft.applied_result_json = json.dumps(result, ensure_ascii=False, indent=2)
+        db.session.commit()
+        return result
     except ServiceError as exc:
         db.session.rollback()
-        raise ApplyError(f"落库被字段校验拒绝：{exc}") from exc
-    draft.status = AiDraft.STATUS_APPROVED
-    draft.reviewed_by = reviewer.id
-    draft.reviewed_at = datetime.datetime.utcnow()
-    draft.applied_result_json = json.dumps(
-        result, ensure_ascii=False, indent=2)
-    db.session.commit()
-    return result
+        raise ApplyError(f"Asset service rejected approval: {exc}") from exc
+    except Exception:
+        db.session.rollback()
+        raise
 
 
-def _input_payload(draft: AiDraft) -> dict[str, Any]:
-    return json.loads(draft.input_json) if draft.input_json else {}
-
-
-def _item_or_raise(draft: AiDraft, project) -> TestItemRow:
-    item_id = _input_payload(draft).get("item_id")
-    item = db.session.get(TestItemRow, item_id) if item_id else None
-    if item is None or item.project_id != project.id or item.deleted_at is not None:
-        raise ApplyError("目标手顺行不存在或已删除")
-    return item
-
-
-def _apply_viewpoint(draft, reviewer, project, output, refs=None) -> dict[str, Any]:
-    module_id = str(output.get("module_id") or "")
-    created_ids: list[int] = []
-    for vp in output.get("viewpoints", []):
+def _apply_viewpoint(draft, reviewer, project, payload, output, rows, snapshots, model, evidence, refs):
+    module_id = output["module_id"]
+    created_ids = []
+    for viewpoint in output["viewpoints"]:
         purpose_parts = []
-        if vp.get("precondition"):
-            purpose_parts.append(f"前提：{vp['precondition']}")
-        if vp.get("condition"):
-            purpose_parts.append(f"条件：{vp['condition']}")
-        values = {
-            "test_id": vp.get("case_id") or "",
-            "test_name": vp.get("title") or "",
-            "viewpoint": _KIND_JP.get(vp.get("kind"), vp.get("kind") or ""),
-            "purpose": "；".join(purpose_parts),
-            "description": f"期待：{vp.get('expected', '')}",
-            "remark": "[AI 生成观点草稿，待审核]" if draft else "",
-            "traceability_id": module_id,
-        }
-        item = items_service.create_item(
-            reviewer, project, values, draft=True, sheet="test", commit=False)
+        if viewpoint.get("precondition"):
+            purpose_parts.append(f"前提：{viewpoint['precondition']}")
+        if viewpoint.get("condition"):
+            purpose_parts.append(f"条件：{viewpoint['condition']}")
+        values = {"test_id": viewpoint["case_id"], "test_name": viewpoint["title"],
+                  "viewpoint": _KIND_JP[viewpoint["kind"]], "purpose": "；".join(purpose_parts),
+                  "description": f"期待：{viewpoint['expected']}",
+                  "remark": "[AI 生成观点草稿，待审核]\n" + json.dumps(evidence, ensure_ascii=False),
+                  "traceability_id": module_id}
+        _require_fields(project, "test", values)
+        item = items_service.create_item(reviewer, project, values, draft=True, sheet="test", commit=False)
         created_ids.append(item.id)
-    db.session.commit()
     return {"created_item_ids": created_ids, "module_id": module_id}
 
 
-def _apply_procedure(draft, reviewer, project, output,
-                     refs: list[str] | None = None) -> dict[str, Any]:
-    payload = _input_payload(draft)
-    # ref -> item_id, from the viewpoints the batch was generated for.
-    items_map: dict[str, int] = {}
-    for vp in payload.get("viewpoints") or []:
-        if isinstance(vp, dict) and vp.get("item_id"):
-            ref = str(vp.get("ref") or vp.get("case_id") or "")
-            if ref:
-                items_map[ref] = int(vp["item_id"])
-
-    procedures = output.get("procedures") if isinstance(output, dict) else None
-    if isinstance(procedures, list) and procedures:
-        selected = {str(r) for r in refs} if refs is not None else None
-        applied: list[dict[str, Any]] = []
-        skipped: list[dict[str, Any]] = []
-        all_missing: list[dict[str, Any]] = []
-        for entry in procedures:
-            ref = str(entry.get("ref") or "")
-            if selected is not None and ref not in selected:
-                skipped.append({"ref": ref, "reason": "未勾选（部分通过）"})
-                continue
-            steps_doc = entry.get("steps_doc")
-            item = db.session.get(TestItemRow, items_map.get(ref))
-            if (item is None or item.project_id != project.id
-                    or item.deleted_at is not None or not isinstance(steps_doc, dict)):
-                skipped.append({"ref": ref, "reason": "目标行不存在或无 steps_doc"})
-                continue
-            items_service.update_item(
-                reviewer, project, item, item.version,
-                {"steps": json.dumps(steps_doc, ensure_ascii=False)},
-                commit=False)
-            applied.append({"ref": ref, "item_id": item.id})
-            all_missing.extend(entry.get("missing_variables") or [])
-        db.session.commit()
-        result: dict[str, Any] = {"applied": applied, "skipped": skipped,
-                                  "failed_refs": output.get("failed_refs") or []}
-        if all_missing:
-            result["missing_variables"] = all_missing
-            result["note"] = ("missing_variables 请先走 sbs 场景补登记，"
-                              "否则对应手顺无法执行")
-        return result
-
-    # Legacy single-procedure output ({"steps_doc": ...}).
-    item = _item_or_raise(draft, project)
-    steps_doc = output.get("steps_doc")
-    if not isinstance(steps_doc, dict):
-        raise ApplyError("草稿中没有可用的 steps_doc")
-    items_service.update_item(
-        reviewer, project, item, item.version,
-        {"steps": json.dumps(steps_doc, ensure_ascii=False)})
-    missing = output.get("missing_variables") or []
-    return {"item_id": item.id,
-            "missing_variables": missing,
-            "note": ("missing_variables 请先走 sbs 场景补登记，"
-                     "否则该手顺无法执行") if missing else ""}
+def _apply_procedure(draft, reviewer, project, payload, output, rows, snapshots, model, evidence, refs):
+    _require_fields(project, "test", {"steps"})
+    if "procedures" not in output:
+        item = rows[payload["item_id"]]
+        items_service.update_item(reviewer, project, item, snapshots[item.id],
+                                  {"steps": json.dumps(output["steps_doc"], ensure_ascii=False)}, commit=False)
+        return {"item_id": item.id, "missing_variables": [], "note": ""}
+    entries, _problems = procedure_entries(output, refs)
+    by_ref = {entry["ref"]: entry for entry in payload["viewpoints"] if isinstance(entry, dict)}
+    applied = []
+    for entry in entries:
+        item = rows[by_ref[entry["ref"]]["item_id"]]
+        items_service.update_item(reviewer, project, item, snapshots[item.id],
+                                  {"steps": json.dumps(entry["steps_doc"], ensure_ascii=False)}, commit=False)
+        applied.append({"ref": entry["ref"], "item_id": item.id})
+    selected_refs = {entry["ref"] for entry in entries}
+    skipped = [{"ref": entry.get("ref"), "reason": "未勾选（部分通过）"}
+               for entry in output["procedures"] if isinstance(entry, dict) and entry.get("ref") not in selected_refs]
+    skipped_refs = {entry["ref"] for entry in skipped if isinstance(entry["ref"], str)}
+    for entry in payload["viewpoints"]:
+        ref = entry.get("ref") if isinstance(entry, dict) else None
+        if isinstance(ref, str) and ref not in selected_refs and ref not in skipped_refs:
+            skipped.append({"ref": ref, "reason": "生成失败（未应用）"})
+            skipped_refs.add(ref)
+    return {"applied": applied, "skipped": skipped, "failed_refs": output.get("failed_refs") or []}
 
 
-def _apply_sbs(draft, reviewer, project, output, refs=None) -> dict[str, Any]:
-    payload = _input_payload(draft)
-    model = db.session.get(ProjectModel, payload.get("model_id"))
-    if model is None or model.project_id != project.id:
-        raise ApplyError("目标 Silver 模型不存在")
-    additions = output.get("sbs_additions") or ""
-    base_content = (payload.get("current_sbs") or "").rstrip()
-    content = (base_content + "\n\n" if base_content else "") + additions
-    sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    revision = SbsRevision(
-        project_id=project.id, model_id=model.id,
-        filename=f"ai-draft-{draft.id}.sbs", content=content,
-        sha256=sha, size=len(content.encode("utf-8")),
-        author_id=reviewer.id,
-    )
+def _apply_sbs(draft, reviewer, project, payload, output, rows, snapshots, model, evidence, refs):
+    base_content = payload["current_sbs"].rstrip()
+    content = (base_content + "\n\n" if base_content else "") + output["sbs_additions"]
+    encoded = content.encode("utf-8", "surrogatepass")
+    if len(encoded) > sbs_service.MAX_SBS_BYTES:
+        raise ApplyError("SBS candidate exceeds the size limit")
+    revision = SbsRevision(project_id=project.id, model_id=model.id, filename=f"ai-draft-{draft.id}.sbs",
+                           content=content, sha256=hashlib.sha256(encoded).hexdigest(), size=len(encoded), author_id=reviewer.id)
     db.session.add(revision)
-    # Prune to the platform's 50-revision window per model, oldest first.
+    db.session.flush()
     old = (SbsRevision.query.filter_by(model_id=model.id)
-           .order_by(SbsRevision.created_at.desc())
-           .offset(50).all())
+           .order_by(SbsRevision.created_at.desc(), SbsRevision.id.desc()).offset(sbs_service.MAX_REVISIONS).all())
     for row in old:
         db.session.delete(row)
-    db.session.commit()
-    return {"sbs_revision_id": revision.id,
-            "needed_variables": output.get("needed_variables") or []}
+    return {"sbs_revision_id": revision.id, "needed_variables": output.get("needed_variables") or [],
+            "sbs_base_sha256": payload["_context"]["model"]["sbs_sha256"]}
 
 
-def _apply_lib(draft, reviewer, project, output, refs=None) -> dict[str, Any]:
-    lib_name = output.get("lib_name") or ""
-    if not lib_name:
-        raise ApplyError("草稿缺少 lib_name")
-    values = {
-        "lib_func": lib_name,
-        "lib_name": lib_name,
-        "lib_value": output.get("description") or "",
-        "lib_para": json.dumps(output.get("lib_para") or [],
-                               ensure_ascii=False),
-        "lib_stb": json.dumps(output.get("lib_stb") or {}, ensure_ascii=False),
-        "lib_note": "[AI 生成，人工提议触发]",
-    }
-    lib_row = items_service.create_item(
-        reviewer, project, values, draft=True, sheet="lib", commit=False)
-    rewritten_ids: list[int] = []
+def _apply_lib(draft, reviewer, project, payload, output, rows, snapshots, model, evidence, refs):
+    parameters = []
+    for parameter in output.get("lib_para") or []:
+        default = parameter.get("default")
+        parameters.append(parameter["name"] if default is None else f"{parameter['name']}={default}")
+    values = {"lib_func": output["lib_name"], "lib_name": output["lib_name"],
+              "lib_value": output.get("description") or "", "lib_para": "\n".join(parameters),
+              "lib_stb": json.dumps(output["lib_stb"], ensure_ascii=False),
+              "lib_note": "[AI 生成，人工提议触发]\n" + json.dumps(evidence, ensure_ascii=False)}
+    _require_fields(project, "lib", values)
+    if output.get("rewritten"):
+        _require_fields(project, "test", {"steps"})
+    lib_row = items_service.create_item(reviewer, project, values, draft=True, sheet="lib", commit=False)
+    rewritten_ids = []
     for entry in output.get("rewritten") or []:
-        item = db.session.get(TestItemRow, entry.get("item_id"))
-        if item is None or item.project_id != project.id or item.deleted_at is not None:
-            continue
-        items_service.update_item(
-            reviewer, project, item, item.version,
-            {"steps": json.dumps(entry.get("steps_doc") or {},
-                                 ensure_ascii=False)},
-            commit=False)
+        item = rows[entry["item_id"]]
+        items_service.update_item(reviewer, project, item, snapshots[item.id],
+                                  {"steps": json.dumps(entry["steps_doc"], ensure_ascii=False)}, commit=False)
         rewritten_ids.append(item.id)
-    db.session.commit()
     return {"lib_item_id": lib_row.id, "rewritten_item_ids": rewritten_ids}
 
 
-def _apply_failure(draft, reviewer, project, output, refs=None) -> dict[str, Any]:
-    item = _item_or_raise(draft, project)
-    text = (
-        f"[AI 差异分析 / {output.get('classification', '')}]\n"
-        f"{output.get('analysis', '')}\n\n"
-        f"最可能原因：{output.get('likely_cause', '')}\n"
-        f"建议处理：{output.get('suggested_action', '')}"
-    )
-    comment = CellComment(
-        project_id=project.id, test_item_id=item.id,
-        field_key="ai_failure_analysis", content=text,
-        created_by=reviewer.id,
-    )
+def _apply_failure(draft, reviewer, project, payload, output, rows, snapshots, model, evidence, refs):
+    item = rows[payload["item_id"]]
+    content = (f"[AI 差异分析 / {output['classification']}]\n{output['analysis']}\n\n"
+               f"最可能原因：{output['likely_cause']}\n建议处理：{output['suggested_action']}\n"
+               + json.dumps(evidence, ensure_ascii=False))
+    comment = CellComment(project_id=project.id, test_item_id=item.id, field_key="ai_failure_analysis",
+                           content=content, created_by=reviewer.id)
     db.session.add(comment)
-    db.session.commit()
+    db.session.flush()
     return {"comment_id": comment.id, "item_id": item.id}

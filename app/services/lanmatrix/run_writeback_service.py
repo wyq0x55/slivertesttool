@@ -167,7 +167,7 @@ def _matching_rows(project_id: int, test_id: str) -> list[TestItemRow]:
     return [row for row in candidates if sje.row_test_id(row) == needle]
 
 
-def record_run(task: Task, verdict: str) -> int:
+def record_run(task: Task, verdict: str, *, commit=True) -> int:
     """Write the run's evidence onto its row(s) and append a run record.
 
     Returns the number of rows updated, ``0`` when there was legitimately
@@ -212,6 +212,7 @@ def record_run(task: Task, verdict: str) -> int:
                 row_uuid=row.uuid,
                 test_id=task.test_id,
                 task_key=task.task_key or "",
+                run_count=task.run_count or 1,
                 verdict=(verdict or "")[:24],
                 outcome=outcome,
                 model_name=model_name,
@@ -221,9 +222,12 @@ def record_run(task: Task, verdict: str) -> int:
                 executed_at=executed_at,
                 executed_on=executed_on,
             ))
-        db.session.commit()
+        if commit:
+            db.session.commit()
         return changed
     except Exception:  # pragma: no cover - defensive, never break the run
+        if not commit:
+            raise
         try:
             db.session.rollback()
         except Exception:

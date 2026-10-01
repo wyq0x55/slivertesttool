@@ -39,6 +39,7 @@ class AiDraft(db.Model):
     STATUS_APPROVED = "approved"
     STATUS_REJECTED = "rejected"
     STATUS_ERROR = "error"
+    STATUS_CANCELLED = "cancelled"
 
     id = db.Column(db.Integer, primary_key=True)
     project_id = db.Column(
@@ -99,6 +100,9 @@ class AiDraft(db.Model):
             entry["output"] = _load(self.output_json)
             entry["meta"] = _load(self.meta_json)
             entry["applied_result"] = _load(self.applied_result_json)
+        else:
+            meta = _load(self.meta_json)
+            entry["meta"] = {key: meta[key] for key in ("job", "progress", "rounds") if key in meta} if isinstance(meta, dict) else {}
         return entry
 
 

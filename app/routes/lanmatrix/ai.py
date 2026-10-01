@@ -35,6 +35,8 @@ from ...extensions import db
 from ...models import AiDraft
 from ...services.ai import apply as ai_apply
 from ...services.ai import config as ai_config
+from ...services.ai import context as ai_context
+from ...services.ai import jobs as ai_jobs
 from ...services.ai import scenarios as ai_scenarios
 from ...services.ai import signal_dict as ai_signal_dict
 from ...services.ai.base import GenerationError
@@ -77,12 +79,14 @@ def list_scenarios():
 @login_required
 def create_draft():
     body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return err("BAD_REQUEST", "请求必须是 JSON 对象", status=400)
     scenario = str(body.get("scenario") or "").strip()
     project_id = body.get("project_id")
     payload = body.get("payload")
     if not scenario:
         return err("BAD_REQUEST", "scenario 不能为空", status=400)
-    if not isinstance(project_id, int):
+    if type(project_id) is not int or project_id < 1:
         return err("BAD_REQUEST", "project_id 必须是整数", status=400)
     if not isinstance(payload, dict):
         return err("BAD_REQUEST", "payload 必须是对象", status=400)
@@ -95,15 +99,21 @@ def create_draft():
                    "AI 未配置：请管理员先设置 api_base / api_key / model", status=503)
     _require_edit(project_id)
 
+    try:
+        payload = ai_context.build_payload(project_id, scenario, payload)
+    except ValueError as exc:
+        return err("BAD_REQUEST", str(exc), status=400)
+
     draft = AiDraft(project_id=project_id, scenario=scenario,
                     input_json=json.dumps(payload, ensure_ascii=False),
                     created_by=g.user.id,
                     status=AiDraft.STATUS_RUNNING)
     db.session.add(draft)
+    attempt = ai_jobs.prepare(draft)
     db.session.commit()
     try:
         from ...jobqueue.tasks import run_ai_generation
-        run_ai_generation(draft.id)
+        run_ai_generation(draft.id, attempt)
     except (ProviderError, GenerationError, ValueError) as exc:
         # Immediate-mode (in-process) execution surfaces scenario failures
         # here; the queued path records the same state on the draft itself.
@@ -120,10 +130,11 @@ def create_draft():
         db.session.rollback()
         draft = db.session.get(AiDraft, draft.id)
         if draft is not None:
-            draft.status = AiDraft.STATUS_ERROR
-            draft.error = f"任务队列不可用：{exc}"
+            meta = ai_jobs.metadata(draft)
+            meta["publication_error"] = "Queue publication failed; worker recovery will retry"
+            draft.meta_json = json.dumps(meta, ensure_ascii=False)
             db.session.commit()
-        return err("AI_QUEUE_UNAVAILABLE", f"任务队列不可用：{exc}",
+        return err("AI_QUEUE_UNAVAILABLE", "任务已保存，队列暂不可用；worker 将恢复提交",
                    details={"draft_id": draft.id if draft else None},
                    status=503)
     # The worker (immediate mode: this process) may already have finished the
@@ -142,7 +153,7 @@ def list_drafts():
                        allowed=set(AiDraft.SCENARIOS))
     status = arg_str("status", max_length=16,
                      allowed={"running", "pending", "approved", "rejected",
-                              "error"})
+                              "error", "cancelled"})
     if project_id is None:
         # Draft listing is always project-scoped: without this the filter
         # silently becomes "every project on the server".
@@ -175,15 +186,36 @@ def update_draft(draft_id: int):
     if draft is None:
         return err("NOT_FOUND", "草稿不存在", status=404)
     _require_edit(draft.project_id)
+    project_id = draft.project_id
+    draft = ai_apply.lock_draft(draft_id)
+    if draft is None:
+        return err("NOT_FOUND", "草稿不存在", status=404)
+    if draft.project_id != project_id:
+        _require_edit(draft.project_id)
     if draft.status not in (AiDraft.STATUS_PENDING, AiDraft.STATUS_ERROR):
         return err("BAD_REQUEST", f"草稿当前状态（{draft.status}）不可编辑",
                    status=409)
     body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return err("BAD_REQUEST", "Request body must be an object", status=400)
     output = body.get("output")
     if not isinstance(output, dict):
         return err("BAD_REQUEST", "output 必须是对象", status=400)
+    from ...services.ai.validators import validate_output
+    try:
+        payload = json.loads(draft.input_json) if draft.input_json else {}
+    except (ValueError, TypeError):
+        return err("BAD_REQUEST", "Invalid generation input; regenerate this draft", status=400)
+    problems = validate_output(draft.scenario, payload, output)
+    if problems:
+        return err("BAD_REQUEST", "Output validation failed", details=problems, status=400)
     draft.output_json = json.dumps(output, ensure_ascii=False, indent=2)
-    meta = json.loads(draft.meta_json) if draft.meta_json else {}
+    try:
+        meta = json.loads(draft.meta_json) if draft.meta_json else {}
+    except (ValueError, TypeError):
+        meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
     meta["edited"] = True
     draft.meta_json = json.dumps(meta, ensure_ascii=False)
     db.session.commit()
@@ -198,12 +230,20 @@ def approve_draft(draft_id: int):
         return err("NOT_FOUND", "草稿不存在", status=404)
     _require_edit(draft.project_id)
     body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return err("BAD_REQUEST", "Request body must be an object", status=400)
     refs = body.get("refs")
-    if refs is not None and (not isinstance(refs, list)
-                             or not all(isinstance(r, str) for r in refs)):
-        return err("BAD_REQUEST", "refs 必须是字符串数组", status=400)
-    if not refs and draft.status == AiDraft.STATUS_RUNNING:
+    if "refs" in body and (not isinstance(refs, list) or not refs
+                            or not all(isinstance(ref, str) and ref.strip() for ref in refs)
+                            or len(set(refs)) != len(refs)):
+        return err("BAD_REQUEST", "refs must be nonempty, unique strings", status=400)
+    if draft.status == AiDraft.STATUS_RUNNING:
         return err("BAD_REQUEST", "草稿仍在生成中，请稍候", status=409)
+    if draft.scenario in ("viewpoint", "procedure", "lib"):
+        from .projects import _collab_write_blocked
+        blocked = _collab_write_blocked(draft.project_id)
+        if blocked is not None:
+            return blocked
     try:
         result = ai_apply.apply_draft(draft, g.user, refs=refs)
     except ai_apply.ApplyError as exc:
@@ -219,9 +259,17 @@ def reject_draft(draft_id: int):
     if draft is None:
         return err("NOT_FOUND", "草稿不存在", status=404)
     _require_edit(draft.project_id)
+    project_id = draft.project_id
+    draft = ai_apply.lock_draft(draft_id)
+    if draft is None:
+        return err("NOT_FOUND", "草稿不存在", status=404)
+    if draft.project_id != project_id:
+        _require_edit(draft.project_id)
     if draft.status not in (AiDraft.STATUS_PENDING, AiDraft.STATUS_ERROR):
         return err("BAD_REQUEST", f"草稿已处理（{draft.status}）", status=409)
     body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return err("BAD_REQUEST", "Request body must be an object", status=400)
     note = str(body.get("note") or "").strip()
     if not note:
         return err("BAD_REQUEST", "驳回必须填写原因（note）", status=400)
@@ -231,6 +279,40 @@ def reject_draft(draft_id: int):
     draft.reviewed_at = datetime.datetime.utcnow()
     db.session.commit()
     return ok({"draft_id": draft.id, "status": draft.status})
+
+
+@bp.post("/drafts/<int:draft_id>/cancel")
+@login_required
+def cancel_draft(draft_id: int):
+    draft = db.session.get(AiDraft, draft_id)
+    if draft is None:
+        return err("NOT_FOUND", "草稿不存在", status=404)
+    _require_edit(draft.project_id)
+    try:
+        draft = ai_jobs.cancel(draft_id)
+    except ValueError as exc:
+        return err("BAD_REQUEST", str(exc), status=409)
+    return ok(draft.to_dict())
+
+
+@bp.post("/drafts/<int:draft_id>/retry")
+@login_required
+def retry_draft(draft_id: int):
+    draft = db.session.get(AiDraft, draft_id)
+    if draft is None:
+        return err("NOT_FOUND", "草稿不存在", status=404)
+    _require_edit(draft.project_id)
+    try:
+        draft = ai_jobs.retry(draft_id)
+    except ValueError as exc:
+        return err("BAD_REQUEST", str(exc), status=409)
+    from ...jobqueue.tasks import publish_ai_generation
+    try:
+        publish_ai_generation(draft.id)
+    except Exception:
+        db.session.rollback()
+    db.session.expire_all()
+    return ok(db.session.get(AiDraft, draft_id).to_dict())
 
 
 @bp.get("/usage")

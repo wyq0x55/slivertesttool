@@ -88,6 +88,9 @@ def _migrate_schema() -> None:
     existing_tables = set(inspector.get_table_names())
 
     additions = {
+        "lm_test_run_records": {
+            "run_count": "INTEGER",
+        },
         "tasks": {
             "sil_name": "VARCHAR(128) NOT NULL DEFAULT ''",
             "project_id": "INTEGER",

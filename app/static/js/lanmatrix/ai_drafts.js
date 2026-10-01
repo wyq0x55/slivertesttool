@@ -31,12 +31,22 @@
     pending:  { cls: "queued",    label: "待审" },
     approved: { cls: "passed",    label: "已通过" },
     rejected: { cls: "cancelled", label: "已驳回" },
-    error:    { cls: "error",     label: "生成失败" }
+    error:    { cls: "error",     label: "生成失败" },
+    cancelled: { cls: "cancelled", label: "已取消" }
   };
   var POLL_MS = 2500;
 
   var state = { scenario: "", status: "" };
   var rows = [];
+  var canEdit = false;
+  var listRequest = 0;
+  var generating = false;
+  var currentDraft = null;
+  var detailId = null;
+  var detailEpoch = 0;
+  var detailTimer = null;
+  var detailBusy = false;
+  var pollAttempts = 0;
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
@@ -49,8 +59,18 @@
     return String(iso || "").replace("T", " ").replace("Z", "").split(".")[0];
   }
 
-  function pill(status) {
-    var s = STATUS[status] || { cls: "notask", label: status };
+  function draftStatus(d) {
+    if (d.status === "running") {
+      var job = d.meta && d.meta.job || {};
+      if (job.cancel_requested) return { cls: "running", label: "等待取消" };
+      return job.state === "queued" ? { cls: "queued", label: "排队中" }
+        : { cls: "running", label: "生成中" };
+    }
+    return STATUS[d.status] || { cls: "notask", label: d.status };
+  }
+
+  function pill(d) {
+    var s = draftStatus(d);
     return '<span class="pill st-' + s.cls + '"><span class="dot"></span>' +
       esc(s.label) + "</span>";
   }
@@ -72,14 +92,18 @@
   }
 
   async function load() {
+    var requestId = ++listRequest;
     collectFilters();
     var query = { project_id: pid };
     if (state.scenario) query.scenario = state.scenario;
     if (state.status) query.status = state.status;
     var tbody = document.getElementById("lm-ai-rows");
     try {
-      rows = await LMApi.listAiDrafts(query);
+      var loaded = await LMApi.listAiDrafts(query);
+      if (requestId !== listRequest) return;
+      rows = loaded;
     } catch (ex) {
+      if (requestId !== listRequest) return;
       tbody.innerHTML = '<tr><td colspan="7" class="muted">' +
         esc(ex.message) + "</td></tr>";
       return;
@@ -92,15 +116,15 @@
     tbody.innerHTML = rows.map(function (d) {
       var note = d.error || d.review_note || "";
       return "<tr>" +
-        "<td>#" + d.id + "</td>" +
+        "<td>#" + esc(d.id) + "</td>" +
         "<td>" + esc(SCENARIO_ZH[d.scenario] || d.scenario) + "</td>" +
-        "<td>" + pill(d.status) + "</td>" +
+        "<td>" + pill(d) + "</td>" +
         "<td>" + (d.meta && d.meta.rounds ? esc(d.meta.rounds) : "—") + "</td>" +
         "<td>" + esc(stamp(d.created_at)) + "</td>" +
         '<td class="muted" style="max-width:340px;overflow:hidden;' +
         'text-overflow:ellipsis;white-space:nowrap" title="' +
         esc(note) + '">' + esc(note || "—") + "</td>" +
-        '<td><button class="btn small" data-view="' + d.id + '">查看</button></td>' +
+        '<td><button class="btn small" data-view="' + esc(d.id) + '">查看</button></td>' +
         "</tr>";
     }).join("");
     tbody.querySelectorAll("[data-view]").forEach(function (b) {
@@ -111,31 +135,106 @@
   // ---------------------------------------------------------------- detail
   var editMode = false;
 
+  function detailMatches(id, epoch) {
+    return detailId === id && detailEpoch === epoch;
+  }
+
+  function stopDetailPoll() {
+    if (detailTimer !== null) clearTimeout(detailTimer);
+    detailTimer = null;
+  }
+
+  function restoreOutput() {
+    var edited = document.getElementById("lm-ai-d-output-edit");
+    if (!edited) return;
+    var pre = document.createElement("pre");
+    pre.id = "lm-ai-d-output";
+    pre.className = "term";
+    edited.replaceWith(pre);
+  }
+
+  function syncActions() {
+    var d = currentDraft;
+    var enabled = canEdit && !!d && !detailBusy;
+    var actionable = enabled && (d.status === "pending" || d.status === "error");
+    document.getElementById("lm-ai-d-approve").disabled = !actionable || editMode || !d.output;
+    document.getElementById("lm-ai-d-reject").disabled = !actionable || editMode;
+    document.getElementById("lm-ai-d-edit").disabled = !actionable;
+    document.getElementById("lm-ai-d-cancel").disabled = !enabled || d.status !== "running" ||
+      !!(d.meta && d.meta.job && d.meta.job.cancel_requested);
+    document.getElementById("lm-ai-d-retry").disabled = !enabled ||
+      (d.status !== "error" && d.status !== "cancelled") || editMode;
+  }
+
+  function scheduleDetailPoll(id, epoch) {
+    stopDetailPoll();
+    if (!detailMatches(id, epoch) || !currentDraft || currentDraft.status !== "running" || detailBusy) return;
+    if (pollAttempts >= 240) {
+      document.getElementById("lm-ai-d-action-status").textContent = "仍在生成，请点击刷新查看进度。";
+      return;
+    }
+    detailTimer = setTimeout(async function () {
+      detailTimer = null;
+      if (!detailMatches(id, epoch) || detailBusy || editMode) return;
+      pollAttempts++;
+      try {
+        var d = await LMApi.getAiDraft(id);
+        if (!detailMatches(id, epoch)) return;
+        renderDetail(d);
+      } catch (ex) {
+        if (!detailMatches(id, epoch)) return;
+        document.getElementById("lm-ai-d-action-status").textContent = "进度刷新失败：" + ex.message;
+      }
+      scheduleDetailPoll(id, epoch);
+    }, POLL_MS);
+  }
+
   async function openDetail(id) {
+    if (!Number.isSafeInteger(id) || id < 1) return;
+    stopDetailPoll();
+    var epoch = ++detailEpoch;
+    detailId = id;
+    currentDraft = null;
+    detailBusy = false;
+    pollAttempts = 0;
+    restoreOutput();
+    editMode = false;
+    syncActions();
     var d;
     try { d = await LMApi.getAiDraft(id); }
-    catch (ex) { toast(ex.message, false); return; }
-    if (d.status === "running") {
-      // Generation still on the worker — follow it here instead of bouncing
-      // the user back to the list.
-      renderDetail(d);
-      setTimeout(function () { openDetail(id); }, POLL_MS);
+    catch (ex) {
+      if (detailMatches(id, epoch)) {
+        document.getElementById("lm-ai-d-action-status").textContent = ex.message;
+        toast(ex.message, false);
+      }
+      return;
+    }
+    if (!detailMatches(id, epoch)) return;
+    if (d.id !== id || Number(d.project_id) !== Number(pid)) {
+      document.getElementById("lm-ai-d-action-status").textContent = "草稿不属于当前项目。";
+      toast("草稿不属于当前项目。", false);
       return;
     }
     renderDetail(d);
+    scheduleDetailPoll(id, epoch);
   }
 
   function renderDetail(d) {
+    currentDraft = d;
     document.querySelector(".lm-ai-drafts").hidden = true;
     var sec = document.getElementById("lm-ai-detail");
     sec.hidden = false;
+    restoreOutput();
     editMode = false;
+    document.getElementById("lm-ai-d-action-status").textContent =
+      d.meta && d.meta.job && d.meta.job.cancel_requested
+        ? "取消已请求；正在进行的请求完成后停止，请等待状态更新。" : "";
 
     document.getElementById("lm-ai-d-title").textContent =
       "草稿 #" + d.id + " · " + (SCENARIO_ZH[d.scenario] || d.scenario);
     document.getElementById("lm-ai-d-sub").textContent =
       d.status === "running"
-        ? "生成中 · " + ((d.meta && d.meta.progress && d.meta.progress.message) || "排队等待 worker…")
+        ? draftStatus(d).label + " · " + ((d.meta && d.meta.progress && d.meta.progress.message) || "等待状态更新…")
         : "创建于 " + stamp(d.created_at);
     document.getElementById("lm-ai-d-scenario").textContent =
       SCENARIO_ZH[d.scenario] || d.scenario;
@@ -160,24 +259,25 @@
       ? JSON.stringify(d.input, null, 2) : "—";
     ["lm-ai-d-hstatus", "lm-ai-d-status"].forEach(function (id2) {
       var el = document.getElementById(id2);
-      el.className = "pill st-" + (STATUS[d.status] || { cls: "notask" }).cls;
+      el.className = "pill st-" + draftStatus(d).cls;
+      el.textContent = draftStatus(d).label;
     });
 
     renderRefs(d);
 
     // Only pending/error drafts can still be decided; terminal states show
     // disabled verbs so the affordance matches the server's rule.
-    var actionable = d.status === "pending" || d.status === "error";
     var approve = document.getElementById("lm-ai-d-approve");
     var reject = document.getElementById("lm-ai-d-reject");
     var editBtn = document.getElementById("lm-ai-d-edit");
-    approve.disabled = !actionable;
-    reject.disabled = !actionable && d.status !== "error";
-    editBtn.disabled = !actionable;
+    syncActions();
     editBtn.textContent = "编辑输出…";
-    approve.onclick = function () { decide(d, "approve"); };
-    reject.onclick = function () { decide(d, "reject"); };
-    editBtn.onclick = function () { toggleEdit(d); };
+    editBtn.classList.remove("primary");
+    approve.onclick = function () { return decide(d, "approve"); };
+    reject.onclick = function () { return decide(d, "reject"); };
+    editBtn.onclick = function () { return toggleEdit(d); };
+    document.getElementById("lm-ai-d-cancel").onclick = function () { return recover(d, "cancel"); };
+    document.getElementById("lm-ai-d-retry").onclick = function () { return recover(d, "retry"); };
   }
 
   /** Partial-approval checklist for batch procedure drafts. */
@@ -222,7 +322,9 @@
   }
 
   /** Inline edit: swap the output <pre> for a JSON textarea and back. */
-  function toggleEdit(d) {
+  async function toggleEdit(d) {
+    if (!canEdit || detailBusy || currentDraft !== d ||
+        (d.status !== "pending" && d.status !== "error")) return;
     var pre = document.getElementById("lm-ai-d-output");
     var btn = document.getElementById("lm-ai-d-edit");
     if (!editMode) {
@@ -236,6 +338,7 @@
       btn.textContent = "保存修改";
       btn.classList.add("primary");
       editMode = true;
+      syncActions();
       return;
     }
     var ta2 = document.getElementById("lm-ai-d-output-edit");
@@ -246,111 +349,251 @@
       toast("输出必须是 JSON 对象", false);
       return;
     }
-    LMApi.updateAiDraft(d.id, parsed).then(function (updated) {
+    detailBusy = true;
+    var epoch = ++detailEpoch;
+    syncActions();
+    try {
+      var updated = await LMApi.updateAiDraft(d.id, parsed);
+      if (!detailMatches(d.id, epoch)) return;
       toast("已保存修改（审核记录中标记 edited）", true);
       renderDetail(updated);
-    }).catch(function (ex) { toast(ex.message, false); });
+    } catch (ex) {
+      if (!detailMatches(d.id, epoch)) return;
+      document.getElementById("lm-ai-d-action-status").textContent = ex.message;
+      toast(ex.message, false);
+    } finally {
+      if (detailMatches(d.id, epoch)) { detailBusy = false; syncActions(); }
+    }
   }
 
   function closeDetail() {
+    stopDetailPoll();
+    detailEpoch++;
+    detailId = null;
+    currentDraft = null;
+    detailBusy = false;
+    editMode = false;
+    restoreOutput();
     document.getElementById("lm-ai-detail").hidden = true;
     document.querySelector(".lm-ai-drafts").hidden = false;
     loadUsage();
   }
 
   async function decide(d, action) {
-    if (action === "approve") {
-      var refs = selectedRefs();
-      var body = refs && refs.length < (d.output.procedures || []).length
-        ? "将只落库勾选的 " + refs.length + " 条手顺，其余记为「未勾选（部分通过）」。"
-        : "草稿内容将经平台服务层写入（测试行 / steps / SBS revision / lib / 评论）。";
-      var ok = await LMUI.confirm({
-        title: "通过并落库",
-        body: body,
-        confirmText: "通过"
-      });
-      if (!ok) return;
-      try {
+    if (!canEdit || detailBusy || editMode || currentDraft !== d ||
+        (d.status !== "pending" && d.status !== "error")) return;
+    detailBusy = true;
+    var epoch = ++detailEpoch;
+    syncActions();
+    var status = document.getElementById("lm-ai-d-action-status");
+    status.textContent = "";
+    try {
+      if (action === "approve") {
+        var refs = selectedRefs();
+        if (refs && !refs.length) throw new Error("请至少勾选一条手顺后通过。");
+        var body = refs && refs.length < (d.output.procedures || []).length
+          ? "将只落库勾选的 " + refs.length + " 条手顺，其余记为「未勾选（部分通过）」。"
+          : "草稿内容将经平台服务层写入（测试行 / steps / SBS revision / lib / 评论）。";
+        var ok = await LMUI.confirm({
+          title: "通过并落库",
+          body: body,
+          confirmText: "通过"
+        });
+        if (!ok || !detailMatches(d.id, epoch)) return;
         await LMApi.approveAiDraft(d.id, refs);
+        if (!detailMatches(d.id, epoch)) return;
         toast("已通过并落库", true);
         closeDetail();
         load();
-      } catch (ex) { toast(ex.message, false); }
-      return;
-    }
-    var note = await LMUI.prompt({
-      title: "驳回草稿（必填原因）",
-      input: { value: "" }
-    });
-    if (!note || !String(note).trim()) {
-      if (note !== null) toast("驳回必须填写原因", false);
-      return;
-    }
-    try {
+        return;
+      }
+      var note = await LMUI.prompt({
+        title: "驳回草稿（必填原因）",
+        input: { value: "" }
+      });
+      if (!detailMatches(d.id, epoch)) return;
+      if (!note || !String(note).trim()) {
+        if (note !== null) toast("驳回必须填写原因", false);
+        return;
+      }
       await LMApi.rejectAiDraft(d.id, String(note).trim());
+      if (!detailMatches(d.id, epoch)) return;
       toast("已驳回", true);
       closeDetail();
       load();
-    } catch (ex) { toast(ex.message, false); }
+    } catch (ex) {
+      if (!detailMatches(d.id, epoch)) return;
+      status.textContent = ex.message + "；如来源行已变更，请从矩阵重新生成草稿。";
+      toast(ex.message, false);
+    } finally {
+      if (detailMatches(d.id, epoch)) { detailBusy = false; syncActions(); }
+    }
+  }
+
+  async function recover(d, action) {
+    if (!canEdit || detailBusy || editMode || currentDraft !== d) return;
+    if (action === "cancel" && (d.status !== "running" ||
+        (d.meta && d.meta.job && d.meta.job.cancel_requested))) return;
+    if (action === "retry" && d.status !== "error" && d.status !== "cancelled") return;
+    detailBusy = true;
+    stopDetailPoll();
+    var epoch = ++detailEpoch;
+    syncActions();
+    var status = document.getElementById("lm-ai-d-action-status");
+    status.textContent = action === "cancel" ? "正在请求取消；正在进行的请求会完成后停止。"
+      : "正在按原来源快照重试；来源已变更时请从矩阵新建草稿。";
+    try {
+      var updated = await (action === "cancel" ? LMApi.cancelAiDraft(d.id) : LMApi.retryAiDraft(d.id));
+      if (!detailMatches(d.id, epoch)) return;
+      renderDetail(updated);
+      load();
+    } catch (ex) {
+      if (!detailMatches(d.id, epoch)) return;
+      status.textContent = ex.message;
+      toast(ex.message, false);
+    } finally {
+      if (detailMatches(d.id, epoch)) {
+        detailBusy = false;
+        syncActions();
+        pollAttempts = 0;
+        scheduleDetailPoll(d.id, epoch);
+      }
+    }
   }
 
   // ------------------------------------------------------------ generation
+  function positiveId(raw, label) {
+    if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw)) || Number(raw) < 1) {
+      throw new Error(label + "必须为正整数");
+    }
+    return Number(raw);
+  }
+
+  function collectPayload(scenario) {
+    var value = function (id) { return document.getElementById(id).value.trim(); };
+    var payload = {};
+    var selected = scenario === "procedure" || scenario === "lib" || scenario === "failure";
+    if (selected) {
+      var rawIds = value("lm-ai-gen-item-ids");
+      if (!rawIds) throw new Error("请选择矩阵中的已保存测试行，或填写行 ID");
+      var ids = rawIds.split(/[\s,，]+/).map(function (raw) { return positiveId(raw, "行 ID "); });
+      if (ids.length > 200 || new Set(ids).size !== ids.length) throw new Error("选择 1–200 条不重复的已保存行");
+      if (scenario === "failure") {
+        if (ids.length !== 1) throw new Error("失败分析只选择一条测试行");
+        payload.item_id = ids[0];
+        payload.task_key = value("lm-ai-gen-task-key");
+        if (!payload.task_key) throw new Error("请填写包含归档证据的任务标识");
+      } else payload.item_ids = ids;
+    }
+    if (scenario === "viewpoint") {
+      payload.doc_text = value("lm-ai-gen-doc-text");
+      payload.source_name = value("lm-ai-gen-source-name");
+      payload.source_revision = value("lm-ai-gen-source-revision");
+      if (!payload.doc_text || !payload.source_name || !payload.source_revision) {
+        throw new Error("请填写设计文档摘录、来源名称和版本");
+      }
+    }
+    if (scenario === "lib") {
+      payload.proposal = value("lm-ai-gen-proposal");
+      if (!payload.proposal) throw new Error("请填写复用提议及目的");
+    }
+    var modelRaw = value("lm-ai-gen-model-id");
+    if (modelRaw && (scenario === "procedure" || scenario === "sbs" || scenario === "lib")) {
+      payload.model_id = positiveId(modelRaw, "已保存模型 ID ");
+    }
+    if (scenario === "sbs" && !payload.model_id) throw new Error("请选择已保存的 bundle 模型 ID");
+    var raw = value("lm-ai-gen-payload");
+    if (raw && (scenario === "procedure" || scenario === "sbs" || scenario === "lib")) {
+      var advanced;
+      try { advanced = JSON.parse(raw); }
+      catch (ex) { throw new Error("源码摘录 JSON 无效：" + ex.message); }
+      if (!advanced || typeof advanced !== "object" || Array.isArray(advanced) ||
+          Object.keys(advanced).some(function (key) { return key !== "source_files"; })) {
+        throw new Error("高级 JSON 仅支持 source_files 摘录；项目上下文与版本由服务器组装");
+      }
+      if (advanced.source_files) {
+        if (scenario !== "sbs" && scenario !== "procedure" && scenario !== "lib") {
+          throw new Error("此场景不接受源码摘录");
+        }
+        var files = advanced.source_files;
+        if (!files || typeof files !== "object" || Array.isArray(files) || Object.keys(files).length > 32 ||
+            Object.keys(files).some(function (name) { return !name.trim() || typeof files[name] !== "string"; })) {
+          throw new Error("source_files 必须为文件名到文本的映射，最多 32 个摘录");
+        }
+        if (Object.keys(files).reduce(function (length, name) { return length + files[name].length; }, 0) > 256000) {
+          throw new Error("源码摘录总长度不能超过 256000 字符");
+        }
+        payload.source_files = files;
+      }
+    }
+    if (scenario === "sbs" && (!payload.source_files || !Object.keys(payload.source_files).length)) {
+      throw new Error("请在高级 JSON 中提供 source_files 源码摘录");
+    }
+    if (payload.doc_text && payload.doc_text.length > 256000) throw new Error("文档摘录不能超过 256000 字符");
+    if (payload.source_files || scenario === "lib") {
+      var name = value("lm-ai-gen-source-name");
+      var revision = value("lm-ai-gen-source-revision");
+      if (name) payload.source_name = name;
+      if (revision) payload.source_revision = revision;
+    }
+    return payload;
+  }
+
+  function syncGenerationControls() {
+    var scenario = document.getElementById("lm-ai-gen-scenario").value;
+    document.getElementById("lm-ai-open-gen").disabled = !canEdit || generating;
+    document.getElementById("lm-ai-gen-submit").disabled = !canEdit || generating;
+    document.querySelectorAll("[data-ai-scenarios]").forEach(function (node) {
+      node.hidden = node.dataset.aiScenarios.split(" ").indexOf(scenario) < 0;
+    });
+    document.querySelectorAll("#lm-ai-gen-panel input, #lm-ai-gen-panel textarea, #lm-ai-gen-panel select")
+      .forEach(function (node) { node.disabled = !canEdit || generating; });
+  }
+
   function bindGenerate() {
     var panel = document.getElementById("lm-ai-gen-panel");
     document.getElementById("lm-ai-open-gen").addEventListener("click", function () {
+      if (!canEdit || generating) return;
       panel.hidden = !panel.hidden;
     });
+    document.getElementById("lm-ai-gen-scenario").addEventListener("change", syncGenerationControls);
     document.getElementById("lm-ai-gen-submit").addEventListener("click", async function () {
+      if (!canEdit || generating) return;
       var scenario = document.getElementById("lm-ai-gen-scenario").value;
-      var raw = document.getElementById("lm-ai-gen-payload").value;
       var statusEl = document.getElementById("lm-ai-gen-status");
       var payload;
-      try { payload = JSON.parse(raw); }
-      catch (e) { statusEl.textContent = "payload 不是合法 JSON：" + e.message; return; }
+      try { payload = collectPayload(scenario); }
+      catch (e) { statusEl.textContent = e.message; return; }
+      generating = true;
+      syncGenerationControls();
+      var epoch = detailEpoch;
       statusEl.textContent = "已提交，等待 worker…";
       var draft;
       try {
-        draft = await LMApi.createAiDraft(scenario, pid, payload);
+        await LMReady;
+        draft = await LMApi.createAiDraft(scenario, Number(pid), payload);
       } catch (ex) {
-        statusEl.textContent = "";
+        statusEl.textContent = ex.message;
+        if (ex.details && Number.isSafeInteger(ex.details.draft_id) && ex.details.draft_id > 0) {
+          statusEl.textContent += "（草稿 #" + ex.details.draft_id + "，可在列表查看并重试）";
+          load();
+        }
         toast(ex.message, false);
         return;
-      }
-      if (draft.status === "running") {
-        statusEl.textContent = "生成中（草稿 #" + draft.id + "）——可离开本页，生成完成后出现在列表";
-        panel.hidden = true;
-        load();
-        pollDraft(draft.id, statusEl);
-        return;
+      } finally {
+        generating = false;
+        syncGenerationControls();
       }
       statusEl.textContent = draft.status === "error"
-        ? "生成失败（草稿 #" + draft.id + "）"
-        : "已生成草稿 #" + draft.id;
-      panel.hidden = true;
-      state.status = "";
-      document.getElementById("lm-ai-gen-payload").value = "";
+        ? (draft.error || "生成失败") + "（草稿 #" + draft.id + "）"
+        : draftStatus(draft).label + " · 草稿 #" + draft.id + "，请人工审核";
       load();
-      openDetail(draft.id);
-    });
-  }
-
-  /** Follow an async generation until it leaves ``running``. */
-  async function pollDraft(id, statusEl) {
-    for (var i = 0; i < 240; i++) {  // bounded: ~10 minutes
-      await new Promise(function (r) { setTimeout(r, POLL_MS); });
-      var d;
-      try { d = await LMApi.getAiDraft(id); }
-      catch (ex) { continue; }  // transient fetch failure: keep polling
-      var msg = (d.meta && d.meta.progress && d.meta.progress.message) || "";
-      if (statusEl) statusEl.textContent = "草稿 #" + id + " 生成中…" + (msg ? "（" + msg + "）" : "");
-      if (d.status !== "running") {
-        if (statusEl) statusEl.textContent = "";
-        load();
-        openDetail(id);
-        return;
+      if (detailEpoch === epoch && detailId === null) {
+        panel.hidden = true;
+        openDetail(draft.id);
       }
-    }
-    if (statusEl) statusEl.textContent = "仍在生成中（草稿 #" + id + "）——请稍后刷新查看";
+    });
+    syncGenerationControls();
   }
 
   // ----------------------------------------------------------------- usage
@@ -406,6 +649,7 @@
     }).catch(function () { /* leave blank */ });
     document.getElementById("lm-ai-signals-save").addEventListener(
       "click", async function () {
+        if (!canEdit) return;
         var statusEl = document.getElementById("lm-ai-signals-status");
         var entries = [];
         for (var line of document.getElementById("lm-ai-signals-text").value.split("\n")) {
@@ -452,9 +696,32 @@
   }
 
   // ------------------------------------------------------------------- init
+  async function loadPermissions() {
+    try {
+      await LMReady;
+      var project = await LMApi.getProject(Number(pid));
+      canEdit = project.project.is_editable !== false &&
+        (project.role === "project_admin" || project.role === "editor" ||
+         project.role === "system_admin" || !!(LM.user && LM.user.is_system_admin));
+      if (!canEdit) document.getElementById("lm-ai-gen-status").textContent =
+        "当前项目或角色仅可查看草稿；生成和审核需要编辑权限。";
+    } catch (ex) {
+      canEdit = false;
+      document.getElementById("lm-ai-gen-status").textContent = "权限加载失败：" + ex.message;
+    }
+    document.getElementById("lm-ai-signals-save").disabled = !canEdit;
+    document.getElementById("lm-ai-signals-text").disabled = !canEdit;
+    syncGenerationControls();
+    syncActions();
+  }
+
   document.getElementById("lm-ai-refresh").addEventListener("click", function () {
     load();
     loadUsage();
+    if (detailId !== null && !editMode && !detailBusy) openDetail(detailId);
+  });
+  document.getElementById("lm-ai-d-refresh").addEventListener("click", function () {
+    if (detailId !== null && !editMode && !detailBusy) openDetail(detailId);
   });
   document.getElementById("lm-ai-d-close").addEventListener("click", closeDetail);
   document.getElementById("lm-ai-f-scenario").addEventListener("change", load);
@@ -469,8 +736,18 @@
   });
 
   bindGenerate();
+  document.getElementById("lm-ai-signals-save").disabled = true;
+  document.getElementById("lm-ai-signals-text").disabled = true;
   bindSettings();
   bindSignals();
   load();
   loadUsage();
+  loadPermissions();
+  var linkedDraft = new URLSearchParams(window.location.search).get("draft");
+  if (linkedDraft && /^\d+$/.test(linkedDraft)) openDetail(Number(linkedDraft));
+  window.addEventListener("pagehide", function () {
+    stopDetailPoll();
+    detailEpoch++;
+    detailId = null;
+  });
 })(window, document);

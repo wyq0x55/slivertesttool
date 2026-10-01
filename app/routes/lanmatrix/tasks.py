@@ -19,6 +19,7 @@ from ...models import DataJob, FieldDefinition, LMUser, Project, Task, TaskStatu
 from ...services import (
     event_service, license_service, project_model_service,
     report_service, task_service, upload_service,
+    run_evidence_service,
 )
 from ...services.upload_service import UploadError
 from ...services.lanmatrix import (
@@ -36,7 +37,7 @@ register_common(bp)
 
 def _enqueue_task(task: Task) -> None:
     from ...jobqueue.tasks import run_task
-    run_task(task.id)
+    run_task(task.id, task.run_count or 1)
 
 def _form_items(files_field: str, paths_field: str):
     files = request.files.getlist(files_field)
@@ -200,10 +201,14 @@ def upload_project_tree(project_id):
                     project_id=project.id, submitter_id=g.user.id, commit=False)
                 proj_root = run_layout.project_root(cfg, project)
                 case_dir = run_layout.staging_dir(proj_root, test_id) / test_id
+                run_evidence_service.validate_segment(test_id)
+                run_evidence_service.checked_path(proj_root, case_dir)
                 shutil.rmtree(case_dir.parent, ignore_errors=True)
                 upload_service.materialise_one(
                     cfg.WORKSPACE_DIR, info["upload_key"], case_dir, test_id)
                 task.workspace = str(proj_root)
+                run_evidence_service.pin_attempt(
+                    task, case_dir, approved_inputs={"source": "human submitted bundle"})
                 submission_attempt = (task.id, task.run_count)
                 db.session.commit()
                 committed_attempt = submission_attempt
@@ -292,14 +297,12 @@ def run_selected_tasks(project_id):
                 duplicates.append({"test_id": test_id, "task_id": task.task_key})
                 db.session.rollback()
                 continue
-            # Results are keyed by project + test_id (not the synthetic task
-            # key). Run scripts are materialised into a short-lived staging dir;
-            # the worker copies them into the runtime pool-instance dir and
-            # deletes them once the run finishes.
             proj_root = run_layout.project_root(cfg, project)
             case_dir = run_layout.staging_dir(proj_root, test_id) / test_id
+            run_evidence_service.validate_segment(test_id)
+            run_evidence_service.checked_path(proj_root, case_dir)
             shutil.rmtree(case_dir.parent, ignore_errors=True)
-            sje.materialise_run_dir(case_dir, row, const_rows, lib_rows)
+            sje.materialise_run_dir(case_dir, row, const_rows, lib_rows, task)
             task.workspace = str(proj_root)
             submission_attempt = (task.id, task.run_count)
             db.session.commit()
@@ -403,8 +406,10 @@ def rerun_selected_tasks(project_id):
                 workspace=str(proj_root), task_name=test_id,
                 submitter=submitter, submitter_id=g.user.id, commit=False)
             case_dir = run_layout.staging_dir(proj_root, test_id) / test_id
+            run_evidence_service.validate_segment(test_id)
+            run_evidence_service.checked_path(proj_root, case_dir)
             shutil.rmtree(case_dir.parent, ignore_errors=True)
-            sje.materialise_run_dir(case_dir, row, const_rows, lib_rows)
+            sje.materialise_run_dir(case_dir, row, const_rows, lib_rows, task)
             submission_attempt = (task.id, task.run_count)
             db.session.commit()
             committed_attempt = submission_attempt

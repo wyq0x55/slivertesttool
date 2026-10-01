@@ -108,24 +108,46 @@ def _current_limit(app) -> int:
         return license_service.get_limit()
 
 
+def _claim_run(database, task_pk: int, expected_run_count: int):
+    from ..models import Task, TaskStatus
+
+    task = (Task.query.filter_by(id=task_pk, run_count=expected_run_count,
+                                 status=TaskStatus.QUEUED.value, deleted_at=None,
+                                 cancel_requested=False)
+            .populate_existing().with_for_update().first())
+    if task is None:
+        database.session.rollback()
+        return None
+    task.status = TaskStatus.RUNNING.value
+    task.started_at = _utcnow()
+    task.message = "Running on Silver."
+    database.session.commit()
+    return task
+
+
 @huey.task()
-def run_task(task_pk: int) -> None:
+def run_task(task_pk: int, expected_run_count: int | None = None) -> None:
     app = _get_app()
     config = app.config_obj
     if _pooling_enabled(config, app):
-        _run_task_pooled(app, config, task_pk)
+        _run_task_pooled(app, config, task_pk, expected_run_count)
     else:
-        _run_task_dedicated(app, config, task_pk)
+        _run_task_dedicated(app, config, task_pk, expected_run_count)
 
 
-def _run_task_pooled(app, config, task_pk: int) -> None:
+def _has_pending_outcome(task_pk, run_count):
+    from ..extensions import db
+    from ..models import RunEvidence
+    record = db.session.get(RunEvidence, (task_pk, run_count))
+    return record is not None and bool(record.outcome_sha256) and not record.finalised
+
+
+def _run_task_pooled(app, config, task_pk: int, expected_run_count=None) -> None:
     """Execute a task on a pre-warmed, reusable pooled Silver instance."""
     from ..extensions import db
     from ..models import Task, TaskStatus
     from ..runners import test_runner
     from ..services import event_service, license_service
-
-    pool = get_pool(app, config)
 
     with app.app_context():
         task = db.session.get(Task, task_pk)
@@ -136,6 +158,10 @@ def _run_task_pooled(app, config, task_pk: int) -> None:
             logger.info("Task %s no longer queued (%s); skipping",
                         task.task_key, task.status)
             return
+        if expected_run_count is None:
+            expected_run_count = 1
+        if task.deleted_at is not None or task.run_count != expected_run_count:
+            return
         from ..runners import run_layout
         sil_ref = Path(task.sil_relpath)
         # Model path is normally absolute (admin registry); the legacy in-bundle
@@ -143,19 +169,23 @@ def _run_task_pooled(app, config, task_pk: int) -> None:
         staged = run_layout.staging_dir(task.workspace, task.test_id) / task.test_id
         sil_path = sil_ref if sil_ref.is_absolute() else (staged / sil_ref).resolve()
 
+    pool = get_pool(app, config)
+
     # --- Phase 1: borrow a pooled instance, cancellable while queued. ---
     def _should_cancel() -> bool:
         with app.app_context():
             db.session.expire_all()
             t = db.session.get(Task, task_pk)
-            return t is None or t.cancel_requested or TaskStatus(t.status).is_final
+            return (t is None or t.cancel_requested or t.deleted_at is not None
+                    or t.status != TaskStatus.QUEUED.value or t.run_count != expected_run_count)
 
     instance = pool.acquire(sil_path, should_cancel=_should_cancel,
                             poll=_LICENSE_POLL_SECONDS)
     if instance is None:
         with app.app_context():
             task = db.session.get(Task, task_pk)
-            if task is not None:
+            if (task is not None and task.run_count == expected_run_count
+                    and task.status == TaskStatus.QUEUED.value and task.cancel_requested):
                 _mark_cancelled(db, task)
         return
 
@@ -163,23 +193,18 @@ def _run_task_pooled(app, config, task_pk: int) -> None:
     with app.app_context():
         license_service.mark_busy()
         try:
-            task = db.session.get(Task, task_pk)
+            task = _claim_run(db, task_pk, expected_run_count)
             if task is None:
                 return
-            if task.cancel_requested:
-                _mark_cancelled(db, task)
-                return
-            task.status = TaskStatus.RUNNING.value
-            task.started_at = _utcnow()
-            task.message = "Running on Silver."
-            db.session.commit()
             event_service.emit_status(task, "running", "Running on Silver.")
 
             test_runner.execute(app, config, task, pool=pool, instance=instance)
         except Exception as exc:  # noqa: BLE001
             logger.exception("run_task failed for pk=%s", task_pk)
+            db.session.rollback()
             task = db.session.get(Task, task_pk)
-            if task is not None and not TaskStatus(task.status).is_final:
+            if (task is not None and task.run_count == expected_run_count
+                    and not TaskStatus(task.status).is_final and not _has_pending_outcome(task_pk, expected_run_count)):
                 task.status = TaskStatus.FAILED.value
                 task.message = f"Internal error: {exc}"
                 task.finished_at = _utcnow()
@@ -189,7 +214,7 @@ def _run_task_pooled(app, config, task_pk: int) -> None:
             license_service.mark_idle()
 
 
-def _run_task_dedicated(app, config, task_pk: int) -> None:
+def _run_task_dedicated(app, config, task_pk: int, expected_run_count=None) -> None:
     """Classic path: launch a dedicated Silver instance per task."""
     from ..extensions import db
     from ..models import Task, TaskStatus
@@ -204,6 +229,10 @@ def _run_task_dedicated(app, config, task_pk: int) -> None:
         if TaskStatus(task.status) != TaskStatus.QUEUED:
             logger.info("Task %s no longer queued (%s); skipping", task.task_key, task.status)
             return
+        if expected_run_count is None:
+            expected_run_count = 1
+        if task.deleted_at is not None or task.run_count != expected_run_count:
+            return
 
         # --- Phase 1: wait for a license slot, cancellable while queued. ---
         acquired = False
@@ -212,7 +241,10 @@ def _run_task_dedicated(app, config, task_pk: int) -> None:
             task = db.session.get(Task, task_pk)
             if task is None:
                 return
-            if task.cancel_requested or TaskStatus(task.status).is_final:
+            if (task.deleted_at is not None or task.run_count != expected_run_count
+                    or task.status != TaskStatus.QUEUED.value):
+                return
+            if task.cancel_requested:
                 _mark_cancelled(db, task)
                 return
             acquired = license_service.try_acquire()
@@ -226,23 +258,18 @@ def _run_task_dedicated(app, config, task_pk: int) -> None:
         from ..runners.slots import dedicated_allocator
         slot = dedicated_allocator().acquire()
         try:
-            task = db.session.get(Task, task_pk)
+            task = _claim_run(db, task_pk, expected_run_count)
             if task is None:
                 return
-            if task.cancel_requested:
-                _mark_cancelled(db, task)
-                return
-            task.status = TaskStatus.RUNNING.value
-            task.started_at = _utcnow()
-            task.message = "Running on Silver."
-            db.session.commit()
             event_service.emit_status(task, "running", "Running on Silver.")
 
             test_runner.execute(app, app.config_obj, task, dedicated_slot=slot)
         except Exception as exc:  # noqa: BLE001
             logger.exception("run_task failed for pk=%s", task_pk)
+            db.session.rollback()
             task = db.session.get(Task, task_pk)
-            if task is not None and not TaskStatus(task.status).is_final:
+            if (task is not None and task.run_count == expected_run_count
+                    and not TaskStatus(task.status).is_final and not _has_pending_outcome(task_pk, expected_run_count)):
                 task.status = TaskStatus.FAILED.value
                 task.message = f"Internal error: {exc}"
                 task.finished_at = _utcnow()
@@ -252,16 +279,20 @@ def _run_task_dedicated(app, config, task_pk: int) -> None:
             license_service.release()
 
 
-@huey.task()
-def run_ai_generation(draft_pk: int) -> None:
-    """Generate an AI draft off the request path.
+def publish_ai_generation(draft_pk: int) -> None:
+    from ..extensions import db
+    from ..models import AiDraft
+    from ..services.ai import jobs
 
-    The web route creates the ``AiDraft`` row in ``running`` and enqueues this
-    task, so a multi-viewpoint procedure batch (two phases + retries, easily
-    a minute of LLM calls) can never sit inside an HTTP timeout. Progress
-    events from the scenario land in ``meta_json.progress`` for the polling
-    frontend; the draft ends as ``pending`` (awaiting review) or ``error``.
-    """
+    draft = db.session.get(AiDraft, draft_pk)
+    if draft is not None and draft.status == AiDraft.STATUS_RUNNING:
+        attempt = (jobs.metadata(draft).get("job") or {}).get("attempt")
+        run_ai_generation(draft_pk, attempt)
+
+
+@huey.task()
+def run_ai_generation(draft_pk: int, attempt: str | None = None) -> None:
+    """Consume a fenced generation attempt without taking a Silver license."""
     app = _get_app()
     with app.app_context():
         import json
@@ -269,58 +300,96 @@ def run_ai_generation(draft_pk: int) -> None:
         from ..extensions import db
         from ..models import AiDraft
         from ..services.ai import scenarios as ai_scenarios
-        from ..services.ai import signal_dict as ai_signal_dict
-        from ..services.ai.base import GenerationError
-        from ..services.ai.provider import ProviderError
+        from ..services.ai import jobs as ai_jobs
 
         draft = db.session.get(AiDraft, draft_pk)
         if draft is None or draft.status != AiDraft.STATUS_RUNNING:
             return
 
-        # The project's curated signal dictionary rides along in the payload:
-        # scenarios stay pure (DB-free), the registry gains its top-priority
-        # source without knowing where it came from.
-        payload = json.loads(draft.input_json) if draft.input_json else {}
-        entries = ai_signal_dict.entries_for(draft.project_id)
-        if entries:
-            payload.setdefault("signal_dict", entries)
-
-        def _load_meta() -> dict:
-            try:
-                return json.loads(draft.meta_json) if draft.meta_json else {}
-            except ValueError:
-                return {}
-
-        def on_event(event: dict) -> None:
-            meta = _load_meta()
-            meta["progress"] = event
-            draft.meta_json = json.dumps(meta, ensure_ascii=False)
+        if attempt is None:
+            attempt = (ai_jobs.metadata(draft).get("job") or {}).get("attempt")
+        if attempt is None:
+            attempt = ai_jobs.prepare(draft)
             db.session.commit()
-
+        if not ai_jobs.acquire_slot():
+            if not huey.immediate:
+                run_ai_generation.schedule(args=(draft_pk, attempt), delay=2)
+            return
+        checkpoint_token = None
         try:
-            result = ai_scenarios.run_scenario(
-                draft.scenario, payload, on_event=on_event)
-        except (ProviderError, GenerationError, ValueError) as exc:
-            db.session.rollback()
-            draft = db.session.get(AiDraft, draft_pk)
-            if draft is None:
+            if not ai_jobs.claim(draft_pk, attempt):
                 return
-            draft.status = AiDraft.STATUS_ERROR
-            draft.error = str(exc)
-            db.session.commit()
-            return
-        db.session.rollback()  # drop any progress-write state before the final write
-        draft = db.session.get(AiDraft, draft_pk)
-        if draft is None:
-            return
-        draft.output_json = json.dumps(result.output, ensure_ascii=False,
-                                       indent=2)
-        draft.meta_json = json.dumps(
-            {"model": result.model, "rounds": result.rounds,
-             "usage": result.usage, "log": result.log},
-            ensure_ascii=False)
-        draft.status = AiDraft.STATUS_PENDING
-        db.session.commit()
+            draft = db.session.get(AiDraft, draft_pk)
+            payload = json.loads(draft.input_json) if draft.input_json else {}
+            scenario = draft.scenario
+            checkpoint_token = ai_jobs.install_checkpoint(lambda: ai_jobs.touch(draft_pk, attempt))
+            result = ai_scenarios.run_scenario(
+                scenario, payload, on_event=lambda event: ai_jobs.touch(draft_pk, attempt, event))
+            ai_jobs.checkpoint()
+            ai_jobs.finish(draft_pk, attempt, output=result.output,
+                           result_meta={"model": result.model, "rounds": result.rounds,
+                                        "usage": result.usage, "log": result.log})
+        except ai_jobs.AttemptStopped:
+            db.session.rollback()
+        except Exception as exc:
+            logger.exception("AI generation failed for draft=%s", draft_pk)
+            db.session.rollback()
+            ai_jobs.finish(draft_pk, attempt, error=str(exc))
+        finally:
+            if checkpoint_token is not None:
+                ai_jobs.reset_checkpoint(checkpoint_token)
+            ai_jobs.release_slot()
+
+
+@huey.periodic_task(crontab(minute="*"))
+def recover_ai_generation_job() -> None:
+    app = _get_app()
+    with app.app_context():
+        from ..services.ai import jobs
+        jobs.recover(publish_ai_generation)
+
+
+def recover_run_attempts(*, startup=False) -> dict:
+    """Reconcile sealed outcomes and publish only pinned approved queued attempts."""
+    from ..extensions import db
+    from ..models import Task, TaskStatus
+    from ..services.run_evidence_service import recover_queued_attempts
+    from ..services.run_finalisation_service import finalise_attempt
+    from ..services.run_recovery_service import recover_interrupted_attempts
+
+    if not isinstance(startup, bool):
+        raise ValueError("Recovery startup must be a boolean")
+    pages = 1
+    if startup:
+        interrupted_count = Task.query.filter_by(status=TaskStatus.RUNNING.value, deleted_at=None).count()
+        pages = max(1, (interrupted_count + 99) // 100)
+        db.session.rollback()
+    result = {"recovered": [], "skipped": [], "errors": []}
+    for _page in range(pages):
+        recovered = recover_interrupted_attempts(finalise_attempt, startup=startup)
+        for key in result:
+            result[key].extend(recovered[key])
+
+    pending = {tuple(task.args) for task in huey.pending(limit=1000)
+               if isinstance(task, run_task.task_class)}
+
+    def enqueue(task_id, run_count):
+        message = run_task.s(task_id, run_count)
+        huey.storage.enqueue(huey.serialize_task(message), message.priority)
+
+    queued = recover_queued_attempts(enqueue, is_pending=lambda task_id, run_count: (task_id, run_count) in pending)
+    for key in result:
+        result[key].extend(queued[key])
+    return result
+
+
+@huey.periodic_task(crontab(minute="*"))
+def recover_run_attempts_job() -> None:
+    app = _get_app()
+    with app.app_context():
+        result = recover_run_attempts()
+        if result["errors"]:
+            logger.warning("Run publication recovery failed: %s", result["errors"])
 
 
 @huey.periodic_task(crontab(hour="3", minute="0"))

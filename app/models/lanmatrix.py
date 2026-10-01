@@ -659,6 +659,7 @@ class TestRunRecord(db.Model):
     test_id = db.Column(db.String(128), nullable=False, default="", index=True)
     # The Task that produced this record (``task_key``, e.g. "T000123").
     task_key = db.Column(db.String(16), nullable=False, default="")
+    run_count = db.Column(db.Integer, nullable=True)
     # Judge verdict exactly as mirrored onto the row (PASS/FAIL/ERROR/...).
     verdict = db.Column(db.String(24), nullable=False, default="")
     # Normalised bucket used by every aggregate, so the dashboard never has to
@@ -683,6 +684,7 @@ class TestRunRecord(db.Model):
             "row_uuid": self.row_uuid,
             "test_id": self.test_id,
             "task_key": self.task_key,
+            "run_count": self.run_count,
             "verdict": self.verdict,
             "outcome": self.outcome,
             "model_name": self.model_name,

@@ -14,34 +14,64 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/></svg>
         刷新
       </button>
-      <button class="btn primary" id="lm-ai-open-gen" type="button">
+      <button class="btn primary" id="lm-ai-open-gen" type="button" disabled>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8L20 10l-5 3.6 1.7 6L12 16l-4.7 3.6L9 13.6 4 10l6.1-1.2z"/></svg>
         生成草稿
       </button>
     </div>
   </div>
 
-  {# Generation panel. Payload is raw JSON on purpose: the five scenarios
-     evolve with the pipeline and a hand-built form per scenario would lag
-     behind within weeks. The JSON contract lives in docs/ai-integration.md. #}
   <div id="lm-ai-gen-panel" class="addbar" hidden>
     <div class="mforms">
       <div class="mform-cap">生成草稿</div>
       <div class="row wrap">
         <label class="uplbl">场景 <select id="lm-ai-gen-scenario" class="selbox">
           <option value="viewpoint">观点抽取（设计书 → 测试观点）</option>
-          <option value="procedure">手顺生成（观点 + 源码 → steps）</option>
+          <option value="procedure">手顺生成（已保存矩阵行 → steps）</option>
           <option value="sbs">SBS 构筑（源码 → SBS 增量 / 补变量）</option>
           <option value="lib">lib 编写（人工提议 + 被标注手顺）</option>
-          <option value="failure">失败分析（日志 + 观点 → issue 草稿）</option>
+          <option value="failure">失败分析（归档执行证据 → issue 草稿）</option>
         </select></label>
         <span class="muted" style="align-self:center">生成走 机器校验 + 重试，草稿进入待审</span>
       </div>
-      <textarea id="lm-ai-gen-payload" class="term" rows="10"
-        placeholder='payload（JSON），各场景字段见 docs/ai-integration.md，例如 procedure：&#10;{"viewpoints": [{"ref": "MDL100-01", "title": "超速警告·正例", "item_id": 12}],&#10; "source_files": {"engine.c": "..."}, "sbs_variables": [["警告フラグ", "warn_flag"]]}'></textarea>
+      <div data-ai-scenarios="procedure lib failure">
+        <label class="uplbl">已保存测试行 ID
+          <input id="lm-ai-gen-item-ids" class="inbox" placeholder="12, 13（失败分析仅一行）" autocomplete="off">
+        </label>
+        <p class="muted">在<a href="{{ url_for('lanmatrix_pages.editor', project_id=project_id) }}">矩阵</a>勾选已有行后点击「AI 生成手顺」，即可直接提交选中行。此处也可填写行 ID；服务器读取真实行内容及版本。</p>
+      </div>
+      <div data-ai-scenarios="procedure sbs lib">
+        <label class="uplbl">已保存模型 ID（手顺 / lib 可留空使用当前模型）
+          <input id="lm-ai-gen-model-id" class="inbox" type="number" min="1" step="1" placeholder="模型 ID">
+        </label>
+      </div>
+      <div data-ai-scenarios="viewpoint">
+        <label class="uplbl" for="lm-ai-gen-doc-text">设计文档摘录</label>
+        <textarea id="lm-ai-gen-doc-text" class="term" rows="8" maxlength="256000"
+          placeholder="提交需要提取测试观点的设计书内容"></textarea>
+      </div>
+      <div class="row wrap" data-ai-scenarios="viewpoint procedure sbs lib">
+        <label class="uplbl">来源名称 <input id="lm-ai-gen-source-name" class="inbox" maxlength="256" placeholder="设计书 / 源码 / 提议名称"></label>
+        <label class="uplbl">来源版本 <input id="lm-ai-gen-source-revision" class="inbox" maxlength="256" placeholder="文档版本或提交号"></label>
+        <span class="muted">文档抽取必填；源码及提议可补充来源信息，摘要由服务器记录。</span>
+      </div>
+      <div data-ai-scenarios="lib">
+        <label class="uplbl" for="lm-ai-gen-proposal">复用提议</label>
+        <textarea id="lm-ai-gen-proposal" class="term" rows="4" placeholder="说明要复用哪些已保存手顺及理由；生成后仍需人工审核"></textarea>
+      </div>
+      <div data-ai-scenarios="failure">
+        <label class="uplbl">归档任务标识 <input id="lm-ai-gen-task-key" class="inbox" placeholder="task_key"></label>
+        <p class="muted">服务器读取该任务的归档证据。直接粘贴日志的旧入口不支持；仅生成分析草稿。</p>
+      </div>
+      <details data-ai-scenarios="procedure sbs lib">
+        <summary>高级：提交源码摘录 JSON（SBS 必填）</summary>
+        <p class="muted">仅接受 source_files；无需转录观点、版本、信号或项目上下文。</p>
+        <textarea id="lm-ai-gen-payload" class="term" rows="6"
+          placeholder='{"source_files": {"engine.c": "源码摘录…"}}'></textarea>
+      </details>
       <div class="row" style="margin-top:10px">
-        <button class="btn primary" id="lm-ai-gen-submit" type="button">提交生成</button>
-        <span id="lm-ai-gen-status" class="muted"></span>
+        <button class="btn primary" id="lm-ai-gen-submit" type="button" disabled>提交生成</button>
+        <span id="lm-ai-gen-status" class="muted" role="status" aria-live="polite"></span>
       </div>
     </div>
   </div>
@@ -103,6 +133,7 @@
       <button type="button" data-status="approved">已通过</button>
       <button type="button" data-status="rejected">已驳回</button>
       <button type="button" data-status="error">生成失败</button>
+      <button type="button" data-status="cancelled">已取消</button>
     </div>
   </div>
 
@@ -147,11 +178,17 @@
       <p id="lm-ai-d-sub"></p>
     </div>
     <div class="head-actions">
-      <button class="btn small" id="lm-ai-d-edit" type="button">编辑输出…</button>
-      <button class="btn small danger" id="lm-ai-d-reject" type="button">驳回…</button>
-      <button class="btn small primary" id="lm-ai-d-approve" type="button">通过并落库</button>
+      <button class="btn small" id="lm-ai-d-refresh" type="button">刷新进度</button>
+      <button class="btn small danger" id="lm-ai-d-cancel" type="button" disabled>取消生成</button>
+      <button class="btn small" id="lm-ai-d-retry" type="button" disabled>按原快照重试</button>
+      <button class="btn small" id="lm-ai-d-edit" type="button" disabled>编辑输出…</button>
+      <button class="btn small danger" id="lm-ai-d-reject" type="button" disabled>驳回…</button>
+      <button class="btn small primary" id="lm-ai-d-approve" type="button" disabled>通过并落库</button>
     </div>
   </div>
+
+  <p id="lm-ai-d-action-status" class="muted" role="status" aria-live="polite"></p>
+  <p class="muted">取消需等待正在进行的请求完成。重试保留原来源快照；来源已变更时请从矩阵重新生成。通过草稿后，执行仍需另行确认。</p>
 
   {# Partial approval: which batch entries land. Only rendered for procedure
      drafts with a procedures[] output; single-output drafts approve whole. #}

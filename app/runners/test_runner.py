@@ -25,6 +25,7 @@ from typing import Any
 from ..extensions import db
 from ..models import Task, TaskStatus, TestItemRow
 from ..services import event_service, report_service, runtime_config, task_service
+from ..services import run_evidence_service as evidence
 from . import run_layout
 from .silver_runner import (
     RunContext,
@@ -244,6 +245,48 @@ def _tail_console(app, task_pk: int, console_path: Path,
 
 def execute(app, config, task: Task, pool=None, instance=None,
             dedicated_slot=None) -> None:
+    """Validate and claim the pinned attempt before invoking either backend."""
+    task._evidence_kind = "synthetic" if config.RUNNER_BACKEND == "mock" or pool is not None and pool.is_mock else "silver_runtime"
+    task._runner_backend = config.RUNNER_BACKEND
+    task._attempt_run_count = task.run_count or 1
+    try:
+        root = evidence.attempt_dir(task)
+        if not (root / "manifest.json").exists():
+            source = run_layout.staging_dir(task.workspace, task.test_id) / task.test_id
+            evidence.checked_path(task.workspace, source, exists=True)
+            if list(source.glob("testcase_*.json")) or ".evidence" in Path(task.report_path).parts:
+                raise evidence.EvidenceError("Generated submissions require a pinned approved snapshot")
+            evidence.pin_attempt(task, source, approved_inputs={"source": "legacy submitted bundle"})
+        data = evidence.read_evidence(task)
+        if data["outcome"] is not None:
+            outcome = data["outcome"]
+            _finalise(task, TaskStatus(outcome["status"]), outcome["message"], outcome["verdict"])
+            return
+        from ..services.run_validation_service import validate_run_directory
+        case = root / "inputs" / task.test_id
+        if list(case.glob("testcase_*.json")):
+            validate_run_directory(case)
+        claim = evidence.checked_path(root, root / "execution.json")
+        try:
+            with claim.open("x", encoding="utf-8") as stream:
+                stream.write('{"claimed": true}')
+        except FileExistsError:
+            return
+        if task.cancel_requested or task.deleted_at is not None:
+            _finalise(task, TaskStatus.CANCELLED, "Cancelled by user.", verdict="CANCELLED")
+            return
+        task.report_path = str(root)
+        task.sil_relpath = data["model"]["execution_path"]
+        db.session.commit()
+        _execute_backend(app, config, task, pool, instance, dedicated_slot)
+    except (ValueError, OSError) as exc:
+        event_service.emit_error(task, str(exc))
+        event_service.emit_result(task, "failed", str(exc))
+        _finalise(task, TaskStatus.FAILED, f"Evidence validation failed: {exc}", verdict="ERROR", archive=False)
+
+
+def _execute_backend(app, config, task: Task, pool=None, instance=None,
+                     dedicated_slot=None) -> None:
     """Execute one task end-to-end. Must be called within an app context.
 
     When *pool* and *instance* are supplied the job runs on a pre-warmed,
@@ -255,24 +298,16 @@ def execute(app, config, task: Task, pool=None, instance=None,
     """
     pooled = pool is not None and instance is not None
 
-    # ``task.workspace`` is the persistent per-project root; results are keyed by
-    # test id. Run scripts were materialised into a staging dir at enqueue time
-    # and are now copied into the chosen runtime instance dir (deleted once the
-    # run finishes).
     workspace = Path(task.workspace)
-    log_dir = run_layout.log_dir(workspace, task.test_id)
-    # Results are keyed by test id and therefore REUSED across runs. Without
-    # this wipe the previous run's jdgrslt.log / Console.log stay in place, and
-    # a re-run that produces no judge output at all silently reports the old
-    # verdict -- the user clicks "retest" and nothing appears to change.
-    # Clearing first makes a missing verdict read as UNKNOWN, which is true,
-    # instead of as the stale result, which is a lie.
-    shutil.rmtree(log_dir, ignore_errors=True)
+    root = evidence.attempt_dir(task)
+    log_dir = evidence.checked_path(root, root / "results")
     log_dir.mkdir(parents=True, exist_ok=True)
-    staging = run_layout.staging_dir(workspace, task.test_id)
+    staging = root / "inputs"
     run_dir = run_layout.instance_run_dir(
         config, task.id, task.test_id, instance if pooled else None,
         slot=None if pooled else dedicated_slot)
+    run_dir = run_dir.parent / f"run_{task.task_key}_{task.run_count or 1}"
+    evidence.checked_path(config.POOL_DIR, run_dir)
     shutil.rmtree(run_dir, ignore_errors=True)
     if staging.is_dir():
         shutil.copytree(staging, run_dir)
@@ -314,6 +349,19 @@ def execute(app, config, task: Task, pool=None, instance=None,
     )
     monitor.start()
     tailer.start()
+
+    logs_finished = False
+
+    def finish_logs():
+        nonlocal logs_finished
+        if logs_finished:
+            return
+        stop_threads.set()
+        monitor.join(timeout=2)
+        tailer.join(timeout=2)
+        if pooled and console_path != log_dir / "Console.log":
+            _slice_console(console_path, start_offset, log_dir / "Console.log")
+        logs_finished = True
 
     def _on_start(handle: Any) -> None:
         handle_box["handle"] = handle
@@ -358,7 +406,7 @@ def execute(app, config, task: Task, pool=None, instance=None,
             runner = build_runner(config.RUNNER_BACKEND)
             runner.run(ctx)
     except RunnerCancelled:
-        stop_threads.set()
+        finish_logs()
         if pooled and not pool.is_mock:
             # The instance's process was force-killed to unblock the run; drop
             # it so the pool recreates a clean replacement (re-grabbing the
@@ -372,7 +420,7 @@ def execute(app, config, task: Task, pool=None, instance=None,
         _finalise(task, TaskStatus.CANCELLED, "Cancelled by user.", verdict="CANCELLED")
         return
     except RunnerError as exc:
-        stop_threads.set()
+        finish_logs()
         if pooled and not pool.is_mock:
             pool.poison(instance)
         # Terminal events before the final-status flip (see cancel path above).
@@ -385,7 +433,7 @@ def execute(app, config, task: Task, pool=None, instance=None,
         _cancel_project_queue_on_error(task, str(exc))
         return
     except Exception as exc:  # noqa: BLE001
-        stop_threads.set()
+        finish_logs()
         if pooled and not pool.is_mock:
             pool.poison(instance)
         logger.exception("Unexpected failure in task %s", task.task_key)
@@ -396,27 +444,14 @@ def execute(app, config, task: Task, pool=None, instance=None,
         _cancel_project_queue_on_error(task, f"Internal error: {exc}")
         return
     finally:
-        stop_threads.set()
-        # Run scripts live only for the duration of the run: drop the runtime
-        # instance copy and the enqueue-time staging dir (results stay in
-        # ``log_dir``). Runs on every exit path (success, error, cancel).
+        finish_logs()
+        evidence.checked_path(config.POOL_DIR, run_dir)
         shutil.rmtree(run_dir, ignore_errors=True)
-        shutil.rmtree(staging, ignore_errors=True)
 
-    # For a reused instance, copy this run's slice of the shared console log into
-    # the task's own Console.log so the packaged report is self-contained.
-    if pooled and console_path != (log_dir / "Console.log"):
-        _slice_console(console_path, start_offset, log_dir / "Console.log")
-
-    # Give the tailer a beat to flush the final Console.log lines.
-    time.sleep(_TAIL_POLL_SECONDS)
     event_service.emit_progress(task, 90)
 
     verdict = _parse_verdict(log_dir, task.test_id)
-    # Results are compressed on demand at download time straight from ``log_dir``
-    # (see report_service.build_report_stream), so no report.zip snapshot is
-    # stored here. Record the results dir as the download source.
-    task.report_path = str(log_dir)
+    task.report_path = str(root)
     db.session.add(task)
     db.session.commit()
 
@@ -471,15 +506,29 @@ def _cancel_project_queue_on_error(task: Task, detail: str) -> None:
             "Failed to cancel project queue after error on task %s", task.task_key)
 
 
-def _finalise(task: Task, status: TaskStatus, message: str, verdict: str) -> None:
-    task.status = status.value
-    task.message = message
-    task.result = verdict
-    task.finished_at = _utcnow()
-    db.session.add(task)
-    db.session.commit()
-    _write_row_result(task, verdict)
-    _notify_submitter(task, status, verdict)
+def _finalise(task: Task, status: TaskStatus, message: str, verdict: str, *, archive=True) -> None:
+    task_id = task.id
+    run_count = getattr(task, "_attempt_run_count", task.run_count or 1)
+    if archive:
+        try:
+            existing = evidence.read_evidence(task, run_count)["outcome"]
+            if existing is None:
+                evidence.seal_attempt(task, status=status.value, verdict=verdict, message=message,
+                                      evidence_kind=getattr(task, "_evidence_kind", "unclassified"),
+                                      runner_backend=getattr(task, "_runner_backend", ""))
+            else:
+                status, verdict, message = TaskStatus(existing["status"]), existing["verdict"], existing["message"]
+        except (ValueError, OSError) as exc:
+            logger.exception("Could not seal evidence for task %s", task.task_key)
+            status, verdict = TaskStatus.FAILED, "ERROR"
+            message = f"Evidence archive failed: {exc}"
+            archive = False
+        else:
+            db.session.commit()
+    from ..services.run_finalisation_service import finalise_attempt
+    if finalise_attempt(task_id, run_count, status.value, verdict, message,
+                        writeback=_write_row_result, trusted_outcome=archive):
+        _notify_submitter(task, status, verdict)
 
 
 def _notify_submitter(task: Task, status: TaskStatus, verdict: str) -> None:
@@ -516,7 +565,7 @@ def _notify_submitter(task: Task, status: TaskStatus, verdict: str) -> None:
         logger.exception("failed to notify submitter for task %s", task.task_key)
 
 
-def _write_row_result(task: Task, verdict: str) -> None:
+def _write_row_result(task: Task, verdict: str, *, commit=True) -> int:
     """Mirror the finished run onto the matching Test-Matrix row(s).
 
     Delegates to :mod:`app.services.lanmatrix.run_writeback_service`, which
@@ -527,8 +576,9 @@ def _write_row_result(task: Task, verdict: str) -> None:
     """
     from ..services.lanmatrix import run_writeback_service
 
-    written = run_writeback_service.record_run(task, verdict)
+    written = run_writeback_service.record_run(task, verdict, commit=commit)
     if written < 0:
         logger.warning("evidence write-back failed for task %s (verdict=%r); "
                        "see run_writeback_service log above",
                        getattr(task, "task_key", None), verdict)
+    return written
