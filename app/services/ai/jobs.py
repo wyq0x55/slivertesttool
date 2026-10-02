@@ -186,6 +186,7 @@ def finish(draft_id: int, attempt: str, *, output=None, result_meta=None, error=
         db.session.rollback()
         return False
     meta.update(result_meta or {})
+    meta.pop("provider_provenance", None)
     provenance = provider.get_provider_provenance()
     if provenance is not None:
         meta["provider_provenance"] = provenance
