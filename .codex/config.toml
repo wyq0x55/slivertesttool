@@ -1,0 +1,10 @@
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+network_access = true
+
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 3
+default_subagent_model = "deepseek-v4.1-flash"
+default_subagent_reasoning_effort = "high"
