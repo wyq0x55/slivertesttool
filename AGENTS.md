@@ -1,6 +1,6 @@
 # Repository Agent Contract
 
-Validated against `main` at `71dc3cb67ea3` on 2026-09-23.
+Codex orchestration adaptation based on `main` at `97ba659b7b1e` on 2026-10-02.
 
 This file defines repository-specific engineering constraints. Prefer the
 current code and tests over historical design notes when they disagree.
