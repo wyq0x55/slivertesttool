@@ -193,15 +193,21 @@ def _run_task_pooled(app, config, task_pk: int, expected_run_count=None) -> None
     # --- Phase 2: run, always returning the instance to the pool. ---
     with app.app_context():
         acquired = False
+        claimed = False
         try:
             acquired = license_service.try_acquire()
             if not acquired:
                 if not huey.immediate and not _should_cancel():
-                    run_task.schedule(args=(task_pk, expected_run_count), delay=_LICENSE_POLL_SECONDS)
+                    try:
+                        run_task.schedule(args=(task_pk, expected_run_count), delay=_LICENSE_POLL_SECONDS)
+                    except Exception:
+                        db.session.rollback()
+                        logger.exception("Task retry publication failed for pk=%s", task_pk)
                 return
             task = _claim_run(db, task_pk, expected_run_count)
             if task is None:
                 return
+            claimed = True
             event_service.emit_status(task, "running", "Running on Silver.")
 
             test_runner.execute(app, config, task, pool=pool, instance=instance)
@@ -209,7 +215,7 @@ def _run_task_pooled(app, config, task_pk: int, expected_run_count=None) -> None
             logger.exception("run_task failed for pk=%s", task_pk)
             db.session.rollback()
             task = db.session.get(Task, task_pk)
-            if (task is not None and task.run_count == expected_run_count
+            if (claimed and task is not None and task.run_count == expected_run_count
                     and not TaskStatus(task.status).is_final and not _has_pending_outcome(task_pk, expected_run_count)):
                 task.status = TaskStatus.FAILED.value
                 task.message = f"Internal error: {exc}"
@@ -268,10 +274,12 @@ def _run_task_dedicated(app, config, task_pk: int, expected_run_count=None) -> N
         # unique ``inst_dedicated_<task_id>`` per task that piles up on disk.
         from ..runners.slots import dedicated_allocator
         slot = dedicated_allocator().acquire()
+        claimed = False
         try:
             task = _claim_run(db, task_pk, expected_run_count)
             if task is None:
                 return
+            claimed = True
             event_service.emit_status(task, "running", "Running on Silver.")
 
             test_runner.execute(app, app.config_obj, task, dedicated_slot=slot)
@@ -279,7 +287,7 @@ def _run_task_dedicated(app, config, task_pk: int, expected_run_count=None) -> N
             logger.exception("run_task failed for pk=%s", task_pk)
             db.session.rollback()
             task = db.session.get(Task, task_pk)
-            if (task is not None and task.run_count == expected_run_count
+            if (claimed and task is not None and task.run_count == expected_run_count
                     and not TaskStatus(task.status).is_final and not _has_pending_outcome(task_pk, expected_run_count)):
                 task.status = TaskStatus.FAILED.value
                 task.message = f"Internal error: {exc}"
