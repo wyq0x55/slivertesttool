@@ -49,12 +49,12 @@ def get_provider_provenance() -> dict[str, int] | None:
 
 
 def invoke_chat(messages: list[dict[str, str]], **kwargs: Any) -> str:
-    """Count attempts and returned content while preserving chat test fakes."""
+    """Count attempts and non-throwing returns while preserving chat test fakes."""
     counters = _provenance.get()
     if counters is not None:
         counters["attempted_calls"] += 1
     content = chat(messages, **kwargs)
-    if counters is not None and content:
+    if counters is not None:
         counters["successful_calls"] += 1
     return content
 
