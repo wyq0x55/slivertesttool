@@ -13,14 +13,12 @@ from sqlalchemy import event, text
 from sqlalchemy.exc import DBAPIError
 
 from app.extensions import db
-from app.models import AiDraft, LMUser, Project, ProjectMember, ProjectModel, RunEvidence, Task, TestItemRow
+from app.models import AiDraft, LMUser, Project, ProjectMember, ProjectModel, RunEvidence, Task
+from app.models import TestItemRow as MatrixRow
 from app.services import run_evidence_service as evidence
 from app.services.ai.runtime_validation import _row
 from app.services.lanmatrix.silver_json_export import build_documents
 from app.services.pilot_contract import PilotInput
-
-
-TEST_URL = "postgresql+psycopg2://postgres@127.0.0.1:55435/stp_pilot_audit"
 
 
 def audit_module():
@@ -34,12 +32,14 @@ def steps_document(value="1"):
 
 @pytest.fixture()
 def audit_env(tmp_path):
-    assert all(os.environ.get(name) == TEST_URL for name in (
+    test_url = os.environ.get("TEST_DATABASE_URL")
+    assert test_url, "An explicit disposable TEST_DATABASE_URL is required"
+    assert all(os.environ.get(name) == test_url for name in (
         "TEST_DATABASE_URL", "DATABASE_URL", "HUEY_DATABASE_URL"))
     assert os.environ.get("RUNNER_BACKEND") == "mock"
     assert os.environ.get("HUEY_IMMEDIATE") == "1"
     application = Flask(__name__)
-    application.config.update(SQLALCHEMY_DATABASE_URI=TEST_URL, SQLALCHEMY_TRACK_MODIFICATIONS=False)
+    application.config.update(SQLALCHEMY_DATABASE_URI=test_url, SQLALCHEMY_TRACK_MODIFICATIONS=False)
     db.init_app(application)
     with application.app_context():
         db.drop_all()
@@ -56,7 +56,7 @@ def audit_env(tmp_path):
         model_path.parent.mkdir()
         model_path.write_text("pilot configuration\n", encoding="utf-8")
         model = ProjectModel(project_id=project.id, name="pilot-model", version="v1", sil_path=str(model_path))
-        rows = [TestItemRow(project_id=project.id, sheet="test", case_id=f"C{number}",
+        rows = [MatrixRow(project_id=project.id, sheet="test", case_id=f"C{number}",
                             uuid=f"pilot-row-{number}", version=3, module="A" if number <= 10 else "B",
                             review_status="approved", workflow_status="Ready", custom_values={"steps": steps_document()})
                 for number in range(1, 21)]
@@ -120,7 +120,7 @@ def make_draft(env, *, status="pending", meta=None, accepted=None, legacy=False)
 
 def make_attempt(env, *, count=1, task=None, kind="silver_runtime", backend="silver", sealed=True, finalised=True,
                  procedure=None):
-    row = db.session.get(TestItemRow, env["rows"][0])
+    row = db.session.get(MatrixRow, env["rows"][0])
     if task is None:
         task = Task(task_key="T000001", project_id=env["project"], test_id=row.case_id,
                     sil_relpath=str(env["path"]), sil_name="pilot-model", sil_version="v1",
@@ -178,8 +178,8 @@ def test_collect_snapshot_binds_selection_and_never_infers_human_approval(audit_
 
 def test_audit_preserves_all_database_counts_and_versions(audit_env):
     def state():
-        counts = tuple(db.session.query(model).count() for model in (TestItemRow, AiDraft, Task, RunEvidence, Project))
-        versions = tuple(db.session.query(TestItemRow.id, TestItemRow.version, TestItemRow.review_status).all())
+        counts = tuple(db.session.query(model).count() for model in (MatrixRow, AiDraft, Task, RunEvidence, Project))
+        versions = tuple(db.session.query(MatrixRow.id, MatrixRow.version, MatrixRow.review_status).all())
         db.session.rollback()
         return counts, versions
     draft_id = make_draft(audit_env)
@@ -209,7 +209,7 @@ def test_transaction_is_repeatable_read_and_rejects_database_write(audit_env):
         event.remove(engine, "before_cursor_execute", inspect_transaction)
     assert observed == [True]
     assert not db.session().in_transaction()
-    assert {row.version for row in TestItemRow.query.all()} == {3}
+    assert {row.version for row in MatrixRow.query.all()} == {3}
 
 
 @pytest.mark.parametrize("authority", ["outsider", "disabled", "missing", "deleted_project"])
@@ -260,7 +260,7 @@ def test_rejects_and_preserves_unrelated_session_work(audit_env, condition):
     ("model_digest", "model_digest_mismatch"), ("model_missing", "model_file_unavailable"),
 ])
 def test_current_preflight_is_scoped_and_explicit(audit_env, mutation, issue):
-    row = db.session.get(TestItemRow, audit_env["rows"][0])
+    row = db.session.get(MatrixRow, audit_env["rows"][0])
     model = db.session.get(ProjectModel, audit_env["model"])
     if mutation == "version":
         row.version += 1
@@ -322,7 +322,7 @@ def test_provider_provenance_requires_actual_strict_production_receipt(audit_env
 
 def test_partial_approval_counts_actual_applied_selected_refs_only(audit_env):
     identity = make_draft(audit_env, status="approved", accepted=audit_env["rows"][:1])
-    db.session.get(TestItemRow, audit_env["rows"][0]).version = 4
+    db.session.get(MatrixRow, audit_env["rows"][0]).version = 4
     db.session.commit()
     observation = collect(audit_env, draft_ids=[identity]).drafts[0]
     assert observation.generated_item_ids == audit_env["rows"][:2]
@@ -376,7 +376,7 @@ def test_exact_prior_attempt_survives_retest_and_current_row_model_changes(audit
     request, _root, task_id = make_attempt(audit_env)
     task = db.session.get(Task, task_id)
     second, _second_root, _task_id = make_attempt(audit_env, count=2, task=task, kind="synthetic", backend="mock")
-    db.session.get(TestItemRow, request["item_id"]).version = 5
+    db.session.get(MatrixRow, request["item_id"]).version = 5
     db.session.get(ProjectModel, audit_env["model"]).version = "v2"
     audit_env["path"].write_text("current saved model changed", encoding="utf-8")
     db.session.commit()
@@ -465,8 +465,8 @@ def test_real_prior_archive_links_only_matching_approved_draft_procedure(audit_e
     identity = make_draft(audit_env, status="approved", accepted=audit_env["rows"][:1],
                           meta={"provider_provenance": receipt})
     request, _root, _task_id = make_attempt(audit_env, procedure=steps_document("2" if different_procedure else "1"))
-    db.session.get(TestItemRow, request["item_id"]).custom_values = {"steps": steps_document("999")}
-    db.session.get(TestItemRow, request["item_id"]).version = 4
+    db.session.get(MatrixRow, request["item_id"]).custom_values = {"steps": steps_document("999")}
+    db.session.get(MatrixRow, request["item_id"]).version = 4
     db.session.commit()
     observation = collect(audit_env, draft_ids=[identity], run_attempts=[request]).runs[0]
     assert observation.verified and observation.evidence_kind == "silver_runtime"
