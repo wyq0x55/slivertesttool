@@ -4,7 +4,7 @@ import hashlib
 import importlib
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -110,6 +110,7 @@ def make_draft(env, *, status="pending", meta=None, accepted=None, legacy=False)
                     meta_json=json.dumps(meta or {"model": "configured-only", "usage": {"input_tokens": 10}}),
                     applied_result_json=json.dumps(applied),
                     reviewed_by=env["reader"] if status == "approved" else None,
+                    created_at=datetime.utcnow() - timedelta(seconds=1),
                     reviewed_at=datetime.utcnow() if status == "approved" else None)
     db.session.add(draft)
     db.session.flush()
@@ -119,17 +120,17 @@ def make_draft(env, *, status="pending", meta=None, accepted=None, legacy=False)
 
 
 def make_attempt(env, *, count=1, task=None, kind="silver_runtime", backend="silver", sealed=True, finalised=True,
-                 procedure=None, runtime_inputs=None):
-    row = db.session.get(MatrixRow, env["rows"][0])
+                 procedure=None, runtime_inputs=None, item_id=None, task_key="T000001"):
+    row = db.session.get(MatrixRow, item_id or env["rows"][0])
     if task is None:
-        task = Task(task_key="T000001", project_id=env["project"], test_id=row.case_id,
+        task = Task(task_key=task_key, project_id=env["project"], test_id=row.case_id,
                     sil_relpath=str(env["path"]), sil_name="pilot-model", sil_version="v1",
                     sil_model_id=env["model"], run_count=count, workspace=str(env["root"] / "workspace"))
         db.session.add(task)
         db.session.flush()
     else:
         task.run_count = count
-    source = env["root"] / "workspace" / f"source-{count}"
+    source = env["root"] / "workspace" / f"source-{task.task_key}-{count}"
     source.mkdir(parents=True)
     procedure = procedure or steps_document()
     runtime_inputs = runtime_inputs or {"constants": [], "libraries": []}
@@ -601,3 +602,70 @@ def test_permission_denial_precedes_any_archive_filesystem_read(audit_env, monke
     with pytest.raises(audit_module().PilotAuditError) as failure:
         audit_module().collect_snapshot(pilot(audit_env), actor_id=audit_env["outsider"])
     assert failure.value.code == "PROJECT_ACCESS_DENIED"
+
+
+@pytest.mark.parametrize("condition", ["before_creation", "before_approval", "missing_pin_time",
+                                      "naive_pin_time", "invalid_pin_time", "review_before_creation"])
+def test_historical_link_requires_established_approval_before_input_pinning(audit_env, condition):
+    receipt = {"schema_version": 1, "attempted_calls": 1, "successful_calls": 1, "api_response_calls": 1}
+    identity = make_draft(audit_env, status="approved", accepted=audit_env["rows"][:1],
+                          meta={"provider_provenance": receipt})
+    request, root, task_id = make_attempt(audit_env)
+    pinned = datetime.fromisoformat(json.loads((root / "manifest.json").read_text(encoding="utf-8"))["created_at"])
+    naive = pinned.replace(tzinfo=None)
+    draft = db.session.get(AiDraft, identity)
+    if condition == "before_creation":
+        draft.created_at = naive + timedelta(seconds=1)
+        draft.reviewed_at = naive + timedelta(seconds=2)
+    elif condition == "before_approval":
+        draft.reviewed_at = naive + timedelta(seconds=1)
+    elif condition == "review_before_creation":
+        draft.reviewed_at = draft.created_at - timedelta(seconds=1)
+    db.session.commit()
+    if condition == "missing_pin_time":
+        rewrite_manifest(task_id, root, lambda data: data.pop("created_at"))
+    elif condition in {"naive_pin_time", "invalid_pin_time"}:
+        value = naive.isoformat() if condition == "naive_pin_time" else "unparseable"
+        rewrite_manifest(task_id, root, lambda data: data.update(created_at=value))
+    observation = collect(audit_env, draft_ids=[identity], run_attempts=[request]).runs[0]
+    assert observation.verified
+    assert observation.approved_draft_id is None
+    assert "run_draft_link_missing" in observation.issues
+
+
+def test_approval_order_uses_utc_instead_of_manifest_offset(audit_env):
+    receipt = {"schema_version": 1, "attempted_calls": 1, "successful_calls": 1, "api_response_calls": 1}
+    identity = make_draft(audit_env, status="approved", accepted=audit_env["rows"][:1],
+                          meta={"provider_provenance": receipt})
+    request, root, task_id = make_attempt(audit_env)
+    pinned = datetime.fromisoformat(json.loads((root / "manifest.json").read_text(encoding="utf-8"))["created_at"])
+    rewrite_manifest(task_id, root, lambda data: data.update(
+        created_at=pinned.astimezone(timezone(timedelta(hours=8))).isoformat()))
+    assert collect(audit_env, draft_ids=[identity], run_attempts=[request]).runs[0].approved_draft_id == identity
+
+
+def test_twenty_preapproval_archives_cannot_complete_assisted_measurement(audit_env):
+    from app.services.pilot_metrics import build_report
+
+    attempts = [make_attempt(audit_env, item_id=identity, task_key=f"T{position:06d}")[0]
+                for position, identity in enumerate(audit_env["rows"], start=1)]
+    receipt = {"schema_version": 1, "attempted_calls": 1, "successful_calls": 1, "api_response_calls": 1}
+    identity = make_draft(audit_env, status="approved", accepted=audit_env["rows"],
+                          meta={"provider_provenance": receipt})
+    draft = db.session.get(AiDraft, identity)
+    source = json.loads(draft.input_json)
+    source["viewpoints"] = [{"ref": str(item_id), "item_id": item_id, "version": 3} for item_id in audit_env["rows"]]
+    source["_context"]["items"] = [{"id": item_id, "version": 3} for item_id in audit_env["rows"]]
+    draft.input_json = json.dumps(source)
+    draft.output_json = json.dumps({"procedures": [{"ref": str(item_id), "steps_doc": steps_document()}
+                                                   for item_id in audit_env["rows"]]})
+    db.session.commit()
+    selection = pilot(audit_env, draft_ids=[identity], run_attempts=attempts,
+                      timings={"manual_baseline_minutes": 10, "assisted_total_minutes": 5,
+                               "human_intervention_minutes": 1, "human_intervention_count": 1})
+    snapshot = audit_module().collect_snapshot(selection, actor_id=audit_env["reader"])
+    report = build_report(selection, snapshot)
+    assert report["metrics"]["real_authenticated_attempts"] == 20
+    assert report["metrics"]["real_completed_viewpoints"] == 20
+    assert report["measurement"]["complete"] is False
+    assert report["measurement"]["reported_time_saved_percent"] is None
