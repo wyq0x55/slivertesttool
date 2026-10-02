@@ -143,22 +143,50 @@ def test_unparsed_http_reply_has_no_api_receipt(monkeypatch, payload):
 
 
 @pytest.mark.parametrize("content", ["", None])
-def test_empty_http_content_is_not_a_success(monkeypatch, content):
+def test_empty_http_content_counts_as_a_returned_call(monkeypatch, content):
     monkeypatch.setattr(provider.urllib.request, "urlopen",
                         Mock(return_value=http_reply(content)))
     with provider.capture_provider_provenance() as captured:
         assert provider.invoke_chat(MESSAGES) == ""
 
-    assert captured == receipt(1, 0, 1)
+    assert captured == receipt(1, 1, 1)
 
 
 @pytest.mark.parametrize("content", ["", None])
-def test_empty_patched_content_is_not_a_success(monkeypatch, content):
+def test_empty_patched_content_counts_as_a_returned_call(monkeypatch, content):
     monkeypatch.setattr(provider, "chat", lambda *args, **kwargs: content)
     with provider.capture_provider_provenance() as captured:
         assert provider.invoke_chat(MESSAGES) is content
 
-    assert captured == receipt(1, 0, 0)
+    assert captured == receipt(1, 1, 0)
+
+
+@pytest.mark.parametrize("content", ["", None])
+def test_empty_http_then_nonempty_stub_cannot_look_all_real(monkeypatch, content):
+    monkeypatch.setattr(provider.urllib.request, "urlopen",
+                        Mock(return_value=http_reply(content)))
+    with provider.capture_provider_provenance() as captured:
+        assert provider.invoke_chat(MESSAGES) == ""
+        monkeypatch.setattr(provider, "chat", lambda *args, **kwargs: '{"ok": true}')
+        assert provider.invoke_chat(MESSAGES) == '{"ok": true}'
+
+    assert captured == receipt(2, 2, 1)
+    assert captured["successful_calls"] != captured["api_response_calls"]
+
+
+def test_empty_http_then_actual_retry_keeps_all_return_counts(monkeypatch):
+    monkeypatch.setattr(provider.urllib.request, "urlopen", Mock(side_effect=[
+        http_reply(""), http_reply('{"ok": true}'),
+    ]))
+    with provider.capture_provider_provenance() as captured:
+        result = base.generate_validated(
+            build_prompt=lambda feedback: MESSAGES,
+            validate=lambda parsed: [],
+        )
+
+    assert result.output == {"ok": True}
+    assert result.rounds == 2
+    assert captured == receipt(2, 2, 2)
 
 
 def test_no_configuration_has_only_attempt_count(monkeypatch, isolated_provider):
@@ -331,6 +359,7 @@ def test_procedure_capture_aggregates_plan_chunks_and_retry(monkeypatch):
     ("http", receipt(2, 2, 2)),
     ("patched", receipt(2, 2, 0)),
     ("mixed", receipt(2, 2, 1)),
+    ("empty-http-then-patched", receipt(2, 2, 1)),
     ("replaced", receipt()),
     ("failed-then-http", receipt(2, 1, 1)),
 ])
@@ -355,6 +384,14 @@ def test_worker_persists_observed_receipt_for_controlled_generators(
                 provider.invoke_chat(MESSAGES)
         elif mode == "mixed":
             provider.invoke_chat(MESSAGES)
+            with monkeypatch.context() as patch:
+                patch.setattr(provider, "chat", lambda *args, **kwargs: "{}")
+                provider.invoke_chat(MESSAGES)
+        elif mode == "empty-http-then-patched":
+            with monkeypatch.context() as patch:
+                patch.setattr(provider.urllib.request, "urlopen",
+                              Mock(return_value=http_reply("")))
+                provider.invoke_chat(MESSAGES)
             with monkeypatch.context() as patch:
                 patch.setattr(provider, "chat", lambda *args, **kwargs: "{}")
                 provider.invoke_chat(MESSAGES)
