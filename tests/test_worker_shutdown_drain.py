@@ -285,3 +285,24 @@ def test_direct_ai_publication_deduplicates_the_same_attempt(app_ctx, monkeypatc
         tasks.publish_ai_generation(draft.id)
         tasks.publish_ai_generation(draft.id)
         dispatch.assert_called_once_with(draft.id, attempt)
+
+
+def test_ai_recovery_uses_the_real_publication_boundary(app_ctx, monkeypatch):
+    from app.extensions import db
+    from app.jobqueue import tasks
+    from app.models import AiDraft, Project
+    from app.services.ai import jobs
+
+    dispatch = Mock()
+    monkeypatch.setattr(tasks, "run_ai_generation", dispatch)
+    with app_ctx.app_context():
+        project = Project(code="RECOVER", name="Recovery publication")
+        db.session.add(project)
+        db.session.flush()
+        draft = AiDraft(project_id=project.id, scenario="viewpoint")
+        attempt = jobs.prepare(draft)
+        db.session.add(draft)
+        db.session.commit()
+        for _tick in range(10):
+            jobs.recover(tasks.publish_ai_generation)
+        dispatch.assert_called_once_with(draft.id, attempt)
