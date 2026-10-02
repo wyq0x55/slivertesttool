@@ -15,6 +15,8 @@ from sqlalchemy.exc import DBAPIError
 from app.extensions import db
 from app.models import AiDraft, LMUser, Project, ProjectMember, ProjectModel, RunEvidence, Task, TestItemRow
 from app.services import run_evidence_service as evidence
+from app.services.ai.runtime_validation import _row
+from app.services.lanmatrix.silver_json_export import build_documents
 from app.services.pilot_contract import PilotInput
 
 
@@ -116,7 +118,8 @@ def make_draft(env, *, status="pending", meta=None, accepted=None, legacy=False)
     return identity
 
 
-def make_attempt(env, *, count=1, task=None, kind="silver_runtime", backend="silver", sealed=True, finalised=True):
+def make_attempt(env, *, count=1, task=None, kind="silver_runtime", backend="silver", sealed=True, finalised=True,
+                 procedure=None):
     row = db.session.get(TestItemRow, env["rows"][0])
     if task is None:
         task = Task(task_key="T000001", project_id=env["project"], test_id=row.case_id,
@@ -128,10 +131,13 @@ def make_attempt(env, *, count=1, task=None, kind="silver_runtime", backend="sil
         task.run_count = count
     source = env["root"] / "workspace" / f"source-{count}"
     source.mkdir(parents=True)
-    (source / "constants.json").write_text('{"constants": {}}', encoding="utf-8")
-    (source / "lib.json").write_text('{"subroutines": {}}', encoding="utf-8")
-    (source / f"testcase_{row.case_id}.json").write_text('{"steps": []}', encoding="utf-8")
-    approved = {"row": {"id": row.id, "uuid": row.uuid, "version": 3}, "test": steps_document()}
+    procedure = procedure or steps_document()
+    documents = build_documents(_row({"steps": procedure}, case_id="PILOT-AUDIT"), [], [])
+    (source / "constants.json").write_text(json.dumps(documents["constants"]), encoding="utf-8")
+    (source / "lib.json").write_text(json.dumps(documents["library"]), encoding="utf-8")
+    (source / f"testcase_{row.case_id}.json").write_text(json.dumps(documents["testcase"]), encoding="utf-8")
+    approved = {"row": {"id": row.id, "uuid": row.uuid, "version": 3}, "test": procedure,
+                "constants": documents["constants"], "libraries": {}}
     root = evidence.pin_attempt(task, source, approved_inputs=approved)
     db.session.commit()
     if sealed:
@@ -451,3 +457,41 @@ def test_archive_reader_receives_explicit_attempt_and_zero_log_budget(audit_env,
     monkeypatch.setattr(evidence, "read_evidence", checked_reader)
     assert collect(audit_env, run_attempts=[request]).runs[0].verified
     assert calls == [(True, 1, 0)]
+
+
+@pytest.mark.parametrize("different_procedure", [False, True])
+def test_real_prior_archive_links_only_matching_approved_draft_procedure(audit_env, different_procedure):
+    receipt = {"schema_version": 1, "attempted_calls": 1, "successful_calls": 1, "api_response_calls": 1}
+    identity = make_draft(audit_env, status="approved", accepted=audit_env["rows"][:1],
+                          meta={"provider_provenance": receipt})
+    request, _root, _task_id = make_attempt(audit_env, procedure=steps_document("2" if different_procedure else "1"))
+    db.session.get(TestItemRow, request["item_id"]).custom_values = {"steps": steps_document("999")}
+    db.session.get(TestItemRow, request["item_id"]).version = 4
+    db.session.commit()
+    observation = collect(audit_env, draft_ids=[identity], run_attempts=[request]).runs[0]
+    assert observation.verified and observation.evidence_kind == "silver_runtime"
+    assert observation.approved_draft_id == (None if different_procedure else identity)
+    assert ("run_draft_link_missing" in observation.issues) == different_procedure
+
+
+@pytest.mark.parametrize("status", ["pending", "rejected", "cancelled", "error"])
+def test_unapproved_draft_cannot_certify_matching_historical_archive(audit_env, status):
+    identity = make_draft(audit_env, status=status)
+    request, _root, _task_id = make_attempt(audit_env)
+    observation = collect(audit_env, draft_ids=[identity], run_attempts=[request]).runs[0]
+    assert observation.verified
+    assert observation.approved_draft_id is None
+    assert "run_draft_link_missing" in observation.issues
+
+
+def test_archived_runtime_constants_must_match_draft_source_snapshot(audit_env):
+    identity = make_draft(audit_env, status="approved", accepted=audit_env["rows"][:1])
+    draft = db.session.get(AiDraft, identity)
+    source = json.loads(draft.input_json)
+    source["runtime_inputs"]["constants"] = [{"const_name": "BASE", "const_value": "2"}]
+    draft.input_json = json.dumps(source)
+    db.session.commit()
+    request, _root, _task_id = make_attempt(audit_env)
+    observation = collect(audit_env, draft_ids=[identity], run_attempts=[request]).runs[0]
+    assert observation.verified and observation.approved_draft_id is None
+    assert "run_draft_link_missing" in observation.issues
