@@ -1,6 +1,8 @@
 # Post-release execution integrity
 
-Status: implementation and integration gates in progress.
+Status: local engineering verification complete at `9a4da02`.
+PR [#37](https://github.com/wyq0x55/slivertesttool/pull/37) and its resulting
+main checks are the authoritative integration record.
 Source plan: [AI-first execution](../roadmap/ai-first-execution.md).
 Baseline: PR #36, `cc56b20356ead4acbed889e16b5539dc81eb590c`.
 
@@ -68,6 +70,8 @@ the proof across squash integration.
 | Supplemental worker/recovery target | 122 passed in 150.39 seconds; worker module 71% line coverage, with unchanged maintenance/entrypoint branches outside that focused target |
 | Final producer and capacity boundaries | 73 passed in 46.98 seconds |
 | Post-review claim/failure target | 38 passed in 29.96 seconds |
+| Final stable-source PostgreSQL regression | 1433 passed, 4 skipped, 4 existing SQLAlchemy warnings in 420.77 seconds |
+| Final changed-module coverage | 84% combined: connections 100%, worker 75%, draft routes 77%, generation jobs 95%, evidence 93% |
 | Frontend delivery regressions | 79 passed; no skipped tests |
 | Three production bundles | `npm run build` succeeds; unrelated generated-byte drift is restored, no bundle changes are delivered |
 | Frozen dependency export | Pass with a command-local uv 0.12.15; production dependency files are unchanged |
@@ -105,8 +109,9 @@ transaction, and the bounded startup scan is not an all-history immediate SLA.
 
 ## Integration and rollout boundary
 
-Final integrated regression, independent review, candidate PR CI and resulting
-main CI must finish before this engineering slice is complete. Local logs live
+Final integrated regression and independent review are complete. Candidate PR
+CI and resulting main CI must also succeed before integration is accepted;
+the linked PR records their exact revisions. Local logs live
 under the parent worktree's ignored `.cache/integrity/`, with separate evidence
 under each delegated worktree. The owned cluster is stopped only after all
 validation consumers finish; databases and audit artifacts are retained.
@@ -114,3 +119,32 @@ validation consumers finish; databases and audit artifacts are retained.
 The two-module/20-approved-viewpoint pilot and manual timing are still absent.
 Project/module/viewpoint selection, formal asset approval, SBS activation and
 paid AI/real Silver execution are not inferred from these software tests.
+
+## Independent review
+
+The evidence reviewer independently checked UTC connection registration and
+the worker/recovery integration, using contained probes rather than production
+services. Its final blocker was retry-publication failure terminalising an
+unclaimed task. The regression and root ownership guard cover scheduler,
+acquisition and both-mode claim failures; the final review at `9a4da02` reports
+no remaining scoped blocker, with sixteen contained cases passing.
+
+The other implementer independently reviewed the evidence patch at `3f62cd7`:
+canonical prior identity, database-bound manifest authentication, snapshot
+retention and rejection cleanup have no finding. That module has not changed
+since the review. The parent reviewed both delegated patches before integration.
+No review is represented as proof of all vendor behavior or all dependencies.
+
+## Delivery self-check
+
+| Axis | Score | Evidence and remaining limitation |
+| --- | --- | --- |
+| Accuracy | 4/5 | Final commands, checkpoints and source bytes are recorded; no standalone type/lint or new vendor-runtime proof is claimed |
+| Completeness | 4/5 | All scoped failures have executed regressions; broader worker/route branches remain below 80% individually despite 84% combined coverage |
+| Clarity | 4/5 | Guarantees and squash-safe proofs are explicit; raw logs still require the retained local worktrees |
+| Actionability | 4/5 | PR and verification commands identify the delivery; deployment preserves rather than updates the user-owned original checkout |
+| Conciseness | 4/5 | Checkpoint tables avoid transcript dumps; the audit is longer than the user-facing handoff |
+
+Overall: 4.0/5. No critical scoped self-check issue remains. Broader branch
+coverage can be added when those behaviors are extended; it is not a reason for
+another generic refactor. The owner-selected real pilot remains a separate gate.

@@ -67,12 +67,13 @@ isolated historical Silver acceptance is not the two-module efficiency pilot.
 
 ## Post-release integrity lane
 
-The next autonomous engineering slice is a bounded audit of the delivered
-execution contracts, not a new efficiency-pilot feature or generic refactor.
-Reproduced findings cover PostgreSQL session-time drift, pooled shutdown drain,
-AI recovery liveness/publication and trusted model reuse on retest. Each repair
-requires isolated RED/GREEN evidence, an independent review, full regression
-and exact-head CI before integration. See
+The bounded post-release engineering slice is tracked in
+[PR #37](https://github.com/wyq0x55/slivertesttool/pull/37), not a new
+efficiency-pilot feature or generic refactor. Its reproduced findings cover
+PostgreSQL session-time drift, pooled shutdown drain, AI recovery
+liveness/publication and trusted model reuse on retest. Repairs have isolated
+RED/GREEN evidence, independent review and final local regression; exact-head
+PR and main CI remain integration gates. See
 [post-release verification](../verification/post-release-integrity-2026-10-02.md).
 The original checkout, production database and prior Silver evidence remain
 untouched; formal approval and real pilot inputs remain human-owned.
