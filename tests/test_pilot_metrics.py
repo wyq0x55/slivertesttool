@@ -216,3 +216,12 @@ def test_reducer_does_not_mutate_inputs():
     before = (pilot.model_dump(), snapshot.model_dump())
     report(pilot, snapshot)
     assert (pilot.model_dump(), snapshot.model_dump()) == before
+
+
+def test_real_attempt_without_approved_generation_link_does_not_complete_ai_measurement():
+    pilot = measured_pilot()
+    snapshot = complete_snapshot(pilot)
+    snapshot.runs[0] = RunObservation.model_validate(
+        snapshot.runs[0].model_dump(exclude={"approved_draft_id"})
+    )
+    assert report(pilot, snapshot)["measurement"]["complete"] is False
