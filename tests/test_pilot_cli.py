@@ -109,6 +109,26 @@ def test_live_requires_explicit_pilot_database_not_default_database(tmp_path, mo
     assert "do-not-leak" not in captured.err
 
 
+@pytest.mark.parametrize("dsn", [
+    "postgresql://", "postgresql+psycopg2://", "postgresql:///pilot",
+    "postgresql://localhost", "postgresql://localhost/",
+    "postgresql://localhost/pilot?host=", "postgresql://localhost/pilot?dbname=",
+    "postgresql://localhost/pilot?service=production",
+    "postgresql://localhost/pilot?hostaddr=",
+])
+def test_live_rejects_implicit_or_query_overridden_targets_before_factory(tmp_path, monkeypatch, capsys, dsn):
+    import app
+    from unittest.mock import Mock
+    factory = Mock(side_effect=AssertionError("Application factory must not run"))
+    monkeypatch.setattr(app, "create_app", factory)
+    monkeypatch.setenv("PILOT_DATABASE_URL", dsn)
+    path = write_input(tmp_path)
+    assert cli().main([str(path), "--live", "--actor-id", "1"]) == 2
+    factory.assert_not_called()
+    captured = capsys.readouterr()
+    assert not captured.out and "Live pilot audit failed" in captured.err
+
+
 @pytest.mark.parametrize("dsn", ["sqlite:///production.db", "postgresql://private:do-not-leak@127.0.0.1:1/production"])
 def test_live_configuration_or_connection_failures_redact_credentials(tmp_path, monkeypatch, capsys, dsn):
     path = write_input(tmp_path)
