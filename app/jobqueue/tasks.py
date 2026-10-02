@@ -196,6 +196,8 @@ def _run_task_pooled(app, config, task_pk: int, expected_run_count=None) -> None
         try:
             acquired = license_service.try_acquire()
             if not acquired:
+                if not huey.immediate and not _should_cancel():
+                    run_task.schedule(args=(task_pk, expected_run_count), delay=_LICENSE_POLL_SECONDS)
                 return
             task = _claim_run(db, task_pk, expected_run_count)
             if task is None:
@@ -214,9 +216,11 @@ def _run_task_pooled(app, config, task_pk: int, expected_run_count=None) -> None
                 task.finished_at = _utcnow()
                 db.session.commit()
         finally:
-            pool.release(instance)
-            if acquired:
-                license_service.release()
+            try:
+                if acquired:
+                    license_service.release()
+            finally:
+                pool.release(instance)
 
 
 def _run_task_dedicated(app, config, task_pk: int, expected_run_count=None) -> None:
