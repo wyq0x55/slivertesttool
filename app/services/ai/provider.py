@@ -15,13 +15,48 @@ import json
 import re
 import urllib.error
 import urllib.request
-from typing import Any, Optional
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, Iterator, Optional
 
 from . import config
 
 
 class ProviderError(RuntimeError):
     """Provider unreachable / non-200 / unparseable response."""
+
+
+_provenance: ContextVar[dict[str, int] | None] = ContextVar(
+    "ai_provider_provenance", default=None)
+
+
+@contextmanager
+def capture_provider_provenance() -> Iterator[dict[str, int]]:
+    """Capture counters for this execution and restore any enclosing capture."""
+    counters = {"schema_version": 1, "attempted_calls": 0,
+                "successful_calls": 0, "api_response_calls": 0}
+    token = _provenance.set(counters)
+    try:
+        yield counters
+    finally:
+        _provenance.reset(token)
+
+
+def get_provider_provenance() -> dict[str, int] | None:
+    """Return a counters-only snapshot, or None outside a captured execution."""
+    counters = _provenance.get()
+    return dict(counters) if counters is not None else None
+
+
+def invoke_chat(messages: list[dict[str, str]], **kwargs: Any) -> str:
+    """Count attempts and returned content while preserving chat test fakes."""
+    counters = _provenance.get()
+    if counters is not None:
+        counters["attempted_calls"] += 1
+    content = chat(messages, **kwargs)
+    if counters is not None and content:
+        counters["successful_calls"] += 1
+    return content
 
 
 def chat(messages: list[dict[str, str]], *,
@@ -85,6 +120,9 @@ def chat(messages: list[dict[str, str]], *,
         reported = payload.get("usage") or {}
         usage["input_tokens"] = int(reported.get("prompt_tokens") or 0)
         usage["output_tokens"] = int(reported.get("completion_tokens") or 0)
+    counters = _provenance.get()
+    if counters is not None:
+        counters["api_response_calls"] += 1
     return content
 
 

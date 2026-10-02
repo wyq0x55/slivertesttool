@@ -267,8 +267,8 @@ def generate_procedure(payload: dict[str, Any],
                 feedback=feedback)
             usage: dict[str, int] = {}
             try:
-                text = provider.chat(messages, temperature=0.2, max_tokens=8192,
-                                     usage=usage)
+                text = provider.invoke_chat(messages, temperature=0.2, max_tokens=8192,
+                                            usage=usage)
                 checkpoint()
                 parsed = provider.extract_json(text)
                 items = (parsed or {}).get("procedures") if isinstance(parsed, dict) else None
