@@ -226,3 +226,14 @@ def test_real_attempt_without_approved_generation_link_does_not_complete_ai_meas
         snapshot.runs[0].model_dump(exclude={"approved_draft_id"})
     )
     assert report(pilot, snapshot)["measurement"]["complete"] is False
+
+
+def test_unlinked_real_archive_is_authenticated_but_not_an_ai_measurement():
+    pilot = measured_pilot()
+    snapshot = complete_snapshot(pilot)
+    snapshot.runs[0].approved_draft_id = None
+    snapshot.runs[0].issues = ["run_draft_link_missing"]
+    result = report(pilot, snapshot)
+    assert result["metrics"]["real_authenticated_attempts"] == 20
+    assert result["metrics"]["real_completed_viewpoints"] == 20
+    assert result["measurement"]["complete"] is False
