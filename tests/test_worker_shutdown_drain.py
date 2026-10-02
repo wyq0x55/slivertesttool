@@ -264,3 +264,24 @@ def test_busy_ai_slots_reschedule_only_current_queued_attempts(app_ctx, monkeypa
     else:
         schedule.assert_not_called()
         acquire.assert_not_called()
+
+
+def test_direct_ai_publication_deduplicates_the_same_attempt(app_ctx, monkeypatch):
+    from app.extensions import db
+    from app.jobqueue import tasks
+    from app.models import AiDraft, Project
+    from app.services.ai import jobs
+
+    dispatch = Mock()
+    monkeypatch.setattr(tasks, "run_ai_generation", dispatch)
+    with app_ctx.app_context():
+        project = Project(code="PUBLISH", name="Publication lease")
+        db.session.add(project)
+        db.session.flush()
+        draft = AiDraft(project_id=project.id, scenario="viewpoint")
+        attempt = jobs.prepare(draft)
+        db.session.add(draft)
+        db.session.commit()
+        tasks.publish_ai_generation(draft.id)
+        tasks.publish_ai_generation(draft.id)
+        dispatch.assert_called_once_with(draft.id, attempt)
