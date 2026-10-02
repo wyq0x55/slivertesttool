@@ -217,6 +217,29 @@ def test_capacity_denial_preserves_a_fenced_delivery(app_ctx, queued_run, monkey
         license_service.release()
 
 
+def test_failed_retry_publication_keeps_the_unclaimed_attempt_queued(app_ctx, queued_run, monkeypatch):
+    from app.extensions import db
+    from app.jobqueue import tasks
+    from app.models import Task
+    from app.services import license_service
+
+    task_id, pool, instance, backend = queued_run
+    monkeypatch.setattr(tasks.huey, "immediate", False)
+    monkeypatch.setattr(tasks.run_task, "schedule", Mock(side_effect=ConnectionError("queue unavailable")))
+    with app_ctx.app_context():
+        license_service.set_limit(1)
+        assert license_service.try_acquire()
+        tasks._run_task_pooled(app_ctx, app_ctx.config_obj, task_id, 1)
+        task = db.session.get(Task, task_id)
+        assert task.status == "queued"
+        assert task.run_count == 1
+        assert task.started_at is None and task.finished_at is None
+        backend.assert_not_called()
+        pool.release.assert_called_once_with(instance)
+        assert license_service.get_in_use() == 1
+        license_service.release()
+
+
 def test_one_worker_process_can_run_two_tasks_without_exceeding_capacity(app_ctx, monkeypatch):
     import threading
     from concurrent.futures import ThreadPoolExecutor, wait
