@@ -119,7 +119,7 @@ def make_draft(env, *, status="pending", meta=None, accepted=None, legacy=False)
 
 
 def make_attempt(env, *, count=1, task=None, kind="silver_runtime", backend="silver", sealed=True, finalised=True,
-                 procedure=None):
+                 procedure=None, runtime_inputs=None):
     row = db.session.get(MatrixRow, env["rows"][0])
     if task is None:
         task = Task(task_key="T000001", project_id=env["project"], test_id=row.case_id,
@@ -132,12 +132,17 @@ def make_attempt(env, *, count=1, task=None, kind="silver_runtime", backend="sil
     source = env["root"] / "workspace" / f"source-{count}"
     source.mkdir(parents=True)
     procedure = procedure or steps_document()
-    documents = build_documents(_row({"steps": procedure}, case_id="PILOT-AUDIT"), [], [])
+    runtime_inputs = runtime_inputs or {"constants": [], "libraries": []}
+    documents = build_documents(_row({"steps": procedure}, case_id="PILOT-AUDIT"),
+                                [_row(values) for values in runtime_inputs["constants"]],
+                                [_row(values) for values in runtime_inputs["libraries"]])
     (source / "constants.json").write_text(json.dumps(documents["constants"]), encoding="utf-8")
     (source / "lib.json").write_text(json.dumps(documents["library"]), encoding="utf-8")
     (source / f"testcase_{row.case_id}.json").write_text(json.dumps(documents["testcase"]), encoding="utf-8")
     approved = {"row": {"id": row.id, "uuid": row.uuid, "version": 3}, "test": procedure,
-                "constants": documents["constants"], "libraries": {}}
+                "constants": documents["constants"],
+                "libraries": {str(values["lib_func"]).strip(): values["lib_stb"] for values in runtime_inputs["libraries"]
+                              if str(values["lib_func"]).strip() in documents["library"]["subroutines"]}}
     root = evidence.pin_attempt(task, source, approved_inputs=approved)
     db.session.commit()
     if sealed:
@@ -485,7 +490,8 @@ def test_unapproved_draft_cannot_certify_matching_historical_archive(audit_env, 
 
 
 def test_archived_runtime_constants_must_match_draft_source_snapshot(audit_env):
-    identity = make_draft(audit_env, status="approved", accepted=audit_env["rows"][:1])
+    receipt = {"schema_version": 1, "attempted_calls": 1, "successful_calls": 1, "api_response_calls": 1}
+    identity = make_draft(audit_env, status="approved", accepted=audit_env["rows"][:1], meta={"provider_provenance": receipt})
     draft = db.session.get(AiDraft, identity)
     source = json.loads(draft.input_json)
     source["runtime_inputs"]["constants"] = [{"const_name": "BASE", "const_value": "2"}]
@@ -495,3 +501,103 @@ def test_archived_runtime_constants_must_match_draft_source_snapshot(audit_env):
     observation = collect(audit_env, draft_ids=[identity], run_attempts=[request]).runs[0]
     assert observation.verified and observation.approved_draft_id is None
     assert "run_draft_link_missing" in observation.issues
+
+
+def library_draft(env):
+    receipt = {"schema_version": 1, "attempted_calls": 1, "successful_calls": 1, "api_response_calls": 1}
+    identity = make_draft(env, status="approved", accepted=env["rows"][:1], meta={"provider_provenance": receipt})
+    draft = db.session.get(AiDraft, identity)
+    source = json.loads(draft.input_json)
+    runtime = {"constants": [], "libraries": [{"lib_func": " Set ", "lib_para": "value", "lib_stb": steps_document("value")}]}
+    source["runtime_inputs"] = runtime
+    procedure = {"steps": [{"no": 1, "subroutine": "Set", "args": ["1"], "timing": "即時"}]}
+    output = json.loads(draft.output_json)
+    output["procedures"][0]["steps_doc"] = procedure
+    draft.input_json = json.dumps(source)
+    draft.output_json = json.dumps(output)
+    db.session.commit()
+    return identity, procedure, runtime
+
+
+@pytest.mark.parametrize("mismatch", [False, True])
+def test_pinned_raw_libraries_must_match_normalized_draft_library_names(audit_env, mismatch):
+    identity, procedure, runtime = library_draft(audit_env)
+    request, root, task_id = make_attempt(audit_env, procedure=procedure, runtime_inputs=runtime)
+    if mismatch:
+        rewrite_manifest(task_id, root, lambda data: data["approved_inputs"]["libraries"].update({"Set": steps_document("value+1")}))
+    observation = collect(audit_env, draft_ids=[identity], run_attempts=[request]).runs[0]
+    assert observation.verified
+    assert observation.approved_draft_id == (None if mismatch else identity)
+
+
+def test_repeatable_read_keeps_one_snapshot_during_concurrent_commit(audit_env):
+    changed = []
+    engine = db.engine
+    def concurrent_write(connection, cursor, statement, parameters, context, executemany):
+        if changed or "FROM lm_users" not in statement:
+            return
+        changed.append(True)
+        with engine.begin() as writer:
+            writer.execute(text("UPDATE lm_test_items SET version = 4"))
+            writer.execute(text("UPDATE lm_project_members SET role = 'not-a-role'"))
+    event.listen(engine, "after_cursor_execute", concurrent_write)
+    try:
+        snapshot = collect(audit_env)
+    finally:
+        event.remove(engine, "after_cursor_execute", concurrent_write)
+    assert changed == [True]
+    assert snapshot.preflight_issues == []
+    assert {row.version for row in MatrixRow.query.all()} == {4}
+
+
+@pytest.mark.parametrize("condition", ["modified", "deleted"])
+def test_rejects_modified_or_deleted_session_entities_without_rollback(audit_env, condition):
+    row = db.session.get(MatrixRow, audit_env["rows"][0])
+    if condition == "modified":
+        row.title = "uncommitted unrelated work"
+    else:
+        db.session.delete(row)
+    transaction = db.session().get_transaction()
+    with pytest.raises(audit_module().PilotAuditError):
+        collect(audit_env)
+    assert db.session().get_transaction() is transaction
+    assert row in (db.session.dirty if condition == "modified" else db.session.deleted)
+
+
+def test_unknown_provider_and_ambiguous_approved_drafts_remain_unlinked(audit_env):
+    identity = make_draft(audit_env, status="approved", accepted=audit_env["rows"][:1])
+    request, _root, _task_id = make_attempt(audit_env)
+    assert collect(audit_env, draft_ids=[identity], run_attempts=[request]).runs[0].approved_draft_id is None
+    receipt = {"schema_version": 1, "attempted_calls": 1, "successful_calls": 1, "api_response_calls": 1}
+    second = make_draft(audit_env, status="approved", accepted=audit_env["rows"][:1], meta={"provider_provenance": receipt})
+    third = make_draft(audit_env, status="approved", accepted=audit_env["rows"][:1], meta={"provider_provenance": receipt})
+    assert collect(audit_env, draft_ids=[second, third], run_attempts=[request]).runs[0].approved_draft_id is None
+
+
+def test_readonly_audit_releases_connection_and_restores_writable_next_transaction(audit_env):
+    engine = db.engine
+    checked_out = engine.pool.checkedout()
+    for _attempt in range(3):
+        collect(audit_env)
+        assert engine.pool.checkedout() == checked_out
+        assert not db.session().in_transaction()
+    db.session.execute(text("UPDATE lm_test_items SET title = 'test-only next transaction'"))
+    db.session.commit()
+    assert engine.pool.checkedout() == checked_out
+
+
+def test_context_and_postgresql_are_required_without_starting_database_work(audit_env, monkeypatch):
+    monkeypatch.setattr(db.engine.dialect, "name", "unsupported")
+    with pytest.raises(audit_module().PilotAuditError) as failure:
+        collect(audit_env)
+    assert failure.value.code == "POSTGRESQL_REQUIRED"
+    assert not db.session().in_transaction()
+
+
+def test_permission_denial_precedes_any_archive_filesystem_read(audit_env, monkeypatch):
+    def forbidden_read(*args, **kwargs):
+        pytest.fail("Permission denial must precede filesystem evidence access")
+    monkeypatch.setattr(evidence, "read_evidence", forbidden_read)
+    with pytest.raises(audit_module().PilotAuditError) as failure:
+        audit_module().collect_snapshot(pilot(audit_env), actor_id=audit_env["outsider"])
+    assert failure.value.code == "PROJECT_ACCESS_DENIED"
