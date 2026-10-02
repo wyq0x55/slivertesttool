@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import secrets
 import sys
+from urllib.parse import parse_qsl, urlsplit
 
 from pydantic import ValidationError
 
@@ -66,6 +67,10 @@ def _collect_live(pilot: PilotInput, actor_id: int):
     url = make_url(target)
     if url.drivername not in {"postgresql", "postgresql+psycopg2"}:
         raise ValueError("Only PostgreSQL with psycopg2 is supported")
+    query_keys = {key for key, _value in parse_qsl(urlsplit(target).query, keep_blank_values=True)}
+    if (not url.host or not url.host.strip() or not url.database or not url.database.strip()
+            or {"host", "hostaddr", "dbname", "service", "servicefile"} & query_keys):
+        raise ValueError("An explicit PostgreSQL host and database target without routing overrides is required")
     from app import create_app
     from app.config import Config
     from app.extensions import db
