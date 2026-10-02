@@ -147,6 +147,92 @@ def test_running_pooled_attempt_releases_its_slot_during_drain(app_ctx, queued_r
         assert license_service.is_draining()
 
 
+@pytest.mark.parametrize("pooled", [True, False])
+def test_failed_backend_releases_only_its_owned_slot(app_ctx, queued_run, pooled):
+    from app.extensions import db
+    from app.jobqueue import tasks
+    from app.models import Task
+    from app.services import license_service
+
+    task_id, pool, instance, backend = queued_run
+    backend.side_effect = RuntimeError("backend failure")
+    with app_ctx.app_context():
+        run = tasks._run_task_pooled if pooled else tasks._run_task_dedicated
+        run(app_ctx, app_ctx.config_obj, task_id, 1)
+        task = db.session.get(Task, task_id)
+        assert task.status == "failed"
+        assert task.finished_at is not None
+        assert license_service.get_in_use() == 0
+        if pooled:
+            pool.release.assert_called_once_with(instance)
+
+
+def test_failed_license_acquisition_returns_borrow_without_decrement(app_ctx, queued_run, monkeypatch):
+    from app.jobqueue import tasks
+    from app.services import license_service
+
+    task_id, pool, instance, backend = queued_run
+    with app_ctx.app_context():
+        assert license_service.try_acquire()
+        monkeypatch.setattr(license_service, "try_acquire", Mock(side_effect=RuntimeError("acquisition failed")))
+        tasks._run_task_pooled(app_ctx, app_ctx.config_obj, task_id, 1)
+        backend.assert_not_called()
+        pool.release.assert_called_once_with(instance)
+        assert license_service.get_in_use() == 1
+        license_service.release()
+
+
+def test_one_worker_process_can_run_two_tasks_without_exceeding_capacity(app_ctx, monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor, wait
+
+    from app.extensions import db
+    from app.jobqueue import tasks
+    from app.models import Task
+    from app.runners import test_runner
+    from app.services import license_service
+
+    with app_ctx.app_context():
+        task_ids = []
+        for number in range(4):
+            task = Task(task_key=f"CONC{number:04}", status="queued", run_count=1)
+            db.session.add(task)
+            db.session.flush()
+            task_ids.append(task.id)
+        db.session.commit()
+    started = threading.Barrier(3, timeout=15)
+    finish = threading.Event()
+    pool = Mock()
+    pool.acquire.side_effect = lambda *_args, **_kwargs: object()
+    backend = Mock()
+
+    def execute(*_args, **_kwargs):
+        started.wait()
+        assert finish.wait(timeout=15)
+
+    backend.side_effect = execute
+    monkeypatch.setattr(tasks, "get_pool", lambda *_args: pool)
+    monkeypatch.setattr(test_runner, "execute", backend)
+    with ThreadPoolExecutor(max_workers=4) as worker_threads:
+        futures = [worker_threads.submit(tasks._run_task_pooled, app_ctx, app_ctx.config_obj, task_id, 1)
+                   for task_id in task_ids]
+        try:
+            started.wait()
+            completed, _pending = wait(futures, timeout=5)
+            assert len(completed) == 2
+            with app_ctx.app_context():
+                assert license_service.get_in_use() == 2
+                assert license_service.get_limit() == 2
+            assert backend.call_count == 2
+        finally:
+            finish.set()
+        for future in futures:
+            future.result(timeout=15)
+    with app_ctx.app_context():
+        assert license_service.get_in_use() == 0
+    assert pool.release.call_count == 4
+
+
 @pytest.mark.parametrize("delivery", ["stale", "already-running", "current"])
 def test_busy_ai_slots_reschedule_only_current_queued_attempts(app_ctx, monkeypatch, delivery):
     from app.extensions import db
