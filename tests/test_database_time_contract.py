@@ -95,6 +95,36 @@ def test_stale_collaboration_presence_does_not_block_rest(nonutc_app):
         assert project.id not in presence.active_project_ids(ttl_seconds=30)
 
 
+def test_fresh_presence_remains_active_after_reload(nonutc_app):
+    from app.collab import presence
+    from app.extensions import db
+    from app.models import Project
+
+    with nonutc_app.app_context():
+        project = Project(code="HEARTBEAT", name="Heartbeat contract")
+        db.session.add(project)
+        db.session.commit()
+        presence.mark_presence(project.id, 1)
+        db.session.expire_all()
+        assert presence.is_collab_active(project.id, ttl_seconds=30) is True
+        assert project.id in presence.active_project_ids(ttl_seconds=30)
+
+
+def test_legacy_timezone_aware_columns_keep_their_stored_instant(nonutc_app):
+    from app.extensions import db
+
+    with nonutc_app.app_context():
+        instant = datetime(2026, 10, 1, 14, 30, tzinfo=timezone(timedelta(hours=8)))
+        db.session.execute(text("CREATE TEMP TABLE time_contract_legacy (moment timestamptz)"))
+        db.session.execute(text("INSERT INTO time_contract_legacy VALUES (:instant)"), {"instant": instant})
+        db.session.commit()
+        stored = db.session.scalar(text("SELECT moment FROM time_contract_legacy"))
+        assert stored == instant
+        assert stored.utcoffset() == timedelta(0)
+        db.session.execute(text("DROP TABLE time_contract_legacy"))
+        db.session.commit()
+
+
 def test_account_lockout_expires_at_configured_deadline(nonutc_app, monkeypatch):
     from app.extensions import db
     from app.models import LMUser
