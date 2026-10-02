@@ -97,6 +97,13 @@ and the SSE endpoint replays them by id cursor. The Huey task queue is stored in
 the same PostgreSQL server (`huey.contrib.sql_huey`), so no message broker and no
 local SQLite file are involved.
 
+Application PostgreSQL connections explicitly use UTC, preserving other driver
+startup options. This keeps timestamp casts, account locks, import expiry and
+collaboration heartbeats independent of the database server's local timezone.
+`LM_DISPLAY_TZ` still controls presentation only. This connection policy does
+not rewrite historical timestamps; ambiguous legacy values require a separately
+approved, backed-up investigation rather than an automatic offset correction.
+
 ### Engineering boundaries
 
 - `create_app()` constructs the application without persistent bootstrap side
