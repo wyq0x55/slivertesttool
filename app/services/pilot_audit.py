@@ -87,7 +87,7 @@ def _execution(payload, document, *, archived_libraries=None):
     libraries = []
     for values in inputs["libraries"]:
         values = dict(values)
-        name = values.get("lib_func") or values.get("lib_name") or values.get("case_id") or ""
+        name = str(values.get("lib_func") or values.get("lib_name") or values.get("case_id") or "").strip()
         if archived_libraries is not None and name in archived_libraries:
             values["lib_stb"] = archived_libraries[name]
         libraries.append(_row(values))
