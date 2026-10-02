@@ -32,6 +32,7 @@ def complete_snapshot(pilot):
                                  conversion_item_ids=chunk)
                 for draft_id, chunk in zip(pilot.draft_ids, chunks)],
         runs=[RunObservation(**attempt.model_dump(), verified=True, finalised=True,
+                             approved_draft_id=1 if attempt.item_id <= 8 else 2 if attempt.item_id <= 16 else 3,
                              evidence_kind="silver_runtime", runner_backend="silver",
                              status="passed", verdict="PASS") for attempt in pilot.run_attempts],
     )

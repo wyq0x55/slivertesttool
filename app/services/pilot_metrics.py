@@ -16,6 +16,9 @@ def _validate_observations(pilot: PilotInput, snapshot: AuditSnapshot) -> None:
     observed = {(attempt.task_key, attempt.run_count): attempt.item_id for attempt in snapshot.runs}
     if len(observed) != len(snapshot.runs) or observed != expected:
         raise ValueError("Audit observations do not match the requested task attempts")
+    if any(attempt.approved_draft_id is not None and attempt.approved_draft_id not in pilot.draft_ids
+           for attempt in snapshot.runs):
+        raise ValueError("Task generation links must identify a requested draft")
     for draft in snapshot.drafts:
         for item_ids in (draft.generated_item_ids, draft.accepted_item_ids, draft.conversion_item_ids):
             if len(set(item_ids)) != len(item_ids) or not set(item_ids) <= selected:
@@ -53,18 +56,23 @@ def build_report(pilot: PilotInput, snapshot: AuditSnapshot | None = None) -> di
         accepted = {(draft.draft_id, item_id) for draft in snapshot.drafts for item_id in draft.accepted_item_ids}
         converted = {(draft.draft_id, item_id) for draft in snapshot.drafts for item_id in draft.conversion_item_ids}
         executable_accepted = set()
+        executable_pairs = set()
         approved = set()
         for draft in snapshot.drafts:
             if draft.status == "approved" and not draft.issues:
                 approved.update(draft.accepted_item_ids)
                 if draft.provider_kind == "live":
-                    executable_accepted.update(set(draft.accepted_item_ids) & set(draft.conversion_item_ids))
+                    eligible = set(draft.accepted_item_ids) & set(draft.conversion_item_ids)
+                    executable_accepted.update(eligible)
+                    executable_pairs.update((draft.draft_id, item_id) for item_id in eligible)
         authentic = [attempt for attempt in snapshot.runs if (
             attempt.verified and attempt.finalised and not attempt.issues
             and attempt.evidence_kind == "silver_runtime" and attempt.runner_backend == "silver"
             and attempt.status in {"passed", "failed"} and attempt.verdict in {"PASS", "FAIL"}
         )]
         completed = {attempt.item_id for attempt in authentic}
+        linked = {attempt.item_id for attempt in authentic
+                  if (attempt.approved_draft_id, attempt.item_id) in executable_pairs}
         metrics.update({
             "generated_candidates": len(generated),
             "accepted_candidates": len(accepted),
@@ -82,6 +90,8 @@ def build_report(pilot: PilotInput, snapshot: AuditSnapshot | None = None) -> di
             missing.append("live_converted_procedure_coverage")
         if completed != selected:
             missing.append("real_execution_coverage")
+        if linked != selected:
+            missing.append("approved_generation_execution_link")
         if not missing:
             baseline = pilot.timings.manual_baseline_minutes
             assisted = pilot.timings.assisted_total_minutes
