@@ -126,8 +126,8 @@ def make_attempt(env, *, count=1, task=None, kind="silver_runtime", backend="sil
         db.session.flush()
     else:
         task.run_count = count
-    source = env["root"] / f"source-{count}"
-    source.mkdir()
+    source = env["root"] / "workspace" / f"source-{count}"
+    source.mkdir(parents=True)
     (source / "constants.json").write_text('{"constants": {}}', encoding="utf-8")
     (source / "lib.json").write_text('{"subroutines": {}}', encoding="utf-8")
     (source / f"testcase_{row.case_id}.json").write_text('{"steps": []}', encoding="utf-8")
