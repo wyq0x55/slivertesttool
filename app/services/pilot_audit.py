@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,14 @@ class _Candidate:
     item_id: int
     payload: dict
     execution: dict
+    created_at: datetime
+    reviewed_at: datetime
+
+
+def _utc(value):
+    if not isinstance(value, datetime):
+        return None
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
 def _positive(value):
@@ -269,13 +278,20 @@ def _draft(pilot, identity):
     observation.issues = list(dict.fromkeys(observation.issues))
     candidates = []
     if observation.provider_kind == "live":
-        candidates = [_Candidate(identity, item_id, payload, converted[item_id])
+        candidates = [_Candidate(identity, item_id, payload, converted[item_id], draft.created_at, draft.reviewed_at)
                       for item_id in sorted(accepted & converted.keys())]
     return observation, candidates
 
 
 def _linked_draft(data, item_id, candidates):
     try:
+        timestamp = data.get("created_at")
+        if not isinstance(timestamp, str):
+            return None
+        pinned_at = datetime.fromisoformat(timestamp[:-1] + "+00:00" if timestamp.endswith("Z") else timestamp)
+        if pinned_at.tzinfo is None:
+            return None
+        pinned_at = _utc(pinned_at)
         approved = _json_object(data["approved_inputs"])
         libraries = _json_object(approved.get("libraries"))
         constants = _json_object(approved.get("constants"))
@@ -294,13 +310,17 @@ def _linked_draft(data, item_id, candidates):
         for candidate in candidates:
             if candidate.item_id != item_id:
                 continue
+            created_at = _utc(candidate.created_at)
+            reviewed_at = _utc(candidate.reviewed_at)
+            if created_at is None or reviewed_at is None or not created_at <= reviewed_at <= pinned_at:
+                continue
             if set(libraries) != set(candidate.execution["library"]["subroutines"]):
                 continue
             pinned = _execution(candidate.payload, document, archived_libraries=libraries)
             if _canonical(pinned) == _canonical(candidate.execution) == _canonical(archived):
                 matches.append(candidate.draft_id)
         return matches[0] if len(matches) == 1 else None
-    except (ConversionError, ValueError, TypeError, KeyError, AttributeError):
+    except (ConversionError, ValueError, TypeError, KeyError, AttributeError, OverflowError):
         return None
 
 
