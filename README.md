@@ -117,6 +117,9 @@ approved, backed-up investigation rather than an automatic offset correction.
 - AI-generated test assets are never authoritative on generation alone. The
   pipeline machine-validates into a draft, exposes the draft for human review,
   and applies approved output through the existing service layer.
+- The [owner-selected efficiency pilot](docs/efficiency-pilot.md) has an
+  offline-first reporting CLI and explicit read-only audit. It never approves
+  assets, starts runs or turns incomplete/synthetic evidence into efficiency claims.
 - Dependency ownership is single-path: `pyproject.toml` -> `uv.lock` ->
   generated `requirements.txt`.
 

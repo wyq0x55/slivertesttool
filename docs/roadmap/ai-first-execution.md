@@ -77,3 +77,12 @@ PR and main CI remain integration gates. See
 [post-release verification](../verification/post-release-integrity-2026-10-02.md).
 The original checkout, production database and prior Silver evidence remain
 untouched; formal approval and real pilot inputs remain human-owned.
+
+## Efficiency pilot preparation
+
+The next bounded engineering slice supplies the owner-selected pilot's strict
+two-module/twenty-viewpoint input, read-only evidence audit and provenance-aware
+metrics, without executing the business pilot. See
+[readiness delivery plan](efficiency-pilot-readiness.md) and
+[operator guide](../efficiency-pilot.md). Manual timing, formal approval and
+real execution remain explicit owner decisions, not automation side effects.
