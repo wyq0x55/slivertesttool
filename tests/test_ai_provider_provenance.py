@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import os
 import threading
 import urllib.error
 from concurrent.futures import ThreadPoolExecutor
@@ -15,9 +16,6 @@ from app.services.ai import base, config, jobs, provider, scenarios
 from test_ai_api import _admin, _login, project_env
 
 
-TEST_DATABASE_URL = (
-    "postgresql+psycopg2://postgres@127.0.0.1:55435/stp_pilot_provenance"
-)
 MESSAGES = [{"role": "user", "content": "private-prompt-marker"}]
 
 
@@ -36,10 +34,13 @@ def http_reply(content="private-response-marker", **extra):
 
 
 @pytest.fixture(autouse=True)
-def isolated_provider(monkeypatch):
-    monkeypatch.setenv("TEST_DATABASE_URL", TEST_DATABASE_URL)
-    monkeypatch.setenv("DATABASE_URL", TEST_DATABASE_URL)
-    monkeypatch.setenv("HUEY_DATABASE_URL", TEST_DATABASE_URL)
+def isolated_provider(monkeypatch, request):
+    test_url = os.environ.get("TEST_DATABASE_URL")
+    if "app_ctx" in request.fixturenames:
+        assert test_url, "An explicit disposable TEST_DATABASE_URL is required"
+    if test_url:
+        monkeypatch.setenv("DATABASE_URL", test_url)
+        monkeypatch.setenv("HUEY_DATABASE_URL", test_url)
     monkeypatch.setenv("LM_ALLOW_INSECURE_SECRET", "1")
     monkeypatch.setattr(config, "get_ai_config", lambda **kwargs: {
         config.KEY_API_BASE: "https://provider.invalid/v1",
@@ -521,6 +522,29 @@ def test_finish_without_capture_cannot_infer_receipt_from_model(
         assert jobs.finish(draft.id, attempt, output={},
                            result_meta={"model": "configured-model-marker"})
         assert "provider_provenance" not in jobs.metadata(draft)
+
+
+@pytest.mark.parametrize("stale", [False, True])
+def test_finish_without_capture_discards_supplied_and_stale_receipts(app_ctx, project_env, stale):
+    from app.extensions import db
+    from app.models import AiDraft
+
+    with app_ctx.app_context():
+        draft = AiDraft(project_id=project_env, scenario="viewpoint", input_json="{}")
+        attempt = jobs.prepare(draft)
+        db.session.add(draft)
+        db.session.commit()
+        assert jobs.claim(draft.id, attempt)
+        if stale:
+            meta = jobs.metadata(draft)
+            meta["provider_provenance"] = receipt(1, 1, 1)
+            draft.meta_json = json.dumps(meta)
+            db.session.commit()
+        supplied = {"model": "configured-model-marker", "provider_provenance": receipt(1, 1, 1)}
+        assert jobs.finish(draft.id, attempt, output={}, result_meta=supplied)
+        assert "provider_provenance" not in jobs.metadata(draft)
+        assert jobs.metadata(draft)["model"] == "configured-model-marker"
+        assert supplied["provider_provenance"] == receipt(1, 1, 1)
 
 
 @pytest.mark.parametrize("mode, expected", [
