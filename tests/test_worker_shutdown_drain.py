@@ -168,7 +168,9 @@ def test_failed_backend_releases_only_its_owned_slot(app_ctx, queued_run, pooled
 
 
 def test_failed_license_acquisition_returns_borrow_without_decrement(app_ctx, queued_run, monkeypatch):
+    from app.extensions import db
     from app.jobqueue import tasks
+    from app.models import Task
     from app.services import license_service
 
     task_id, pool, instance, backend = queued_run
@@ -176,6 +178,9 @@ def test_failed_license_acquisition_returns_borrow_without_decrement(app_ctx, qu
         assert license_service.try_acquire()
         monkeypatch.setattr(license_service, "try_acquire", Mock(side_effect=RuntimeError("acquisition failed")))
         tasks._run_task_pooled(app_ctx, app_ctx.config_obj, task_id, 1)
+        task = db.session.get(Task, task_id)
+        assert task.status == "queued"
+        assert task.started_at is None and task.finished_at is None
         backend.assert_not_called()
         pool.release.assert_called_once_with(instance)
         assert license_service.get_in_use() == 1
