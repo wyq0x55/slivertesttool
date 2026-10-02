@@ -287,14 +287,9 @@ def _run_task_dedicated(app, config, task_pk: int, expected_run_count=None) -> N
 
 
 def publish_ai_generation(draft_pk: int) -> None:
-    from ..extensions import db
-    from ..models import AiDraft
     from ..services.ai import jobs
 
-    draft = db.session.get(AiDraft, draft_pk)
-    if draft is not None and draft.status == AiDraft.STATUS_RUNNING:
-        attempt = (jobs.metadata(draft).get("job") or {}).get("attempt")
-        run_ai_generation(draft_pk, attempt)
+    jobs.publish_once(draft_pk, run_ai_generation)
 
 
 @huey.task()
