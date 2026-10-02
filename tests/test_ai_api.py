@@ -128,6 +128,31 @@ class TestAiSettings:
 
 
 class TestDraftLifecycle:
+    def test_queued_creation_cannot_be_duplicated_by_recovery(self, client, app_ctx, project_env, monkeypatch):
+        from unittest.mock import Mock
+
+        from app.extensions import db
+        from app.jobqueue import tasks
+        from app.models import AiDraft
+        from app.services.ai import jobs
+
+        _configure_ai(app_ctx)
+        dispatch = Mock()
+        monkeypatch.setattr(tasks, "run_ai_generation", dispatch)
+        response = client.post("/api/v1/ai/drafts", headers=_login(client, _admin(client)), json={
+            "scenario": "viewpoint", "project_id": project_env,
+            "payload": {"doc_text": "Approved requirement", "module_id": "M-UTC"},
+        })
+        assert response.status_code == 201
+        draft_id = response.get_json()["data"]["id"]
+        with app_ctx.app_context():
+            draft = db.session.get(AiDraft, draft_id)
+            attempt = jobs.metadata(draft)["job"]["attempt"]
+            for _tick in range(10):
+                jobs.recover(tasks.publish_ai_generation)
+            dispatch.assert_called_once_with(draft_id, attempt)
+            assert draft.status == AiDraft.STATUS_RUNNING
+
     def test_unconfigured_returns_503(self, client, project_env):
         headers = _login(client, _admin(client))
         resp = client.post("/api/v1/ai/drafts", headers=headers, json={
