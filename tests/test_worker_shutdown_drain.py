@@ -182,6 +182,41 @@ def test_failed_license_acquisition_returns_borrow_without_decrement(app_ctx, qu
         license_service.release()
 
 
+def test_pool_waiter_sees_released_database_capacity(app_ctx, queued_run):
+    from app.jobqueue import tasks
+    from app.services import license_service
+
+    task_id, pool, instance, backend = queued_run
+
+    def expose_idle_instance(returned):
+        assert returned is instance
+        assert license_service.get_in_use() == 0
+
+    pool.release.side_effect = expose_idle_instance
+    with app_ctx.app_context():
+        tasks._run_task_pooled(app_ctx, app_ctx.config_obj, task_id, 1)
+        backend.assert_called_once()
+        pool.release.assert_called_once_with(instance)
+
+
+def test_capacity_denial_preserves_a_fenced_delivery(app_ctx, queued_run, monkeypatch):
+    from app.jobqueue import tasks
+    from app.services import license_service
+
+    task_id, _pool, _instance, backend = queued_run
+    schedule = Mock()
+    monkeypatch.setattr(tasks.huey, "immediate", False)
+    monkeypatch.setattr(tasks.run_task, "schedule", schedule)
+    with app_ctx.app_context():
+        license_service.set_limit(1)
+        assert license_service.try_acquire()
+        tasks._run_task_pooled(app_ctx, app_ctx.config_obj, task_id, 1)
+        backend.assert_not_called()
+        schedule.assert_called_once_with(args=(task_id, 1), delay=tasks._LICENSE_POLL_SECONDS)
+        assert license_service.get_in_use() == 1
+        license_service.release()
+
+
 def test_one_worker_process_can_run_two_tasks_without_exceeding_capacity(app_ctx, monkeypatch):
     import threading
     from concurrent.futures import ThreadPoolExecutor, wait
