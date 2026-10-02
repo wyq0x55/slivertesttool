@@ -97,15 +97,15 @@ def get_pool(app, config):
         gui=bool(getattr(config, "SILVER_GUI", False)),
     )
     pool = _get_pool(driver, Path(config.POOL_DIR), _default_sil)
-    pool.set_target(_current_limit(app))
+    pool.set_target(_current_pool_target(app))
     return pool
 
 
-def _current_limit(app) -> int:
+def _current_pool_target(app) -> int:
     from ..services import license_service
 
     with app.app_context():
-        return license_service.get_limit()
+        return 0 if license_service.is_draining() else license_service.get_limit()
 
 
 def _claim_run(database, task_pk: int, expected_run_count: int):
@@ -176,7 +176,8 @@ def _run_task_pooled(app, config, task_pk: int, expected_run_count=None) -> None
         with app.app_context():
             db.session.expire_all()
             t = db.session.get(Task, task_pk)
-            return (t is None or t.cancel_requested or t.deleted_at is not None
+            return (license_service.is_draining()
+                    or t is None or t.cancel_requested or t.deleted_at is not None
                     or t.status != TaskStatus.QUEUED.value or t.run_count != expected_run_count)
 
     instance = pool.acquire(sil_path, should_cancel=_should_cancel,
@@ -191,8 +192,11 @@ def _run_task_pooled(app, config, task_pk: int, expected_run_count=None) -> None
 
     # --- Phase 2: run, always returning the instance to the pool. ---
     with app.app_context():
-        license_service.mark_busy()
+        acquired = False
         try:
+            acquired = license_service.try_acquire()
+            if not acquired:
+                return
             task = _claim_run(db, task_pk, expected_run_count)
             if task is None:
                 return
@@ -211,7 +215,8 @@ def _run_task_pooled(app, config, task_pk: int, expected_run_count=None) -> None
                 db.session.commit()
         finally:
             pool.release(instance)
-            license_service.mark_idle()
+            if acquired:
+                license_service.release()
 
 
 def _run_task_dedicated(app, config, task_pk: int, expected_run_count=None) -> None:
@@ -246,6 +251,8 @@ def _run_task_dedicated(app, config, task_pk: int, expected_run_count=None) -> N
                 return
             if task.cancel_requested:
                 _mark_cancelled(db, task)
+                return
+            if license_service.is_draining():
                 return
             acquired = license_service.try_acquire()
             if not acquired:
@@ -311,6 +318,9 @@ def run_ai_generation(draft_pk: int, attempt: str | None = None) -> None:
         if attempt is None:
             attempt = ai_jobs.prepare(draft)
             db.session.commit()
+        job = ai_jobs.metadata(draft).get("job") or {}
+        if job.get("attempt") != attempt or job.get("state") != "queued":
+            return
         if not ai_jobs.acquire_slot():
             if not huey.immediate:
                 run_ai_generation.schedule(args=(draft_pk, attempt), delay=2)
