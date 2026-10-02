@@ -11,7 +11,7 @@ from __future__ import annotations
 from flask import Flask
 
 from .config import Config
-from .extensions import db
+from .extensions import configure_utc_connections, db
 
 __version__ = "2.13.0"
 
@@ -46,6 +46,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
         )
 
     db.init_app(app)
+    configure_utc_connections(app)
 
     from .routes.lanmatrix import BLUEPRINTS as lanmatrix_api_blueprints
     from .routes.lanmatrix_pages import pages_bp as lanmatrix_pages_bp

@@ -318,6 +318,85 @@ def test_database_attempt_identity_binds_evidence_metadata(submitted, mutation):
         evidence.read_evidence(task)
 
 
+@pytest.mark.parametrize("mutation", [
+    "execution", "model_metadata", "task_id", "task_key", "run_count", "project_id", "test_id",
+])
+def test_retest_rejects_rewritten_previous_manifest(submitted, mutation):
+    from app.extensions import db
+    from app.models import RunEvidence
+    _application, task, source, _model = submitted
+    evidence = service()
+    previous_root = evidence.attempt_dir(task)
+    manifest_path = previous_root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if mutation == "execution":
+        Path(task.sil_relpath).write_text("forged execution", encoding="utf-8")
+        manifest["model"]["files"] = evidence._hashes(previous_root / "model")
+    elif mutation == "model_metadata":
+        manifest["model"].update(id=99, name="forged", version="forged",
+                                 sha256="0" * 64, source_path="forged.sil")
+    else:
+        manifest[mutation] = {
+            "task_id": task.id + 1, "task_key": "T000099", "run_count": 99,
+            "project_id": task.project_id + 1, "test_id": "forged",
+        }[mutation]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(evidence.EvidenceError, match="integrity|hash"):
+        evidence.read_evidence(task)
+    task.run_count = 2
+    with pytest.raises(evidence.EvidenceError):
+        evidence.pin_attempt(task, source)
+    assert not evidence.attempt_dir(task).exists()
+    assert db.session.get(RunEvidence, (task.id, 2)) is None
+    assert previous_root.is_dir()
+
+
+@pytest.mark.parametrize("missing", ["record", "digest", "manifest"])
+def test_retest_rejects_missing_previous_trusted_binding(submitted, missing):
+    from app.extensions import db
+    from app.models import RunEvidence
+    _application, task, source, _model = submitted
+    evidence = service()
+    previous_root = evidence.attempt_dir(task)
+    record = db.session.get(RunEvidence, (task.id, 1))
+    if missing == "record":
+        db.session.delete(record)
+        db.session.commit()
+    elif missing == "digest":
+        record.manifest_sha256 = ""
+        db.session.commit()
+    else:
+        (previous_root / "manifest.json").unlink()
+    task.run_count = 2
+    with pytest.raises(evidence.EvidenceError):
+        evidence.pin_attempt(task, source)
+    assert not evidence.attempt_dir(task).exists()
+    assert db.session.get(RunEvidence, (task.id, 2)) is None
+    assert previous_root.is_dir()
+
+
+@pytest.mark.parametrize("original", ["changed", "removed"])
+def test_retest_preserves_trusted_snapshot_after_original_model_changes(submitted, original):
+    from app.extensions import db
+    _application, task, source, model = submitted
+    evidence = service()
+    first = evidence.read_evidence(task)
+    approved = Path(first["model"]["execution_path"]).read_bytes()
+    if original == "changed":
+        model.write_text("new registration", encoding="utf-8")
+    else:
+        model.unlink()
+    task.run_count = 2
+    evidence.pin_attempt(task, source)
+    db.session.commit()
+    second = evidence.read_evidence(task)
+    assert second["model"]["sha256"] == first["model"]["sha256"]
+    assert second["model"]["source_path"] == first["model"]["source_path"]
+    assert second["model"]["version"] == first["model"]["version"]
+    assert Path(second["model"]["execution_path"]).read_bytes() == approved
+    assert evidence.read_evidence(task, run_count=1) == first
+
+
 def test_submission_rollback_does_not_block_a_fresh_approved_attempt(submitted):
     from app.extensions import db
     _app, task, source, model = submitted

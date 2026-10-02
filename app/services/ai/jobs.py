@@ -4,18 +4,24 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
 import threading
 import uuid
 from contextvars import ContextVar
 from typing import Callable
 
+from sqlalchemy.dialects.postgresql import insert
+
 from ...extensions import db
-from ...models import AiDraft
+from ...models import AiDraft, Setting
 
 AI_CONCURRENCY = 2
 LEASE_SECONDS = 900
 _slots = threading.BoundedSemaphore(AI_CONCURRENCY)
+_ownership_lock = threading.Lock()
+_owners: dict[threading.Thread, list] = {}
 _checkpoint: ContextVar = ContextVar("ai_checkpoint", default=None)
+logger = logging.getLogger(__name__)
 
 
 class AttemptStopped(RuntimeError):
@@ -55,12 +61,39 @@ def prepare(draft: AiDraft) -> str:
     return attempt
 
 
+def _reap_owners() -> None:
+    for owner in list(_owners):
+        if not owner.is_alive():
+            for _slot in _owners.pop(owner):
+                _slots.release()
+
+
 def acquire_slot() -> bool:
-    return _slots.acquire(blocking=False)
+    with _ownership_lock:
+        _reap_owners()
+        if not _slots.acquire(blocking=False):
+            return False
+        _owners.setdefault(threading.current_thread(), []).append(None)
+        return True
 
 
 def release_slot() -> None:
-    _slots.release()
+    with _ownership_lock:
+        owner = threading.current_thread()
+        owned = _owners.get(owner)
+        if not owned:
+            raise RuntimeError("No AI slot held by the current thread")
+        owned.pop()
+        if not owned:
+            del _owners[owner]
+        _slots.release()
+
+
+def _is_active(draft_id: int, attempt: str) -> bool:
+    identity = (db.engine, draft_id, attempt)
+    with _ownership_lock:
+        _reap_owners()
+        return any(identity in owned for owned in _owners.values())
 
 
 def claim(draft_id: int, attempt: str) -> bool:
@@ -73,7 +106,57 @@ def claim(draft_id: int, attempt: str) -> bool:
         return False
     job.update(state="running", heartbeat=_now())
     _save(draft, meta)
+    with _ownership_lock:
+        owned = _owners.get(threading.current_thread())
+        db.session.commit()
+        if owned:
+            owned[-1] = (db.engine, draft_id, attempt)
+    return True
+
+
+def _publication_due(job: dict, now: float) -> bool:
+    until = job.get("publication_until")
+    return not isinstance(until, (int, float)) or not now < until <= now + LEASE_SECONDS
+
+
+def publish_once(draft_id: int, dispatch: Callable[[int, str], object]) -> bool:
+    """Reserve a bounded lease, then dispatch the pinned queued attempt.
+
+    All publishers must use this helper with the raw two-argument dispatcher.
+    Publication is at least once: process death or timeout permits a replay,
+    while claim fences execution. A failed dispatch releases its own lease.
+    """
+    draft = _locked(draft_id)
+    meta = metadata(draft) if draft else {}
+    job = meta.get("job") or {}
+    attempt = job.get("attempt")
+    now = _now()
+    if (draft is None or draft.status != AiDraft.STATUS_RUNNING
+            or job.get("state") != "queued" or not isinstance(attempt, str) or not attempt
+            or not _publication_due(job, now)):
+        db.session.rollback()
+        return False
+    publication_id = uuid.uuid4().hex
+    job.update(publication_id=publication_id, publication_until=now + LEASE_SECONDS)
+    _save(draft, meta)
     db.session.commit()
+    try:
+        dispatch(draft_id, attempt)
+    except BaseException:
+        try:
+            db.session.rollback()
+            draft = _locked(draft_id)
+            meta = metadata(draft) if draft else {}
+            job = meta.get("job") or {}
+            if job.get("attempt") == attempt and job.get("publication_id") == publication_id:
+                job.pop("publication_id", None)
+                job.pop("publication_until", None)
+                _save(draft, meta)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            logger.exception("Could not release AI publication lease for draft=%s", draft_id)
+        raise
     return True
 
 
@@ -134,21 +217,55 @@ def retry(draft_id: int) -> AiDraft:
     return draft
 
 
-def recover(publish: Callable[[int], None], *, startup: bool = False) -> int:
-    now = _now()
-    rows = (AiDraft.query.filter_by(status=AiDraft.STATUS_RUNNING)
-            .order_by(AiDraft.id).limit(200).populate_existing()
+def _recovery_page() -> list[AiDraft]:
+    key = "ai_recovery_cursor"
+    db.session.execute(insert(Setting).values(key=key, value="0")
+                       .on_conflict_do_nothing(index_elements=[Setting.key]))
+    setting = Setting.query.filter_by(key=key).populate_existing().with_for_update().one()
+    try:
+        cursor = max(0, int(setting.value))
+    except (TypeError, ValueError):
+        cursor = 0
+    candidates = (AiDraft.query.filter_by(status=AiDraft.STATUS_RUNNING)
+                  .order_by(AiDraft.id).populate_existing())
+    rows = (candidates.filter(AiDraft.id > cursor).limit(200)
             .with_for_update(skip_locked=True).all())
+    if cursor and len(rows) < 200:
+        rows.extend(candidates.filter(AiDraft.id <= cursor).limit(200 - len(rows))
+                    .with_for_update(skip_locked=True).all())
+    setting.value = str(rows[-1].id) if rows else "0"
+    return rows
+
+
+def recover(publish: Callable[[int], object], *, startup: bool = False) -> int:
+    """Reconcile at most 200 drafts per circular scan before publication.
+
+    Startup must run before consumers. Periodic scans preserve attempts owned
+    by a live local slot, even during a slow provider call. The publisher must
+    call publish_once; the return count includes failed publication callbacks.
+    """
+    now = _now()
+    with _ownership_lock:
+        _reap_owners()
+    rows = _recovery_page()
     queued = []
     for draft in rows:
         meta = metadata(draft)
         job = meta.get("job") or {}
         heartbeat = job.get("heartbeat")
         expired = not isinstance(heartbeat, (int, float)) or now - heartbeat > LEASE_SECONDS
-        if startup or expired:
+        attempt = job.get("attempt")
+        if startup:
             prepare(draft)
             queued.append(draft.id)
         elif job.get("state") == "queued":
+            if not isinstance(attempt, str) or not attempt:
+                prepare(draft)
+                queued.append(draft.id)
+            elif _publication_due(job, now):
+                queued.append(draft.id)
+        elif expired and not _is_active(draft.id, attempt):
+            prepare(draft)
             queued.append(draft.id)
     db.session.commit()
     for draft_id in queued:
@@ -156,6 +273,7 @@ def recover(publish: Callable[[int], None], *, startup: bool = False) -> int:
             publish(draft_id)
         except Exception:
             db.session.rollback()
+            logger.exception("AI recovery publication failed for draft=%s", draft_id)
     return len(queued)
 
 

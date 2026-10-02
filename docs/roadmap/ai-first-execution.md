@@ -48,9 +48,9 @@ and main CI. See
 [`../verification/m0-delivery-2026-10-01.md`](../verification/m0-delivery-2026-10-01.md).
 The user authorized autonomous M1-M4 engineering delivery, including commits,
 pushes and green-CI-only integration. M1-M4 landed in PR #35 at `c7ee963`,
-with successful PR and main CI. The follow-up real-Silver release lane is
-isolated on `codex/real-silver-acceptance`; its reproduced defects, real runtime
-evidence and remaining boundaries are recorded in
+with successful PR and main CI. The follow-up real-Silver release landed in
+PR #36 at `cc56b20`, with successful PR and main CI. Its reproduced defects,
+real runtime evidence and remaining boundaries are recorded in
 [Silver release verification](../verification/silver-release-2026-10-02.md).
 GitHub PR and main checks remain the authoritative integration record.
 The existing root worktree changes to `CONTEXT.md` and ADR 0003 are preserved.
@@ -64,3 +64,16 @@ The real two-module/20-approved-viewpoint pilot and manual timing remain
 human-owned rollout gates. Formal asset approval, candidate SBS activation and
 real Silver execution are never inferred from engineering completion. The
 isolated historical Silver acceptance is not the two-module efficiency pilot.
+
+## Post-release integrity lane
+
+The bounded post-release engineering slice is tracked in
+[PR #37](https://github.com/wyq0x55/slivertesttool/pull/37), not a new
+efficiency-pilot feature or generic refactor. Its reproduced findings cover
+PostgreSQL session-time drift, pooled shutdown drain, AI recovery
+liveness/publication and trusted model reuse on retest. Repairs have isolated
+RED/GREEN evidence, independent review and final local regression; exact-head
+PR and main CI remain integration gates. See
+[post-release verification](../verification/post-release-integrity-2026-10-02.md).
+The original checkout, production database and prior Silver evidence remain
+untouched; formal approval and real pilot inputs remain human-owned.

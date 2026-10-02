@@ -109,11 +109,11 @@ def create_draft():
                     created_by=g.user.id,
                     status=AiDraft.STATUS_RUNNING)
     db.session.add(draft)
-    attempt = ai_jobs.prepare(draft)
+    ai_jobs.prepare(draft)
     db.session.commit()
     try:
-        from ...jobqueue.tasks import run_ai_generation
-        run_ai_generation(draft.id, attempt)
+        from ...jobqueue.tasks import publish_ai_generation
+        publish_ai_generation(draft.id)
     except (ProviderError, GenerationError, ValueError) as exc:
         # Immediate-mode (in-process) execution surfaces scenario failures
         # here; the queued path records the same state on the draft itself.
