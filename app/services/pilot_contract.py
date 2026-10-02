@@ -101,6 +101,7 @@ class RunObservation(ContractModel):
     task_key: Annotated[str, Field(strict=True, pattern=r"^T[0-9]{1,15}$")]
     run_count: PositiveId
     item_id: PositiveId
+    approved_draft_id: PositiveId | None = None
     verified: bool = False
     finalised: bool = False
     evidence_kind: Literal["silver_runtime", "synthetic", "unclassified"] = "unclassified"
