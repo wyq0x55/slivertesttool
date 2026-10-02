@@ -245,6 +245,28 @@ def test_failed_retry_publication_keeps_the_unclaimed_attempt_queued(app_ctx, qu
         license_service.release()
 
 
+@pytest.mark.parametrize("pooled", [True, False])
+def test_failed_claim_cannot_mark_an_unowned_attempt_failed(app_ctx, queued_run, monkeypatch, pooled):
+    from app.extensions import db
+    from app.jobqueue import tasks
+    from app.models import Task
+    from app.services import license_service
+
+    task_id, pool, instance, backend = queued_run
+    monkeypatch.setattr(tasks, "_claim_run", Mock(side_effect=RuntimeError("claim unavailable")))
+    with app_ctx.app_context():
+        run = tasks._run_task_pooled if pooled else tasks._run_task_dedicated
+        run(app_ctx, app_ctx.config_obj, task_id, 1)
+        task = db.session.get(Task, task_id)
+        assert task.status == "queued"
+        assert task.run_count == 1
+        assert task.started_at is None and task.finished_at is None
+        assert license_service.get_in_use() == 0
+        backend.assert_not_called()
+        if pooled:
+            pool.release.assert_called_once_with(instance)
+
+
 def test_one_worker_process_can_run_two_tasks_without_exceeding_capacity(app_ctx, monkeypatch):
     import threading
     from concurrent.futures import ThreadPoolExecutor, wait
