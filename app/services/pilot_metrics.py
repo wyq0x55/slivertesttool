@@ -66,13 +66,13 @@ def build_report(pilot: PilotInput, snapshot: AuditSnapshot | None = None) -> di
                     executable_accepted.update(eligible)
                     executable_pairs.update((draft.draft_id, item_id) for item_id in eligible)
         authentic = [attempt for attempt in snapshot.runs if (
-            attempt.verified and attempt.finalised and not attempt.issues
+            attempt.verified and attempt.finalised and set(attempt.issues) <= {"run_draft_link_missing"}
             and attempt.evidence_kind == "silver_runtime" and attempt.runner_backend == "silver"
             and attempt.status in {"passed", "failed"} and attempt.verdict in {"PASS", "FAIL"}
         )]
         completed = {attempt.item_id for attempt in authentic}
-        linked = {attempt.item_id for attempt in authentic
-                  if (attempt.approved_draft_id, attempt.item_id) in executable_pairs}
+        linked = {attempt.item_id for attempt in authentic if not attempt.issues
+                  and (attempt.approved_draft_id, attempt.item_id) in executable_pairs}
         metrics.update({
             "generated_candidates": len(generated),
             "accepted_candidates": len(accepted),
