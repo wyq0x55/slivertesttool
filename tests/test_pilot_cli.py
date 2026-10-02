@@ -1,4 +1,5 @@
 from importlib import import_module
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -130,3 +131,71 @@ def test_offline_subprocess_never_connects_poisoned_database_or_provider(tmp_pat
     assert result.returncode == 3
     assert json.loads(result.stdout)["measurement"]["rollout_approved"] is False
     assert "do-not-leak" not in result.stdout + result.stderr
+
+
+@pytest.fixture
+def live_selection(app_ctx, tmp_path, monkeypatch):
+    from app.extensions import db
+    from app.models import LMUser, Project, ProjectMember, ProjectModel, TestItemRow
+    model_root = tmp_path / "models"
+    model_root.mkdir()
+    model_path = model_root / "pilot.sil"
+    model_path.write_bytes(b"<silver-model/>\n")
+    monkeypatch.setenv("MODEL_DIR", str(model_root))
+    monkeypatch.setitem(app_ctx.config, "MODEL_DIR", model_root)
+    with app_ctx.app_context():
+        actor = LMUser(username="pilot-reader", password_hash="fixture-only-not-used", status="active")
+        project = Project(code="PILOT-CLI", name="Synthetic CLI pilot", status="active")
+        db.session.add_all([actor, project])
+        db.session.flush()
+        db.session.add(ProjectMember(project_id=project.id, user_id=actor.id, role="reader"))
+        model = ProjectModel(project_id=project.id, name="pilot-copy", version="v1", sil_path=str(model_path))
+        rows = [TestItemRow(project_id=project.id, sheet="test", case_id=f"PC-{position}",
+                            module="module-a" if position <= 10 else "module-b", version=2)
+                for position in range(1, 21)]
+        db.session.add_all([model, *rows])
+        db.session.flush()
+        payload = {"schema_version": 1, "project_id": project.id, "modules": ["module-a", "module-b"],
+                   "model": {"model_id": model.id, "version": "v1",
+                             "sha256": hashlib.sha256(model_path.read_bytes()).hexdigest()},
+                   "viewpoints": [{"item_id": row.id, "version": row.version, "module": row.module,
+                                   "document_revision": "fixture-document-v1",
+                                   "approval_reference": "fixture-operator-declaration"} for row in rows]}
+        actor_id = actor.id
+        db.session.commit()
+        db.session.remove()
+    path = write_input(tmp_path, payload)
+    environment = {**os.environ, "PILOT_DATABASE_URL": os.environ["TEST_DATABASE_URL"]}
+    yield path, actor_id, environment, payload, app_ctx
+
+
+def test_live_subprocess_reads_only_selected_project_and_preserves_versions(live_selection):
+    path, actor_id, environment, payload, application = live_selection
+    result = subprocess.run([sys.executable, "-m", "scripts.efficiency_pilot", str(path),
+                             "--live", "--actor-id", str(actor_id), "--mode", "preflight"],
+                            cwd=Path(__file__).resolve().parents[1], env=environment,
+                            text=True, capture_output=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["source"] == "postgresql_readonly"
+    assert report["readiness"]["ready"] is True
+    assert report["measurement"]["complete"] is False
+    from app.extensions import db
+    from app.models import AiDraft, Task, TestItemRow
+    with application.app_context():
+        rows = TestItemRow.query.filter_by(project_id=payload["project_id"]).all()
+        assert len(rows) == 20 and all(row.version == 2 and row.review_status == "" for row in rows)
+        assert Task.query.count() == 0 and AiDraft.query.count() == 0
+        db.session.remove()
+
+
+def test_live_denied_actor_does_not_disclose_input_or_evidence(live_selection):
+    path, _actor_id, environment, _payload, _application = live_selection
+    result = subprocess.run([sys.executable, "-m", "scripts.efficiency_pilot", str(path),
+                             "--live", "--actor-id", "99999"],
+                            cwd=Path(__file__).resolve().parents[1], env=environment,
+                            text=True, capture_output=True, timeout=20)
+    assert result.returncode == 2
+    assert not result.stdout
+    assert "Live pilot audit failed" in result.stderr
+    assert "fixture-document" not in result.stderr and "Traceback" not in result.stderr
