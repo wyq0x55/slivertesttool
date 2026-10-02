@@ -127,19 +127,23 @@ def _pin_model(task, source, root, workspace):
     if not model.is_file():
         raise EvidenceError("Saved model is missing")
     model_root = model.parent
-    target_root = root / "model"
-    target_root.mkdir()
     original = model.read_bytes()
     execution_text = original
     source_path = str(model)
-    previous_manifest = model_root.parent / "manifest.json"
-    if model_root.name == "model" and ".evidence" in model_root.parts and previous_manifest.is_file():
+    if model_root.name == "model" and ".evidence" in model_root.parts:
         previous_root = checked_path(workspace, model_root.parent, exists=True)
-        previous = _read_json(previous_root, "manifest.json")["model"]
-        if _hashes(model_root) != previous["files"]:
-            raise EvidenceError("Previous pinned model hash integrity check failed")
+        try:
+            previous_count = int(previous_root.name)
+        except ValueError as exc:
+            raise EvidenceError("Previous pinned model attempt identity is invalid") from exc
+        if (previous_count >= (task.run_count or 1)
+                or previous_root != attempt_dir(task, previous_count, workspace=workspace)):
+            raise EvidenceError("Previous pinned model attempt identity mismatch")
+        previous = _manifest(task, previous_root, previous_count)["model"]
         original = checked_path(model_root, model_root / "approved.sil", exists=True).read_bytes()
         source_path = previous["source_path"]
+    target_root = root / "model"
+    target_root.mkdir()
     (target_root / "approved.sil").write_bytes(original)
     executable = target_root / model.name
     if executable.name == "approved.sil":
