@@ -1,6 +1,6 @@
 # Repository Agent Contract
 
-Validated against `main` at `71dc3cb67ea3` on 2026-09-23.
+Codex orchestration adaptation based on `main` at `97ba659b7b1e` on 2026-10-02.
 
 This file defines repository-specific engineering constraints. Prefer the
 current code and tests over historical design notes when they disagree.
@@ -93,3 +93,24 @@ public route contract. Project resource routes are intentionally split across
 Use normal Git branches, commits, issues, and pull requests. Do **not** create
 special delivery-copy directories, incremented duplicate filenames, or
 whole-project ZIP archives unless a user explicitly requests an archive artifact.
+
+
+## Codex subagent orchestration
+
+For non-trivial repository work, use the project skill at
+`.agents/skills/silver-orchestrator/SKILL.md`. The repository contract in this
+file remains authoritative if orchestration guidance conflicts with it.
+
+- Keep architecture and cross-component decisions in the root session.
+- Use read-only exploration before implementation when the ownership boundary is
+  not already clear.
+- Routine subagents default to `deepseek-v4.1-flash`; the independent code
+  reviewer is intentionally a different model.
+- Keep at most three subagents active concurrently. Parallelize only independent
+  workstreams.
+- Give every writable subagent an explicit file/subsystem ownership boundary;
+  do not send two writers into the same files.
+- Verification agents should run the smallest targeted checks that prove the
+  delegated behavior. Full CI remains the pre-merge integration gate.
+- Subagent conclusions are evidence for the root to verify, not a substitute for
+  inspecting the final diff or respecting the real-Silver validation boundary.
