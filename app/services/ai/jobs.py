@@ -14,6 +14,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from ...extensions import db
 from ...models import AiDraft, Setting
+from . import provider
 
 AI_CONCURRENCY = 2
 LEASE_SECONDS = 900
@@ -54,6 +55,7 @@ def prepare(draft: AiDraft) -> str:
     meta["job"] = {"attempt": attempt, "state": "queued", "heartbeat": _now(),
                    "concurrency": AI_CONCURRENCY, "chunk_size": 8, "max_rounds": 3}
     meta.pop("progress", None)
+    meta.pop("provider_provenance", None)
     _save(draft, meta)
     draft.status = AiDraft.STATUS_RUNNING
     draft.error = ""
@@ -184,6 +186,10 @@ def finish(draft_id: int, attempt: str, *, output=None, result_meta=None, error=
         db.session.rollback()
         return False
     meta.update(result_meta or {})
+    meta.pop("provider_provenance", None)
+    provenance = provider.get_provider_provenance()
+    if provenance is not None:
+        meta["provider_provenance"] = provenance
     job.update(state="failed" if error else "complete", heartbeat=_now())
     _save(draft, meta)
     draft.status = AiDraft.STATUS_ERROR if error else AiDraft.STATUS_PENDING
@@ -278,11 +284,18 @@ def recover(publish: Callable[[int], object], *, startup: bool = False) -> int:
 
 
 def install_checkpoint(callback):
-    return _checkpoint.set(callback)
+    """Start capture at the worker's existing generator execution boundary."""
+    capture = provider.capture_provider_provenance()
+    capture.__enter__()
+    return _checkpoint.set(callback), capture
 
 
 def reset_checkpoint(token) -> None:
-    _checkpoint.reset(token)
+    checkpoint_token, capture = token
+    try:
+        _checkpoint.reset(checkpoint_token)
+    finally:
+        capture.__exit__(None, None, None)
 
 
 def checkpoint() -> None:

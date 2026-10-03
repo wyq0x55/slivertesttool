@@ -70,8 +70,8 @@ def generate_validated(*,
         checkpoint()
         messages = build_prompt(feedback)
         usage: dict[str, int] = {}
-        text = provider.chat(messages, temperature=temperature,
-                             max_tokens=max_tokens, usage=usage)
+        text = provider.invoke_chat(messages, temperature=temperature,
+                                    max_tokens=max_tokens, usage=usage)
         checkpoint()
         merge_usage(usage_total, usage)
         try:
