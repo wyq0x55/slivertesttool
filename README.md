@@ -65,6 +65,15 @@ Waitress (prod server)  +  Pydantic  +  pytest
 
 ## Architecture
 
+### CLI for AI and automation
+
+Run `python -m silver_cli list` to discover existing API operations without a
+database connection. The JSON-first CLI supports authenticated calls, explicit
+write confirmation, offline dry-runs, multipart uploads, artifact downloads,
+SSE and bounded job polling. It reuses the web API's permissions and single-worker
+execution flow. See [CLI operator guide](docs/cli.md) for setup, examples and
+coverage boundaries.
+
 ```
 Browser ──upload──▶ Flask (run_web.py) ──create Task──▶ PostgreSQL (app data)
                                      └──enqueue──▶ Huey queue (PostgreSQL)
