@@ -103,3 +103,13 @@ _Avoid_: Row, when the sheet matters
 **Test id**:
 The identity of a test case within a project. Unique per project.
 _Avoid_: Case id, which is the storage column that usually holds it
+
+### Performance
+
+**Performance baseline**:
+A repeated timing of one named path on a fixed synthetic dataset. It is not an efficiency claim about the real pilot.
+_Avoid_: Benchmark, when that means a CI failure gate or a vendor comparison
+
+**Candidate clock**:
+A user-visible wait that may later be shortened. The open clocks are editor open and dashboard history reads.
+_Avoid_: Optimization, which names the later code change
