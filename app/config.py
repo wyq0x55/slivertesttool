@@ -186,6 +186,20 @@ class Config:
         ).split(",") if n.strip()
     ]
 
+    # --- Unit-test pipeline (ut-agent + WinAMS) ---
+    # ut-agent is an external, separately versioned checkout invoked only via
+    # ``python -m ut_agent bridge ...`` (JSON contract); it is never imported.
+    UT_AGENT_ROOT = os.environ.get("UT_AGENT_ROOT", "")
+    UT_AGENT_PYTHON = os.environ.get("UT_AGENT_PYTHON", "")
+    UT_AGENT_EXTRACTOR = os.environ.get("UT_AGENT_EXTRACTOR", "")
+    WINAMS_EXECUTABLE = os.environ.get("WINAMS_EXECUTABLE", r"C:\WinAMS\BIN\SSTManager.exe")
+    # Seconds. Generation covers the whole-project extraction of a batch.
+    UT_GENERATE_TIMEOUT = _as_int(os.environ.get("UT_GENERATE_TIMEOUT"), 3600)
+    UT_EXECUTE_TIMEOUT = _as_int(os.environ.get("UT_EXECUTE_TIMEOUT"), 300)
+    UT_BRIDGE_TIMEOUT = _as_int(os.environ.get("UT_BRIDGE_TIMEOUT"), 120)
+    # Default LLM repair rounds before a job is handed to a human.
+    UT_REPAIR_MAX_ROUNDS = _as_int(os.environ.get("UT_REPAIR_MAX_ROUNDS"), 5)
+
     # --- Upload limits ---
     MAX_UPLOAD_BYTES = _as_int(
         os.environ.get("MAX_UPLOAD_BYTES"), 512 * 1024 * 1024  # 512 MiB

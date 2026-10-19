@@ -68,32 +68,55 @@
   }
 
   function cardHtml(p) {
+    const isUt = p.project_type === "unit_test";
     const st = esc(p.status || "draft");
     const stZh = STATUS_ZH[p.status] || st;
-    const total = p.task_total || 0;
-    const passed = p.task_passed || 0;
-    const failed = p.task_failed || 0;
-    const rate = total ? Math.round((passed / total) * 100) : 0;
     const hasDesc = (p.description || "").trim().length > 0;
-    const desc = hasDesc ? esc(p.description) : "暂无描述 · 点击进入在线编辑";
-    return `<div class="card zoned" data-id="${p.id}" data-code="${esc(p.code)}"
-        data-name="${esc(p.name)}" data-status="${st}" data-desc="${esc(p.description || "")}">
-      <a class="zone zone-main" href="/lanmatrix/projects/${p.id}"
-        aria-label="打开 ${esc(p.name)} 在线编辑">
-        <div class="card-top">
-          <span class="code-chip">${esc(p.code)}</span>
-          <span class="status"><span class="dot ${st}"></span>${esc(stZh)}</span>
+    const defaultDesc = isUt ? "単体テスト · ut-agent / WinAMS 自动化流水线" : "暂无描述 · 点击进入在线编辑";
+    const desc = hasDesc ? esc(p.description) : defaultDesc;
+    const mainHref = isUt ? `/lanmatrix/projects/${p.id}/ut` : `/lanmatrix/projects/${p.id}`;
+    const mainAria = isUt ? `打开 ${esc(p.name)} 単体テスト実施一覧` : `打开 ${esc(p.name)} 在线编辑`;
+    const typeBadge = isUt
+      ? `<span class="badge" style="margin-left:6px;font-size:11px;padding:2px 8px;border-radius:999px;background:var(--accent-soft, #eef2ff);color:var(--accent, #4f46e5);font-weight:600">単体テスト</span>`
+      : "";
+
+    let middleHtml = "";
+    if (isUt) {
+      middleHtml = `
+      <a class="zone zone-tasks" href="/lanmatrix/projects/${p.id}/ut" aria-label="查看単体テスト">
+        <div class="metrics">
+          <div class="metric"><div class="v">${p.ut_targets_count || 0}</div><div class="k">函数</div></div>
+          <div class="metric"><div class="v ok">${p.ut_jobs_approved || 0}</div><div class="k">已通过</div></div>
+          <div class="metric"><div class="v ${(p.ut_jobs_needs_human || 0) ? "warn" : ""}">${p.ut_jobs_needs_human || 0}</div><div class="k">需人工</div></div>
         </div>
-        <h3>${esc(p.name)}</h3>
-        <p class="desc${hasDesc ? "" : " empty"}">${desc}</p>
-      </a>
+      </a>`;
+    } else {
+      const total = p.task_total || 0;
+      const passed = p.task_passed || 0;
+      const failed = p.task_failed || 0;
+      const rate = total ? Math.round((passed / total) * 100) : 0;
+      middleHtml = `
       <a class="zone zone-tasks" href="/lanmatrix/projects/${p.id}/tasks" aria-label="查看测试任务">
         <div class="metrics">
           <div class="metric"><div class="v">${total}</div><div class="k">测试项</div></div>
           <div class="metric"><div class="v ok">${total ? rate + "%" : "—"}</div><div class="k">通过率</div></div>
           <div class="metric"><div class="v ${failed ? "warn" : ""}">${failed}</div><div class="k">失败</div></div>
         </div>
+      </a>`;
+    }
+
+    return `<div class="card zoned" data-id="${p.id}" data-code="${esc(p.code)}"
+        data-name="${esc(p.name)}" data-status="${st}" data-desc="${esc(p.description || "")}">
+      <a class="zone zone-main" href="${mainHref}"
+        aria-label="${mainAria}">
+        <div class="card-top">
+          <span class="code-chip">${esc(p.code)}</span>${typeBadge}
+          <span class="status"><span class="dot ${st}"></span>${esc(stZh)}</span>
+        </div>
+        <h3>${esc(p.name)}</h3>
+        <p class="desc${hasDesc ? "" : " empty"}">${desc}</p>
       </a>
+      ${middleHtml}
       <a class="zone zone-members" href="/lanmatrix/projects/${p.id}/members" aria-label="项目成员管理">
         <div class="card-foot">
           <div class="stack">${avatarStack(p)}</div>
@@ -213,14 +236,19 @@
   document.getElementById("lm-np-ok").addEventListener("click", async (e) => {
     e.preventDefault();
     const err = document.getElementById("lm-np-error");
+    const typeEl = document.getElementById("lm-np-type");
+    const ptype = typeEl ? typeEl.value : "silver";
     try {
       const data = await LMApi.createProject({
+        project_type: ptype,
         code: document.getElementById("lm-np-code").value.trim(),
         name: document.getElementById("lm-np-name").value.trim(),
         description: document.getElementById("lm-np-desc").value.trim(),
       });
       dialog.close();
-      window.location = `/lanmatrix/projects/${data.project.id}`;
+      window.location = ptype === "unit_test"
+        ? `/lanmatrix/projects/${data.project.id}/ut`
+        : `/lanmatrix/projects/${data.project.id}`;
     } catch (ex) {
       err.textContent = ex.message;
       err.hidden = false;

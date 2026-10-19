@@ -88,6 +88,8 @@ def _project_card_stats(project_ids: list[int]) -> dict[int, dict]:
 
     測試項 = total tasks, 通過率 = passed / total, 失敗 = failed count."""
     stats = {pid: {"task_total": 0, "task_passed": 0, "task_failed": 0,
+                   "ut_targets_count": 0, "ut_jobs_awaiting_review": 0,
+                   "ut_jobs_approved": 0, "ut_jobs_needs_human": 0,
                    "members": [], "member_extra": 0} for pid in project_ids}
     if not project_ids:
         return stats
@@ -107,6 +109,27 @@ def _project_card_stats(project_ids: list[int]) -> dict[int, dict]:
             s["task_passed"] += count
         elif status == TaskStatus.FAILED.value:
             s["task_failed"] += count
+
+    from ...models import UtJob, UtTarget
+    target_counts = (
+        db.session.query(UtTarget.project_id, db.func.count(UtTarget.id))
+        .filter(UtTarget.project_id.in_(project_ids), UtTarget.in_index.is_(True))
+        .group_by(UtTarget.project_id)
+        .all()
+    )
+    for pid, count in target_counts:
+        if pid in stats:
+            stats[pid]["ut_targets_count"] = count
+
+    job_counts = (
+        db.session.query(UtJob.project_id, UtJob.state, db.func.count(UtJob.id))
+        .filter(UtJob.project_id.in_(project_ids))
+        .group_by(UtJob.project_id, UtJob.state)
+        .all()
+    )
+    for pid, state, count in job_counts:
+        if pid in stats:
+            stats[pid][f"ut_jobs_{state}"] = count
 
     members = (
         db.session.query(ProjectMember.project_id, LMUser.display_name, LMUser.username)
@@ -144,7 +167,8 @@ def create_project():
     body = request.get_json(silent=True) or {}
     project = service.create_project(
         g.user, code=body.get("code", ""), name=body.get("name", ""),
-        description=body.get("description", ""))
+        description=body.get("description", ""),
+        project_type=body.get("project_type", "silver"))
     return ok({"project": project.to_dict()}, status=201)
 
 @bp.get("/projects/<int:project_id>")

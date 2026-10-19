@@ -382,6 +382,40 @@
       return request("PUT", "/ai/signals",
         { body: { project_id: projectId, entries: entries } });
     },
+
+    // --- Unit-test pipeline (ut-agent → WinAMS → check → LLM → review) --- //
+    utGetConfig(pid) { return request("GET", `/projects/${pid}/ut/config`); },
+    utPutConfig(pid, values) {
+      return request("PUT", `/projects/${pid}/ut/config`, { body: values });
+    },
+    utImportTargets(pid) {
+      return request("POST", `/projects/${pid}/ut/targets/import`, { body: {} });
+    },
+    utTargets(pid) { return request("GET", `/projects/${pid}/ut/targets`); },
+    utCreateBatch(pid, targetIds, label) {
+      return request("POST", `/projects/${pid}/ut/batches`,
+        { body: { target_ids: targetIds, label: label || "" } });
+    },
+    utBatches(pid) { return request("GET", `/projects/${pid}/ut/batches`); },
+    utJob(pid, jobId) { return request("GET", `/projects/${pid}/ut/jobs/${jobId}`); },
+    utAttemptText(pid, jobId, attemptId) {
+      return request("GET", `/projects/${pid}/ut/jobs/${jobId}/attempts/${attemptId}/csv`,
+        { query: { format: "text" } });
+    },
+    utAttemptUrl(pid, jobId, attemptId) {
+      return `${BASE}/projects/${pid}/ut/jobs/${jobId}/attempts/${attemptId}/csv`;
+    },
+    utRevise(pid, jobId, csv, note) {
+      return request("POST", `/projects/${pid}/ut/jobs/${jobId}/revision`,
+        { body: { csv: csv, note: note || "" } });
+    },
+    utReview(pid, jobId, decision, note) {
+      return request("POST", `/projects/${pid}/ut/jobs/${jobId}/review`,
+        { body: { decision: decision, note: note || "" } });
+    },
+    utRetry(pid, jobId) {
+      return request("POST", `/projects/${pid}/ut/jobs/${jobId}/retry`, { body: {} });
+    },
   };
 
   global.LMApi = LMApi;

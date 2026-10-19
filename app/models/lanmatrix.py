@@ -149,6 +149,8 @@ class Project(db.Model):
     description = db.Column(db.Text, nullable=False, default="")
     # draft | active | frozen | archived
     status = db.Column(db.String(16), nullable=False, default="draft", index=True)
+    # silver (Synopsys Silver / plant model) | unit_test (ut-agent / WinAMS)
+    project_type = db.Column(db.String(32), nullable=False, default="silver", server_default="silver")
     owner_id = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True)
     created_by = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
@@ -238,6 +240,7 @@ class Project(db.Model):
             "name": self.name,
             "description": self.description,
             "status": self.status,
+            "project_type": self.project_type or "silver",
             # Exposed so the editor can grey out structural controls instead of
             # letting the user click them into a PROJECT_LOCKED error. Derived
             # from status here rather than re-implemented in JS, so there is one

@@ -28,6 +28,14 @@ def _current_user():
     return user if (user and user.is_active) else None
 
 
+def _project(project_id: int):
+    try:
+        p = service.get_project(project_id)
+        return p if (p and p.deleted_at is None) else None
+    except Exception:
+        return None
+
+
 @pages_bp.get("/login")
 def login():
     if _current_user() is not None:
@@ -150,8 +158,12 @@ def editor(project_id: int):
     user = _current_user()
     if user is None:
         return redirect(url_for("lanmatrix_pages.login"))
+    proj = _project(project_id)
+    if proj and proj.project_type == "unit_test":
+        return redirect(url_for("lanmatrix_pages.ut_pipeline", project_id=project_id))
     return render_template(
         "lanmatrix/editor.html", user=user.to_dict(), project_id=project_id,
+        project=proj.to_dict() if proj else None,
         univer_available=_univer_bundle_available(),
         collab_available=_collab_bundle_available())
 
@@ -175,9 +187,13 @@ def project_dashboard(project_id: int):
     user = _current_user()
     if user is None:
         return redirect(url_for("lanmatrix_pages.login"))
+    proj = _project(project_id)
+    if proj and proj.project_type == "unit_test":
+        return redirect(url_for("lanmatrix_pages.ut_pipeline", project_id=project_id))
     return render_template(
         "lanmatrix/dashboard.html", user=user.to_dict(),
         project_id=project_id,
+        project=proj.to_dict() if proj else None,
         charts_available=_charts_bundle_available())
 
 
@@ -187,8 +203,10 @@ def ai_drafts(project_id: int):
     user = _current_user()
     if user is None:
         return redirect(url_for("lanmatrix_pages.login"))
+    proj = _project(project_id)
     return render_template(
-        "lanmatrix/ai_drafts.html", user=user.to_dict(), project_id=project_id)
+        "lanmatrix/ai_drafts.html", user=user.to_dict(), project_id=project_id,
+        project=proj.to_dict() if proj else None)
 
 
 @pages_bp.get("/projects/<int:project_id>/tasks")
@@ -198,10 +216,27 @@ def project_tasks(project_id: int):
     user = _current_user()
     if user is None:
         return redirect(url_for("lanmatrix_pages.login"))
+    proj = _project(project_id)
+    if proj and proj.project_type == "unit_test":
+        return redirect(url_for("lanmatrix_pages.ut_pipeline", project_id=project_id))
     return render_template(
         "lanmatrix/project_tasks.html", user=user.to_dict(),
         project_id=project_id,
+        project=proj.to_dict() if proj else None,
         univer_available=_univer_bundle_available())
+
+
+@pages_bp.get("/projects/<int:project_id>/ut")
+def ut_pipeline(project_id: int):
+    """単体テスト pipeline shell: 実施一覧, queue, repair history and review.
+    The API enforces project capabilities; the page is a thin shell."""
+    user = _current_user()
+    if user is None:
+        return redirect(url_for("lanmatrix_pages.login"))
+    proj = _project(project_id)
+    return render_template(
+        "lanmatrix/ut_pipeline.html", user=user.to_dict(), project_id=project_id,
+        project=proj.to_dict() if proj else None)
 
 
 @pages_bp.get("/projects/<int:project_id>/settings")

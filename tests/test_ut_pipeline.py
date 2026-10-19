@@ -1,0 +1,308 @@
+"""Unit-test pipeline (実施一覧 → generate → WinAMS → check → LLM repair → review).
+
+ut-agent is replaced by a scripted bridge so the platform-side state machine
+is exercised end to end over HTTP; the real bridge contract is tested in the
+ut-agent repository.  Huey runs in immediate mode, so each request drives the
+affected job to its next human gate before returning.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from app.services.ai import provider  # noqa: E402
+from app.services.ut_pipeline import pipeline  # noqa: E402
+from app.services.ut_pipeline.bridge import BridgeError  # noqa: E402
+
+GOOD = b'mod,"a.c/f","f",1,1\r\n#COMMENT,x,ret\r\n,0,1\r\n'
+BAD = b'mod,"a.c/f","f",1,1\r\n#COMMENT,x,ret\r\n,0,BAD\r\n'
+
+
+class FakeBridge:
+    """Scripted ut-agent: a CSV containing BAD fails execution, others pass."""
+
+    def __init__(self, tmp: Path, *, generated=GOOD, execution_status="EXECUTED",
+                 generate_error=None):
+        self.tmp = tmp
+        self.generated = generated
+        self.execution_status = execution_status
+        self.generate_error = generate_error
+        self.executions = 0
+
+    def index(self, manifest, index_csv, product_root):
+        return [
+            {"row": 1, "callcnt": 1, "source_name": "a.c", "function": "f",
+             "source_rel": "src/a.c", "unit_rel": "WinAMS/src/a.c/f"},
+            {"row": 2, "callcnt": 2, "source_name": "a.c", "function": "g",
+             "source_rel": "src/a.c", "unit_rel": "WinAMS/src/a.c/g"},
+        ]
+
+    def constraints(self, manifest):
+        return {"baseline": {"id": "psd-rebuild", "version": "1.1"},
+                "rules": [{"rule_id": "psd.4.compare", "meaning": "境界值"}],
+                "revision_rules": ["列不得改动"], "coverage_policy": {"c1": True}}
+
+    def generate(self, manifest, index_csv, product_root, out, functions):
+        if self.generate_error:
+            raise BridgeError(self.generate_error)
+        out.mkdir(parents=True, exist_ok=True)
+        units = []
+        for name in functions:
+            unit = {"function": name, "status": "VALIDATED", "testcsv": None, "error": None}
+            if self.generated is not None:
+                path = out / f"{name}.csv"
+                path.write_bytes(self.generated)
+                unit["testcsv"] = str(path)
+            else:
+                unit.update(status="UNSUPPORTED", error="loop construct")
+            units.append(unit)
+        return {"ok": True, "provenance": {"baseline_ref": "psd-rebuild@1.1"}, "units": units}
+
+    def execute(self, unit_dir, candidate, out):
+        self.executions += 1
+        out.mkdir(parents=True)
+        evidence = {"status": self.execution_status, "unit_dir": str(unit_dir)}
+        if self.execution_status == "BLOCKED":
+            evidence["blocked_reasons"] = [{"code": "ASSET_MISSING", "path": "AMS_Setting"}]
+        (out / "execution.json").write_text(json.dumps(evidence), encoding="utf-8")
+        return evidence
+
+    def check(self, candidate, *, manifest, reference=None, previous=None, execution=None):
+        if execution is None:
+            return {"verdict": "FORMAT_OK", "issues": []}
+        evidence = json.loads(Path(execution).read_text(encoding="utf-8"))
+        if evidence["status"] == "BLOCKED":
+            return {"verdict": "BLOCKED", "issues": [{
+                "code": "EXECUTION_BLOCKED", "severity": "error", "repairable": False,
+                "message": "env", "detail": evidence["blocked_reasons"]}]}
+        if b"BAD" in Path(candidate).read_bytes():
+            return {"verdict": "FAIL", "issues": [{
+                "code": "ORACLE_MISMATCH", "severity": "error", "repairable": True,
+                "message": "1 mismatch", "detail": [{"row": 0, "column": "ret"}]}]}
+        return {"verdict": "PASS", "issues": []}
+
+
+def _llm_reply(csv_bytes):
+    text = None if csv_bytes is None else csv_bytes.decode("cp932")
+    return json.dumps({"csv": text, "rationale": "fix", "changes": []})
+
+
+@pytest.fixture()
+def env(app_ctx, monkeypatch, tmp_path):
+    from app.jobqueue import tasks
+
+    monkeypatch.setattr(tasks, "_worker_app", app_ctx)
+    with app_ctx.app_context():
+        from app.extensions import db
+        from app.models import LMUser
+        from app.services.ai import config as ai_config
+        from app.services.lanmatrix import projects_service
+
+        admin = LMUser.query.filter_by(is_system_admin=True).first()
+        project = projects_service.create_project(admin, code="UTP", name="UT 流水线")
+        db.session.commit()
+        ai_config.update_ai_config({"ai_api_base": "http://127.0.0.1:9/v1",
+                                    "ai_api_key": "local", "ai_model": "qwen3.8-27b-gsq"})
+        pid, uid = project.id, admin.id
+    client = app_ctx.test_client()
+    with client.session_transaction() as sess:
+        sess["lm_user_id"] = uid
+        sess["csrf_token"] = "t"
+    bridge = FakeBridge(tmp_path)
+    monkeypatch.setattr(pipeline, "get_bridge", lambda: bridge)
+
+    class Env:
+        pass
+
+    e = Env()
+    e.client, e.pid, e.bridge, e.headers = client, pid, bridge, {"X-CSRF-Token": "t"}
+    e.base = f"/api/v1/projects/{pid}/ut"
+
+    def call(method, path, **kwargs):
+        resp = getattr(client, method)(e.base + path, headers=e.headers, **kwargs)
+        return resp.status_code, resp.get_json()
+
+    e.call = call
+    return e
+
+
+def _configure(env, rounds=5):
+    status, body = env.call("put", "/config", json={
+        "manifest_path": "m.json", "index_csv": "i.csv", "product_root": "P",
+        "work_root": "W", "max_repair_rounds": rounds, "repair_model": "qwen3.8-27b-gsq"})
+    assert status == 200, body
+    status, body = env.call("post", "/targets/import")
+    assert status == 200 and body["data"] == {"total": 2, "added": 2, "removed": 0}
+    _, body = env.call("get", "/targets")
+    return {t["function"]: t["id"] for t in body["data"]}
+
+
+def _enqueue(env, *target_ids):
+    status, body = env.call("post", "/batches", json={"target_ids": list(target_ids)})
+    assert status == 202, body
+    _, jobs = env.call("get", "/jobs", query_string={"batch_id": body["data"]["id"]})
+    return [job["id"] for job in jobs["data"]]
+
+
+def _job(env, job_id):
+    status, body = env.call("get", f"/jobs/{job_id}")
+    assert status == 200, body
+    return body["data"]
+
+
+def test_queue_requires_binding(env):
+    status, body = env.call("post", "/batches", json={"target_ids": [1]})
+    assert status == 400 and body["error"]["code"] == "UT_NOT_CONFIGURED"
+
+
+def test_page_shell_renders(env):
+    resp = env.client.get(f"/lanmatrix/projects/{env.pid}/ut")
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "実施一覧" in html and "js/lanmatrix/ut_pipeline.js" in html
+
+
+def test_passing_generation_waits_for_review_then_approves(env):
+    targets = _configure(env)
+    [job_id] = _enqueue(env, targets["f"])
+    job = _job(env, job_id)
+    assert job["state"] == "awaiting_review"
+    assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [("GENERATOR", "PASS")]
+    assert job["batch"]["status"] == "done"
+    assert job["batch"]["provenance"] == {"baseline_ref": "psd-rebuild@1.1"}
+
+    _, targets_after = env.call("get", "/targets")
+    latest = {t["function"]: t["latest_job"] for t in targets_after["data"]}
+    assert latest["f"]["state"] == "awaiting_review" and latest["g"] is None
+
+    status, body = env.call("post", f"/jobs/{job_id}/review", json={"decision": "approve"})
+    assert status == 200 and body["data"]["state"] == "approved"
+    status, body = env.call("post", f"/jobs/{job_id}/review", json={"decision": "reject",
+                                                                     "note": "late"})
+    assert status == 400 and body["error"]["code"] == "INVALID_STATE"
+
+
+def test_llm_repairs_a_failing_candidate(env, monkeypatch):
+    targets = _configure(env)
+    env.bridge.generated = BAD
+    seen = []
+
+    def fake_chat(messages, **kwargs):
+        seen.append((messages, kwargs))
+        return _llm_reply(GOOD)
+
+    monkeypatch.setattr(provider, "chat", fake_chat)
+    [job_id] = _enqueue(env, targets["f"])
+    job = _job(env, job_id)
+    assert job["state"] == "awaiting_review" and job["repair_rounds"] == 1
+    assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [
+        ("GENERATOR", "FAIL"), ("LLM", "PASS")]
+    reviser = job["attempts"][1]["reviser"]
+    assert reviser["model"] == "qwen3.8-27b-gsq" and len(reviser["prompt_sha256"]) == 64
+    messages, kwargs = seen[0]
+    assert kwargs["model"] == "qwen3.8-27b-gsq"
+    assert "psd.4.compare" in messages[0]["content"] and "列不得改动" in messages[0]["content"]
+    assert "ORACLE_MISMATCH" in messages[1]["content"]
+
+    status, body = env.call(
+        "get", f"/jobs/{job_id}/attempts/{job['attempts'][1]['id']}/csv",
+        query_string={"format": "text"})
+    assert status == 200 and body["data"]["text"] == GOOD.decode("cp932")
+
+
+def test_exhausted_rounds_hand_over_to_a_human(env, monkeypatch):
+    targets = _configure(env, rounds=2)
+    env.bridge.generated = BAD
+    replies = [_llm_reply(BAD), _llm_reply(None)]
+    monkeypatch.setattr(provider, "chat", lambda *a, **k: replies.pop(0))
+    [job_id] = _enqueue(env, targets["f"])
+    job = _job(env, job_id)
+    assert job["state"] == "needs_human" and job["repair_rounds"] == 2
+    assert "上限 2" in job["reason"]
+    assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [
+        ("GENERATOR", "FAIL"), ("LLM", "FAIL"), ("LLM", "INVALID")]
+
+    status, body = env.call("post", f"/jobs/{job_id}/review", json={"decision": "approve"})
+    assert status == 400 and body["error"]["code"] == "VALIDATION_ERROR"
+
+    # A failing human revision returns to the human instead of the model.
+    status, _ = env.call("post", f"/jobs/{job_id}/revision",
+                         json={"csv": BAD.decode("cp932"), "note": "try"})
+    assert status == 202
+    assert _job(env, job_id)["state"] == "needs_human"
+    status, _ = env.call("post", f"/jobs/{job_id}/revision",
+                         json={"csv": GOOD.decode("cp932").replace("\r\n", "\n")})
+    job = _job(env, job_id)
+    assert job["state"] == "awaiting_review"
+    assert job["attempts"][-1]["origin"] == "HUMAN"
+    status, body = env.call("post", f"/jobs/{job_id}/review", json={"decision": "reject"})
+    assert status == 400
+    status, body = env.call("post", f"/jobs/{job_id}/review",
+                            json={"decision": "reject", "note": "期望值来源不明"})
+    assert body["data"]["state"] == "rejected"
+
+
+def test_blocked_environment_does_not_consume_rounds(env, monkeypatch):
+    targets = _configure(env)
+    env.bridge.execution_status = "BLOCKED"
+    monkeypatch.setattr(provider, "chat", lambda *a, **k: pytest.fail("LLM must not run"))
+    [job_id] = _enqueue(env, targets["f"])
+    job = _job(env, job_id)
+    assert job["state"] == "blocked" and job["repair_rounds"] == 0
+    assert "ASSET_MISSING" in job["reason"]
+
+    env.bridge.execution_status = "EXECUTED"
+    status, _ = env.call("post", f"/jobs/{job_id}/retry")
+    assert status == 202
+    assert _job(env, job_id)["state"] == "awaiting_review"
+    assert env.bridge.executions == 2
+
+
+def test_unreachable_model_is_an_error_and_retry_resumes_repair(env, monkeypatch):
+    targets = _configure(env)
+    env.bridge.generated = BAD
+
+    def down(*args, **kwargs):
+        raise provider.ProviderError("connection refused")
+
+    monkeypatch.setattr(provider, "chat", down)
+    [job_id] = _enqueue(env, targets["f"])
+    job = _job(env, job_id)
+    assert job["state"] == "error" and job["repair_rounds"] == 0
+
+    monkeypatch.setattr(provider, "chat", lambda *a, **k: _llm_reply(GOOD))
+    env.call("post", f"/jobs/{job_id}/retry")
+    job = _job(env, job_id)
+    assert job["state"] == "awaiting_review" and job["repair_rounds"] == 1
+
+
+def test_generation_outcomes_reach_a_human(env):
+    targets = _configure(env)
+    env.bridge.generated = None
+    [job_id] = _enqueue(env, targets["g"])
+    job = _job(env, job_id)
+    assert job["state"] == "needs_human" and job["generation_status"] == "UNSUPPORTED"
+    assert "loop construct" in job["reason"]
+
+    env.bridge.generate_error = "extractor crashed"
+    [job_id] = _enqueue(env, targets["f"])
+    job = _job(env, job_id)
+    assert job["state"] == "error" and job["batch"]["status"] == "failed"
+    status, body = env.call("post", f"/jobs/{job_id}/retry")
+    assert status == 400 and body["error"]["code"] == "INVALID_STATE"
+
+
+def test_next_state_is_pure_and_total():
+    fail = {"verdict": "FAIL", "issues": [{"code": "X", "severity": "error"}]}
+    assert pipeline.next_state(fail, "LLM", 0, 5)[0] == "repairing"
+    assert pipeline.next_state(fail, "GENERATOR", 0, 0)[0] == "needs_human"
+    assert pipeline.next_state(fail, "HUMAN", 0, 5)[0] == "needs_human"
+    blocked = {"verdict": "BLOCKED", "issues": [
+        {"code": "COVERAGE_UNAVAILABLE", "severity": "error"}]}
+    assert pipeline.next_state(blocked, "LLM", 0, 5)[0] == "needs_human"

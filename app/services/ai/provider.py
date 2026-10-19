@@ -15,6 +15,7 @@ import json
 import re
 import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Iterator, Optional
@@ -64,11 +65,15 @@ def chat(messages: list[dict[str, str]], *,
          max_tokens: int = 4096,
          json_mode: bool = True,
          timeout: Optional[int] = None,
-         usage: Optional[dict[str, int]] = None) -> str:
+         usage: Optional[dict[str, int]] = None,
+         model: Optional[str] = None) -> str:
     """Call the configured model once and return the assistant text.
 
     ``temperature`` defaults low: test-case generation wants determinism and
     consistency across projects, not creativity.
+
+    ``model`` overrides the configured model name on the same gateway (e.g. a
+    project that repairs with a specific local model).
 
     ``usage`` is an optional out-parameter: when a dict is passed, the
     gateway-reported token counts are written into it as
@@ -82,7 +87,7 @@ def chat(messages: list[dict[str, str]], *,
         raise ProviderError("AI 未配置：请先在系统设置中填写 api_base / api_key / model")
     url = cfg[config.KEY_API_BASE].rstrip("/") + "/chat/completions"
     body: dict[str, Any] = {
-        "model": cfg[config.KEY_MODEL],
+        "model": model or cfg[config.KEY_MODEL],
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
@@ -99,8 +104,21 @@ def chat(messages: list[dict[str, str]], *,
         },
         method="POST",
     )
+    hostname = (urlparse(url).hostname or "").lower()
+    is_local = (
+        hostname in ("127.0.0.1", "localhost", "::1")
+        or hostname.startswith("10.")
+        or hostname.startswith("192.168.")
+        or (hostname.startswith("172.") and len(hostname.split(".")) > 1
+            and hostname.split(".")[1].isdigit() and 16 <= int(hostname.split(".")[1]) <= 31)
+    )
+    opener = (
+        urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        if is_local
+        else urllib.request.build_opener()
+    )
     try:
-        with urllib.request.urlopen(
+        with opener.open(
                 req, timeout=timeout or cfg[config.KEY_TIMEOUT]) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:

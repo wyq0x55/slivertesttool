@@ -24,6 +24,7 @@ from .setting import Setting
 from .run_evidence import RunEvidence
 from .task import Task, TaskStatus
 from .task_event import EventType, TaskEvent
+from .ut_pipeline import UtAttempt, UtBatch, UtJob, UtPipelineConfig, UtTarget
 
 __all__ = [
     "Setting",
@@ -50,4 +51,10 @@ __all__ = [
     "DataJob",
     "CollabDoc",
     "CollabPresence",
+    # Unit-test pipeline (ut-agent + WinAMS + local LLM repair).
+    "UtPipelineConfig",
+    "UtTarget",
+    "UtBatch",
+    "UtJob",
+    "UtAttempt",
 ]

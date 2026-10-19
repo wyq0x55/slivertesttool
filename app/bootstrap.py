@@ -104,6 +104,7 @@ def _migrate_schema() -> None:
             "sil_model_id": "INTEGER",
         },
         "lm_projects": {
+            "project_type": "VARCHAR(32) NOT NULL DEFAULT 'silver'",
             "tm_id_prefix": "VARCHAR(64)",
             "tm_summary_sheet": "VARCHAR(120)",
             # Which verdicts require reviewer sign-off (per-project policy).

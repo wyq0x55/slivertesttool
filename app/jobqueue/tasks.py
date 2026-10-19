@@ -446,3 +446,8 @@ def _mark_cancelled(db, task) -> None:
         task.message = "Cancelled by user."
         task.finished_at = _utcnow()
         db.session.commit()
+
+
+# Registers the unit-test pipeline tasks with the same Huey instance so the
+# worker (which imports only this module) consumes them as well.
+from . import ut_tasks  # noqa: E402,F401
