@@ -397,6 +397,9 @@
         { body: { target_ids: targetIds, label: label || "" } });
     },
     utBatches(pid) { return request("GET", `/projects/${pid}/ut/batches`); },
+    utJobs(pid, query) {
+      return request("GET", `/projects/${pid}/ut/jobs`, { query: query || {} });
+    },
     utJob(pid, jobId) { return request("GET", `/projects/${pid}/ut/jobs/${jobId}`); },
     utAttemptText(pid, jobId, attemptId) {
       return request("GET", `/projects/${pid}/ut/jobs/${jobId}/attempts/${attemptId}/csv`,
@@ -409,9 +412,9 @@
       return request("POST", `/projects/${pid}/ut/jobs/${jobId}/revision`,
         { body: { csv: csv, note: note || "" } });
     },
-    utReview(pid, jobId, decision, note) {
+    utReview(pid, jobId, decision, note, expectedAttemptId) {
       return request("POST", `/projects/${pid}/ut/jobs/${jobId}/review`,
-        { body: { decision: decision, note: note || "" } });
+        { body: { decision: decision, note: note || "", expected_attempt_id: expectedAttemptId } });
     },
     utRetry(pid, jobId) {
       return request("POST", `/projects/${pid}/ut/jobs/${jobId}/retry`, { body: {} });

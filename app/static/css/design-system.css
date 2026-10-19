@@ -322,6 +322,11 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .card-top{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:14px; }
 .code-chip{ font-size:11px; font-weight:600; letter-spacing:.03em; color:var(--brand); background:var(--brand-soft);
   padding:3px 8px; border-radius:6px; font-variant-numeric:tabular-nums; font-family:var(--mono); }
+.card-tags{ display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap; }
+/* Project type tag. Both types get one, in the same shape; only the hue differs. */
+.ptype{ font-size:11px; font-weight:600; padding:2px 8px; border-radius:999px;
+  border:1px solid var(--border); background:var(--surface-2); color:var(--text-2); }
+.ptype-ut{ background:var(--run-soft); color:var(--run); border-color:transparent; }
 .card h3{ font-size:15.5px; font-weight:600; letter-spacing:-0.015em; margin-bottom:5px; line-height:1.3; }
 .card h3 a{ color:var(--text); } .card h3 a:hover{ color:var(--brand); }
 .card .desc{ font-size:13px; color:var(--text-3); line-height:1.5; display:-webkit-box; -webkit-line-clamp:2;
@@ -1281,4 +1286,19 @@ textarea.lmui-input{ resize:vertical; min-height:76px; }
 }
 .lm-banner-warn{
   background:var(--warn-soft); color:var(--warn); border-color:transparent;
+}
+
+/* Shared narrow-screen page chrome, including both execution backends. */
+@media (max-width:720px){
+  .page-head,.lm-page-head{ flex-direction:column; align-items:stretch; gap:16px; }
+  .page-head h1,.lm-page-head h1{ overflow-wrap:anywhere; }
+  .head-actions{ margin-left:0; justify-content:flex-end; flex-wrap:wrap; }
+  .topbar{ padding:0 12px; gap:8px; }
+  .topbar .iconbtn{ flex-shrink:0; }
+  .topbar .crumb{ flex:1; overflow:hidden; white-space:nowrap; }
+  .topbar .crumb > a{ min-width:0; overflow:hidden; text-overflow:ellipsis; }
+  .topbar .crumb > a:not(#lm-crumb-project),.topbar .crumb .sep{ display:none; }
+  .topbar .crumb b{ flex-shrink:0; max-width:100px; overflow:hidden; text-overflow:ellipsis; }
+  .topbar > .spacer{ display:none; }
+  .lm-settings-tabs{ overflow-x:auto; white-space:nowrap; }
 }

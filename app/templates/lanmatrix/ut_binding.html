@@ -1,0 +1,57 @@
+{% extends "lanmatrix/base_lm.html" %}
+{% from "lanmatrix/_crumb.html" import project_crumb %}
+{% from "lanmatrix/_settings_tabs.html" import settings_tabs with context %}
+{% block styles %}<link rel="stylesheet" href="{{ url_for('static', filename='css/lanmatrix-ut.css') }}">{% endblock %}
+{% block title %}项目绑定{% endblock %}
+{% block crumb %}{{ project_crumb(project_id, "项目绑定", "设置") }}{% endblock %}
+{% block content %}
+<div class="content lm-ut-binding" data-project="{{ project_id }}">
+  {{ settings_tabs(project_id, "binding") }}
+  <div class="page-head">
+    <div class="ttl">
+      <h1>项目绑定</h1>
+      <p>ut-agent 项目清单、函数索引与 WinAMS 工作目录。入队时冻结当时的绑定，之后修改只影响新批次。</p>
+    </div>
+    <div class="head-actions">
+      <button class="btn primary" id="ut-config-save" type="button"{% if not project_capabilities.configure %} hidden{% endif %}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+        保存绑定
+      </button>
+    </div>
+  </div>
+  <p id="ut-status" class="muted" role="status" aria-live="polite"></p>
+
+  <div class="ut-form-grid">
+    <section class="panel">
+      <h4>ut-agent</h4>
+      <div class="field"><label for="ut-c-manifest_path">ProjectManifest</label>
+        <input id="ut-c-manifest_path" autocomplete="off" placeholder="…\ut-agent\config\projects\&lt;项目&gt;.json">
+        <p class="ut-hint">ut-agent 的项目清单，决定基准、规则包与 WinAMS Profile。</p></div>
+      <div class="field"><label for="ut-c-index_csv">函数索引 CSV</label>
+        <input id="ut-c-index_csv" autocomplete="off" placeholder="…\HOYU\&lt;项目&gt;.csv">
+        <p class="ut-hint">实施一览从这里读取待测函数。</p></div>
+    </section>
+    <section class="panel">
+      <h4>WinAMS</h4>
+      <div class="field"><label for="ut-c-product_root">Product / Soft 根目录</label>
+        <input id="ut-c-product_root" autocomplete="off"></div>
+      <div class="field"><label for="ut-c-work_root">WinAMS 工作根</label>
+        <input id="ut-c-work_root" autocomplete="off">
+        <p class="ut-hint">包含索引第 5 列所指 WinAMS 单元树的目录。</p></div>
+    </section>
+    <section class="panel">
+      <h4>本地模型修正</h4>
+      <div class="field"><label for="ut-c-max_repair_rounds">修正上限（次）</label>
+        <input id="ut-c-max_repair_rounds" type="number" min="0" max="20" step="1">
+        <p class="ut-hint">达到上限仍未通过时转人工处理。</p></div>
+      <div class="field"><label for="ut-c-repair_model">修正模型</label>
+        <input id="ut-c-repair_model" autocomplete="off" placeholder="留空使用 AI 设置中的模型">
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/lanmatrix/ut_common.js') }}"></script>
+<script src="{{ url_for('static', filename='js/lanmatrix/ut_binding.js') }}"></script>
+{% endblock %}

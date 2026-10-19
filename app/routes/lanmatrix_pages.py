@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 
-from flask import (Blueprint, current_app, redirect, render_template, request,
+from flask import (Blueprint, current_app, g, redirect, render_template, request,
                    session, url_for)
 
 from ..services.lanmatrix import permissions, service, settings
@@ -24,16 +24,52 @@ def _current_user():
     uid = session.get("lm_user_id")
     if uid is None:
         return None
-    user = service.get_user(uid)
+    if not hasattr(g, "_page_user"):
+        g._page_user = service.get_user(uid)
+    user = g._page_user
     return user if (user and user.is_active) else None
 
 
 def _project(project_id: int):
-    try:
+    if not hasattr(g, "_page_projects"):
+        g._page_projects = {}
+    if project_id not in g._page_projects:
         p = service.get_project(project_id)
-        return p if (p and p.deleted_at is None) else None
-    except Exception:
-        return None
+        g._page_projects[project_id] = p if (p and p.deleted_at is None) else None
+    return g._page_projects[project_id]
+
+
+def _is_ut(proj) -> bool:
+    return bool(proj) and proj.project_type == "unit_test"
+
+
+@pages_bp.context_processor
+def _inject_project():
+    """Give every project-scoped page its project.
+
+    The sidebar and the settings tab strip are shared by both project types and
+    differ only in a few entries, so they need ``project.project_type`` on every
+    page. Most routes used to pass only ``project_id``; the settings pages then
+    fell back to the Silver navigation even inside a unit-test project.
+    Explicit ``render_template`` arguments still take precedence.
+    """
+    project_id = (request.view_args or {}).get("project_id")
+    if not project_id:
+        return {}
+    proj = _project(project_id)
+    user = _current_user()
+    role = service.role_in_project(project_id, user) if proj and user else None
+    capabilities = {
+        key: permissions.can(capability, role, is_system_admin=bool(user and user.is_system_admin))
+        for key, capability in (
+            ("view", "project.view"), ("configure", "project.edit"),
+            ("edit", "item.edit"), ("review", "item.review"),
+        )
+    }
+    return {
+        "project": proj.to_dict() if proj else None,
+        "project_capabilities": capabilities,
+    }
 
 
 @pages_bp.get("/login")
@@ -159,7 +195,7 @@ def editor(project_id: int):
     if user is None:
         return redirect(url_for("lanmatrix_pages.login"))
     proj = _project(project_id)
-    if proj and proj.project_type == "unit_test":
+    if _is_ut(proj):
         return redirect(url_for("lanmatrix_pages.ut_pipeline", project_id=project_id))
     return render_template(
         "lanmatrix/editor.html", user=user.to_dict(), project_id=project_id,
@@ -188,8 +224,6 @@ def project_dashboard(project_id: int):
     if user is None:
         return redirect(url_for("lanmatrix_pages.login"))
     proj = _project(project_id)
-    if proj and proj.project_type == "unit_test":
-        return redirect(url_for("lanmatrix_pages.ut_pipeline", project_id=project_id))
     return render_template(
         "lanmatrix/dashboard.html", user=user.to_dict(),
         project_id=project_id,
@@ -204,6 +238,8 @@ def ai_drafts(project_id: int):
     if user is None:
         return redirect(url_for("lanmatrix_pages.login"))
     proj = _project(project_id)
+    if _is_ut(proj):
+        return redirect(url_for("lanmatrix_pages.ut_pipeline", project_id=project_id))
     return render_template(
         "lanmatrix/ai_drafts.html", user=user.to_dict(), project_id=project_id,
         project=proj.to_dict() if proj else None)
@@ -211,14 +247,21 @@ def ai_drafts(project_id: int):
 
 @pages_bp.get("/projects/<int:project_id>/tasks")
 def project_tasks(project_id: int):
-    """Per-project Upload Tasks page (test execution). Members only; the API
-    enforces membership, the page is a thin shell."""
+    """Per-project 任务与运行 page. Members only; the API enforces membership,
+    the page is a thin shell.
+
+    Both project types share this destination; only the run model differs:
+    Silver runs uploaded test ids on a .sil model, a unit-test project runs
+    ut-agent → WinAMS jobs that end at a human review gate.
+    """
     user = _current_user()
     if user is None:
         return redirect(url_for("lanmatrix_pages.login"))
     proj = _project(project_id)
-    if proj and proj.project_type == "unit_test":
-        return redirect(url_for("lanmatrix_pages.ut_pipeline", project_id=project_id))
+    if _is_ut(proj):
+        return render_template(
+            "lanmatrix/ut_tasks.html", user=user.to_dict(),
+            project_id=project_id, project=proj.to_dict())
     return render_template(
         "lanmatrix/project_tasks.html", user=user.to_dict(),
         project_id=project_id,
@@ -228,12 +271,15 @@ def project_tasks(project_id: int):
 
 @pages_bp.get("/projects/<int:project_id>/ut")
 def ut_pipeline(project_id: int):
-    """単体テスト pipeline shell: 実施一覧, queue, repair history and review.
-    The API enforces project capabilities; the page is a thin shell."""
+    """实施一览 of a unit-test project: the functions to test, read from the
+    project index, and the entry point for queueing them. Plays the role the
+    测试矩阵 plays for a Silver project."""
     user = _current_user()
     if user is None:
         return redirect(url_for("lanmatrix_pages.login"))
     proj = _project(project_id)
+    if proj and not _is_ut(proj):
+        return redirect(url_for("lanmatrix_pages.editor", project_id=project_id))
     return render_template(
         "lanmatrix/ut_pipeline.html", user=user.to_dict(), project_id=project_id,
         project=proj.to_dict() if proj else None)
@@ -251,7 +297,23 @@ def project_settings(project_id: int):
     user = _current_user()
     if user is None:
         return redirect(url_for("lanmatrix_pages.login"))
+    if _is_ut(_project(project_id)):
+        return redirect(url_for("lanmatrix_pages.ut_binding", project_id=project_id))
     return redirect(url_for("lanmatrix_pages.fields", project_id=project_id))
+
+
+@pages_bp.get("/projects/<int:project_id>/settings/binding")
+def ut_binding(project_id: int):
+    """项目绑定 tab of a unit-test project: the ut-agent manifest, index CSV,
+    Product and WinAMS roots and the model-repair limit. Takes the slot that
+    字段配置 / 模型管理 hold for a Silver project."""
+    user = _current_user()
+    if user is None:
+        return redirect(url_for("lanmatrix_pages.login"))
+    if not _is_ut(_project(project_id)):
+        return redirect(url_for("lanmatrix_pages.fields", project_id=project_id))
+    return render_template(
+        "lanmatrix/ut_binding.html", user=user.to_dict(), project_id=project_id)
 
 
 @pages_bp.get("/projects/<int:project_id>/members")
@@ -268,6 +330,8 @@ def fields(project_id: int):
     user = _current_user()
     if user is None:
         return redirect(url_for("lanmatrix_pages.login"))
+    if _is_ut(_project(project_id)):
+        return redirect(url_for("lanmatrix_pages.ut_binding", project_id=project_id))
     return render_template(
         "lanmatrix/fields.html", user=user.to_dict(), project_id=project_id)
 
@@ -277,6 +341,8 @@ def models_page(project_id: int):
     user = _current_user()
     if user is None:
         return redirect(url_for("lanmatrix_pages.login"))
+    if _is_ut(_project(project_id)):
+        return redirect(url_for("lanmatrix_pages.ut_binding", project_id=project_id))
     return render_template(
         "lanmatrix/models.html", user=user.to_dict(), project_id=project_id)
 

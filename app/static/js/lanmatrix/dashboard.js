@@ -27,6 +27,7 @@
   if (!root) return;
 
   const projectId = root.dataset.project;
+  const isUt = root.dataset.projectType === "unit_test";
   const charts = {};
   let snapshot = null;
 
@@ -46,7 +47,7 @@
 
   function renderKpis(s, review) {
     setKpi("total", s.total);
-    setKpi("planned", s.planned);
+    setKpi("planned", isUt ? s.not_run : s.planned);
     setKpi("executed", s.executed);
     setKpi("passed", s.passed);
     setKpi("failed_errored", s.failed + s.errored);
@@ -59,8 +60,9 @@
       s.exempt_pending ? `${s.exempt_pending} 待审批（仍计入要实施）` : "");
     // Percentages are shown against the in-scope total, so state the
     // denominator rather than leaving a bare "72%".
-    setKpi("executed_pct", s.planned ? `${s.executed_pct}% / 要实施` : "");
-    setKpi("passed_pct", s.planned ? `${s.passed_pct}% / 要实施` : "");
+    const denominator = isUt ? "当前索引" : "要实施";
+    setKpi("executed_pct", s.planned ? `${s.executed_pct}% / ${denominator}` : "");
+    setKpi("passed_pct", s.planned ? `${s.passed_pct}% / ${denominator}` : "");
   }
 
   /* Build a chart in `elId`, tracking the handle and re-binding it when the
@@ -83,7 +85,12 @@
   function progressOption(p) {
     const s = snapshot.summary;
     // Ordered worst-to-best around the ring so the eye lands on the gap first.
-    const data = [
+    const data = isUt ? Object.entries(snapshot.ut_states).map(([state, value]) => ({
+      name: state === "none" ? "未入队" : (LMUt.STATE[state] || [0, state])[1],
+      value: value,
+      itemStyle: { color: state === "approved" ? p.ok : LMUt.GATES[state] ? p.warn
+        : LMUt.ACTIVE[state] ? p.brand : p.muted },
+    })) : [
       { name: "通过", value: s.passed, itemStyle: { color: p.ok } },
       { name: "失败", value: s.failed, itemStyle: { color: p.danger } },
       { name: "错误", value: s.errored, itemStyle: { color: p.warn } },
@@ -117,7 +124,7 @@
           show: true,
           position: "center",
           // The ring's centre carries the headline the page exists to deliver.
-          formatter: () => `{a|${s.executed_pct}%}\n{b|已实施}`,
+          formatter: () => `{a|${s.executed_pct}%}\n{b|${isUt ? "已入队" : "已实施"}}`,
           rich: {
             a: { fontSize: 26, fontWeight: 600, color: p.text },
             b: { fontSize: 12, color: p.muted, padding: [4, 0, 0, 0] },
@@ -237,7 +244,8 @@
     const btn = $("lm-dash-refresh");
     if (btn) btn.disabled = true;
     try {
-      snapshot = await LMApi.projectDashboard(projectId);
+      snapshot = isUt ? LMUt.dashboardSnapshot(await LMApi.utTargets(projectId))
+        : await LMApi.projectDashboard(projectId);
       const err = $("lm-dash-err");
       if (err) err.hidden = true;
 

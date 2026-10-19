@@ -32,7 +32,7 @@ from ...extensions import db
 from ...models import UtAttempt, UtBatch, UtJob, UtPipelineConfig, UtTarget
 from ...models.lanmatrix import _utcnow
 from ..ai.provider import ProviderError
-from ..lanmatrix.errors import ServiceError
+from ..lanmatrix.errors import ServiceError, VersionConflict
 from . import repair
 from .bridge import BridgeError, BridgeSettings, UtAgentBridge
 
@@ -40,6 +40,7 @@ from .bridge import BridgeError, BridgeSettings, UtAgentBridge
 # extraction are serialised; checks and LLM revisions stay concurrent.
 _WINAMS_GATE = threading.Lock()
 _GENERATION_GATE = threading.Lock()
+_EXPECTED_ATTEMPT_UNSET = object()
 
 _CONFIG_TEXT_FIELDS = ("manifest_path", "index_csv", "product_root", "work_root", "repair_model")
 _REQUIRED_FIELDS = ("manifest_path", "index_csv", "product_root", "work_root")
@@ -459,11 +460,17 @@ def submit_revision(project_id: int, job_id: int, csv_bytes: bytes, user_id: int
     return job
 
 
-def review(project_id: int, job_id: int, decision: str, user_id: int, note: str = "") -> UtJob:
+def review(project_id: int, job_id: int, decision: str, user_id: int, note: str = "",
+           *, expected_attempt_id: Any = _EXPECTED_ATTEMPT_UNSET) -> UtJob:
     note = (note or "").strip()
     if decision not in ("approve", "reject"):
         raise ServiceError("decision 必须是 approve 或 reject", code="VALIDATION_ERROR")
     job = _locked_job(project_id, job_id)
+    # Omission preserves the existing API contract. Explicit null means the
+    # caller saw no candidate and must not sign off a subsequently created one.
+    if (expected_attempt_id is not _EXPECTED_ATTEMPT_UNSET
+            and expected_attempt_id != job.current_attempt_id):
+        raise VersionConflict(expected_attempt_id or 0, job.current_attempt_id or 0, job.to_dict())
     if decision == "approve":
         if job.current_attempt_id is None:
             raise ServiceError("没有可通过的候选 CSV", code="INVALID_STATE")

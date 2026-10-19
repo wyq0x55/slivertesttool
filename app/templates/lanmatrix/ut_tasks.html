@@ -1,0 +1,154 @@
+{% extends "lanmatrix/base_lm.html" %}
+{% from "lanmatrix/_crumb.html" import project_crumb %}
+{% from "lanmatrix/_ut_filters.html" import ut_filters %}
+{% block styles %}<link rel="stylesheet" href="{{ url_for('static', filename='css/lanmatrix-ut.css') }}">{% endblock %}
+{% block title %}任务/运行{% endblock %}
+{% block crumb %}{{ project_crumb(project_id, "任务 / 运行") }}{% endblock %}
+{% block content %}
+<div class="content lm-ut-tasks" data-project="{{ project_id }}">
+  <div class="page-head">
+    <div class="ttl">
+      <h1>任务/运行</h1>
+      <p>单元测试作业：生成、WinAMS 执行、校验、本地模型修正，最终停在人工审核</p>
+    </div>
+    <div class="head-actions">
+      <button class="btn" id="ut-refresh" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/></svg>
+        刷新
+      </button>
+      <a class="btn primary" href="/lanmatrix/projects/{{ project_id }}/ut"{% if not project_capabilities.edit %} hidden{% endif %}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        从实施一览入队
+      </a>
+    </div>
+  </div>
+  <p id="ut-status" role="status" aria-live="polite"></p>
+
+  <div class="toolbar">
+    <div class="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>
+      <input type="search" id="ut-q" placeholder="搜索函数 / 源文件…" autocomplete="off">
+    </div>
+    <select id="ut-batch" class="selbox" title="按批次筛选"><option value="">全部批次</option></select>
+    {{ ut_filters(show_rejected=true) }}
+  </div>
+
+  <div class="tablecard">
+    <div style="overflow-x:auto">
+      <table class="dt ut-table">
+        <thead>
+          <tr>
+            <th>作业</th>
+            <th>函数</th>
+            <th>源文件</th>
+            <th>批次</th>
+            <th>状态</th>
+            <th>机器判定</th>
+            <th>模型修正</th>
+            <th>更新时间</th>
+            <th style="width:1%"></th>
+          </tr>
+        </thead>
+        <tbody id="ut-rows"><tr><td colspan="9" class="muted">加载中…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<section id="ut-detail" class="task-detail" hidden>
+  <div class="page-head">
+    <div class="ttl">
+      <button class="btn small ghost lm-d-back" id="ut-d-close" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+        返回列表
+      </button>
+      <div class="dtitle">
+        <h1 id="ut-d-title">作业</h1>
+        <span class="pill st-notask" id="ut-d-hstate"><span class="dot"></span></span>
+      </div>
+      <p id="ut-d-sub"></p>
+    </div>
+    <div class="head-actions">
+      <button class="btn small" id="ut-d-refresh" type="button">刷新</button>
+      <button class="btn small" id="ut-d-retry" type="button" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        重试
+      </button>
+      <a class="btn small" id="ut-d-download" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+        下载当前版本
+      </a>
+    </div>
+  </div>
+  <p id="ut-detail-status" role="status" aria-live="polite"></p>
+
+  <div class="detail-grid">
+    <div class="panel">
+      <h4>概览</h4>
+      <dl class="meta">
+        <dt>状态</dt><dd><span class="pill st-notask" id="ut-d-state"><span class="dot"></span></span></dd>
+        <dt>机器判定</dt><dd id="ut-d-verdict">—</dd>
+        <dt>函数</dt><dd id="ut-d-function"></dd>
+        <dt>源文件</dt><dd id="ut-d-source"></dd>
+        <dt>批次</dt><dd id="ut-d-batch"></dd>
+        <dt>生成状态</dt><dd id="ut-d-gen"></dd>
+        <dt>模型修正</dt><dd id="ut-d-rounds"></dd>
+        <dt>审核</dt><dd id="ut-d-review">—</dd>
+        <dt>更新时间</dt><dd id="ut-d-updated"></dd>
+        <dt>说明</dt><dd><p class="ut-reason" id="ut-d-reason">—</p></dd>
+      </dl>
+    </div>
+    <div class="panel ut-review">
+      <h4>审核</h4>
+      <p class="muted" id="ut-d-gate-hint"></p>
+      {# Only shown while the job waits at a human gate; a decided or still
+         running job has nothing to submit, so it gets the hint line only. #}
+      <div id="ut-d-gate-forms">
+      <div id="ut-d-review-forms">
+      <textarea id="ut-d-note" aria-label="审核意见" placeholder="审核意见（驳回必填；机器判定未通过时通过也必填）"></textarea>
+      <div class="row">
+        <button class="btn danger" id="ut-d-reject" type="button">驳回</button>
+        <button class="btn primary" id="ut-d-approve" type="button">通过当前版本</button>
+      </div>
+      </div>
+      <div id="ut-d-revision-forms">
+      <hr class="ut-sep">
+      <h4>人工修订</h4>
+      <p class="muted">提交后重新执行与校验；人工修订未通过时回到人工，不再交给模型。</p>
+      <textarea id="ut-d-revision" class="ut-code-input" rows="8" aria-label="修订后的 CSV" placeholder="粘贴修订后的完整 CSV（保存时转为 CP932 / CRLF）"></textarea>
+      <input id="ut-d-revision-note" aria-label="修订说明" placeholder="修订说明">
+      <div class="row">
+        <button class="btn" id="ut-d-load-current" type="button">载入当前版本</button>
+        <button class="btn primary" id="ut-d-revise" type="button">提交修订并执行</button>
+      </div>
+      </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:20px">
+    <div class="panel-bar"><h4>版本历史 <span class="submuted">· 每个候选的来源、执行与机器判定</span></h4></div>
+    <div style="overflow-x:auto">
+      <table class="dt ut-table ut-attempts">
+        <thead><tr><th>#</th><th>来源</th><th>机器判定</th><th>主要问题</th><th>覆盖率</th><th>说明</th><th>时间</th><th style="width:1%"></th></tr></thead>
+        <tbody id="ut-d-attempts"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="ut-detail-grid">
+    <div class="panel">
+      <div class="panel-bar"><h4 id="ut-d-csv-title">CSV</h4></div>
+      <pre id="ut-d-csv" class="term ut-csv"></pre>
+    </div>
+    <div class="panel">
+      <div class="panel-bar"><h4>校验问题</h4></div>
+      <pre id="ut-d-issues" class="term ut-issues"></pre>
+    </div>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/lanmatrix/ut_common.js') }}"></script>
+<script src="{{ url_for('static', filename='js/lanmatrix/ut_tasks.js') }}"></script>
+{% endblock %}

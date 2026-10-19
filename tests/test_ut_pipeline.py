@@ -105,7 +105,8 @@ def env(app_ctx, monkeypatch, tmp_path):
         from app.services.lanmatrix import projects_service
 
         admin = LMUser.query.filter_by(is_system_admin=True).first()
-        project = projects_service.create_project(admin, code="UTP", name="UT 流水线")
+        project = projects_service.create_project(
+            admin, code="UTP", name="UT 流水线", project_type="unit_test")
         db.session.commit()
         ai_config.update_ai_config({"ai_api_base": "http://127.0.0.1:9/v1",
                                     "ai_api_key": "local", "ai_model": "qwen3.8-27b-gsq"})
@@ -165,7 +166,129 @@ def test_page_shell_renders(env):
     resp = env.client.get(f"/lanmatrix/projects/{env.pid}/ut")
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
-    assert "実施一覧" in html and "js/lanmatrix/ut_pipeline.js" in html
+    assert "实施一览" in html and "js/lanmatrix/ut_pipeline.js" in html
+
+
+def test_project_navigation_and_settings_keep_their_type(env, app_ctx):
+    from app.extensions import db
+    from app.models import LMUser
+    from app.services.lanmatrix import projects_service
+
+    with app_ctx.app_context():
+        admin = LMUser.query.filter_by(is_system_admin=True).first()
+        silver = projects_service.create_project(admin, code="SIL", name="Silver")
+        db.session.commit()
+        silver_id = silver.id
+
+    ut = f"/lanmatrix/projects/{env.pid}"
+    silver = f"/lanmatrix/projects/{silver_id}"
+    for suffix in ("/members", "/audit", "/trash", "/settings/binding", "/tasks"):
+        response = env.client.get(ut + suffix)
+        assert response.status_code == 200
+        html = response.get_data(as_text=True)
+        assert f'href="{ut}/tasks"' in html
+        assert f'href="{ut}/ut"' in html
+        assert ">测试矩阵</span>" not in html
+        if suffix not in ("/tasks",):
+            assert ">项目绑定</a>" in html
+            assert ">模型管理</a>" not in html
+
+    for suffix in ("/settings", "/fields", "/models"):
+        response = env.client.get(ut + suffix)
+        assert response.status_code == 302
+        assert response.headers["Location"] == ut + "/settings/binding"
+
+    for suffix in ("/members", "/fields", "/models", "/tasks", "/dashboard"):
+        response = env.client.get(silver + suffix)
+        assert response.status_code == 200
+        html = response.get_data(as_text=True)
+        assert ">测试矩阵</span>" in html
+        assert ">实施一览</span>" not in html
+    assert env.client.get(silver + "/ut").headers["Location"] == silver
+    assert env.client.get(silver + "/settings").headers["Location"] == silver + "/fields"
+    response = env.client.get(ut + "/dashboard")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "机器通过" in html and "审核通过" in html
+    assert 'id="lm-version-compare"' not in html
+    assert "js/lanmatrix/dashboard.js" in html
+
+
+def test_project_shell_does_not_offer_an_outsider_ut_actions(env, app_ctx):
+    from app.extensions import db
+    from app.models import LMUser
+
+    with app_ctx.app_context():
+        outsider = LMUser(username="outsider", display_name="Outsider", password_hash="x")
+        db.session.add(outsider)
+        db.session.commit()
+        outsider_id = outsider.id
+    with env.client.session_transaction() as session:
+        session["lm_user_id"] = outsider_id
+    response = env.client.get(f"/lanmatrix/projects/{env.pid}/ut")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "无法访问项目" in html
+    assert 'id="ut-enqueue"' not in html
+
+
+def test_review_rejects_a_candidate_replaced_since_the_page_loaded(env):
+    targets = _configure(env)
+    [job_id] = _enqueue(env, targets["f"])
+    original = _job(env, job_id)["current_attempt_id"]
+    status, body = env.call("post", f"/jobs/{job_id}/revision",
+                           json={"csv": GOOD.decode(), "note": "new candidate"})
+    assert status == 202, body
+    current = _job(env, job_id)["current_attempt_id"]
+    assert current != original
+
+    status, body = env.call("post", f"/jobs/{job_id}/review", json={
+        "decision": "approve", "expected_attempt_id": None,
+    })
+    assert status == 409, body
+    assert _job(env, job_id)["state"] == "awaiting_review"
+
+    status, body = env.call("post", f"/jobs/{job_id}/review", json={
+        "decision": "approve", "expected_attempt_id": original,
+    })
+    assert status == 409, body
+    assert body["error"]["code"] == "VERSION_CONFLICT"
+    assert _job(env, job_id)["state"] == "awaiting_review"
+
+    status, body = env.call("post", f"/jobs/{job_id}/review", json={
+        "decision": "approve", "expected_attempt_id": current,
+    })
+    assert status == 200, body
+    assert _job(env, job_id)["state"] == "approved"
+
+
+@pytest.mark.parametrize("role,expected", [
+    ("reader", (False, False, False)),
+    ("editor", (True, False, False)),
+    ("reviewer", (False, True, False)),
+    ("project_admin", (True, True, True)),
+])
+def test_project_shell_exposes_authoritative_action_capabilities(env, app_ctx, role, expected):
+    import re
+
+    from app.extensions import db
+    from app.models import LMUser, ProjectMember
+
+    with app_ctx.app_context():
+        member = LMUser(username=role, display_name=role, password_hash="x")
+        db.session.add(member)
+        db.session.flush()
+        db.session.add(ProjectMember(project_id=env.pid, user_id=member.id, role=role))
+        db.session.commit()
+        member_id = member.id
+    with env.client.session_transaction() as session:
+        session["lm_user_id"] = member_id
+    response = env.client.get(f"/lanmatrix/projects/{env.pid}/ut")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    capabilities = json.loads(re.search(r"projectCapabilities: (\{[^\n]+\})", html).group(1))
+    assert capabilities["view"] is True
+    assert tuple(capabilities[key] for key in ("edit", "review", "configure")) == expected
 
 
 def test_passing_generation_waits_for_review_then_approves(env):

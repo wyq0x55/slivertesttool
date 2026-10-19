@@ -1,6 +1,6 @@
 {% extends "lanmatrix/base_lm.html" %}
 {% from "lanmatrix/_crumb.html" import project_crumb %}
-{% from "lanmatrix/_settings_tabs.html" import settings_tabs %}
+{% from "lanmatrix/_settings_tabs.html" import settings_tabs with context %}
 {% block title %}回收站{% endblock %}
 {% block crumb %}{{ project_crumb(project_id, "回收站", "设置") }}{% endblock %}
 {% block content %}

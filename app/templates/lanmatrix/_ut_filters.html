@@ -1,0 +1,12 @@
+{% macro ut_filters(show_unrun=false, show_rejected=false) -%}
+<div class="segmented" id="ut-filter" role="group" aria-label="按作业状态筛选">
+  <button type="button" class="on" data-filter="" aria-pressed="true">全部</button>
+  {% if show_unrun %}<button type="button" data-filter="none" aria-pressed="false">未执行</button>{% endif %}
+  <button type="button" data-filter="active" aria-pressed="false">进行中</button>
+  <button type="button" data-filter="awaiting_review" aria-pressed="false">待审核</button>
+  <button type="button" data-filter="needs_human" aria-pressed="false">需人工</button>
+  <button type="button" data-filter="trouble" aria-pressed="false">异常</button>
+  <button type="button" data-filter="approved" aria-pressed="false">已通过</button>
+  {% if show_rejected %}<button type="button" data-filter="rejected" aria-pressed="false">已驳回</button>{% endif %}
+</div>
+{%- endmacro %}

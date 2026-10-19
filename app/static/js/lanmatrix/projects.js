@@ -72,21 +72,23 @@
     const st = esc(p.status || "draft");
     const stZh = STATUS_ZH[p.status] || st;
     const hasDesc = (p.description || "").trim().length > 0;
-    const defaultDesc = isUt ? "単体テスト · ut-agent / WinAMS 自动化流水线" : "暂无描述 · 点击进入在线编辑";
+    const defaultDesc = isUt ? "暂无描述 · 点击进入实施一览" : "暂无描述 · 点击进入在线编辑";
     const desc = hasDesc ? esc(p.description) : defaultDesc;
     const mainHref = isUt ? `/lanmatrix/projects/${p.id}/ut` : `/lanmatrix/projects/${p.id}`;
-    const mainAria = isUt ? `打开 ${esc(p.name)} 単体テスト実施一覧` : `打开 ${esc(p.name)} 在线编辑`;
-    const typeBadge = isUt
-      ? `<span class="badge" style="margin-left:6px;font-size:11px;padding:2px 8px;border-radius:999px;background:var(--accent-soft, #eef2ff);color:var(--accent, #4f46e5);font-weight:600">単体テスト</span>`
-      : "";
+    const mainAria = isUt ? `打开 ${esc(p.name)} 实施一览` : `打开 ${esc(p.name)} 在线编辑`;
+    // Every card names its type, so the two kinds read as peers in one list
+    // rather than one of them looking like an exception.
+    const typeTag = isUt
+      ? `<span class="ptype ptype-ut">单元测试</span>`
+      : `<span class="ptype ptype-silver">Silver</span>`;
 
     let middleHtml = "";
     if (isUt) {
       middleHtml = `
-      <a class="zone zone-tasks" href="/lanmatrix/projects/${p.id}/ut" aria-label="查看単体テスト">
+      <a class="zone zone-tasks" href="/lanmatrix/projects/${p.id}/tasks" aria-label="查看单元测试作业">
         <div class="metrics">
           <div class="metric"><div class="v">${p.ut_targets_count || 0}</div><div class="k">函数</div></div>
-          <div class="metric"><div class="v ok">${p.ut_jobs_approved || 0}</div><div class="k">已通过</div></div>
+          <div class="metric"><div class="v ok">${p.ut_jobs_approved || 0}</div><div class="k">审核通过</div></div>
           <div class="metric"><div class="v ${(p.ut_jobs_needs_human || 0) ? "warn" : ""}">${p.ut_jobs_needs_human || 0}</div><div class="k">需人工</div></div>
         </div>
       </a>`;
@@ -110,7 +112,7 @@
       <a class="zone zone-main" href="${mainHref}"
         aria-label="${mainAria}">
         <div class="card-top">
-          <span class="code-chip">${esc(p.code)}</span>${typeBadge}
+          <span class="card-tags"><span class="code-chip">${esc(p.code)}</span>${typeTag}</span>
           <span class="status"><span class="dot ${st}"></span>${esc(stZh)}</span>
         </div>
         <h3>${esc(p.name)}</h3>

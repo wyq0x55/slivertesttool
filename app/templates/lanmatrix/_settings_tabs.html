@@ -12,9 +12,22 @@
    deep links and tests all still resolve.
 --------------------------------------------------------------------------- #}
 {% macro settings_tabs(project_id, active) -%}
-{% set items = [
+{# Import with context: the strip reads `project` to pick the tab set. Both
+   project types share 成员 / 审计 / 回收站; the first slot is what differs —
+   a Silver project configures matrix fields and .sil models, a unit-test
+   project configures its ut-agent / WinAMS binding. #}
+{% set is_ut = project is defined and project and project.project_type == 'unit_test' %}
+{% if is_ut %}
+{% set head = [
+  ("binding", "项目绑定", "/lanmatrix/projects/%d/settings/binding" % project_id)
+] %}
+{% else %}
+{% set head = [
   ("fields",  "字段配置", "/lanmatrix/projects/%d/fields"  % project_id),
-  ("models",  "模型管理", "/lanmatrix/projects/%d/models"  % project_id),
+  ("models",  "模型管理", "/lanmatrix/projects/%d/models"  % project_id)
+] %}
+{% endif %}
+{% set items = head + [
   ("members", "成员管理", "/lanmatrix/projects/%d/members" % project_id),
   ("audit",   "审计日志", "/lanmatrix/projects/%d/audit"   % project_id),
   ("trash",   "回收站",   "/lanmatrix/projects/%d/trash"   % project_id)

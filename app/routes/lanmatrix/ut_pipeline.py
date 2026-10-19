@@ -139,8 +139,13 @@ def submit_revision(project_id: int, job_id: int):
 def review(project_id: int, job_id: int):
     _project_and_role(project_id, "item.review")
     body = _body()
+    expected_attempt_id = body.get("expected_attempt_id")
+    if expected_attempt_id is not None and (
+            type(expected_attempt_id) is not int or expected_attempt_id < 1):
+        return err("VALIDATION_ERROR", "expected_attempt_id 必须是正整数", status=400)
+    options = {"expected_attempt_id": expected_attempt_id} if "expected_attempt_id" in body else {}
     job = pipeline.review(project_id, job_id, str(body.get("decision") or ""),
-                          g.user.id, str(body.get("note") or ""))
+                          g.user.id, str(body.get("note") or ""), **options)
     return ok(job.to_dict())
 
 
