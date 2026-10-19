@@ -539,6 +539,7 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
    defeat the space saving. As an overlay they cost the table zero width and
    simply fade in over the row's right edge on hover. */
 .lm-tasks-table thead th, .lm-tasks-table tbody td{ padding:11px 12px; }
+.lm-tasks-table .pill{ white-space:nowrap; }
 .lm-tasks-table .lm-cell-ell{ max-width:150px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .lm-tasks-table tbody tr{ position:relative; }
 .lm-tasks-table .lm-row-actions{ width:0; padding:0 !important; border:0; }
