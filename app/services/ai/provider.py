@@ -64,11 +64,15 @@ def chat(messages: list[dict[str, str]], *,
          max_tokens: int = 4096,
          json_mode: bool = True,
          timeout: Optional[int] = None,
-         usage: Optional[dict[str, int]] = None) -> str:
+         usage: Optional[dict[str, int]] = None,
+         model: Optional[str] = None) -> str:
     """Call the configured model once and return the assistant text.
 
     ``temperature`` defaults low: test-case generation wants determinism and
     consistency across projects, not creativity.
+
+    ``model`` overrides the configured model name on the same gateway (e.g. a
+    project that repairs with a specific local model).
 
     ``usage`` is an optional out-parameter: when a dict is passed, the
     gateway-reported token counts are written into it as
@@ -82,7 +86,7 @@ def chat(messages: list[dict[str, str]], *,
         raise ProviderError("AI 未配置：请先在系统设置中填写 api_base / api_key / model")
     url = cfg[config.KEY_API_BASE].rstrip("/") + "/chat/completions"
     body: dict[str, Any] = {
-        "model": cfg[config.KEY_MODEL],
+        "model": model or cfg[config.KEY_MODEL],
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,

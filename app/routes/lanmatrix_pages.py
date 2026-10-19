@@ -204,6 +204,17 @@ def project_tasks(project_id: int):
         univer_available=_univer_bundle_available())
 
 
+@pages_bp.get("/projects/<int:project_id>/ut")
+def ut_pipeline(project_id: int):
+    """単体テスト pipeline shell: 実施一覧, queue, repair history and review.
+    The API enforces project capabilities; the page is a thin shell."""
+    user = _current_user()
+    if user is None:
+        return redirect(url_for("lanmatrix_pages.login"))
+    return render_template(
+        "lanmatrix/ut_pipeline.html", user=user.to_dict(), project_id=project_id)
+
+
 @pages_bp.get("/projects/<int:project_id>/settings")
 def project_settings(project_id: int):
     """Entry point for the project settings area.

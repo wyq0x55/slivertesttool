@@ -1,0 +1,139 @@
+{% extends "lanmatrix/base_lm.html" %}
+{% from "lanmatrix/_crumb.html" import project_crumb %}
+{% block title %}単体テスト{% endblock %}
+{% block crumb %}{{ project_crumb(project_id, "単体テスト") }}{% endblock %}
+{% block content %}
+<div class="content lm-ut" data-project="{{ project_id }}">
+  <div class="page-head">
+    <div class="ttl">
+      <h1>単体テスト · 実施一覧</h1>
+      <p>ut-agent 生成 → WinAMS 执行 → 校验器判定 → 本地模型修正（有上限）→ 人工审核。任何一步的产出都必须经人工审核。</p>
+    </div>
+    <div class="head-actions">
+      <button class="btn" id="ut-refresh" type="button">刷新</button>
+      <button class="btn" id="ut-import" type="button">重新读取索引</button>
+      <button class="btn primary" id="ut-enqueue" type="button" disabled>加入队列</button>
+    </div>
+  </div>
+  <p id="ut-status" class="muted" role="status" aria-live="polite"></p>
+
+  <details class="panel" id="ut-config" style="margin-top:12px">
+    <summary><b>ut-agent 项目绑定</b> <span class="submuted" id="ut-config-summary"></span></summary>
+    <div class="mforms" style="margin-top:10px">
+      <label class="uplbl">ProjectManifest（ut-agent config/projects/*.json）
+        <input id="ut-c-manifest_path" class="inbox" autocomplete="off"></label>
+      <label class="uplbl">索引 CSV（HOYU/&lt;项目&gt;.csv）
+        <input id="ut-c-index_csv" class="inbox" autocomplete="off"></label>
+      <label class="uplbl">Product / Soft 根目录
+        <input id="ut-c-product_root" class="inbox" autocomplete="off"></label>
+      <label class="uplbl">WinAMS 工作根（包含索引第 5 列的 WinAMS 单元树）
+        <input id="ut-c-work_root" class="inbox" autocomplete="off"></label>
+      <div class="row wrap">
+        <label class="uplbl">模型修正上限（次）
+          <input id="ut-c-max_repair_rounds" class="inbox" type="number" min="0" max="20" step="1"></label>
+        <label class="uplbl">修正模型（留空使用 AI 设置中的模型）
+          <input id="ut-c-repair_model" class="inbox" placeholder="qwen3.8-27b-gsq" autocomplete="off"></label>
+      </div>
+      <div class="row"><button class="btn primary" id="ut-config-save" type="button">保存绑定</button></div>
+      <p class="muted">入队时冻结当时的绑定；之后修改只影响新批次。</p>
+    </div>
+  </details>
+
+  <div class="panel" id="ut-batches" style="margin-top:12px" hidden>
+    <div class="panel-bar"><h4 style="margin:0">最近批次</h4></div>
+    <div id="ut-batches-body"></div>
+  </div>
+
+  <div class="toolbar" style="margin-top:16px">
+    <div class="segmented" id="ut-filter" role="tablist">
+      <button type="button" class="on" data-filter="">全部</button>
+      <button type="button" data-filter="none">未执行</button>
+      <button type="button" data-filter="active">进行中</button>
+      <button type="button" data-filter="awaiting_review">待审核</button>
+      <button type="button" data-filter="needs_human">需人工</button>
+      <button type="button" data-filter="blocked">环境阻塞</button>
+      <button type="button" data-filter="error">异常</button>
+      <button type="button" data-filter="approved">已通过</button>
+      <button type="button" data-filter="rejected">已驳回</button>
+    </div>
+    <span class="muted" id="ut-counts"></span>
+  </div>
+
+  <div class="tablecard">
+    <div style="overflow-x:auto">
+      <table class="dt">
+        <thead>
+          <tr>
+            <th style="width:1%"><input type="checkbox" id="ut-all" aria-label="全选"></th>
+            <th>No.</th>
+            <th>源文件</th>
+            <th>函数</th>
+            <th>状态</th>
+            <th>模型修正</th>
+            <th>判定</th>
+            <th style="width:1%"></th>
+          </tr>
+        </thead>
+        <tbody id="ut-rows"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<section id="ut-detail" class="task-detail" hidden>
+  <div class="page-head">
+    <div class="ttl">
+      <button class="btn small ghost" id="ut-d-close" type="button">返回实施一览</button>
+      <div class="dtitle">
+        <h1 id="ut-d-title"></h1>
+        <span class="pill" id="ut-d-state"><span class="dot"></span></span>
+      </div>
+      <p id="ut-d-sub"></p>
+    </div>
+    <div class="head-actions">
+      <button class="btn small" id="ut-d-refresh" type="button">刷新</button>
+      <button class="btn small" id="ut-d-retry" type="button" hidden>重试</button>
+    </div>
+  </div>
+  <p id="ut-d-reason" class="muted"></p>
+
+  <div class="panel" style="margin-top:12px">
+    <div class="panel-bar"><h4 style="margin:0">版本历史 <span class="submuted">· 每个候选的来源、执行与机器判定</span></h4></div>
+    <div style="overflow-x:auto">
+      <table class="dt">
+        <thead><tr><th>#</th><th>来源</th><th>判定</th><th>主要问题</th><th>覆盖率</th><th>说明</th><th></th></tr></thead>
+        <tbody id="ut-d-attempts"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="detail-grid">
+    <div class="panel">
+      <div class="panel-bar"><h4 style="margin:0" id="ut-d-csv-title">CSV</h4></div>
+      <pre id="ut-d-csv" class="term" style="max-height:420px"></pre>
+      <h4 style="margin-top:14px">校验问题</h4>
+      <pre id="ut-d-issues" class="term" style="max-height:260px"></pre>
+    </div>
+    <div class="panel" id="ut-d-actions">
+      <h4>人工修订</h4>
+      <p class="muted">提交后立即重新执行与校验；人工修订未通过时回到人工，不再交给模型。</p>
+      <textarea id="ut-d-revision" class="term" rows="10" placeholder="粘贴修订后的完整 CSV（保存时自动转为 CP932 / CRLF）"></textarea>
+      <input id="ut-d-revision-note" class="inbox" placeholder="修订说明" style="margin-top:6px">
+      <div class="row" style="margin-top:6px">
+        <button class="btn" id="ut-d-load-current" type="button">载入当前版本</button>
+        <button class="btn primary" id="ut-d-revise" type="button">提交修订并执行</button>
+      </div>
+      <h4 style="margin-top:18px">审核</h4>
+      <p class="muted">通过的是当前版本。机器校验未通过的候选必须填写审核意见才能通过；驳回必须填写原因。</p>
+      <textarea id="ut-d-note" class="term" rows="3" placeholder="审核意见"></textarea>
+      <div class="row" style="margin-top:6px">
+        <button class="btn danger" id="ut-d-reject" type="button">驳回</button>
+        <button class="btn primary" id="ut-d-approve" type="button">通过</button>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/lanmatrix/ut_pipeline.js') }}"></script>
+{% endblock %}
