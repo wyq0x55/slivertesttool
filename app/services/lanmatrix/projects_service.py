@@ -35,15 +35,18 @@ def list_projects(user: LMUser, *, include_deleted: bool = False) -> list[Projec
 
 
 def create_project(user: LMUser, *, code: str, name: str,
-                   description: str = "", owner_id: Optional[int] = None) -> Project:
+                   description: str = "", owner_id: Optional[int] = None,
+                   project_type: str = "silver") -> Project:
     code = (code or "").strip().upper()
     if not code:
         raise ServiceError("项目编码不能为空", code="VALIDATION_ERROR")
     if Project.query.filter_by(code=code).first():
         raise ServiceError("项目编码已存在", code="DUPLICATE")
+    project_type = "unit_test" if str(project_type).strip().lower() in ("unit_test", "ut") else "silver"
     project = Project(
         code=code, name=(name or "").strip() or code, description=description,
         status="draft", owner_id=owner_id or user.id, created_by=user.id,
+        project_type=project_type,
     )
     db.session.add(project)
     db.session.flush()
