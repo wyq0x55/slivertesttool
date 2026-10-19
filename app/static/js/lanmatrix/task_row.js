@@ -238,7 +238,7 @@
           <span class="muted" style="font-size:12px">${p}%</span>
         </div>`}
       </td>
-      <td class="lm-cell-time"><code>${esc(fmtFinished(t))}</code></td>
+      <td class="lm-cell-time">${fmtFinished(t) ? `<code>${esc(fmtFinished(t))}</code>` : '<span class="muted">—</span>'}</td>
       <td class="lm-row-actions"><span class="row-acts" style="display:flex;gap:4px;justify-content:flex-end">${view} ${steps} ${cancel} ${retest} ${dl} ${del}</span></td>
     </tr>`;
   }

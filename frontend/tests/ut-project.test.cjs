@@ -266,6 +266,10 @@ test("UT jobs use the shared task row with separate result and review cells", ()
   assert.match(html, /lm-cell-review[\s\S]*?已通过/);
   assert.doesNotMatch(html, /lm-task-(sel|steps|cancel|retest|del)/);
   assert.match(html, /WinAMS/);
+  assert.match(html, /lm-cell-time"><code>26\/10\/19/);
+  const queued = window.LMTaskRow.rowHtml({ ...task, finished_at: null }, { projectId: 4 });
+  assert.match(queued, /lm-cell-time"><span class="muted">—<\/span>/);
+  assert.doesNotMatch(queued, /<code><\/code>/);
   const changed = window.LMUt.workspaceTask({ ...raw, current_attempt_id: 20 });
   assert.notEqual(window.LMTaskRow.signature(task), window.LMTaskRow.signature(changed));
 });
