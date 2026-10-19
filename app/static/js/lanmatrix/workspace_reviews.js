@@ -88,7 +88,28 @@
     return (r && r.kind) === "exemption";
   }
 
+  /* A unit-test job at a human gate. Its decision is pinned to the candidate
+     CSV shown in the job detail, so the row only links there. */
+  function isUtJob(r) {
+    return (r && r.kind) === "ut_job";
+  }
+
+  const UT_VERDICT = { PASS: "passed", FORMAT_OK: "pending", FAIL: "failed",
+                       BLOCKED: "error", INVALID: "failed" };
+
+  function rowHref(r) {
+    if (isUtJob(r)) return `${r.link}&from=workspace`;
+    return `/lanmatrix/projects/${encodeURIComponent(r.project_id)}`
+      + `?row=${encodeURIComponent(r.uuid)}&from=workspace`;
+  }
+
   function verdictPill(r) {
+    if (isUtJob(r)) {
+      const v = String(r.review_verdict || "");
+      const badge = v ? LMPill.html(UT_VERDICT[v] || "pending", v, `机器判定：${v}`)
+        : '<span class="muted">—</span>';
+      return `${badge} <span class="muted">单元测试</span>`;
+    }
     const v = String(r.review_verdict || r.result || "");
     const cls = /untestable/i.test(v) ? "warn" : "ok";
     // Both kinds show the verdict at stake -- an exemption reports Untestable
@@ -197,8 +218,7 @@
     const page = pager ? pager.slice(rows) : rows;
     $("lm-h-rv-rows").innerHTML = page.map((r, n) => {
       const i = start + n;
-      const href = `/lanmatrix/projects/${encodeURIComponent(r.project_id)}`
-        + `?row=${encodeURIComponent(r.uuid)}&from=workspace`;
+      const href = rowHref(r);
       // Only bulk-approvable rows get a checkbox: offering one that silently
       // does nothing on submit is worse than not offering it.
       const box = (actionable() && r.bulk_approvable)
@@ -207,7 +227,10 @@
         : `<span class="muted" title="${actionable() ? "需逐条审核" : "已完成审核"}">—</span>`;
       // A decided row gets 打开 only: 通过 / 驳回 on it would be refused by the
       // server, and a button that cannot work is worse than no button.
-      const acts = (actionable() && isPending(r))
+      const acts = isUtJob(r)
+        ? `<a class="btn ${actionable() ? "primary " : "ghost "}small" href="${href}">`
+          + `${actionable() ? "打开审核" : "打开"}</a>`
+        : (actionable() && isPending(r))
         ? `<button class="btn primary small" data-act="approve" data-i="${i}">通过</button>
            <button class="btn small" data-act="reject" data-i="${i}">驳回</button>
            <a class="btn ghost small" href="${href}">打开</a>`

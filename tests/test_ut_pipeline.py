@@ -429,3 +429,106 @@ def test_next_state_is_pure_and_total():
     blocked = {"verdict": "BLOCKED", "issues": [
         {"code": "COVERAGE_UNAVAILABLE", "severity": "error"}]}
     assert pipeline.next_state(blocked, "LLM", 0, 5)[0] == "needs_human"
+
+
+def _member(app_ctx, pid, role):
+    from app.extensions import db
+    from app.models import LMUser, ProjectMember
+
+    with app_ctx.app_context():
+        user = LMUser(username=f"ws-{role}", display_name=role, password_hash="x")
+        db.session.add(user)
+        db.session.flush()
+        db.session.add(ProjectMember(project_id=pid, user_id=user.id, role=role))
+        db.session.commit()
+        return user.id
+
+
+def _as(env, user_id):
+    with env.client.session_transaction() as session:
+        session["lm_user_id"] = user_id
+
+
+def _ut_reviews(env, **query):
+    resp = env.client.get("/api/v1/me/reviews", query_string=query, headers=env.headers)
+    assert resp.status_code == 200, resp.get_json()
+    data = resp.get_json()["data"]
+    return [r for r in data["reviews"] if r["kind"] == "ut_job"], data["queue_counts"]
+
+
+def test_workspace_review_queue_routes_gated_jobs_to_members_who_can_act(env, app_ctx):
+    from app.models import LMUser, Notification
+
+    targets = _configure(env)
+    [job_id] = _enqueue(env, targets["f"])
+    with app_ctx.app_context():
+        admin_id = LMUser.query.filter_by(is_system_admin=True).first().id
+    reviewer = _member(app_ctx, env.pid, "reviewer")
+    editor = _member(app_ctx, env.pid, "editor")
+    reader = _member(app_ctx, env.pid, "reader")
+
+    _as(env, reviewer)
+    rows, counts = _ut_reviews(env)
+    assert [r["id"] for r in rows] == [job_id] and counts["pending"] == 1
+    row = rows[0]
+    assert row["test_id"] == "f" and row["review_status"] == "pending"
+    assert row["bulk_approvable"] is False and row["review_verdict"] == "PASS"
+    assert row["link"] == f"/lanmatrix/projects/{env.pid}/tasks?job={job_id}"
+    for user in (editor, reader):  # awaiting_review needs the review capability
+        _as(env, user)
+        assert _ut_reviews(env)[0] == []
+
+    _as(env, reviewer)
+    status, body = env.call("post", f"/jobs/{job_id}/review",
+                            json={"decision": "reject", "note": "期望值不对"})
+    assert status == 200, body
+    assert _ut_reviews(env)[0] == []
+    decided, counts = _ut_reviews(env, status="decided")
+    assert [r["review_status"] for r in decided] == ["rejected"] and counts["decided"] == 1
+
+    _as(env, admin_id)
+    rejected, counts = _ut_reviews(env, role="requester", status="rejected")
+    assert [r["review_note"] for r in rejected] == ["期望值不对"] and counts["rejected"] == 1
+    with app_ctx.app_context():
+        notes = (Notification.query.filter_by(user_id=admin_id, ref_type="ut_job")
+                 .order_by(Notification.id).all())
+        assert [n.type for n in notes] == ["task.finished", "review.rejected"]
+        assert notes[0].link_url.endswith(f"/tasks?job={job_id}")
+
+    resp = env.client.get("/api/v1/me/overview", headers=env.headers)
+    card = next(p for p in resp.get_json()["data"]["projects"] if p["id"] == env.pid)
+    assert (card["ut_targets"], card["ut_gates"], card["ut_approved"]) == (2, 0, 0)
+
+    # An unknown status is the pending inbox for every source, never "all decided".
+    assert _ut_reviews(env, role="requester", status="bogus")[0] == []
+
+
+def test_gate_notifications_stop_after_membership_is_revoked(env, app_ctx):
+    from app.extensions import db
+    from app.models import LMUser, Notification, ProjectMember
+
+    targets = _configure(env)
+    editor = _member(app_ctx, env.pid, "editor")
+    _as(env, editor)
+    [job_id] = _enqueue(env, targets["f"])
+    with app_ctx.app_context():
+        assert Notification.query.filter_by(user_id=editor, ref_type="ut_job").count() == 1
+        ProjectMember.query.filter_by(project_id=env.pid, user_id=editor).delete()
+        db.session.commit()
+        admin_id = LMUser.query.filter_by(is_system_admin=True).first().id
+    _as(env, admin_id)
+    status, body = env.call("post", f"/jobs/{job_id}/review",
+                            json={"decision": "reject", "note": "retired"})
+    assert status == 200, body
+    with app_ctx.app_context():
+        assert Notification.query.filter_by(user_id=editor, ref_type="ut_job").count() == 1
+
+
+def test_editor_sees_jobs_that_need_a_revision(env, app_ctx, monkeypatch):
+    targets = _configure(env, rounds=0)
+    env.bridge.generated = BAD
+    [job_id] = _enqueue(env, targets["f"])
+    assert _job(env, job_id)["state"] == "needs_human"
+    _as(env, _member(app_ctx, env.pid, "editor"))
+    rows, _ = _ut_reviews(env)
+    assert [(r["id"], r["needs_note"]) for r in rows] == [(job_id, True)]

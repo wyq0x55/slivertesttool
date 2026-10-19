@@ -20,6 +20,7 @@ from ...models import LMUser, ProjectMember, Task, TaskStatus
 from ...services import task_service
 from ...services.lanmatrix import (exemption_service, notification_service,
                                    permissions, review_service, service)
+from ...services.ut_pipeline import workspace as ut_workspace
 from ._base import arg_int, err, ok, login_required, register_common
 
 bp = Blueprint("lanmatrix_me", __name__, url_prefix="/api/v1")
@@ -123,6 +124,8 @@ def me_overview():
     projects = _visible_projects()
     pids = [p.id for p in projects]
     counts = _status_counts(pids)
+    ut_counts = ut_workspace.project_counts(
+        [p.id for p in projects if p.project_type == "unit_test"])
 
     kpi = {"projects": len(projects), "queued": 0, "running": 0,
            "passed": 0, "failed": 0, "cancelled": 0, "total": 0}
@@ -138,6 +141,7 @@ def me_overview():
             "task_passed": c.get(TaskStatus.PASSED.value, 0),
             "task_failed": c.get(TaskStatus.FAILED.value, 0),
         })
+        row.update(ut_counts.get(p.id, {}))
         payload.append(row)
         for key in ("queued", "running", "passed", "failed", "cancelled"):
             kpi[key] += c.get(getattr(TaskStatus, key.upper()).value, 0)
@@ -286,6 +290,10 @@ def me_reviews():
     if role not in review_service.ROLES:
         role = review_service.ROLE_REVIEWER
     status = (request.args.get("status") or review_service.PENDING).strip()
+    # Normalised once for every source in the merged queue, so an unknown value
+    # cannot mean "pending" to one half and "everything decided" to another.
+    if status not in review_service.STATUSES:
+        status = review_service.PENDING
 
     limit = arg_int("limit", 200, minimum=1, maximum=500)
     rows = review_service.queue_for(g.user.id, pids, status=status, role=role,
@@ -313,6 +321,10 @@ def me_reviews():
 
     items = ([review_service.row_review_dict(r, users) for r in rows]
              + [exemption_service.row_review_dict(r, users) for r in ex_rows])
+    # Unit-test jobs at a human gate join the same inbox; the row routes the
+    # reviewer to the job detail, where the candidate is inspected.
+    items += ut_workspace.queue_for(g.user, _roles_in(pids), status=status,
+                                    role=role, limit=limit)
     # One queue means one ordering. Newest request first, undated last, so a
     # claim raised today is not buried under last month's verdicts.
     items.sort(key=lambda d: (d.get("review_requested_at") or ""), reverse=True)
@@ -321,13 +333,15 @@ def me_reviews():
     seen = {d["project_id"] for d in items if d["project_id"] in by_id}
     counts = review_service.counts_by_role(g.user.id, list(by_id))
     ex_counts = exemption_service.counts_by_role(g.user.id, list(by_id))
+    ut_counts = ut_workspace.counts_by_role(g.user, _roles_in(list(by_id)))
     # The badge counts everything waiting on this user. Reporting only verdict
     # reviews would understate the backlog by exactly the rows this merge just
     # moved into the queue -- and every tab must be merged, not just two of
     # them: a 我被驳回 badge that ignores exemptions reads lower than the list
     # printed directly beneath it.
     for key in ("pending", "rejected", "decided"):
-        counts[key] = int(counts.get(key, 0)) + int(ex_counts.get(key, 0))
+        counts[key] = (int(counts.get(key, 0)) + int(ex_counts.get(key, 0))
+                       + int(ut_counts.get(key, 0)))
 
     return ok({
         "reviews": items,

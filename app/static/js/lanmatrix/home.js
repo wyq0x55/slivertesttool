@@ -195,18 +195,24 @@
     if (!host) return;
     const rows = projectPager ? projectPager.slice(projectRows) : projectRows;
     if (!rows.length) { host.innerHTML = ""; return; }
+    // Same card for both project types; only the counted unit differs.
+    const nums = (p) => (p.project_type === "unit_test" ? `
+          <span>函数 <b>${p.ut_targets || 0}</b></span>
+          <span class="run">进行中 <b>${p.ut_active || 0}</b></span>
+          <span class="bad">待处理 <b>${p.ut_gates || 0}</b></span>
+          <span class="ok">审核通过 <b>${p.ut_approved || 0}</b></span>` : `
+          <span>共 <b>${p.task_total || 0}</b></span>
+          <span class="run">运行 <b>${p.task_running || 0}</b></span>
+          <span class="ok">通过 <b>${p.task_passed || 0}</b></span>
+          <span class="bad">失败 <b>${p.task_failed || 0}</b></span>`);
     host.innerHTML = rows.map((p) => `
       <a class="proj-mini" href="/lanmatrix/projects/${encodeURIComponent(p.id)}/tasks">
         <div class="pm-top">
           <span class="pm-code">${esc(p.code || "")}</span>
-          ${pill(p.status, STATUS_ZH[p.status] || p.status || "")}
+          ${pill(p.status, LMPill.PROJECT_ZH[p.status] || p.status || "")}
         </div>
         <h3>${esc(p.name || p.code || "未命名项目")}</h3>
-        <div class="pm-nums">
-          <span>共 <b>${p.task_total || 0}</b></span>
-          <span class="run">运行 <b>${p.task_running || 0}</b></span>
-          <span class="ok">通过 <b>${p.task_passed || 0}</b></span>
-          <span class="bad">失败 <b>${p.task_failed || 0}</b></span>
+        <div class="pm-nums">${nums(p)}
         </div>
       </a>`).join("");
   }
@@ -214,7 +220,9 @@
   function fillProjectSelect(projects) {
     const sel = $("lm-h-project");
     const keep = sel.value;
-    const opts = (projects || []).slice()
+    // 最近任务 lists Silver runs; unit-test jobs reach the workspace through
+    // the review queue, so a unit-test project here could only filter to empty.
+    const opts = (projects || []).filter((p) => p.project_type !== "unit_test")
       .sort((a, b) => String(a.code || "").localeCompare(String(b.code || "")));
     sel.innerHTML = '<option value="">全部项目</option>'
       + opts.map((p) => `<option value="${esc(p.id)}">${esc(p.code || p.name || p.id)}</option>`).join("");

@@ -395,6 +395,13 @@
   }
 
   (window.LMReady || Promise.resolve()).then(function () {
+    // Same return path as the Silver task list, for users sent here from the
+    // workspace review queue.
+    var back = $("lm-back-workspace");
+    if (back && window.LMTaskActions && LMTaskActions.cameFromWorkspace()) {
+      back.href = LMTaskActions.backUrl();
+      back.hidden = false;
+    }
     $("ut-q").value = query;
     U.selectFilter($("ut-filter"), filter);
     var deep = window.LMUrl ? Number(LMUrl.get("job")) : 0;

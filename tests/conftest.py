@@ -23,6 +23,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+# ``app.jobqueue.huey_app`` picks its queue once, at import. A test module that
+# imports the routes at collection time (before any fixture runs) would
+# otherwise build the persistent Huey bound to the .env database: tasks are
+# then queued into the real queue instead of executing inline, and every later
+# pipeline test sees its jobs stuck in ``queued``. Decide it before collection.
+os.environ["HUEY_IMMEDIATE"] = "1"
+
 DEFAULT_TEST_DATABASE_URL = (
     "postgresql+psycopg2://postgres:postgres@localhost:5432/silvetestapp_test"
 )

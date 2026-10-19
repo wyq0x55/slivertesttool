@@ -32,6 +32,7 @@ from ...extensions import db
 from ...models import UtAttempt, UtBatch, UtJob, UtPipelineConfig, UtTarget
 from ...models.lanmatrix import _utcnow
 from ..ai.provider import ProviderError
+from ..lanmatrix import notification_service as notify_svc
 from ..lanmatrix.errors import ServiceError, VersionConflict
 from . import repair
 from .bridge import BridgeError, BridgeSettings, UtAgentBridge
@@ -208,8 +209,40 @@ def _job_dir(job: UtJob) -> Path:
 
 
 def _gate(job: UtJob, state: str, reason: str = "") -> None:
+    reached_gate = state in UtJob.HUMAN_GATES and job.state != state
     job.state = state
     job.reason = reason
+    if reached_gate:
+        _notify_requester(job, notify_svc.TASK_FINISHED, _GATE_TITLES[state], reason)
+
+
+_GATE_TITLES = {
+    UtJob.AWAITING_REVIEW: "单元测试待审核", UtJob.NEEDS_HUMAN: "单元测试需人工处理",
+    UtJob.BLOCKED: "单元测试环境阻塞", UtJob.ERROR: "单元测试异常",
+}
+
+
+def _notify_requester(job: UtJob, kind: str, title: str, body: str = "",
+                      actor_id: Optional[int] = None) -> None:
+    """Tell whoever queued the batch; joins the caller's transaction."""
+    from ...models import LMUser
+    from ..lanmatrix import permissions, users_service
+
+    batch = db.session.get(UtBatch, job.batch_id)
+    recipient = db.session.get(LMUser, batch.created_by) if batch and batch.created_by else None
+    # Membership can be revoked while a batch runs; the notification carries
+    # job details, so it follows the same visibility rule as the project.
+    if recipient is None or not recipient.is_active or not permissions.can(
+            "project.view", users_service.role_in_project(job.project_id, recipient),
+            is_system_admin=recipient.is_system_admin):
+        return
+    target = job.target
+    name = target.function if target else f"作业 #{job.id}"
+    notify_svc.notify(
+        recipient.id, kind, f"{title}：{name}", body=body,
+        project_id=job.project_id,
+        link_url=f"/lanmatrix/projects/{job.project_id}/tasks?job={job.id}",
+        ref_type="ut_job", ref_id=str(job.id), actor_id=actor_id)
 
 
 def _new_attempt(job: UtJob, origin: str, csv_bytes: Optional[bytes], *,
@@ -484,6 +517,9 @@ def review(project_id: int, job_id: int, decision: str, user_id: int, note: str 
     job.reviewed_by = user_id
     job.reviewed_at = _utcnow()
     job.review_note = note
+    approved = job.state == UtJob.APPROVED
+    _notify_requester(job, notify_svc.REVIEW_APPROVED if approved else notify_svc.REVIEW_REJECTED,
+                      "单元测试审核通过" if approved else "单元测试审核驳回", note, actor_id=user_id)
     db.session.commit()
     return job
 
