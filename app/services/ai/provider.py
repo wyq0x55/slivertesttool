@@ -15,6 +15,7 @@ import json
 import re
 import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Iterator, Optional
@@ -103,8 +104,21 @@ def chat(messages: list[dict[str, str]], *,
         },
         method="POST",
     )
+    hostname = (urlparse(url).hostname or "").lower()
+    is_local = (
+        hostname in ("127.0.0.1", "localhost", "::1")
+        or hostname.startswith("10.")
+        or hostname.startswith("192.168.")
+        or (hostname.startswith("172.") and len(hostname.split(".")) > 1
+            and hostname.split(".")[1].isdigit() and 16 <= int(hostname.split(".")[1]) <= 31)
+    )
+    opener = (
+        urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        if is_local
+        else urllib.request.build_opener()
+    )
     try:
-        with urllib.request.urlopen(
+        with opener.open(
                 req, timeout=timeout or cfg[config.KEY_TIMEOUT]) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
