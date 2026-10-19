@@ -361,6 +361,8 @@ def trash_page(project_id: int):
     user = _current_user()
     if user is None:
         return redirect(url_for("lanmatrix_pages.login"))
+    if _is_ut(_project(project_id)):
+        return redirect(url_for("lanmatrix_pages.ut_binding", project_id=project_id))
     # The capabilities are resolved here rather than guessed in JavaScript: the
     # API enforces them regardless, and a "彻底删除" button that always 403s is
     # worse than no button at all.

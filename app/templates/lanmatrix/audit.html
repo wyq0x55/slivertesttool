@@ -4,16 +4,21 @@
 {% block title %}审计日志{% endblock %}
 {% block crumb %}{{ project_crumb(project_id, "审计日志", "设置") }}{% endblock %}
 {% block content %}
-<div class="lm-page" data-project-id="{{ project_id }}">
+<div class="content lm-audit" data-project-id="{{ project_id }}">
   {{ settings_tabs(project_id, "audit") }}
-  <div class="lm-page-head">
-    <h1>审计日志</h1>
+  <div class="page-head">
+    <div class="ttl">
+      <h1>审计日志</h1>
+      <p>项目内的配置、导入、执行与审核操作记录</p>
+    </div>
+    <div class="head-actions">
     <!-- Export is a plain link, not a fetch: the browser's own download UI
          handles a streamed multi-megabyte file, and the href always carries the
          filters currently in the form (kept in sync by audit.js). -->
     <a class="btn" id="lm-audit-export" download
        href="{{ url_for('lanmatrix_projects.audit_logs_csv', project_id=project_id) }}"
        title="导出本项目全部审计日志">导出 CSV</a>
+    </div>
   </div>
 
   <form id="lm-audit-filters" class="lm-filters" role="search" aria-label="审计日志筛选">
@@ -53,12 +58,14 @@
 
   <p id="lm-audit-info" class="lm-muted" role="status" aria-live="polite">加载中…</p>
 
-  <table class="lm-table">
+  <div class="tablecard"><div style="overflow-x:auto">
+  <table class="dt lm-table">
     <thead>
       <tr><th>时间</th><th>操作</th><th>对象</th><th>操作人</th><th>字段变更</th></tr>
     </thead>
     <tbody id="lm-audit-rows"><tr><td colspan="5" class="lm-muted">加载中…</td></tr></tbody>
   </table>
+  </div></div>
 
   <div class="lm-more-wrap">
     <button type="button" class="btn" id="lm-audit-more" hidden>加载更多</button>
@@ -69,7 +76,7 @@
 <script src="{{ url_for('static', filename='js/lanmatrix/audit.js') }}"></script>
 <script>
 (function () {
-  var root = document.querySelector(".lm-page");
+  var root = document.querySelector(".lm-audit");
   LMAudit.init({
     root: root,
     api: LMApi,

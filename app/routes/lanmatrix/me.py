@@ -108,7 +108,7 @@ def _status_counts(project_ids: list[int]) -> dict[int, dict[str, int]]:
         return out
     rows = (
         db.session.query(Task.project_id, Task.status, db.func.count(Task.id))
-        .filter(Task.project_id.in_(project_ids))
+        .filter(Task.project_id.in_(project_ids), Task.deleted_at.is_(None))
         .group_by(Task.project_id, Task.status)
         .all()
     )
@@ -128,7 +128,7 @@ def me_overview():
         [p.id for p in projects if p.project_type == "unit_test"])
 
     kpi = {"projects": len(projects), "queued": 0, "running": 0,
-           "passed": 0, "failed": 0, "cancelled": 0, "total": 0}
+           "passed": 0, "failed": 0, "error": 0, "cancelled": 0, "total": 0}
     payload = []
     for p in projects:
         c = counts.get(p.id, {})
@@ -161,6 +161,11 @@ def me_overview():
             .count()
         )
     kpi["mine_open"] = mine_open
+    # The same execution-status projection drives the UT list and these tiles.
+    ut_kpi = ut_workspace.kpi_counts(
+        g.user, [p.id for p in projects if p.project_type == "unit_test"])
+    for key, value in ut_kpi.items():
+        kpi[key] = kpi.get(key, 0) + value
 
     return ok({"kpi": kpi, "projects": payload})
 
@@ -176,7 +181,7 @@ def me_tasks():
     by_id = {p.id: p for p in projects}
     pids = list(by_id)
     if not pids:
-        return ok({"tasks": [], "projects": [], "truncated": False})
+        return ok({"tasks": [], "ut_jobs": [], "projects": [], "truncated": False})
 
     q = task_service.live(Task.query).filter(Task.project_id.in_(pids))
 
@@ -198,8 +203,9 @@ def me_tasks():
             want = None
         if want in by_id:
             q = q.filter(Task.project_id == want)
+            pids = [want]
         else:
-            return ok({"tasks": [], "projects": [], "truncated": False})
+            return ok({"tasks": [], "ut_jobs": [], "projects": [], "truncated": False})
 
     text = (request.args.get("q") or "").strip()
     if text:
@@ -247,10 +253,20 @@ def me_tasks():
                 entry["reviewer_name"] = user.display_name or user.username or ""
     tasks = review_service.attach_reviews(rows, [t.to_dict() for t in rows],
                                           reviews)
+    ut_pids = [pid for pid in pids if by_id[pid].project_type == "unit_test"]
+    ut_jobs, ut_truncated = ut_workspace.jobs_for(
+        g.user, ut_pids, status=status, text=text, limit=limit,
+        mine=request.args.get("mine") in ("1", "true", "yes"))
+    tasks, ut_jobs, merged_truncated = ut_workspace.recent_entries(tasks, ut_jobs, limit)
+    for pid in {job["project_id"] for job in ut_jobs} - seen:
+        payload.append({"id": pid, "code": by_id[pid].code, "name": by_id[pid].name})
     return ok({
         "tasks": tasks,
         "projects": payload,
-        "truncated": truncated,
+        "truncated": truncated or ut_truncated or merged_truncated,
+        # Unit-test jobs ride alongside runs, filtered by the same parameters.
+        "ut_jobs": ut_jobs,
+        "ut_truncated": ut_truncated,
     })
 
 

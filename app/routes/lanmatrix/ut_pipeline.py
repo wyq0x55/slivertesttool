@@ -57,7 +57,7 @@ def put_config(project_id: int):
 @login_required
 def import_targets(project_id: int):
     _project_and_role(project_id, "item.edit")
-    return ok(pipeline.import_targets(project_id))
+    return ok(pipeline.import_targets(project_id, g.user.id))
 
 
 @bp.get("/targets")
@@ -153,6 +153,6 @@ def review(project_id: int, job_id: int):
 @login_required
 def retry(project_id: int, job_id: int):
     _project_and_role(project_id, "item.edit")
-    job = pipeline.retry(project_id, job_id)
+    job = pipeline.retry(project_id, job_id, g.user.id)
     ut_tasks.ut_advance_job(job.id)
     return ok(job.to_dict(), status=202)

@@ -1289,7 +1289,13 @@ textarea.lmui-input{ resize:vertical; min-height:76px; }
 }
 
 /* Shared narrow-screen page chrome, including both execution backends. */
+.lm-home .lm-kpi{ grid-template-columns:repeat(4,minmax(0,1fr)); }
+@media (max-width:640px){
+  .lm-home .lm-kpi{ grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
 @media (max-width:720px){
+  #lm-tasks-body .toolbar{ flex-wrap:wrap; }
+  .toolbar-batch{ flex-wrap:wrap; max-width:100%; }
   .page-head,.lm-page-head{ flex-direction:column; align-items:stretch; gap:16px; }
   .page-head h1,.lm-page-head h1{ overflow-wrap:anywhere; }
   .head-actions{ margin-left:0; justify-content:flex-end; flex-wrap:wrap; }

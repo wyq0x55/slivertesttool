@@ -36,6 +36,8 @@
   // Rows currently held for each paged list, so switching page repaints from
   // memory instead of re-querying the server.
   let taskRows = [];
+  let utRows = [];
+  let renderedTaskQuery = "";
   let taskProjects = {};
   let projectRows = [];
 
@@ -220,9 +222,7 @@
   function fillProjectSelect(projects) {
     const sel = $("lm-h-project");
     const keep = sel.value;
-    // 最近任务 lists Silver runs; unit-test jobs reach the workspace through
-    // the review queue, so a unit-test project here could only filter to empty.
-    const opts = (projects || []).filter((p) => p.project_type !== "unit_test")
+    const opts = (projects || []).slice()
       .sort((a, b) => String(a.code || "").localeCompare(String(b.code || "")));
     sel.innerHTML = '<option value="">全部项目</option>'
       + opts.map((p) => `<option value="${esc(p.id)}">${esc(p.code || p.name || p.id)}</option>`).join("");
@@ -242,13 +242,17 @@
   let sortDir = -1;
 
   function sortedTasks() {
-    const rows = taskRows.slice();
+    const rows = allTaskRows();
     rows.sort((a, b) => {
       if (sortKey === "project") {
         const pa = taskProjects[a.project_id], pb = taskProjects[b.project_id];
         const x = String((pa && (pa.code || pa.name)) || a.project_id || "").toLowerCase();
         const y = String((pb && (pb.code || pb.name)) || b.project_id || "").toLowerCase();
         return (x < y ? -1 : x > y ? 1 : 0) * sortDir;
+      }
+      if (sortKey === "task_id") {
+        const date = (Date.parse(a.created_at) || 0) - (Date.parse(b.created_at) || 0);
+        return (date || TR.cmp(a, b, sortKey)) * sortDir;
       }
       return TR.cmp(a, b, sortKey) * sortDir;
     });
@@ -308,7 +312,7 @@
   function updateBatchBar() {
     const n = selectedTasks().length;
     const st = $("lm-h-batch-status");
-    if (st) st.textContent = n ? `已选 ${n} 个` : "";
+    if (st) st.textContent = n ? `已选 ${n} 个 Silver 运行` : "";
     const all = $("lm-h-check-all");
     if (all) all.checked = taskRows.length > 0 && taskRows.every((t) => selected.has(t.task_id));
     // 删除所选 only appears when at least one selected row lives in a project
@@ -316,9 +320,12 @@
     // workspace mixes projects with different roles.
     const del = $("lm-h-batch-delete");
     if (del) del.hidden = !selectedTasks().some((t) => canDeleteIn(t.project_id));
+    const bar = document.querySelector("#lm-pane-tasks .toolbar-batch");
+    if (bar) bar.hidden = taskRows.length === 0;
   }
 
-  function renderTasks(data) {
+  function renderTasks(data, opts) {
+    renderedTaskQuery = (opts && opts.queryKey) || JSON.stringify(taskParams());
     taskRows = (data && data.tasks) || [];
     // Server ships the project lookup with the payload — a cross-project list
     // showing bare numeric ids would defeat the point of the page. It also
@@ -326,23 +333,29 @@
     // listed projects and not in others.
     taskProjects = {};
     ((data && data.projects) || []).forEach((p) => { taskProjects[p.id] = p; });
+    utRows = (data && data.ut_jobs) || [];
 
     // Drop selections whose rows are gone (filter changed, task deleted).
     const present = new Set(taskRows.map((t) => t.task_id));
     Array.from(selected).forEach((k) => { if (!present.has(k)) selected.delete(k); });
 
-    $("lm-home-count").textContent = taskRows.length ? `${taskRows.length} 条` : "";
-    setTabCount("tasks", taskRows.length);
-    $("lm-h-more").hidden = !(data && data.truncated);
+    $("lm-h-more").hidden = !(data && (data.truncated || data.ut_truncated));
 
     // A new result set always starts at page 1: staying on page 7 of the
     // previous filter would show an empty table and look like a failure.
     if (taskPager) {
-      taskPager.reset();
-      taskPager.setTotal(taskRows.length);
+      if (!(opts && opts.preservePage)) taskPager.reset();
+      taskPager.setTotal(taskRows.length + utRows.length);
     }
+    const total = taskRows.length + utRows.length;
+    $("lm-home-count").textContent = total ? `${total} 条` : "";
+    setTabCount("tasks", total);
     paintTasks();
     ensurePolling();
+  }
+
+  function allTaskRows() {
+    return taskRows.concat(utRows.map((job) => LMUt.workspaceTask(job)));
   }
 
   function projectCell(t) {
@@ -354,6 +367,10 @@
 
   function taskHref(t) {
     if (!t.project_id) return null;
+    if (t.kind === "ut_job") {
+      return `/lanmatrix/projects/${encodeURIComponent(t.project_id)}/tasks`
+        + `?job=${encodeURIComponent(t.utJob.id)}&from=workspace`;
+    }
     // ?from=workspace makes the project page offer 返回我的工作台 instead of a
     // dead end after the user drilled in from here.
     return `/lanmatrix/projects/${encodeURIComponent(t.project_id)}/tasks`
@@ -377,7 +394,7 @@
     const empty = $("lm-h-empty");
     if (!body) return;
 
-    if (!taskRows.length) {
+    if (!taskRows.length && !utRows.length) {
       body.innerHTML = "";
       empty.hidden = false;
       updateBatchBar();
@@ -388,8 +405,6 @@
     const rows = sortedTasks();
     const page = taskPager ? taskPager.slice(rows) : rows;
     body.innerHTML = page.map(rowHtml).join("");
-    rowSig = {};
-    page.forEach((t) => { rowSig[t.task_id] = TR.signature(t); });
     bindRowActions();
     updateBatchBar();
   }
@@ -609,10 +624,10 @@
   // change are left alone, so scrolling and checkboxes survive the refresh.
   const POLL_MS = 4000;
   let pollTimer = null;
-  let rowSig = {};
 
   function anyLive() {
-    return taskRows.some((t) => !FINAL.includes(t.status));
+    return taskRows.some((t) => !FINAL.includes(t.status))
+      || utRows.some((j) => global.LMUt && LMUt.ACTIVE[j.state]);
   }
   function ensurePolling() {
     if (anyLive() && view === "tasks") startPolling(); else stopPolling();
@@ -626,27 +641,23 @@
 
   async function pollTasks() {
     if (document.hidden || view !== "tasks") return;
+    const my = ++seq;
+    const params = taskParams();
+    const queryKey = JSON.stringify(params);
     let data;
-    try { data = await LMApi.meTasks(taskParams()); }
+    try { data = await LMApi.meTasks(params); }
     catch (_e) { return; }   // transient: keep the last snapshot, retry next tick
-    const tasks = data.tasks || [];
-    const oldIds = taskRows.map((t) => t.task_id).join(",");
-    const newIds = tasks.map((t) => t.task_id).join(",");
-    if (oldIds !== newIds) { renderTasks(data); return; }  // set changed → full repaint
-    taskRows = tasks;
-    let patched = false;
-    tasks.forEach((t) => {
-      const sig = TR.signature(t);
-      if (rowSig[t.task_id] === sig) return;
-      rowSig[t.task_id] = sig;
-      const row = document.querySelector(`#lm-h-rows tr[data-k="${cssEscape(t.task_id)}"]`);
-      if (row) { row.outerHTML = rowHtml(t); patched = true; }
-    });
-    if (patched) { bindRowActions(); updateBatchBar(); }
+    if (my !== seq) return;
+    const fingerprint = (rows) => rows.map((t) => t.task_id + ":" + TR.signature(t)).join("\n");
+    const nextRows = (data.tasks || []).concat(
+      (data.ut_jobs || []).map((job) => LMUt.workspaceTask(job)));
+    if (queryKey !== renderedTaskQuery || fingerprint(allTaskRows()) !== fingerprint(nextRows)) {
+      renderTasks(data, { preservePage: queryKey === renderedTaskQuery, queryKey });
+      loadOverview().catch(() => {});
+      if (global.LMWorkspaceReviews) LMWorkspaceReviews.reload();
+    }
     ensurePolling();
   }
-
-  function cssEscape(s) { return String(s).replace(/"/g, '\\"'); }
 
   // --- loading ------------------------------------------------------------
   function showError(msg) {
@@ -691,10 +702,11 @@
   let seq = 0;
   async function loadTasks() {
     const my = ++seq;
+    const params = taskParams();
     try {
-      const data = await LMApi.meTasks(taskParams());
+      const data = await LMApi.meTasks(params);
       if (my !== seq) return;
-      renderTasks(data);
+      renderTasks(data, { queryKey: JSON.stringify(params) });
     } catch (ex) {
       if (my !== seq) return;
       if (ex.status === 401) { window.location = LM.urls.login; return; }

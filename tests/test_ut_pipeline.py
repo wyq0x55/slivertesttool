@@ -182,7 +182,7 @@ def test_project_navigation_and_settings_keep_their_type(env, app_ctx):
 
     ut = f"/lanmatrix/projects/{env.pid}"
     silver = f"/lanmatrix/projects/{silver_id}"
-    for suffix in ("/members", "/audit", "/trash", "/settings/binding", "/tasks"):
+    for suffix in ("/members", "/audit", "/settings/binding", "/tasks"):
         response = env.client.get(ut + suffix)
         assert response.status_code == 200
         html = response.get_data(as_text=True)
@@ -192,8 +192,9 @@ def test_project_navigation_and_settings_keep_their_type(env, app_ctx):
         if suffix not in ("/tasks",):
             assert ">项目绑定</a>" in html
             assert ">模型管理</a>" not in html
+            assert ">回收站</a>" not in html
 
-    for suffix in ("/settings", "/fields", "/models"):
+    for suffix in ("/settings", "/fields", "/models", "/trash"):
         response = env.client.get(ut + suffix)
         assert response.status_code == 302
         assert response.headers["Location"] == ut + "/settings/binding"
@@ -495,6 +496,14 @@ def test_workspace_review_queue_routes_gated_jobs_to_members_who_can_act(env, ap
         assert [n.type for n in notes] == ["task.finished", "review.rejected"]
         assert notes[0].link_url.endswith(f"/tasks?job={job_id}")
 
+    from app.models import AuditLog
+    with app_ctx.app_context():
+        trail = [(a.action, a.actor_id) for a in
+                 AuditLog.query.filter_by(project_id=env.pid).order_by(AuditLog.id)
+                 if a.action.startswith("ut.")]
+    assert trail == [("ut.config.update", admin_id), ("ut.targets.import", admin_id),
+                     ("ut.batch.create", admin_id), ("ut.job.reject", reviewer)]
+
     resp = env.client.get("/api/v1/me/overview", headers=env.headers)
     card = next(p for p in resp.get_json()["data"]["projects"] if p["id"] == env.pid)
     assert (card["ut_targets"], card["ut_gates"], card["ut_approved"]) == (2, 0, 0)
@@ -532,3 +541,77 @@ def test_editor_sees_jobs_that_need_a_revision(env, app_ctx, monkeypatch):
     _as(env, _member(app_ctx, env.pid, "editor"))
     rows, _ = _ut_reviews(env)
     assert [(r["id"], r["needs_note"]) for r in rows] == [(job_id, True)]
+
+
+def test_workspace_task_list_and_kpis_map_jobs_onto_run_statuses(env, app_ctx):
+    targets = _configure(env, rounds=0)
+    [passing] = _enqueue(env, targets["g"])           # awaiting_review
+    env.bridge.generated = BAD
+    [failing] = _enqueue(env, targets["f"])           # needs_human
+
+    def tasks(**query):
+        resp = env.client.get("/api/v1/me/tasks", query_string=query, headers=env.headers)
+        assert resp.status_code == 200, resp.get_json()
+        return [job["id"] for job in resp.get_json()["data"]["ut_jobs"]]
+
+    assert sorted(tasks()) == sorted([passing, failing])
+    assert tasks(status="failed") == [failing]
+    assert tasks(status="passed") == [passing] and tasks(status="running") == []
+    assert tasks(q="g") == [passing] and tasks(project_id=env.pid, mine="1") != []
+
+    kpi = env.client.get("/api/v1/me/overview",
+                         headers=env.headers).get_json()["data"]["kpi"]
+    # A machine PASS may still be waiting for human review.
+    assert (kpi["failed"], kpi["passed"], kpi["running"], kpi["total"]) == (1, 1, 0, 2)
+
+    env.call("post", f"/jobs/{passing}/review", json={"decision": "approve"})
+    assert tasks(status="passed") == [passing]
+    env.call("post", f"/jobs/{failing}/review", json={"decision": "approve", "note": "override"})
+    assert tasks(status="failed") == [failing]
+    assert tasks(status="passed") == [passing]
+    response = env.client.get("/api/v1/me/tasks?limit=1", headers=env.headers).get_json()["data"]
+    assert len(response["tasks"]) + len(response["ut_jobs"]) == 1
+    assert response["truncated"] is True
+    _enqueue(env, targets["f"])
+    card = next(p for p in env.client.get("/api/v1/projects").get_json()["data"]["projects"]
+                if p["id"] == env.pid)
+    home = next(p for p in env.client.get("/api/v1/me/overview").get_json()["data"]["projects"]
+                if p["id"] == env.pid)
+    assert card["ut_jobs_approved"] == home["ut_approved"] == 1
+    assert card["ut_jobs_needs_human"] == 1
+
+
+def test_recent_entry_limit_applies_across_both_execution_types():
+    from app.services.ut_pipeline.workspace import recent_entries
+
+    silver = [{"task_id": "T000001", "created_at": "2026-10-18T10:00:00Z"}]
+    unit = [{"id": 1, "created_at": "2026-10-19T10:00:00Z"}]
+    tasks, jobs, truncated = recent_entries(silver, unit, 1)
+    assert tasks == [] and jobs == unit and truncated is True
+
+
+@pytest.mark.parametrize("failure,status", [("environment", "error"), ("model", "failed")])
+@pytest.mark.parametrize("decision", ["approve", "reject"])
+def test_review_does_not_reclassify_machine_evidence(env, monkeypatch, failure, status, decision):
+    targets = _configure(env)
+    if failure == "environment":
+        env.bridge.execution_status = "BLOCKED"
+    else:
+        env.bridge.generated = BAD
+
+        def down(*args, **kwargs):
+            raise provider.ProviderError("offline")
+
+        monkeypatch.setattr(provider, "chat", down)
+    [job_id] = _enqueue(env, targets["f"])
+
+    def snapshot():
+        payload = env.client.get("/api/v1/me/tasks", query_string={"status": status}).get_json()["data"]
+        counts = env.client.get("/api/v1/me/overview").get_json()["data"]["kpi"]
+        return [j["id"] for j in payload["ut_jobs"]], counts[status]
+
+    assert snapshot() == ([job_id], 1)
+    response, body = env.call("post", f"/jobs/{job_id}/review",
+                             json={"decision": decision, "note": "human assessment"})
+    assert response == 200, body
+    assert snapshot() == ([job_id], 1)

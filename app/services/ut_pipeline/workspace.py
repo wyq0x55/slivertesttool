@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping, Optional
 
+from sqlalchemy import case
+
 from ...extensions import db
 from ...models import LMUser, UtBatch, UtJob, UtTarget
 from ..lanmatrix import permissions
@@ -25,6 +27,23 @@ STATE_ZH = {
 }
 # Gates an editor can clear (revision / retry) without the review capability.
 _EDITOR_GATES = (UtJob.NEEDS_HUMAN, UtJob.BLOCKED, UtJob.ERROR)
+
+def _task_status():
+    """One SQL projection for list filters and counters.
+
+    Review decisions never substitute for a machine result: an approved FAIL
+    stays failed and a rejected PASS stays passed. A repair-provider error is
+    a workflow problem; the current candidate's checker result stays intact.
+    """
+    return case(
+        (UtJob.state == UtJob.QUEUED, "queued"),
+        (UtJob.state.in_((UtJob.GENERATING, UtJob.EXECUTING, UtJob.REPAIRING)), "running"),
+        (UtJob.last_verdict == "BLOCKED", "error"),
+        (UtJob.last_verdict == "PASS", "passed"),
+        (UtJob.last_verdict.in_(("FAIL", "INVALID")), "failed"),
+        (UtJob.generation_status == "ERROR", "error"),
+        else_="notask",
+    )
 
 
 def actionable_states(role: Optional[str], is_admin: bool) -> tuple[str, ...]:
@@ -169,3 +188,68 @@ def project_counts(project_ids: Iterable[int]) -> dict[int, dict[str, int]]:
         elif state == UtJob.APPROVED:
             entry["ut_approved"] += count
     return out
+
+
+def kpi_counts(user: LMUser, project_ids: Iterable[int]) -> dict[str, int]:
+    """Job counts folded into the workspace KPI band (every job, like runs)."""
+    pids = [int(p) for p in project_ids]
+    out = {"queued": 0, "running": 0, "passed": 0, "failed": 0,
+           "error": 0, "total": 0, "mine_open": 0}
+    if not pids:
+        return out
+    status = _task_status()
+    rows = (db.session.query(status, db.func.count(UtJob.id))
+            .filter(UtJob.project_id.in_(pids)).group_by(status).all())
+    for mapped, count in rows:
+        out["total"] += count
+        if mapped in out:
+            out[mapped] += count
+    out["mine_open"] = (db.session.query(db.func.count(UtJob.id))
+                        .join(UtBatch, UtBatch.id == UtJob.batch_id)
+                        .filter(UtJob.project_id.in_(pids), UtBatch.created_by == user.id,
+                                UtJob.state.in_(UtJob.ACTIVE)).scalar() or 0)
+    return out
+
+
+def jobs_for(user: LMUser, project_ids: Iterable[int], *, status: str = "",
+             mine: bool = False, text: str = "", limit: int = 200
+             ) -> tuple[list[dict[str, Any]], bool]:
+    """Cross-project job list for the workspace, newest submission first."""
+    pids = [int(p) for p in project_ids]
+    if not pids:
+        return [], False
+    query = (db.session.query(UtJob, UtBatch.created_by, _task_status())
+             .join(UtBatch, UtBatch.id == UtJob.batch_id)
+             .join(UtTarget, UtTarget.id == UtJob.target_id)
+             .filter(UtJob.project_id.in_(pids)))
+    if status:
+        query = query.filter(_task_status() == status)
+    if mine:
+        query = query.filter(UtBatch.created_by == user.id)
+    if text:
+        like = "%" + text.replace("%", r"\%").replace("_", r"\_") + "%"
+        query = query.filter(db.or_(UtTarget.function.ilike(like),
+                                    UtTarget.source_rel.ilike(like)))
+    rows = query.order_by(UtJob.created_at.desc(), UtJob.id.desc()).limit(limit + 1).all()
+    truncated = len(rows) > limit
+    rows = rows[:limit]
+    ids = {uid for job, creator, _ in rows for uid in (job.reviewed_by, creator) if uid}
+    users = {u.id: u for u in LMUser.query.filter(LMUser.id.in_(ids))} if ids else {}
+    out = []
+    for job, creator, task_status in rows:
+        entry = job.to_dict()
+        entry.update(submitter=_name(users, creator), reviewer_name=_name(users, job.reviewed_by),
+                     task_status=task_status,
+                     link=f"/lanmatrix/projects/{job.project_id}/tasks?job={job.id}")
+        out.append(entry)
+    return out, truncated
+
+
+def recent_entries(tasks: list[dict], jobs: list[dict], limit: int):
+    """Apply one submission-order limit across both independent identities."""
+    entries = [(False, row) for row in tasks] + [(True, row) for row in jobs]
+    entries.sort(key=lambda pair: pair[1].get("created_at") or "", reverse=True)
+    kept = entries[:limit]
+    return ([row for unit, row in kept if not unit],
+            [row for unit, row in kept if unit],
+            len(entries) > limit)

@@ -84,6 +84,36 @@
       button.setAttribute("aria-pressed", String(selected));
     });
   }
+  function workspaceTask(job) {
+    // View-only adapter. The namespaced key is never sent to Silver endpoints.
+    return {
+      kind: "ut_job", task_id: "ut:" + job.id, project_id: job.project_id,
+      test_id: (job.target || {}).function || ("作业 #" + job.id),
+      sil_name: "WinAMS", submitter: job.submitter || "",
+      status: job.task_status, created_at: job.created_at, finished_at: job.updated_at,
+      review: {
+        status: job.state === "approved" || job.state === "rejected" ? job.state
+          : GATES[job.state] ? "pending" : "",
+        note: job.review_note || "", reviewer_name: job.reviewer_name || "",
+      },
+      utJob: job,
+    };
+  }
+  function workspaceCells(task) {
+    var job = task.utJob;
+    var decided = job.state === "approved" || job.state === "rejected";
+    return {
+      status: ACTIVE[job.state] ? statePill(job.state)
+        : job.last_verdict ? verdictPill(job.last_verdict)
+          : job.generation_status === "ERROR" ? LMPill.html("error", "生成异常")
+            : LMPill.html("notask", "未判定"),
+      review: decided ? statePill(job.state)
+        : GATES[job.state] ? LMPill.html("pending", STATE[job.state][1], job.reason)
+          : '<span class="muted">—</span>',
+      progress: '<span class="muted">模型修正 ' + esc(job.repair_rounds) + " / " +
+        esc(job.max_repair_rounds) + "</span>",
+    };
+  }
   function dashboardSnapshot(targets) {
     var current = targets.filter(function (target) { return target.in_index; });
     var states = {};
@@ -117,6 +147,6 @@
     STATE: STATE, VERDICT: VERDICT, ORIGIN: ORIGIN, ACTIVE: ACTIVE, GATES: GATES,
     FILTERS: FILTERS, esc: esc, statePill: statePill, applyState: applyState,
     verdictPill: verdictPill, time: time, say: say, can: can, selectFilter: selectFilter,
-    dashboardSnapshot: dashboardSnapshot
+    dashboardSnapshot: dashboardSnapshot, workspaceTask: workspaceTask, workspaceCells: workspaceCells
   };
 })(window, document);

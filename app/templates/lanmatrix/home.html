@@ -1,5 +1,6 @@
 {% extends "lanmatrix/base_lm.html" %}
 {% block title %}工作台{% endblock %}
+{% block styles %}<link rel="stylesheet" href="{{ url_for('static', filename='css/lanmatrix-ut.css') }}">{% endblock %}
 {% block crumb %}<b>工作台</b>{% endblock %}
 {% block content %}
 <div class="content lm-home">
@@ -39,7 +40,10 @@
       <span class="k">失败</span><span class="v bad" data-v="failed">–</span>
     </button>
     <button class="kpi-tile" type="button" data-kpi="passed" data-filter="passed">
-      <span class="k">通过</span><span class="v ok" data-v="passed">–</span>
+      <span class="k">机器通过</span><span class="v ok" data-v="passed">–</span>
+    </button>
+    <button class="kpi-tile" type="button" data-kpi="error" data-filter="error">
+      <span class="k">异常 / 阻塞</span><span class="v warn" data-v="error">–</span>
     </button>
     {# Assigned reviews are work the user did not choose and may not know about,
        so they get a first-class tile rather than living behind a tab. #}
@@ -103,7 +107,7 @@
     <div class="toolbar">
       <div class="search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>
-        <input type="search" id="lm-h-text" placeholder="搜索任务 / test id…" autocomplete="off">
+        <input type="search" id="lm-h-text" placeholder="搜索任务 / test id / 函数…" autocomplete="off">
       </div>
       <select id="lm-h-project" class="selbox" title="按项目筛选">
         <option value="">全部项目</option>
@@ -148,20 +152,20 @@
        plus a leading 项目 column: the workspace spans projects, so a task id
        alone does not say where the row lives. Rows are rendered by the shared
        LMTaskRow module, so both pages stay in step. #}
-    <div class="tablecard">
+    <div class="tablecard" id="lm-h-runs-card">
       <div style="overflow-x:auto">
         <table class="dt lm-tasks-table">
           <thead>
             <tr>
-              <th class="lm-col-check" style="width:36px"><input type="checkbox" id="lm-h-check-all" title="全选/全不选（当前筛选）"></th>
+              <th class="lm-col-check" style="width:36px"><input type="checkbox" id="lm-h-check-all" title="全选/全不选 Silver 运行（当前筛选）"></th>
               <th class="lm-sortable" data-sort="project">项目</th>
-              <th class="lm-sortable" data-sort="test_id">test id</th>
-              <th class="lm-sortable" data-sort="sil_name">模型</th>
+              <th class="lm-sortable" data-sort="test_id">test id / 函数</th>
+              <th class="lm-sortable" data-sort="sil_name">模型 / 执行器</th>
               <th class="lm-sortable" data-sort="submitter">提交者</th>
               <th class="lm-sortable" data-sort="status">状态 / 结果</th>
               <th class="lm-sortable" data-sort="review">审核</th>
-              <th class="lm-sortable" data-sort="progress">进度</th>
-              <th class="lm-sortable" data-sort="finished_at">完成时间</th>
+              <th class="lm-sortable" data-sort="progress">进度 / 修正</th>
+              <th class="lm-sortable" data-sort="finished_at">完成 / 更新时间</th>
               <th style="width:1%"></th>
             </tr>
           </thead>
@@ -292,6 +296,8 @@
 <script src="{{ url_for('static', filename='js/lanmatrix/steps_editor.js') }}"></script>
 {# Shared client-side pager used by every list on this page. #}
 <script src="{{ url_for('static', filename='js/lanmatrix/pager.js') }}"></script>
+{# Domain-specific values for the shared task table. #}
+<script src="{{ url_for('static', filename='js/lanmatrix/ut_common.js') }}"></script>
 <script src="{{ url_for('static', filename='js/lanmatrix/home.js') }}"></script>
 {# Review queue. Independent of home.js: it owns its own section and reload, so
    a failure in one list cannot blank the other. #}

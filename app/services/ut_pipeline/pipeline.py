@@ -32,6 +32,7 @@ from ...extensions import db
 from ...models import UtAttempt, UtBatch, UtJob, UtPipelineConfig, UtTarget
 from ...models.lanmatrix import _utcnow
 from ..ai.provider import ProviderError
+from ..lanmatrix import audit
 from ..lanmatrix import notification_service as notify_svc
 from ..lanmatrix.errors import ServiceError, VersionConflict
 from . import repair
@@ -69,7 +70,9 @@ def require_config(project_id: int) -> UtPipelineConfig:
 
 
 def save_config(project_id: int, values: dict[str, Any], user_id: int) -> UtPipelineConfig:
-    config = get_config(project_id) or UtPipelineConfig(
+    existing = get_config(project_id)
+    before = existing.to_dict() if existing else None
+    config = existing or UtPipelineConfig(
         project_id=project_id,
         max_repair_rounds=current_app.config["UT_REPAIR_MAX_ROUNDS"],
     )
@@ -85,6 +88,10 @@ def save_config(project_id: int, values: dict[str, Any], user_id: int) -> UtPipe
         config.max_repair_rounds = rounds
     config.updated_by = user_id
     db.session.add(config)
+    db.session.flush()
+    audit.record("ut.config.update", actor_id=user_id, object_type="ut_config",
+                 object_id=project_id, project_id=project_id,
+                 old_value=before, new_value=config.to_dict())
     db.session.commit()
     return config
 
@@ -92,7 +99,7 @@ def save_config(project_id: int, values: dict[str, Any], user_id: int) -> UtPipe
 # --------------------------------------------------------------------------- #
 # 実施一覧
 # --------------------------------------------------------------------------- #
-def import_targets(project_id: int) -> dict[str, int]:
+def import_targets(project_id: int, user_id: Optional[int] = None) -> dict[str, int]:
     """Mirror the project index; rows that disappeared are kept but flagged."""
     config = require_config(project_id)
     try:
@@ -123,8 +130,11 @@ def import_targets(project_id: int) -> dict[str, int]:
         if key not in seen and target.in_index:
             target.in_index = False
             removed += 1
+    summary = {"total": len(rows), "added": added, "removed": removed}
+    audit.record("ut.targets.import", actor_id=user_id, object_type="ut_index",
+                 object_id=project_id, project_id=project_id, new_value=summary)
     db.session.commit()
-    return {"total": len(rows), "added": added, "removed": removed}
+    return summary
 
 
 def _job_summary(job: Optional[UtJob]) -> Optional[dict[str, Any]]:
@@ -179,6 +189,9 @@ def create_batch(project_id: int, target_ids: Any, user_id: int, label: str = ""
         db.session.add(job)
         db.session.flush()
         target.latest_job_id = job.id
+    audit.record("ut.batch.create", actor_id=user_id, object_type="ut_batch",
+                 object_id=batch.id, project_id=project_id,
+                 new_value={"functions": [t.function for t in targets], "label": batch.label})
     db.session.commit()
     return batch
 
@@ -489,6 +502,9 @@ def submit_revision(project_id: int, job_id: int, csv_bytes: bytes, user_id: int
     _new_attempt(job, UtAttempt.ORIGIN_HUMAN, csv_bytes, note=note, user_id=user_id)
     _gate(job, UtJob.EXECUTING)
     job.last_verdict = ""
+    audit.record("ut.job.revise", actor_id=user_id, object_type="ut_job", object_id=job.id,
+                 project_id=project_id,
+                 new_value={"attempt_id": job.current_attempt_id, "note": note})
     db.session.commit()
     return job
 
@@ -518,19 +534,25 @@ def review(project_id: int, job_id: int, decision: str, user_id: int, note: str 
     job.reviewed_at = _utcnow()
     job.review_note = note
     approved = job.state == UtJob.APPROVED
+    audit.record("ut.job.approve" if approved else "ut.job.reject", actor_id=user_id,
+                 object_type="ut_job", object_id=job.id, project_id=project_id,
+                 new_value={"attempt_id": job.current_attempt_id,
+                            "verdict": job.last_verdict or None, "note": note})
     _notify_requester(job, notify_svc.REVIEW_APPROVED if approved else notify_svc.REVIEW_REJECTED,
                       "单元测试审核通过" if approved else "单元测试审核驳回", note, actor_id=user_id)
     db.session.commit()
     return job
 
 
-def retry(project_id: int, job_id: int) -> UtJob:
+def retry(project_id: int, job_id: int, user_id: Optional[int] = None) -> UtJob:
     job = _locked_job(project_id, job_id)
     if job.state not in (UtJob.BLOCKED, UtJob.ERROR):
         raise ServiceError("只有 blocked / error 状态的作业可以重试", code="INVALID_STATE")
     attempt = db.session.get(UtAttempt, job.current_attempt_id) if job.current_attempt_id else None
     if attempt is None:
         raise ServiceError("生成阶段失败的作业请重新加入队列", code="INVALID_STATE")
+    audit.record("ut.job.retry", actor_id=user_id, object_type="ut_job", object_id=job.id,
+                 project_id=project_id, old_value={"state": job.state, "reason": job.reason})
     # An error during repair leaves a checked FAIL attempt: resume the repair.
     _gate(job, UtJob.REPAIRING if attempt.verdict == "FAIL" else UtJob.EXECUTING)
     db.session.commit()

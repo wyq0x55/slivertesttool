@@ -241,3 +241,31 @@ test("repeated enqueue clicks submit one batch and keep the selected function id
   await settle();
   assert.equal(h.get("ut-enqueue").disabled, true);
 });
+
+test("UT jobs use the shared task row with separate result and review cells", () => {
+  const window = {};
+  const context = vm.createContext({
+    window, document: {},
+    LMApi: { projectTaskDownloadUrl() { throw new Error("UT must not call Silver APIs"); } },
+  });
+  for (const file of ["pill.js", "ut_common.js", "task_row.js"]) {
+    vm.runInContext(fs.readFileSync(path.join(scripts, file), "utf8"), context);
+    context.LMPill = window.LMPill;
+  }
+  const raw = { ...job(), state: "approved", last_verdict: "FAIL",
+    project_id: 4, updated_at: "2026-10-19T12:00:00Z", task_status: "failed" };
+  const task = window.LMUt.workspaceTask(raw);
+  assert.equal(task.task_id, "ut:1");
+  const html = window.LMTaskRow.rowHtml(task, {
+    projectId: 4, canDelete: true, viewHref: "/lanmatrix/projects/4/tasks?job=1",
+    projectCell: "<td>Project</td>",
+  });
+  assert.equal((html.match(/<tr /g) || []).length, 1);
+  assert.equal((html.match(/<td[ >]/g) || []).length, 10);
+  assert.match(html, /lm-cell-status[\s\S]*?FAIL/);
+  assert.match(html, /lm-cell-review[\s\S]*?审核通过/);
+  assert.doesNotMatch(html, /lm-task-(sel|steps|cancel|retest|del)/);
+  assert.match(html, /WinAMS/);
+  const changed = window.LMUt.workspaceTask({ ...raw, current_attempt_id: 20 });
+  assert.notEqual(window.LMTaskRow.signature(task), window.LMTaskRow.signature(changed));
+});

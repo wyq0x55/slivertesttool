@@ -96,7 +96,7 @@ def _project_card_stats(project_ids: list[int]) -> dict[int, dict]:
 
     rows = (
         db.session.query(Task.project_id, Task.status, db.func.count(Task.id))
-        .filter(Task.project_id.in_(project_ids))
+        .filter(Task.project_id.in_(project_ids), Task.deleted_at.is_(None))
         .group_by(Task.project_id, Task.status)
         .all()
     )
@@ -122,9 +122,10 @@ def _project_card_stats(project_ids: list[int]) -> dict[int, dict]:
             stats[pid]["ut_targets_count"] = count
 
     job_counts = (
-        db.session.query(UtJob.project_id, UtJob.state, db.func.count(UtJob.id))
-        .filter(UtJob.project_id.in_(project_ids))
-        .group_by(UtJob.project_id, UtJob.state)
+        db.session.query(UtTarget.project_id, UtJob.state, db.func.count(UtTarget.id))
+        .join(UtJob, UtJob.id == UtTarget.latest_job_id)
+        .filter(UtTarget.project_id.in_(project_ids), UtTarget.in_index.is_(True))
+        .group_by(UtTarget.project_id, UtJob.state)
         .all()
     )
     for pid, state, count in job_counts:

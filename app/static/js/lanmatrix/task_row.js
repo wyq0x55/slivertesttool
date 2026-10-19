@@ -137,6 +137,11 @@
   // does not blow away the user's text selection every few seconds.
   function signature(t) {
     const r = t.review || {};
+    if (t.kind === "ut_job") {
+      const j = t.utJob;
+      return JSON.stringify([j.state, j.last_verdict, j.repair_rounds,
+        j.current_attempt_id, j.updated_at, j.review_note]);
+    }
     return [t.status, t.progress || 0, t.has_result ? 1 : 0,
             t.result || "", fmtFinished(t),
             // A decision that lands while the list is open must repaint the
@@ -170,30 +175,33 @@
    */
   function rowHtml(t, opts) {
     const o = opts || {};
+    const unit = t.kind === "ut_job";
+    const cells = unit ? global.LMUt.workspaceCells(t) : null;
     const pid = o.projectId;
     const key = esc(t.task_id || "");
     const p = t.progress || 0;
     const data = `data-k="${key}"` + (pid != null ? ` data-p="${esc(pid)}"` : "");
 
-    const check = `<td class="lm-col-check">`
+    const check = unit ? '<td class="lm-col-check"><span class="muted" title="在作业详情中操作">—</span></td>'
+      : `<td class="lm-col-check">`
       + `<input type="checkbox" class="lm-task-sel" ${data}${o.selected ? " checked" : ""}></td>`;
 
     const view = o.viewHref
       ? `<a class="btn small btn-icon lm-task-view" href="${esc(o.viewHref)}" ${data} title="查看">${ICO.view}</a>`
       : `<button class="btn small btn-icon lm-task-view" type="button" ${data} title="查看">${ICO.view}</button>`;
-    const steps = t.test_id
+    const steps = !unit && t.test_id
       ? `<button class="btn small btn-icon lm-task-steps" type="button" ${data} data-tid="${esc(t.test_id)}" title="手顺">${ICO.steps}</button>`
       : "";
-    const dl = (canDownload(t) && pid != null)
+    const dl = (!unit && canDownload(t) && pid != null)
       ? `<a class="btn small btn-icon" href="${LMApi.projectTaskDownloadUrl(pid, t.task_id)}" title="下载结果">${ICO.download}</a>`
       : "";
-    const cancel = canCancel(t)
+    const cancel = !unit && canCancel(t)
       ? `<button class="btn small btn-icon lm-task-cancel" type="button" ${data} title="取消运行">${ICO.cancel}</button>`
       : "";
-    const retest = canRetest(t)
+    const retest = !unit && canRetest(t)
       ? `<button class="btn small btn-icon lm-task-retest" type="button" ${data} title="重新测试">${ICO.retest}</button>`
       : "";
-    const del = o.canDelete
+    const del = !unit && o.canDelete
       ? `<button class="btn small btn-icon danger lm-task-del" type="button" ${data} title="删除">${ICO.del}</button>`
       : "";
 
@@ -222,13 +230,13 @@
       <td class="lm-cell-testid">${tidCell}</td>
       <td class="lm-cell-ell" title="${esc(t.sil_name || "")}">${esc(t.sil_name || "")}</td>
       <td class="lm-cell-ell" title="${esc(t.submitter || "")}">${esc(t.submitter || "")}</td>
-      <td class="lm-cell-status">${mergedBadge(t)}</td>
-      <td class="lm-cell-review">${reviewCell(t)}</td>
+      <td class="lm-cell-status">${unit ? cells.status : mergedBadge(t)}</td>
+      <td class="lm-cell-review">${unit ? cells.review : reviewCell(t)}</td>
       <td class="lm-cell-progress">
-        <div style="display:flex;align-items:center;gap:8px">
+        ${unit ? cells.progress : `<div style="display:flex;align-items:center;gap:8px">
           <div class="prog" style="width:70px;flex:0 0 auto"><i style="width:${p}%"></i></div>
           <span class="muted" style="font-size:12px">${p}%</span>
-        </div>
+        </div>`}
       </td>
       <td class="lm-cell-time"><code>${esc(fmtFinished(t))}</code></td>
       <td class="lm-row-actions"><span class="row-acts" style="display:flex;gap:4px;justify-content:flex-end">${view} ${steps} ${cancel} ${retest} ${dl} ${del}</span></td>
