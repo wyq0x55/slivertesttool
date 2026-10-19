@@ -107,11 +107,13 @@
         : job.last_verdict ? verdictPill(job.last_verdict)
           : job.generation_status === "ERROR" ? LMPill.html("error", "生成异常")
             : LMPill.html("notask", "未判定"),
-      review: decided ? statePill(job.state)
+      // Decided and awaiting jobs read with the run list's review vocabulary
+      // (待审核 / 已通过 / 已驳回); the other gates name the workflow problem.
+      review: decided || job.state === "awaiting_review" ? window.LMTaskRow.reviewBadge(task)
         : GATES[job.state] ? LMPill.html("pending", STATE[job.state][1], job.reason)
           : '<span class="muted">—</span>',
-      progress: '<span class="muted">模型修正 ' + esc(job.repair_rounds) + " / " +
-        esc(job.max_repair_rounds) + "</span>",
+      progress: '<span class="muted" title="模型修正轮数">修正 ' + esc(job.repair_rounds) +
+        "/" + esc(job.max_repair_rounds) + "</span>",
     };
   }
   function dashboardSnapshot(targets) {

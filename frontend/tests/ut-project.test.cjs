@@ -263,7 +263,7 @@ test("UT jobs use the shared task row with separate result and review cells", ()
   assert.equal((html.match(/<tr /g) || []).length, 1);
   assert.equal((html.match(/<td[ >]/g) || []).length, 10);
   assert.match(html, /lm-cell-status[\s\S]*?FAIL/);
-  assert.match(html, /lm-cell-review[\s\S]*?审核通过/);
+  assert.match(html, /lm-cell-review[\s\S]*?已通过/);
   assert.doesNotMatch(html, /lm-task-(sel|steps|cancel|retest|del)/);
   assert.match(html, /WinAMS/);
   const changed = window.LMUt.workspaceTask({ ...raw, current_attempt_id: 20 });

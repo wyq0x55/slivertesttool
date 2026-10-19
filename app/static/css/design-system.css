@@ -540,6 +540,9 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
    simply fade in over the row's right edge on hover. */
 .lm-tasks-table thead th, .lm-tasks-table tbody td{ padding:11px 12px; }
 .lm-tasks-table .pill{ white-space:nowrap; }
+/* The workspace list carries one more column (项目) than the project list. */
+#lm-h-runs-card .lm-tasks-table thead th,
+#lm-h-runs-card .lm-tasks-table tbody td{ padding:11px 9px; }
 .lm-tasks-table .lm-cell-ell{ max-width:150px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .lm-tasks-table tbody tr{ position:relative; }
 .lm-tasks-table .lm-row-actions{ width:0; padding:0 !important; border:0; }
