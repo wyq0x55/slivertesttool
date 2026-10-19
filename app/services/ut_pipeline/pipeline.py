@@ -439,7 +439,7 @@ def advance_job(job_id: int) -> None:
 # --------------------------------------------------------------------------- #
 def _locked_job(project_id: int, job_id: int) -> UtJob:
     job = (UtJob.query.filter_by(id=job_id, project_id=project_id)
-           .with_for_update().populate_existing().first())
+           .with_for_update(of=UtJob).populate_existing().first())
     if job is None:
         raise ServiceError("作业不存在", code="NOT_FOUND")
     if job.state not in UtJob.HUMAN_GATES:

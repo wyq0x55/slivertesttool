@@ -179,7 +179,7 @@ class UtJob(db.Model):
     reviewed_at = db.Column(db.DateTime, nullable=True)
     review_note = db.Column(db.Text, nullable=False, default="")
 
-    target = db.relationship("UtTarget", lazy="joined")
+    target = db.relationship("UtTarget", lazy="select")
 
     def to_dict(self, *, attempts: list | None = None) -> dict:
         entry = {

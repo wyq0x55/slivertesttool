@@ -106,7 +106,8 @@ def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: by
         "model": model or configured,
     }
     reply = provider.invoke_chat(messages, temperature=0.1, max_tokens=16384,
-                                 json_mode=True, usage=usage, model=model or None)
+                                 json_mode=True, usage=usage, model=model or None,
+                                 timeout=300)
     meta["usage"] = usage
     try:
         parsed = provider.extract_json(reply)
