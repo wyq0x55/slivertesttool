@@ -61,3 +61,11 @@ def test_nothing_accepted_returns_no_csv():
     applied = increment.apply(_table(), [], {"b1:T"})
     assert applied.csv_bytes is None and applied.accepted == []
     assert increment.apply(_table(), "rows", {"b1:T"}).rejected
+
+
+def test_a_csv_without_rows_starts_from_a_blank_row():
+    empty = increment.parse(CSV.split(";$L$")[0])
+    assert increment.rows_section(empty).startswith("无数据行")
+    applied = increment.apply(empty, [{"obligation": "b1:T", "base_row": 0,
+                                       "inputs": {"I2": "1"}}], {"b1:T"})
+    assert applied.csv_bytes.decode("cp932").endswith(";$L$,LLM add b1:T\r\n,,1,,\r\n")

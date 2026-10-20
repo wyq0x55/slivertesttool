@@ -8,7 +8,8 @@ changed and expected values cannot be rewritten by construction.  Blank
 expected values are then settled by the WinAMS capture.
 
 Input columns are addressed by short tokens (``I1`` .. ``In``) so the prompt
-stays small and a model cannot misspell a long WinAMS column name.
+stays small and a model cannot misspell a long WinAMS column name.  Reference
+row 0 is a row with every input blank, for a CSV without data rows.
 """
 
 from __future__ import annotations
@@ -77,6 +78,8 @@ def rows_section(table: Table) -> str:
     base = defaults(table)
     unusual = " ".join(f"{table.token(i)}={value or '(空)'}"
                        for i, value in enumerate(base) if value != "0")
+    if not table.rows:
+        return "无数据行；用 base_row 0（全部输入为空的行）作参考行。"
     lines = [f"未列出的输入取默认值；默认值除下列外均为 0：{unusual or '无'}"]
     for number, row in enumerate(table.rows, start=1):
         cells = " ".join(f"{table.token(i)}={value or '(空)'}"
@@ -130,12 +133,12 @@ def apply(table: Table, proposals: Any, allowed: set[str]) -> Applied:
                 base_number = int(item.get("base_row"))
             except (TypeError, ValueError):
                 raise ValueError("base_row 必须是现有数据行编号") from None
-            if not 1 <= base_number <= len(table.rows):
-                raise ValueError(f"base_row {base_number} 超出 1..{len(table.rows)}")
+            if not 0 <= base_number <= len(table.rows):
+                raise ValueError(f"base_row {base_number} 超出 0..{len(table.rows)}")
             changes = item.get("inputs")
             if not isinstance(changes, dict) or not changes:
                 raise ValueError("inputs 至少改动一个输入列")
-            base = table.rows[base_number - 1]
+            base = table.rows[base_number - 1] if base_number else [""] * (1 + ni)
             row = list(base[:1 + ni])
             changed = {}
             for key, value in changes.items():

@@ -27,7 +27,7 @@ from ..ai import config as ai_config
 from ..ai import provider
 from . import increment
 
-PROMPT_VERSION = "ut-repair/4.0"
+PROMPT_VERSION = "ut-repair/4.1"
 # Bound the prompt: issue details are already truncated by ut-agent.
 _MAX_DETAIL_CHARS = 6000
 _MAX_DECISION_CHARS = 200
@@ -67,7 +67,8 @@ def _system_prompt(constraints: dict[str, Any]) -> str:
         '"declined": [{"obligation": "<义务 ID>", "reason": "<无法补齐的原因>"}], '
         '"rationale": "<总体说明>"}\n\n'
         "## 方式\n"
-        "- 不要输出 CSV。每个新增行 = 复制 base_row 指定的现有数据行，只改 inputs 中列出的输入列。\n"
+        "- 不要输出 CSV。每个新增行 = 复制 base_row 指定的现有数据行，只改 inputs 中列出的输入列；"
+        "base_row 0 表示全部输入为空的行。\n"
         "- 输入列用 I1..In 引用（见「输入列」）；不能改输出列，平台把新增行的期望值全部留空，由 WinAMS 执行捕获回填。\n"
         "- 已有行、列与期望值由平台保持不变；期望值与实际值不一致由平台用执行捕获值覆盖，不需要你处理。\n"
         "- obligation 只能是「待补缺口」中的义务 ID，或「校验判定」中的问题代码（例如覆盖率不足）。\n"
@@ -95,8 +96,12 @@ def _gap_line(item: dict[str, Any]) -> str:
     line = (f"- {item.get('obligation_id')}（{', '.join(facts)}）"
             f" 判定式：{decision[:_MAX_DECISION_CHARS]}"
             f" / 求解 {item.get('solve_status')}")
+    constraints = [f"{c.get('variable')} {c.get('operator')} {c.get('value')}"
+                   for c in item.get("constraints") or ()]
+    if constraints:
+        line += f" / 求解约束：{'; '.join(constraints)}"
     if item.get("reason"):
-        line += f"：{item['reason']}"
+        line += f"：{item['reason'][:_MAX_DECISION_CHARS]}"
     return line
 
 
