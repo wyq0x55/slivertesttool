@@ -28,7 +28,7 @@
     PASS: ["passed", "PASS"], FORMAT_OK: ["pending", "仅格式通过"],
     FAIL: ["failed", "FAIL"], BLOCKED: ["error", "阻塞"], INVALID: ["failed", "无效"]
   };
-  var ORIGIN = { GENERATOR: "生成器", LLM: "本地模型", HUMAN: "人工" };
+  var ORIGIN = { GENERATOR: "生成器", LLM: "本地模型", CAPTURE: "执行捕获", HUMAN: "人工" };
   var ACTIVE = { queued: 1, generating: 1, executing: 1, repairing: 1 };
   /* Machine outcomes that wait for a person. */
   var GATES = { awaiting_review: 1, needs_human: 1, blocked: 1, error: 1 };

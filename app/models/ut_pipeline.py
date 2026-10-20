@@ -220,6 +220,8 @@ class UtAttempt(db.Model):
     ORIGIN_GENERATOR = "GENERATOR"
     ORIGIN_LLM = "LLM"
     ORIGIN_HUMAN = "HUMAN"
+    # Expected values replaced by the outputs WinAMS captured for the same inputs.
+    ORIGIN_CAPTURE = "CAPTURE"
 
     id = db.Column(db.Integer, primary_key=True)
     job_id = db.Column(

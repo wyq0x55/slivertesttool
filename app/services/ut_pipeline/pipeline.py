@@ -364,6 +364,40 @@ def _error_codes(check: dict[str, Any]) -> list[str]:
     return [issue["code"] for issue in check.get("issues", ()) if issue.get("severity") == "error"]
 
 
+# Expected-value problems the platform settles with the WinAMS capture instead
+# of the model: the capture is the implementation's own output for the same
+# inputs, recorded as EXECUTION_CAPTURED and re-executed before it counts.
+_ORACLE_CODES = frozenset({"ORACLE_MISMATCH", "EXPECTED_VALUE_PENDING"})
+# Human expected values may encode a requirement, so a mismatch there is a
+# finding for the reviewer and is never overwritten; a capture is never
+# captured again.
+_CAPTURABLE_ORIGINS = frozenset({UtAttempt.ORIGIN_GENERATOR, UtAttempt.ORIGIN_LLM})
+
+
+def _capture_backfill(job: UtJob, attempt: UtAttempt, check: dict[str, Any],
+                      execution: Optional[dict[str, Any]]) -> bool:
+    """Queue the WinAMS-captured CSV as the next attempt; True when queued."""
+    codes = set(_error_codes(check))
+    if (check.get("verdict") != "FAIL" or attempt.origin not in _CAPTURABLE_ORIGINS
+            or not codes & _ORACLE_CODES):
+        return False
+    captured = Path((execution or {}).get("captured_candidate") or "")
+    if not captured.name or not captured.is_file():
+        return False
+    csv_bytes = captured.read_bytes()
+    if hashlib.sha256(csv_bytes).hexdigest() == attempt.csv_sha256:
+        return False
+    _new_attempt(job, UtAttempt.ORIGIN_CAPTURE, csv_bytes,
+                 note=f"期望值由第 {attempt.seq} 版的 WinAMS 执行捕获回填（{', '.join(sorted(codes & _ORACLE_CODES))}）",
+                 reviser={"oracle_source": "EXECUTION_CAPTURED",
+                          "from_attempt": attempt.seq,
+                          "from_sha256": attempt.csv_sha256,
+                          "captured_from": str(captured),
+                          "resolved_codes": sorted(codes & _ORACLE_CODES)})
+    _gate(job, UtJob.EXECUTING)
+    return True
+
+
 def next_state(check: dict[str, Any], origin: str, rounds: int, max_rounds: int) -> tuple[str, str]:
     """Pure transition after one checked attempt."""
     verdict = check.get("verdict")
@@ -410,11 +444,14 @@ def _execute_step(job: UtJob) -> None:
     config = db.session.get(UtBatch, job.batch_id).config_snapshot or {}
     candidate = Path(attempt.csv_path)
     previous = _previous_executable(job, attempt)
+    intents = (job.generation or {}).get("intent_manifest")
     arguments = {
         "manifest": config["manifest_path"],
         "reference": Path(job.reference_csv) if job.reference_csv else None,
         "previous": Path(previous.csv_path) if previous else None,
     }
+    if intents and Path(intents).is_file():
+        arguments["intents"] = Path(intents)
     bridge = get_bridge()
     execution = None
     try:
@@ -436,6 +473,9 @@ def _execute_step(job: UtJob) -> None:
     attempt.execution = execution
     attempt.verdict = check["verdict"]
     job.last_verdict = check["verdict"]
+    if _capture_backfill(job, attempt, check, execution):
+        db.session.commit()
+        return
     _gate(job, *next_state(check, attempt.origin, job.repair_rounds, job.max_repair_rounds))
     db.session.commit()
 

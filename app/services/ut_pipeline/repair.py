@@ -1,16 +1,22 @@
 """Local-LLM revision of a TestCsv that failed the ut-agent check.
 
 The model receives the constraint pack exported by ut-agent for the bound
-baseline (the same rules the checker enforces), the failing CSV and the
-machine verdict.  Its output is only a candidate: it is executed and checked
-again by ut-agent, and every outcome still ends at a human gate.
+baseline (the same rules the checker enforces), the input-completeness gaps
+the generator reported for the target, the failing CSV and the machine
+verdict.  Its output is only a candidate: it is executed and checked again by
+ut-agent, and every outcome still ends at a human gate.
+
+The model's job is input steps only.  Wrong or blank expected values are
+settled by the platform with the WinAMS capture (see ``pipeline``), so the
+model must keep existing expected values and leave new ones blank.
 
 Prompt layout follows prefix-cache reuse on the local model: the system
 message depends only on the batch constraint pack (shared by every function
 of the batch), and the user message runs from the most to the least stable
-part — target and current CSV, then the verdict for that CSV, then the round
-history, which changes on every round.  A round that kept the previous CSV
-therefore shares everything except the history tail.
+part — target and its completeness gaps (fixed per job), current CSV, then
+the verdict for that CSV, then the round history, which changes on every
+round.  A round that kept the previous CSV therefore shares everything except
+the history tail.
 """
 
 from __future__ import annotations
@@ -23,9 +29,13 @@ from typing import Any, Optional
 from ..ai import config as ai_config
 from ..ai import provider
 
-PROMPT_VERSION = "ut-repair/2"
+PROMPT_VERSION = "ut-repair/3"
 # Bound the prompt: issue details are already truncated by ut-agent.
 _MAX_DETAIL_CHARS = 6000
+_MAX_DECISION_CHARS = 200
+# Reported once in the gap section; repeating it in the verdict breaks nothing
+# but costs prompt tokens on every round.
+_GAP_CODE = "INPUT_OBLIGATION_UNRESOLVED"
 
 
 @dataclass
@@ -56,16 +66,55 @@ def _system_prompt(constraints: dict[str, Any]) -> str:
         f"MC/DC: {coverage.get('mcdc')}（true 表示必须 100%）\n\n"
         "## 输出\n只输出一个 JSON 对象，不要输出其他文字：\n"
         '{"csv": "<修订后的完整 CSV 文本>", "rationale": "<修改依据>", '
-        '"changes": [{"row": <数据行序号>, "column": "<列名>", "before": "<原值>", '
-        '"after": "<新值>", "reason": "<依据>"}]}\n'
-        "期望值只能依据校验结果中的执行事实或明确的计算修改，并在 changes 中逐格说明；"
-        "无法从给定信息修复时返回 {\"csv\": null, \"rationale\": \"<原因>\"}。"
+        '"changes": [{"row": <新增数据行序号>, "obligation": "<义务 ID>", '
+        '"inputs": {"<输入列名>": "<取值>"}, "reason": "<取值依据>"}]}\n\n'
+        "## 修订方式\n"
+        "- 你只负责输入手順：新增数据行来补齐输入完备性缺口或覆盖率缺口，不修改已有行。\n"
+        "- 已有行的期望值不得改动；期望值与 WinAMS 实际值不一致时由平台用执行捕获值覆盖，不需要你处理。\n"
+        "- 新增行的期望值单元格全部留空，由 WinAMS 执行捕获回填。\n"
+        "- 每个新增行对应一个义务 ID，并依据判定式与列含义说明各输入取值；不要猜测，推不出的义务写进 rationale。\n"
+        "- 所有缺口都无法从给定信息补齐时返回 {\"csv\": null, \"rationale\": \"<原因>\"}。"
     )
+
+
+def _gap_line(item: dict[str, Any]) -> str:
+    facts = [item.get("kind") or "?"]
+    if item.get("outcome") is not None:
+        facts.append(f"outcome={item['outcome']}")
+    if item.get("condition_index") is not None:
+        facts.append(f"条件 {item['condition_index']}")
+    if item.get("boundary_class"):
+        bound = item.get("boundary_value")
+        if item.get("boundary_right_value") is not None:
+            bound = f"{bound}..{item['boundary_right_value']}"
+        facts.append(f"{item['boundary_class']} {bound}")
+    if item.get("case_label"):
+        facts.append(f"case {item['case_label']}")
+    decision = " ".join(str(item.get("decision") or item.get("description") or "").split())
+    line = (f"- {item.get('obligation_id')}（{', '.join(facts)}）"
+            f" 判定式：{decision[:_MAX_DECISION_CHARS]}"
+            f" / 求解 {item.get('solve_status')}")
+    if item.get("reason"):
+        line += f"：{item['reason']}"
+    return line
+
+
+def _completeness_section(completeness: Optional[dict[str, Any]]) -> str:
+    if not completeness:
+        return "## 输入完备性\n生成器未提供义务清单，按覆盖率与校验结果修订。"
+    head = (f"Baseline 义务 {completeness.get('obligations')} 个，生成 {completeness.get('csv_rows')} 行，"
+            f"按基准合并 {completeness.get('merged_by_baseline')} 个，"
+            f"未解决 {completeness.get('unresolved_count')} 个。")
+    gaps = "\n".join(_gap_line(item) for item in completeness.get("unresolved") or ())
+    return ("## 输入完备性缺口（生成器没有给出已证明输入的义务）\n"
+            f"{head}\n{gaps or '- 无'}")
 
 
 def _user_prompt(target: dict[str, Any], csv_text: str, check: dict[str, Any],
                  execution: Optional[dict[str, Any]], history: list[dict[str, Any]]) -> str:
-    issues = json.dumps(check.get("issues", []), ensure_ascii=False)[:_MAX_DETAIL_CHARS]
+    issues = json.dumps(
+        [issue for issue in check.get("issues", ()) if issue.get("code") != _GAP_CODE],
+        ensure_ascii=False)[:_MAX_DETAIL_CHARS]
     execution_summary = json.dumps(
         {key: (execution or {}).get(key) for key in ("status", "exit_code", "diagnostic", "coverage")},
         ensure_ascii=False,
@@ -76,6 +125,7 @@ def _user_prompt(target: dict[str, Any], csv_text: str, check: dict[str, Any],
     ) or "- 无"
     return (
         f"被测函数：{target.get('function')}（{target.get('source_rel')}）\n\n"
+        f"{_completeness_section(check.get('completeness'))}\n\n"
         f"## 当前 CSV\n```csv\n{csv_text}\n```\n\n"
         f"## 当前版本的校验判定：{check.get('verdict')}\n{issues}\n\n"
         f"## 执行摘要\n{execution_summary}\n\n"

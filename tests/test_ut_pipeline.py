@@ -55,6 +55,9 @@ class FakeBridge:
         self.executions = 0
         self.stub_builds = None
         self.source_rel = None
+        # Bytes WinAMS "captures" for any candidate; None means no capture.
+        self.captured = None
+        self.checked_intents = []
         self.blocked_reason = {"code": "ASSET_MISSING", "path": "AMS_Setting"}
 
     def index(self, manifest, index_csv, product_root):
@@ -94,10 +97,15 @@ class FakeBridge:
         evidence = {"status": self.execution_status, "unit_dir": str(unit_dir)}
         if self.execution_status == "BLOCKED":
             evidence["blocked_reasons"] = [self.blocked_reason]
+        elif self.captured is not None:
+            evidence["captured_candidate"] = str(out / "review-candidate.csv")
+            (out / "review-candidate.csv").write_bytes(self.captured)
         (out / "execution.json").write_text(json.dumps(evidence), encoding="utf-8")
         return evidence
 
-    def check(self, candidate, *, manifest, reference=None, previous=None, execution=None):
+    def check(self, candidate, *, manifest, reference=None, previous=None, execution=None,
+              intents=None):
+        self.checked_intents.append(intents)
         if execution is None:
             return {"verdict": "FORMAT_OK", "issues": []}
         evidence = json.loads(Path(execution).read_text(encoding="utf-8"))
@@ -363,6 +371,68 @@ def test_llm_repairs_a_failing_candidate(env, monkeypatch):
         "get", f"/jobs/{job_id}/attempts/{job['attempts'][1]['id']}/csv",
         query_string={"format": "text"})
     assert status == 200 and body["data"]["text"] == GOOD.decode("cp932")
+
+
+def test_wrong_expected_values_are_backfilled_from_winams_without_the_model(env, monkeypatch):
+    targets = _configure(env)
+    env.bridge.generated = BAD
+    env.bridge.captured = GOOD
+    monkeypatch.setattr(provider, "chat", lambda *a, **k: pytest.fail("LLM must not run"))
+    [job_id] = _enqueue(env, targets["f"])
+    job = _job(env, job_id)
+    assert job["state"] == "awaiting_review" and job["repair_rounds"] == 0
+    assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [
+        ("GENERATOR", "FAIL"), ("CAPTURE", "PASS")]
+    # The capture is re-executed before it counts, and its source is recorded.
+    assert env.bridge.executions == 2
+    capture = job["attempts"][1]
+    assert capture["reviser"]["oracle_source"] == "EXECUTION_CAPTURED"
+    assert capture["reviser"]["from_attempt"] == 1
+    assert capture["reviser"]["resolved_codes"] == ["ORACLE_MISMATCH"]
+
+
+def test_a_capture_that_still_fails_goes_to_the_model_once(env, monkeypatch):
+    targets = _configure(env)
+    env.bridge.generated = BAD
+    env.bridge.captured = BAD.replace(b"BAD", b"BAD2")
+    monkeypatch.setattr(provider, "chat", lambda *a, **k: _llm_reply(GOOD))
+    [job_id] = _enqueue(env, targets["f"])
+    job = _job(env, job_id)
+    assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [
+        ("GENERATOR", "FAIL"), ("CAPTURE", "FAIL"), ("LLM", "PASS")]
+    assert job["state"] == "awaiting_review" and job["repair_rounds"] == 1
+
+
+def test_human_expected_values_are_never_overwritten_by_the_capture(env, monkeypatch):
+    targets = _configure(env, rounds=1)
+    env.bridge.generated = BAD
+    monkeypatch.setattr(provider, "chat", lambda *a, **k: _llm_reply(None))
+    [job_id] = _enqueue(env, targets["f"])
+    assert _job(env, job_id)["state"] == "needs_human"
+    env.bridge.captured = GOOD
+    status, _ = env.call("post", f"/jobs/{job_id}/revision", json={"csv": BAD.decode("cp932")})
+    assert status == 202
+    job = _job(env, job_id)
+    assert job["state"] == "needs_human"
+    assert [a["origin"] for a in job["attempts"]] == ["GENERATOR", "LLM", "HUMAN"]
+
+
+def test_the_generator_intent_manifest_feeds_the_completeness_check(env, tmp_path):
+    targets = _configure(env)
+    manifest = tmp_path / "test-intents.json"
+    manifest.write_text("{}", encoding="utf-8")
+    generate = env.bridge.generate
+
+    def generate_with_intents(*args, **kwargs):
+        document = generate(*args, **kwargs)
+        for unit in document["units"]:
+            unit["intent_manifest"] = str(manifest)
+        return document
+
+    env.bridge.generate = generate_with_intents
+    [job_id] = _enqueue(env, targets["f"])
+    assert _job(env, job_id)["state"] == "awaiting_review"
+    assert env.bridge.checked_intents == [manifest, manifest]
 
 
 def test_exhausted_rounds_hand_over_to_a_human(env, monkeypatch):

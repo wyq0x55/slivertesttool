@@ -155,6 +155,7 @@
   function originOf(a) {
     var r = a.reviser || {};
     var o = U.ORIGIN[a.origin] || a.origin;
+    if (a.origin === "CAPTURE" && r.from_attempt) return o + "（第 " + r.from_attempt + " 版）";
     return a.origin === "LLM" && r.model ? o + "（" + r.model + "）" : o;
   }
 
@@ -260,10 +261,32 @@
   // ------------------------------------------------------- check issues
   var SEVERITY = { error: ["failed", "错误"], warning: ["pending", "警告"], info: ["notask", "提示"] };
   var DETAIL_KEYS = { row: "用例", column: "列", expected: "期望值", actual: "实际值",
-                      code: "代码", detail: "说明", path: "路径", message: "说明" };
+                      code: "代码", detail: "说明", path: "路径", message: "说明",
+                      obligation: "义务", kind: "类型", decision: "判定式",
+                      solve: "求解", reason: "原因" };
   // Stored check JSON comes back with sorted keys; show evidence in reading order.
-  var KEY_ORDER = ["row", "column", "expected", "actual", "code", "path", "message", "detail"];
+  var KEY_ORDER = ["row", "column", "expected", "actual", "code", "path", "message", "detail",
+                   "obligation", "kind", "decision", "solve", "reason"];
   var PREVIEW_ROWS = 8;
+
+  // An unresolved obligation carries every generator field; keep what a
+  // reviewer needs to decide whether an input step is missing.
+  function gapRow(g) {
+    var facts = [g.kind];
+    if (g.outcome != null) facts.push(g.outcome ? "真" : "假");
+    if (g.condition_index != null) facts.push("条件 " + g.condition_index);
+    if (g.boundary_class) {
+      facts.push(g.boundary_class + " " + g.boundary_value +
+        (g.boundary_right_value != null ? ".." + g.boundary_right_value : ""));
+    }
+    if (g.case_label) facts.push("case " + g.case_label);
+    return { obligation: g.obligation_id, kind: facts.join(" · "),
+             decision: String(g.decision || g.description || "").replace(/\s+/g, " "),
+             solve: g.solve_status, reason: g.reason || "—" };
+  }
+  var DETAIL_VIEW = {
+    INPUT_OBLIGATION_UNRESOLVED: function (d) { return Array.isArray(d) ? d.map(gapRow) : d; },
+  };
 
   function clip(text, n) { return text.length > n ? text.slice(0, n) + "…" : text; }
   function plain(v) { return v == null ? "—" : typeof v === "object" ? JSON.stringify(v) : String(v); }
@@ -344,7 +367,7 @@
       return '<li class="ut-issue sev-' + esc(i.severity || "") + '"><div class="ut-issue-head">' +
         LMPill.html(sev[0], sev[1]) + '<code class="ut-issue-code">' + esc(i.code) + "</code>" +
         '<span class="ut-issue-msg">' + esc(i.message || "") + "</span>" + locate + "</div>" +
-        detailHtml(i.detail) + "</li>";
+        detailHtml(DETAIL_VIEW[i.code] ? DETAIL_VIEW[i.code](i.detail) : i.detail) + "</li>";
     }).join("") + "</ul>";
   }
 

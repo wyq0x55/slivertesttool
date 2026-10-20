@@ -239,6 +239,26 @@ test("check issues render as structured evidence instead of raw JSON", async () 
   assert.equal(h.get("ut-d-issues-sum").textContent, "· 2 个错误");
 });
 
+test("input-completeness gaps show the obligation, decision and solver status only", async () => {
+  const h = harness();
+  const value = job();
+  value.attempts[0].verdict = "PASS";
+  value.attempts[0].check = { verdict: "PASS", issues: [
+    { code: "INPUT_OBLIGATION_UNRESOLVED", severity: "warning", message: "1 个 Baseline 义务没有可执行的输入行",
+      detail: [{ obligation_id: "b6:boundary:1:above:2", kind: "boundary", branch_id: "b6",
+                 decision: "( A ==\n  b )", description: "atom 1", outcome: null, condition_index: 1,
+                 boundary_class: "above", boundary_value: 2, boundary_right_value: null,
+                 case_label: null, rule_id: "psd.4.compare", solve_status: "UNKNOWN",
+                 reason: "volatile read", intent_status: "NEEDS_REVIEW" }] },
+  ] };
+  await ready(h, value);
+  const html = h.get("ut-d-issues").innerHTML;
+  assert.match(html, /<th>义务<\/th><th>类型<\/th><th>判定式<\/th><th>求解<\/th><th>原因<\/th><\/tr>/);
+  assert.match(html, /b6:boundary:1:above:2<\/td><td>boundary · 条件 1 · above 2<\/td><td>\( A == b \)<\/td><td>UNKNOWN<\/td><td>volatile read/);
+  assert.doesNotMatch(html, /psd\.4\.compare|intent_status/);
+  assert.equal(h.get("ut-d-issues-sum").textContent, "· 1 个警告");
+});
+
 test("a page without a candidate never offers approval", async () => {
   const h = harness();
   const empty = job(null, "needs_human");

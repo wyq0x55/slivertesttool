@@ -125,10 +125,11 @@ class UtAgentBridge:
         return self._run(args, timeout=self.settings.execute_timeout + 120)["execution"]
 
     def check(self, candidate: Path, *, manifest: str, reference: Optional[Path] = None,
-              previous: Optional[Path] = None, execution: Optional[Path] = None) -> dict[str, Any]:
+              previous: Optional[Path] = None, execution: Optional[Path] = None,
+              intents: Optional[Path] = None) -> dict[str, Any]:
         args = ["check", *self._manifest(manifest), "--candidate", str(candidate)]
         for flag, value in (("--reference", reference), ("--previous", previous),
-                            ("--execution", execution)):
+                            ("--execution", execution), ("--intents", intents)):
             if value is not None:
                 args += [flag, str(value)]
         return self._run(args, timeout=self.settings.timeout)["check"]
