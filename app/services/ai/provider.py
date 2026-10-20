@@ -112,13 +112,12 @@ def chat(messages: list[dict[str, str]], *,
         or (hostname.startswith("172.") and len(hostname.split(".")) > 1
             and hostname.split(".")[1].isdigit() and 16 <= int(hostname.split(".")[1]) <= 31)
     )
-    opener = (
-        urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        if is_local
-        else urllib.request.build_opener()
-    )
+    # Local and intranet models must not be routed through the system proxy;
+    # every other endpoint keeps the default ``urlopen`` handling.
+    open_url = (urllib.request.build_opener(urllib.request.ProxyHandler({})).open
+                if is_local else urllib.request.urlopen)
     try:
-        with opener.open(
+        with open_url(
                 req, timeout=timeout or cfg[config.KEY_TIMEOUT]) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:

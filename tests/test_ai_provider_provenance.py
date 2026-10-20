@@ -78,6 +78,39 @@ def test_original_http_return_records_counters_only(monkeypatch):
     assert "response_format" not in body
 
 
+@pytest.mark.parametrize("base", ["http://127.0.0.1:3425/v1", "http://10.1.2.3/v1",
+                                  "http://172.20.0.5/v1", "http://localhost:8000/v1"])
+def test_local_endpoints_bypass_the_system_proxy(monkeypatch, base):
+    monkeypatch.setattr(config, "get_ai_config", lambda **kwargs: {
+        config.KEY_API_BASE: base, config.KEY_API_KEY: "k",
+        config.KEY_MODEL: "m", config.KEY_TIMEOUT: 7,
+    })
+    handlers = []
+
+    class Opener:
+        def open(self, request, timeout):
+            return http_reply("local")
+
+    def build_opener(*args):
+        handlers.extend(args)
+        return Opener()
+
+    monkeypatch.setattr(provider.urllib.request, "build_opener", build_opener)
+    assert provider.chat(MESSAGES) == "local"
+    [handler] = handlers
+    assert isinstance(handler, provider.urllib.request.ProxyHandler)
+    assert handler.proxies == {}
+
+
+def test_remote_endpoints_keep_default_urlopen(monkeypatch):
+    http = Mock(return_value=http_reply("remote"))
+    monkeypatch.setattr(provider.urllib.request, "urlopen", http)
+    monkeypatch.setattr(provider.urllib.request, "build_opener",
+                        Mock(side_effect=AssertionError("remote must use urlopen")))
+    assert provider.chat(MESSAGES) == "remote"
+    assert http.call_count == 1
+
+
 def test_chat_signature_and_keyword_only_fake_remain_compatible(monkeypatch):
     calls = []
 
