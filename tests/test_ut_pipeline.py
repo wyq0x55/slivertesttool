@@ -57,6 +57,8 @@ class FakeBridge:
         self.source_rel = None
         # Bytes WinAMS "captures" for any candidate; None means no capture.
         self.captured = None
+        # Additional error codes reported next to ORACLE_MISMATCH for BAD candidates.
+        self.extra_codes = ()
         self.checked_intents = []
         self.blocked_reason = {"code": "ASSET_MISSING", "path": "AMS_Setting"}
 
@@ -116,7 +118,9 @@ class FakeBridge:
         if b"BAD" in Path(candidate).read_bytes():
             return {"verdict": "FAIL", "issues": [{
                 "code": "ORACLE_MISMATCH", "severity": "error", "repairable": True,
-                "message": "1 mismatch", "detail": [{"row": 0, "column": "ret"}]}]}
+                "message": "1 mismatch", "detail": [{"row": 0, "column": "ret"}]}] + [
+                {"code": code, "severity": "error", "repairable": True, "message": code}
+                for code in self.extra_codes]}
         return {"verdict": "PASS", "issues": []}
 
 
@@ -401,6 +405,19 @@ def test_a_capture_that_still_fails_goes_to_the_model_once(env, monkeypatch):
     assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [
         ("GENERATOR", "FAIL"), ("CAPTURE", "FAIL"), ("LLM", "PASS")]
     assert job["state"] == "awaiting_review" and job["repair_rounds"] == 1
+
+
+@pytest.mark.parametrize("code", ["COVERAGE_C0_INCOMPLETE", "EXECUTION_PATH_DIVERGED"])
+def test_mismatches_beside_input_evidence_are_not_overwritten(env, monkeypatch, code):
+    targets = _configure(env)
+    env.bridge.generated = BAD
+    env.bridge.captured = GOOD
+    env.bridge.extra_codes = (code,)
+    monkeypatch.setattr(provider, "chat", lambda *a, **k: _llm_reply(GOOD))
+    [job_id] = _enqueue(env, targets["f"])
+    job = _job(env, job_id)
+    assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [
+        ("GENERATOR", "FAIL"), ("LLM", "PASS")]
 
 
 def test_human_expected_values_are_never_overwritten_by_the_capture(env, monkeypatch):

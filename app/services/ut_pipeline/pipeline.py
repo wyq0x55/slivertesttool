@@ -367,6 +367,9 @@ def _error_codes(check: dict[str, Any]) -> list[str]:
 # Expected-value problems the platform settles with the WinAMS capture instead
 # of the model: the capture is the implementation's own output for the same
 # inputs, recorded as EXECUTION_CAPTURED and re-executed before it counts.
+# Only when they are the sole errors: a coverage gap or a diverged call path
+# (EXECUTION_PATH_DIVERGED) means the inputs did not drive the intended paths,
+# and capturing would overwrite that evidence with outputs of the wrong path.
 _ORACLE_CODES = frozenset({"ORACLE_MISMATCH", "EXPECTED_VALUE_PENDING"})
 # Human expected values may encode a requirement, so a mismatch there is a
 # finding for the reviewer and is never overwritten; a capture is never
@@ -379,7 +382,7 @@ def _capture_backfill(job: UtJob, attempt: UtAttempt, check: dict[str, Any],
     """Queue the WinAMS-captured CSV as the next attempt; True when queued."""
     codes = set(_error_codes(check))
     if (check.get("verdict") != "FAIL" or attempt.origin not in _CAPTURABLE_ORIGINS
-            or not codes & _ORACLE_CODES):
+            or not codes or not codes <= _ORACLE_CODES):
         return False
     captured = Path((execution or {}).get("captured_candidate") or "")
     if not captured.name or not captured.is_file():
@@ -388,12 +391,12 @@ def _capture_backfill(job: UtJob, attempt: UtAttempt, check: dict[str, Any],
     if hashlib.sha256(csv_bytes).hexdigest() == attempt.csv_sha256:
         return False
     _new_attempt(job, UtAttempt.ORIGIN_CAPTURE, csv_bytes,
-                 note=f"期望值由第 {attempt.seq} 版的 WinAMS 执行捕获回填（{', '.join(sorted(codes & _ORACLE_CODES))}）",
+                 note=f"期望值由第 {attempt.seq} 版的 WinAMS 执行捕获回填（{', '.join(sorted(codes))}）",
                  reviser={"oracle_source": "EXECUTION_CAPTURED",
                           "from_attempt": attempt.seq,
                           "from_sha256": attempt.csv_sha256,
                           "captured_from": str(captured),
-                          "resolved_codes": sorted(codes & _ORACLE_CODES)})
+                          "resolved_codes": sorted(codes)})
     _gate(job, UtJob.EXECUTING)
     return True
 
