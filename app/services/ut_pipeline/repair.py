@@ -27,7 +27,7 @@ from ..ai import config as ai_config
 from ..ai import provider
 from . import increment
 
-PROMPT_VERSION = "ut-repair/4.1"
+PROMPT_VERSION = "ut-repair/4.2"
 # Bound the prompt: issue details are already truncated by ut-agent.
 _MAX_DETAIL_CHARS = 6000
 _MAX_DECISION_CHARS = 200
@@ -123,7 +123,8 @@ def _user_prompt(target: dict[str, Any], table: increment.Table, check: dict[str
                  execution: Optional[dict[str, Any]], history: list[dict[str, Any]],
                  open_gaps: list[dict[str, Any]]) -> str:
     issues = json.dumps(
-        [issue for issue in check.get("issues", ()) if issue.get("code") != _GAP_CODE],
+        [issue for issue in check.get("issues", ()) if issue.get("code") not in
+         {_GAP_CODE, "OUTPUT_ORACLE_PENDING"}],
         ensure_ascii=False)[:_MAX_DETAIL_CHARS]
     execution_summary = json.dumps(
         {key: (execution or {}).get(key) for key in ("status", "exit_code", "diagnostic", "coverage")},
@@ -133,7 +134,7 @@ def _user_prompt(target: dict[str, Any], table: increment.Table, check: dict[str
     return (
         f"被测函数：{target.get('function')}（{target.get('source_rel')}）\n\n"
         f"## 输入列（{len(table.inputs)} 个；输出列 {len(table.outputs)} 个，不可改）\n"
-        f"{increment.columns_section(table)}\n\n"
+        f"{increment.columns_section(table, (check.get('input_ranges') or {}).get('contract'))}\n\n"
         f"{_gaps_section(check.get('completeness'), open_gaps)}\n\n"
         f"## 现有数据行（{len(table.rows)} 行）\n{increment.rows_section(table)}\n\n"
         f"## 当前版本的校验判定：{check.get('verdict')}\n{issues}\n\n"
@@ -206,7 +207,8 @@ def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: by
         meta["reply_head"] = (reply or "")[:2000]
         return Revision(None, meta)
     meta["rationale"] = str(parsed.get("rationale") or "")
-    applied = increment.apply(table, parsed.get("rows") or [], allowed)
+    applied = increment.apply(table, parsed.get("rows") or [], allowed,
+                              (check.get("input_ranges") or {}).get("contract"))
     claimed = [row["obligation"] for row in applied.accepted]
     meta.update(rows=applied.accepted, rejected=applied.rejected, claimed=claimed,
                 declined=[oid for oid in _declined(parsed, allowed) if oid not in claimed])

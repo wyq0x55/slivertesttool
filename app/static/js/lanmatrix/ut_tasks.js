@@ -292,7 +292,8 @@
                       before: "原期望值", after: "新期望值",
                       code: "代码", detail: "说明", path: "路径", message: "说明",
                       obligation: "义务", kind: "类型", decision: "判定式",
-                      solve: "求解", reason: "原因", gap: "缺口" };
+                      solve: "求解", reason: "原因", gap: "缺口",
+                      min: "下限", max: "上限", source: "证据来源", pending: "待捕获输出" };
   // Stored check JSON comes back with sorted keys; show evidence in reading order.
   var KEY_ORDER = ["row", "column", "before", "after", "expected", "actual", "code", "path",
                    "message", "detail", "gap", "obligation", "kind", "decision", "solve", "reason"];
@@ -305,6 +306,7 @@
     MISSING_CASE: ["缺用例", "is-case"],
     SEMANTIC_EVIDENCE: ["缺语义/环境证据", "is-evidence"],
     INFEASIBILITY_UNCONFIRMED: ["不可达待确认", "is-infeasible"],
+    OUTPUT_ORACLE_PENDING: ["仅缺期望值", "is-evidence"],
   };
   var GAP_ORDER = ["MISSING_CASE", "SEMANTIC_EVIDENCE", "INFEASIBILITY_UNCONFIRMED"];
   var CAUSE_TEXT = {
@@ -339,6 +341,12 @@
   }
   var DETAIL_VIEW = {
     INPUT_OBLIGATION_UNRESOLVED: [function (d) { return Array.isArray(d) ? gapRows(d) : d; }, "ut-gap-table"],
+    OUTPUT_ORACLE_PENDING: [function (d) {
+      return Array.isArray(d) ? d.map(function (g) {
+        return { gap: g.gap_class, obligation: g.obligation_id,
+                 pending: (g.pending_outputs || []).join("、"), reason: g.reason };
+      }) : d;
+    }, ""],
   };
 
   function clip(text, n) { return text.length > n ? text.slice(0, n) + "…" : text; }

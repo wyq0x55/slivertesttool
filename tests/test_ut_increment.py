@@ -69,3 +69,20 @@ def test_a_csv_without_rows_starts_from_a_blank_row():
     applied = increment.apply(empty, [{"obligation": "b1:T", "base_row": 0,
                                        "inputs": {"I2": "1"}}], {"b1:T"})
     assert applied.csv_bytes.decode("cp932").endswith(";$L$,LLM add b1:T\r\n,,1,,\r\n")
+
+
+def test_typed_bounds_reject_a_proposal_before_appending_and_keep_legal_rows():
+    table = _table()
+    domains = {"contract": "ut-agent.input-domains/1", "columns": [
+        {"index": i, "column": name, "status": "PROVEN" if i == 3 else "UNKNOWN",
+         "min": 0, "max": 1, "source": "value_type_facts.global.z"}
+        for i, name in enumerate(table.inputs, 1)]}
+    proposals = [
+        {"obligation": "b1:T", "base_row": 1, "inputs": {"I3": str(value)}}
+        for value in (5, 1)]
+    result = increment.apply(table, proposals, {"b1:T"}, domains)
+    assert result.csv_bytes.decode("cp932").endswith(",1,0,1,\r\n")
+    assert result.accepted[0]["inputs"] == {"I3": "1"}
+    assert "INPUT_OUT_OF_RANGE" in result.rejected[0]["error"]
+    assert "允许 0..1" in result.rejected[0]["error"]
+    assert "I3 = a.c/z [范围 0..1]" in increment.columns_section(table, domains)

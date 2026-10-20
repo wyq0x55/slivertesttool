@@ -511,11 +511,14 @@ def _execute_step(job: UtJob) -> None:
         # A candidate that fails the static check would only waste a WinAMS run.
         if check["verdict"] == "FORMAT_OK":
             out = _fresh_exec_dir(job, attempt)
+            execute_args = {}
+            if "intents" in arguments:
+                execute_args["intents"] = arguments["intents"]
             with _WINAMS_GATE:
                 execution = bridge.execute(
                     Path(config["work_root"]) / job.target.unit_rel, candidate, out,
                     stub_builds=_lines(config.get("stub_builds", "")),
-                    source_rel=job.target.source_rel)
+                    source_rel=job.target.source_rel, **execute_args)
             check = bridge.check(candidate, execution=out / "execution.json", **arguments)
     except BridgeError as exc:
         _gate(job, UtJob.ERROR, f"ut-agent 调用失败：{exc}")

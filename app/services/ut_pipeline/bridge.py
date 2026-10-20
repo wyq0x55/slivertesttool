@@ -108,7 +108,7 @@ class UtAgentBridge:
 
     def execute(self, unit_dir: Path, candidate: Path, out: Path,
                 stub_builds: Optional[list[str]] = None,
-                source_rel: str = "") -> dict[str, Any]:
+                source_rel: str = "", intents: Optional[Path] = None) -> dict[str, Any]:
         args = ["execute", "--unit-dir", str(unit_dir), "--candidate", str(candidate),
                 "--out", str(out), "--timeout", str(self.settings.execute_timeout)]
         if self.settings.winams:
@@ -121,6 +121,8 @@ class UtAgentBridge:
             args += ["--source-rel", source_rel]
         if self.settings.omf_converter:
             args += ["--omf-converter", self.settings.omf_converter]
+        if intents is not None:
+            args += ["--intents", str(intents)]
         # The plain and instrumented objects are converted separately before
         # WinAMS runs; each subprocess has its own execution timeout.
         return self._run(args, timeout=3 * self.settings.execute_timeout + 120)["execution"]

@@ -37,9 +37,10 @@ def test_execution_passes_the_explicit_converter_and_source(monkeypatch, tmp_pat
 
     monkeypatch.setattr(bridge, "_run", invoke)
     bridge.execute(tmp_path, tmp_path / "c.csv", tmp_path / "out",
-                   stub_builds=["S1", "S2"], source_rel="src/a.c")
+                   stub_builds=["S1", "S2"], source_rel="src/a.c", intents=tmp_path / "intents.json")
     [args] = calls
     assert args[args.index("--source-rel") + 1] == "src/a.c"
+    assert args[args.index("--intents") + 1] == str(tmp_path / "intents.json")
     assert args[args.index("--omf-converter") + 1] == r"C:\WinAMS\BIN\v850ghsomf.exe"
     assert [args[i + 1] for i, value in enumerate(args) if value == "--stub-build"] == ["S1", "S2"]
 
@@ -96,7 +97,7 @@ class FakeBridge:
             units.append(unit)
         return {"ok": True, "provenance": {"baseline_ref": "psd-rebuild@1.1"}, "units": units}
 
-    def execute(self, unit_dir, candidate, out, stub_builds=None, source_rel=""):
+    def execute(self, unit_dir, candidate, out, stub_builds=None, source_rel="", intents=None):
         self.executions += 1
         self.stub_builds = stub_builds
         self.source_rel = source_rel
