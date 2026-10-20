@@ -261,12 +261,13 @@
   // ------------------------------------------------------- check issues
   var SEVERITY = { error: ["failed", "错误"], warning: ["pending", "警告"], info: ["notask", "提示"] };
   var DETAIL_KEYS = { row: "用例", column: "列", expected: "期望值", actual: "实际值",
+                      before: "原期望值", after: "新期望值",
                       code: "代码", detail: "说明", path: "路径", message: "说明",
                       obligation: "义务", kind: "类型", decision: "判定式",
                       solve: "求解", reason: "原因" };
   // Stored check JSON comes back with sorted keys; show evidence in reading order.
-  var KEY_ORDER = ["row", "column", "expected", "actual", "code", "path", "message", "detail",
-                   "obligation", "kind", "decision", "solve", "reason"];
+  var KEY_ORDER = ["row", "column", "before", "after", "expected", "actual", "code", "path",
+                   "message", "detail", "obligation", "kind", "decision", "solve", "reason"];
   var PREVIEW_ROWS = 8;
 
   // An unresolved obligation carries every generator field; keep what a
@@ -285,7 +286,7 @@
              solve: g.solve_status, reason: g.reason || "—" };
   }
   var DETAIL_VIEW = {
-    INPUT_OBLIGATION_UNRESOLVED: function (d) { return Array.isArray(d) ? d.map(gapRow) : d; },
+    INPUT_OBLIGATION_UNRESOLVED: [function (d) { return Array.isArray(d) ? d.map(gapRow) : d; }, "ut-gap-table"],
   };
 
   function clip(text, n) { return text.length > n ? text.slice(0, n) + "…" : text; }
@@ -309,7 +310,7 @@
     return esc(clip(plain(value), 160));
   }
 
-  function tableHtml(list) {
+  function tableHtml(list, extraClass) {
     var keys = [];
     list.forEach(function (item) {
       Object.keys(item).forEach(function (k) { if (keys.indexOf(k) < 0) keys.push(k); });
@@ -320,11 +321,14 @@
     });
     function body(items) {
       return items.map(function (item) {
-        return "<tr>" + keys.map(function (k) { return "<td>" + cellHtml(k, item[k]) + "</td>"; }).join("") + "</tr>";
+        return "<tr>" + keys.map(function (k) {
+          return '<td title="' + esc(plain(item[k])) + '">' + cellHtml(k, item[k]) + "</td>";
+        }).join("") + "</tr>";
       }).join("");
     }
     function table(items) {
-      return '<table class="ut-issue-table"><thead><tr>' + keys.map(function (k) {
+      return '<table class="ut-issue-table' + (extraClass ? " " + extraClass : "") +
+        '"><thead><tr>' + keys.map(function (k) {
         return "<th>" + esc(DETAIL_KEYS[k] || k) + "</th>";
       }).join("") + "</tr></thead><tbody>" + body(items) + "</tbody></table>";
     }
@@ -333,7 +337,7 @@
       ? "<details><summary>其余 " + rest.length + " 条</summary>" + table(rest) + "</details>" : "");
   }
 
-  function detailHtml(d) {
+  function detailHtml(d, extraClass) {
     if (d == null || d === "" || (Array.isArray(d) && !d.length)) return "";
     if (typeof d !== "object") return '<p class="ut-issue-text">' + esc(clip(String(d), 600)) + "</p>";
     if (!Array.isArray(d)) {
@@ -342,7 +346,9 @@
         return "<dt>" + esc(DETAIL_KEYS[k] || k) + "</dt><dd>" + cellHtml(k, d[k]) + "</dd>";
       }).join("") + "</dl>";
     }
-    if (d.every(function (x) { return x && typeof x === "object" && !Array.isArray(x); })) return tableHtml(d);
+    if (d.every(function (x) { return x && typeof x === "object" && !Array.isArray(x); })) {
+      return tableHtml(d, extraClass);
+    }
     return '<ul class="ut-issue-items">' + d.map(function (x) {
       return "<li>" + esc(clip(plain(x), 300)) + "</li>";
     }).join("") + "</ul>";
@@ -367,7 +373,9 @@
       return '<li class="ut-issue sev-' + esc(i.severity || "") + '"><div class="ut-issue-head">' +
         LMPill.html(sev[0], sev[1]) + '<code class="ut-issue-code">' + esc(i.code) + "</code>" +
         '<span class="ut-issue-msg">' + esc(i.message || "") + "</span>" + locate + "</div>" +
-        detailHtml(DETAIL_VIEW[i.code] ? DETAIL_VIEW[i.code](i.detail) : i.detail) + "</li>";
+        (DETAIL_VIEW[i.code]
+          ? detailHtml(DETAIL_VIEW[i.code][0](i.detail), DETAIL_VIEW[i.code][1])
+          : detailHtml(i.detail)) + "</li>";
     }).join("") + "</ul>";
   }
 
