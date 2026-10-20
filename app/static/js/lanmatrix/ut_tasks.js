@@ -158,6 +158,24 @@
     if (a.origin === "CAPTURE" && r.from_attempt) return o + "（第 " + r.from_attempt + " 版）";
     return a.origin === "LLM" && r.model ? o + "（" + r.model + "）" : o;
   }
+  // A model round only appends input rows; say what it added, what the
+  // platform refused and what it declined before its own rationale.
+  function roundNote(a) {
+    var r = a.reviser || {};
+    var parts = [];
+    if (a.origin === "LLM" && Array.isArray(r.rows)) {
+      if (r.rows.length) {
+        parts.push("新增 " + r.rows.length + " 行：" + r.rows.map(function (row) {
+          return "#" + row.row + " " + row.obligation;
+        }).join("、"));
+      }
+      if ((r.rejected || []).length) parts.push("拒绝 " + r.rejected.length + " 行");
+      if ((r.declined || []).length) parts.push("声明无法补齐 " + r.declined.join("、"));
+    }
+    var text = r.rationale || r.error || a.note || "";
+    if (text && parts.indexOf(text) < 0) parts.push(text);
+    return parts.join("；");
+  }
 
   function renderJob() {
     var t = job.target || {};
@@ -205,8 +223,7 @@
 
     var revisable = canRevise();
     $("ut-d-attempts").innerHTML = (job.attempts || []).map(function (a) {
-      var r = a.reviser || {};
-      var note = r.rationale || r.error || a.note || "";
+      var note = roundNote(a);
       var isCurrent = a.id === job.current_attempt_id;
       var acts = a.has_csv
         ? iconButton("查看表格", ICO.view, 'data-attempt="' + a.id + '" data-act="view"') +

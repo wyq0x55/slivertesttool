@@ -1,22 +1,19 @@
-"""Local-LLM revision of a TestCsv that failed the ut-agent check.
+"""Local-LLM input rows for a TestCsv that the ut-agent check left incomplete.
 
 The model receives the constraint pack exported by ut-agent for the bound
-baseline (the same rules the checker enforces), the input-completeness gaps
-the generator reported for the target, the failing CSV and the machine
-verdict.  Its output is only a candidate: it is executed and checked again by
-ut-agent, and every outcome still ends at a human gate.
-
-The model's job is input steps only.  Wrong or blank expected values are
-settled by the platform with the WinAMS capture (see ``pipeline``), so the
-model must keep existing expected values and leave new ones blank.
+baseline (the same rules the checker enforces), the open missing-case gaps
+of the target, the input columns and the existing rows, and the machine
+verdict.  It returns input rows only: an obligation, a reference row and the
+input cells to change.  The platform appends them with blank expected values
+(see ``increment``), so existing rows, columns and expected values cannot
+change.  Blank expected values are settled by the WinAMS capture, and every
+outcome is executed, checked again and still ends at a human gate.
 
 Prompt layout follows prefix-cache reuse on the local model: the system
 message depends only on the batch constraint pack (shared by every function
 of the batch), and the user message runs from the most to the least stable
-part — target and its completeness gaps (fixed per job), current CSV, then
-the verdict for that CSV, then the round history, which changes on every
-round.  A round that kept the previous CSV therefore shares everything except
-the history tail.
+part: target and input columns (fixed per job), open gaps, existing rows,
+the verdict, then the round history, which changes on every round.
 """
 
 from __future__ import annotations
@@ -28,18 +25,14 @@ from typing import Any, Optional
 
 from ..ai import config as ai_config
 from ..ai import provider
+from . import increment
 
-PROMPT_VERSION = "ut-repair/3.2"
+PROMPT_VERSION = "ut-repair/4.0"
 # Bound the prompt: issue details are already truncated by ut-agent.
 _MAX_DETAIL_CHARS = 6000
 _MAX_DECISION_CHARS = 200
-# Reported once in the gap section; repeating it in the verdict breaks nothing
-# but costs prompt tokens on every round.
+# Reported in the gap section; repeating it in the verdict costs tokens.
 _GAP_CODE = "INPUT_OBLIGATION_UNRESOLVED"
-# Only a missing case can be closed with input rows. Evidence gaps and
-# unconfirmed infeasibility are counted for the model but never listed as work.
-# Reports from before gap classes keep every gap as work.
-_MISSING_CASE = "MISSING_CASE"
 
 
 @dataclass
@@ -59,8 +52,8 @@ def _system_prompt(constraints: dict[str, Any]) -> str:
     revision_rules = "\n".join(f"- {rule}" for rule in constraints.get("revision_rules", ()))
     policies = json.dumps(constraints.get("policies", {}), ensure_ascii=False, sort_keys=True)
     return (
-        "你是 WinAMS 单元测试用例（TestCsv）的修订助手。你只修订给定的 CSV，"
-        "修订结果会被 ut-agent 校验器重新执行与判定，并由人工最终审核。\n\n"
+        "你是 WinAMS 单元测试用例（TestCsv）的输入手順助手。你只提出新增的输入行，"
+        "平台按你的提议追加行并交给 ut-agent 校验器重新执行与判定，最终由人工审核。\n\n"
         "## 硬性约束（校验器逐条检查，违反即判失败）\n"
         f"{revision_rules}\n\n"
         f"## 项目绑定的测试基准 {baseline.get('id')}@{baseline.get('version')}"
@@ -69,18 +62,19 @@ def _system_prompt(constraints: dict[str, Any]) -> str:
         f"## 覆盖要求\nC0: {coverage.get('c0')} / C1: {coverage.get('c1')} / "
         f"MC/DC: {coverage.get('mcdc')}（true 表示必须 100%）\n\n"
         "## 输出\n只输出一个 JSON 对象，不要输出其他文字：\n"
-        '{"csv": "<修订后的完整 CSV 文本>", "rationale": "<修改依据>", '
-        '"changes": [{"row": <新增数据行序号>, "obligation": "<义务 ID>", '
-        '"inputs": {"<输入列名>": "<取值>"}, "reason": "<取值依据>"}]}\n\n'
-        "## 修订方式\n"
-        "- 你只负责输入手順：新增数据行来补齐输入完备性缺口或覆盖率缺口，不修改已有行。\n"
-        "- 已有行的期望值不得改动；期望值与 WinAMS 实际值不一致时由平台用执行捕获值覆盖，不需要你处理。\n"
-        "- 新增行的期望值单元格全部留空，由 WinAMS 执行捕获回填。\n"
-        "- 每个新增行对应一个义务 ID，并依据判定式与列含义说明各输入取值；不要猜测，推不出的义务写进 rationale。\n"
+        '{"rows": [{"obligation": "<缺口义务 ID 或校验问题代码>", "base_row": <参考行编号>, '
+        '"inputs": {"I<n>": "<取值>"}, "reason": "<取值依据>"}], '
+        '"declined": [{"obligation": "<义务 ID>", "reason": "<无法补齐的原因>"}], '
+        '"rationale": "<总体说明>"}\n\n'
+        "## 方式\n"
+        "- 不要输出 CSV。每个新增行 = 复制 base_row 指定的现有数据行，只改 inputs 中列出的输入列。\n"
+        "- 输入列用 I1..In 引用（见「输入列」）；不能改输出列，平台把新增行的期望值全部留空，由 WinAMS 执行捕获回填。\n"
+        "- 已有行、列与期望值由平台保持不变；期望值与实际值不一致由平台用执行捕获值覆盖，不需要你处理。\n"
+        "- obligation 只能是「待补缺口」中的义务 ID，或「校验判定」中的问题代码（例如覆盖率不足）。\n"
+        "- 依据判定式与列含义推出取值并写在 reason 中；不要猜测，推不出的义务放进 declined 并说明原因。\n"
+        "- 新增行的输入不能与任何已有行完全相同。\n"
         "- EXECUTION_PATH_DIVERGED 表示桩函数调用次数与预测冲突；可能来自输入手順、构建或运行配置，"
-        "不能仅凭冲突认定缺少输入。只在给定语义证据支持时新增输入行并引用义务 ID；"
-        "环境或构建原因无法排除时返回 csv:null，交由人工检查。\n"
-        "- 所有缺口都无法从给定信息补齐时返回 {\"csv\": null, \"rationale\": \"<原因>\"}。"
+        "不能仅凭冲突认定缺少输入。只在给定语义证据支持时新增行；否则不新增，在 rationale 中说明，交由人工检查。"
     )
 
 
@@ -106,25 +100,23 @@ def _gap_line(item: dict[str, Any]) -> str:
     return line
 
 
-def _completeness_section(completeness: Optional[dict[str, Any]]) -> str:
+def _gaps_section(completeness: Optional[dict[str, Any]], open_gaps: list[dict[str, Any]]) -> str:
     if not completeness:
-        return "## 输入完备性\n生成器未提供义务清单，按覆盖率与校验结果修订。"
+        return "## 待补缺口\n生成器未提供义务清单，按覆盖率与校验结果补行。"
     head = (f"Baseline 义务 {completeness.get('obligations')} 个，生成 {completeness.get('csv_rows')} 行，"
             f"按基准合并 {completeness.get('merged_by_baseline')} 个，"
             f"未解决 {completeness.get('unresolved_count')} 个。")
-    unresolved = completeness.get("unresolved") or ()
-    work = [item for item in unresolved if item.get("gap_class", _MISSING_CASE) == _MISSING_CASE]
-    others = len(unresolved) - len(work)
-    if others:
-        head += (f"其中 {others} 个缺的是语义/环境证据或待人工确认不可达，"
-                 "补输入行无法解决，已交由人工处理，不要为它们新增行。")
-    gaps = "\n".join(_gap_line(item) for item in work)
-    return ("## 输入完备性缺口（生成器没有给出已证明输入的义务）\n"
-            f"{head}\n{gaps or '- 无'}")
+    others = (completeness.get("unresolved_count") or 0) - len(open_gaps)
+    if others > 0:
+        head += (f"其中 {others} 个已补行待确认、已声明无法补齐，或缺的是语义/环境证据、待人工确认不可达，"
+                 "不要为它们新增行。")
+    gaps = "\n".join(_gap_line(item) for item in open_gaps)
+    return f"## 待补缺口（缺用例：生成器没有给出已证明输入的义务）\n{head}\n{gaps or '- 无'}"
 
 
-def _user_prompt(target: dict[str, Any], csv_text: str, check: dict[str, Any],
-                 execution: Optional[dict[str, Any]], history: list[dict[str, Any]]) -> str:
+def _user_prompt(target: dict[str, Any], table: increment.Table, check: dict[str, Any],
+                 execution: Optional[dict[str, Any]], history: list[dict[str, Any]],
+                 open_gaps: list[dict[str, Any]]) -> str:
     issues = json.dumps(
         [issue for issue in check.get("issues", ()) if issue.get("code") != _GAP_CODE],
         ensure_ascii=False)[:_MAX_DETAIL_CHARS]
@@ -132,18 +124,35 @@ def _user_prompt(target: dict[str, Any], csv_text: str, check: dict[str, Any],
         {key: (execution or {}).get(key) for key in ("status", "exit_code", "diagnostic", "coverage")},
         ensure_ascii=False,
     )
-    rounds = "\n".join(
-        f"- 第 {item['seq']} 版（{item['origin']}）：{item['verdict']} {item['codes']}"
-        for item in history
-    ) or "- 无"
+    rounds = "\n".join(_history_line(item) for item in history) or "- 无"
     return (
         f"被测函数：{target.get('function')}（{target.get('source_rel')}）\n\n"
-        f"{_completeness_section(check.get('completeness'))}\n\n"
-        f"## 当前 CSV\n```csv\n{csv_text}\n```\n\n"
+        f"## 输入列（{len(table.inputs)} 个；输出列 {len(table.outputs)} 个，不可改）\n"
+        f"{increment.columns_section(table)}\n\n"
+        f"{_gaps_section(check.get('completeness'), open_gaps)}\n\n"
+        f"## 现有数据行（{len(table.rows)} 行）\n{increment.rows_section(table)}\n\n"
         f"## 当前版本的校验判定：{check.get('verdict')}\n{issues}\n\n"
         f"## 执行摘要\n{execution_summary}\n\n"
         f"## 已有版本的判定历史\n{rounds}"
     )
+
+
+def _history_line(item: dict[str, Any]) -> str:
+    line = f"- 第 {item['seq']} 版（{item['origin']}）：{item['verdict']} {item['codes']}"
+    if item.get("added") is not None:
+        line += f"；新增 {item['added']} 行，声明无法补齐 {item.get('declined', 0)} 个"
+    for error in item.get("rejected") or ():
+        line += f"；被拒：{error}"
+    return line
+
+
+def _declined(parsed: dict[str, Any], allowed: set[str]) -> list[str]:
+    result = []
+    for item in parsed.get("declined") or ():
+        oid = str((item or {}).get("obligation") if isinstance(item, dict) else item or "").strip()
+        if oid in allowed and oid not in result:
+            result.append(oid)
+    return result
 
 
 def normalize_csv(text: str) -> bytes:
@@ -154,28 +163,32 @@ def normalize_csv(text: str) -> bytes:
 
 def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: bytes,
            check: dict[str, Any], execution: Optional[dict[str, Any]],
-           history: list[dict[str, Any]], model: str = "", timeout: int = 900) -> Revision:
-    """Ask the configured model for one revision.
+           history: list[dict[str, Any]], open_gaps: list[dict[str, Any]], allowed: set[str],
+           model: str = "", timeout: int = 900) -> Revision:
+    """Ask the configured model for input rows and append the valid ones.
 
     Raises :class:`provider.ProviderError` when the model is unreachable so the
-    caller can stop without consuming a repair round.  An unusable reply is a
-    consumed round and comes back as ``Revision(csv_bytes=None)``.
+    caller can stop without consuming a repair round.  A round without any
+    accepted row comes back as ``Revision(csv_bytes=None)``; ``meta`` records
+    accepted, rejected and declined obligations either way.
     """
+    meta: dict[str, Any] = {"prompt_version": PROMPT_VERSION}
+    try:
+        table = increment.parse(csv_bytes.decode("cp932"))
+    except (UnicodeDecodeError, increment.TableError) as exc:
+        meta["error"] = f"当前 CSV 无法追加行：{exc}"
+        return Revision(None, meta)
     messages = [
         {"role": "system", "content": _system_prompt(constraints)},
-        {"role": "user", "content": _user_prompt(
-            target, csv_bytes.decode("cp932", "replace"), check, execution, history)},
+        {"role": "user", "content": _user_prompt(target, table, check, execution, history,
+                                                 open_gaps)},
     ]
-    digest = hashlib.sha256(
+    meta["prompt_sha256"] = hashlib.sha256(
         json.dumps(messages, ensure_ascii=False).encode("utf-8")).hexdigest()
     usage: dict[str, int] = {}
     configured = ai_config.get_ai_config()[ai_config.KEY_MODEL]
-    meta: dict[str, Any] = {
-        "prompt_version": PROMPT_VERSION,
-        "prompt_sha256": digest,
-        "model": model or configured,
-    }
-    reply = provider.invoke_chat(messages, temperature=0.1, max_tokens=16384,
+    meta["model"] = model or configured
+    reply = provider.invoke_chat(messages, temperature=0.1, max_tokens=8192,
                                  json_mode=True, usage=usage, model=model or None,
                                  timeout=timeout)
     meta["usage"] = usage
@@ -183,17 +196,17 @@ def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: by
         parsed = provider.extract_json(reply)
         if not isinstance(parsed, dict):
             raise ValueError("reply is not a JSON object")
-        meta["rationale"] = str(parsed.get("rationale") or "")
-        changes = parsed.get("changes")
-        meta["changes"] = changes if isinstance(changes, list) else []
-        text = parsed.get("csv")
-        if text is None:
-            meta["error"] = "模型声明无法修复"
-            return Revision(None, meta)
-        if not isinstance(text, str) or not text.strip():
-            raise ValueError("csv must be a non-empty string")
-        return Revision(normalize_csv(text), meta)
-    except (ValueError, UnicodeEncodeError) as exc:
+    except ValueError as exc:
         meta["error"] = f"模型输出不可用：{exc}"
         meta["reply_head"] = (reply or "")[:2000]
         return Revision(None, meta)
+    meta["rationale"] = str(parsed.get("rationale") or "")
+    applied = increment.apply(table, parsed.get("rows") or [], allowed)
+    claimed = [row["obligation"] for row in applied.accepted]
+    meta.update(rows=applied.accepted, rejected=applied.rejected, claimed=claimed,
+                declined=[oid for oid in _declined(parsed, allowed) if oid not in claimed])
+    if applied.csv_bytes is None:
+        reasons = "；".join(item["error"] for item in applied.rejected[:3])
+        meta["error"] = ("模型未新增可用行" + (f"：{reasons}" if reasons else "")
+                         + (f"；声明无法补齐 {len(meta['declined'])} 个" if meta["declined"] else ""))
+    return Revision(applied.csv_bytes, meta)

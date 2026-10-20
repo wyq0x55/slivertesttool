@@ -6,7 +6,10 @@
                          └─ no TestCsv / bridge failure ───→ needs_human | error
     executing  (ut-agent check; WinAMS runs only after the static check passes)
         PASS                               → awaiting_review
+        PASS with open missing cases,
+          LLM rounds left                  → repairing → executing → ...
         FAIL, LLM rounds left              → repairing → executing → ...
+        FAIL that input rows cannot close  → needs_human
         FAIL, rounds exhausted             → needs_human
         FAIL on a human revision           → needs_human
         BLOCKED by the WinAMS environment  → blocked
@@ -16,6 +19,12 @@
         retry (blocked, error) → executing | repairing
 
 No machine outcome is final: every path ends at a human gate.
+
+A missing case is an obligation the generator could not give a proven input
+row for (``gap_class`` MISSING_CASE in the completeness report).  The model
+closes it only by claiming it with an appended row or by declining it; a claim
+is a candidate for the reviewer, never proof, because the completeness report
+is the generator's own evidence and does not change with appended rows.
 """
 
 from __future__ import annotations
@@ -401,12 +410,49 @@ def _capture_backfill(job: UtJob, attempt: UtAttempt, check: dict[str, Any],
     return True
 
 
-def next_state(check: dict[str, Any], origin: str, rounds: int, max_rounds: int) -> tuple[str, str]:
+_MISSING_CASE = "MISSING_CASE"
+
+
+def gap_status(check: dict[str, Any], revisers: list[dict[str, Any]]) -> dict[str, Any]:
+    """Missing cases of ``check`` against the claims and declines of model rounds.
+
+    Only an explicit MISSING_CASE is work for the model; evidence gaps,
+    unconfirmed infeasibility and reports without gap classes are not.
+    """
+    unresolved = (check.get("completeness") or {}).get("unresolved") or ()
+    missing = [item for item in unresolved
+               if item.get("gap_class") == _MISSING_CASE and item.get("obligation_id")]
+    claimed: set[str] = set()
+    declined: set[str] = set()
+    for meta in revisers:
+        claimed.update((meta or {}).get("claimed") or ())
+        declined.update((meta or {}).get("declined") or ())
+    ids = {item["obligation_id"] for item in missing}
+    return {
+        "missing": len(ids),
+        "claimed": len(ids & claimed),
+        "declined": len((ids & declined) - claimed),
+        "open": [item for item in missing
+                 if item["obligation_id"] not in claimed and item["obligation_id"] not in declined],
+    }
+
+
+def _gap_note(gaps: Optional[dict[str, Any]]) -> str:
+    if not gaps or not gaps["missing"]:
+        return ""
+    return (f"；缺用例 {gaps['missing']} 个：模型补行待确认 {gaps['claimed']}，"
+            f"模型声明无法补齐 {gaps['declined']}，未处理 {len(gaps['open'])}")
+
+
+def next_state(check: dict[str, Any], origin: str, rounds: int, max_rounds: int,
+               gaps: Optional[dict[str, Any]] = None) -> tuple[str, str]:
     """Pure transition after one checked attempt."""
     verdict = check.get("verdict")
     codes = ", ".join(_error_codes(check))
     if verdict == "PASS":
-        return UtJob.AWAITING_REVIEW, "机器校验通过，等待人工审核"
+        if gaps and gaps["open"] and origin != UtAttempt.ORIGIN_HUMAN and rounds < max_rounds:
+            return UtJob.REPAIRING, ""
+        return UtJob.AWAITING_REVIEW, "机器校验通过，等待人工审核" + _gap_note(gaps)
     if verdict == "BLOCKED":
         blocked = next((issue for issue in check.get("issues", ())
                         if issue["code"] == "EXECUTION_BLOCKED"), None)
@@ -421,6 +467,9 @@ def next_state(check: dict[str, Any], origin: str, rounds: int, max_rounds: int)
         return UtJob.NEEDS_HUMAN, f"未知判定：{verdict}"
     if origin == UtAttempt.ORIGIN_HUMAN:
         return UtJob.NEEDS_HUMAN, f"人工修订仍未通过校验：{codes}"
+    if not _row_tags(check) and not (gaps and gaps["open"]):
+        # The model only adds input rows; nothing here can be closed that way.
+        return UtJob.NEEDS_HUMAN, f"剩余问题无法通过新增输入行解决：{codes}"
     if rounds >= max_rounds:
         return UtJob.NEEDS_HUMAN, f"本地模型已修正 {rounds} 次仍未通过（上限 {max_rounds}）：{codes}"
     return UtJob.REPAIRING, ""
@@ -479,26 +528,58 @@ def _execute_step(job: UtJob) -> None:
     if _capture_backfill(job, attempt, check, execution):
         db.session.commit()
         return
-    _gate(job, *next_state(check, attempt.origin, job.repair_rounds, job.max_repair_rounds))
+    _gate(job, *next_state(check, attempt.origin, job.repair_rounds, job.max_repair_rounds,
+                           _job_gaps(job, check)))
     db.session.commit()
+
+
+def _job_gaps(job: UtJob, check: dict[str, Any]) -> dict[str, Any]:
+    revisers = [item.reviser for item in UtAttempt.query.filter_by(
+        job_id=job.id, origin=UtAttempt.ORIGIN_LLM)]
+    return gap_status(check, revisers)
+
+
+# Errors that appended input rows can address. Expected values belong to the
+# capture, and format or column errors cannot be fixed by adding rows.
+_ROW_FIXABLE = frozenset({"EXECUTION_PATH_DIVERGED", "ROW_COUNT_BELOW_REFERENCE",
+                          "REFERENCE_CASE_REMOVED"})
+
+
+def _row_tags(check: dict[str, Any]) -> set[str]:
+    """Error codes a model row may name besides a missing case (e.g. coverage)."""
+    return {issue["code"] for issue in check.get("issues", ())
+            if issue.get("severity") == "error" and issue.get("repairable")
+            and (issue["code"].startswith("COVERAGE_") or issue["code"] in _ROW_FIXABLE)}
+
+
+def _history_item(item: UtAttempt) -> dict[str, Any]:
+    entry = {"seq": item.seq, "origin": item.origin, "verdict": item.verdict or "INVALID",
+             "codes": _error_codes(item.check or {})}
+    if item.origin == UtAttempt.ORIGIN_LLM and isinstance(item.reviser, dict):
+        entry.update(added=len(item.reviser.get("rows") or ()),
+                     declined=len(item.reviser.get("declined") or ()),
+                     rejected=[rejected.get("error") for rejected in
+                               (item.reviser.get("rejected") or ())[:3]])
+    return entry
 
 
 def _repair_step(job: UtJob) -> None:
     attempt = db.session.get(UtAttempt, job.current_attempt_id)
     batch = db.session.get(UtBatch, job.batch_id)
-    history = [
-        {"seq": item.seq, "origin": item.origin, "verdict": item.verdict or "INVALID",
-         "codes": _error_codes(item.check or {})}
-        for item in UtAttempt.query.filter_by(job_id=job.id).order_by(UtAttempt.seq)
-    ]
+    check = attempt.check or {}
+    history = [_history_item(item) for item in
+               UtAttempt.query.filter_by(job_id=job.id).order_by(UtAttempt.seq)]
+    gaps = _job_gaps(job, check)
     try:
         revision = repair.revise(
             constraints=batch.constraints or {},
             target=job.target.to_dict(),
             csv_bytes=Path(attempt.csv_path).read_bytes(),
-            check=attempt.check or {},
+            check=check,
             execution=attempt.execution,
             history=history,
+            open_gaps=gaps["open"],
+            allowed={item["obligation_id"] for item in gaps["open"]} | _row_tags(check),
             model=(batch.config_snapshot or {}).get("repair_model", ""),
             timeout=current_app.config["UT_REPAIR_TIMEOUT"],
         )
@@ -512,11 +593,18 @@ def _repair_step(job: UtJob) -> None:
                        reviser=revision.meta, note=revision.meta.get("error", ""))
     if revision.csv_bytes is not None:
         job.state = UtJob.EXECUTING
-    else:
-        new.verdict = "INVALID"
-        if job.repair_rounds >= job.max_repair_rounds:
-            _gate(job, UtJob.NEEDS_HUMAN,
-                  f"本地模型已修正 {job.repair_rounds} 次仍未产出可用候选（上限 {job.max_repair_rounds}）")
+        db.session.commit()
+        return
+    new.verdict = "INVALID"
+    # No row was added: the checked attempt stays current. Declined gaps are
+    # closed for the model, so a PASS goes to review once nothing is open.
+    state, reason = next_state(check, attempt.origin, job.repair_rounds,
+                               job.max_repair_rounds, _job_gaps(job, check))
+    if state == UtJob.NEEDS_HUMAN and check.get("verdict") == "FAIL":
+        reason = (f"本地模型已修正 {job.repair_rounds} 次仍未产出可用候选"
+                  f"（上限 {job.max_repair_rounds}）")
+    if state != UtJob.REPAIRING:
+        _gate(job, state, reason)
     db.session.commit()
 
 
@@ -609,8 +697,11 @@ def retry(project_id: int, job_id: int, user_id: Optional[int] = None) -> UtJob:
         raise ServiceError("生成阶段失败的作业请重新加入队列", code="INVALID_STATE")
     audit.record("ut.job.retry", actor_id=user_id, object_type="ut_job", object_id=job.id,
                  project_id=project_id, old_value={"state": job.state, "reason": job.reason})
-    # An error during repair leaves a checked FAIL attempt: resume the repair.
-    _gate(job, UtJob.REPAIRING if attempt.verdict == "FAIL" else UtJob.EXECUTING)
+    # An error during repair leaves a checked attempt that still wants rows
+    # (FAIL, or PASS with open missing cases): resume the repair.
+    wants_rows = attempt.verdict == "FAIL" or (
+        attempt.verdict == "PASS" and _job_gaps(job, attempt.check or {})["open"])
+    _gate(job, UtJob.REPAIRING if wants_rows else UtJob.EXECUTING)
     db.session.commit()
     return job
 

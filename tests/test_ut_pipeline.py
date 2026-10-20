@@ -60,6 +60,10 @@ class FakeBridge:
         self.captured = None
         # Additional error codes reported next to ORACLE_MISMATCH for BAD candidates.
         self.extra_codes = ()
+        # Data rows C1 coverage needs; fewer rows fail with a coverage gap.
+        self.coverage_rows = 0
+        # Completeness gaps reported with every executed check.
+        self.gaps = []
         self.checked_intents = []
         self.blocked_reason = {"code": "ASSET_MISSING", "path": "AMS_Setting"}
 
@@ -101,8 +105,11 @@ class FakeBridge:
         if self.execution_status == "BLOCKED":
             evidence["blocked_reasons"] = [self.blocked_reason]
         elif self.captured is not None:
+            captured = self.captured
+            if callable(captured):
+                captured = captured(Path(candidate).read_bytes())
             evidence["captured_candidate"] = str(out / "review-candidate.csv")
-            (out / "review-candidate.csv").write_bytes(self.captured)
+            (out / "review-candidate.csv").write_bytes(captured)
         (out / "execution.json").write_text(json.dumps(evidence), encoding="utf-8")
         return evidence
 
@@ -116,18 +123,42 @@ class FakeBridge:
             return {"verdict": "BLOCKED", "issues": [{
                 "code": "EXECUTION_BLOCKED", "severity": "error", "repairable": False,
                 "message": "env", "detail": evidence["blocked_reasons"]}]}
-        if b"BAD" in Path(candidate).read_bytes():
-            return {"verdict": "FAIL", "issues": [{
+        data = Path(candidate).read_bytes()
+        rows = [line for line in data.split(b"\r\n") if line.startswith(b",")]
+        completeness = {"unresolved_count": len(self.gaps), "unresolved": self.gaps}
+        if b"BAD" in data:
+            return {"verdict": "FAIL", "completeness": completeness, "issues": [{
                 "code": "ORACLE_MISMATCH", "severity": "error", "repairable": True,
                 "message": "1 mismatch", "detail": [{"row": 0, "column": "ret"}]}] + [
                 {"code": code, "severity": "error", "repairable": True, "message": code}
                 for code in self.extra_codes]}
-        return {"verdict": "PASS", "issues": []}
+        issues = []
+        if len(rows) < self.coverage_rows:
+            issues.append({"code": "COVERAGE_C1_INCOMPLETE", "severity": "error",
+                           "repairable": True, "message": "C1 < 100%"})
+        if any(row.endswith(b",") for row in rows):
+            issues.append({"code": "EXPECTED_VALUE_PENDING", "severity": "error",
+                           "repairable": True, "message": "blank expected"})
+        return {"verdict": "FAIL" if issues else "PASS", "completeness": completeness,
+                "issues": issues}
 
 
-def _llm_reply(csv_bytes):
-    text = None if csv_bytes is None else csv_bytes.decode("cp932")
-    return json.dumps({"csv": text, "rationale": "fix", "changes": []})
+def _llm_reply(*rows, declined=()):
+    return json.dumps({"rows": list(rows), "rationale": "fix",
+                       "declined": [{"obligation": oid, "reason": "no column"} for oid in declined]})
+
+
+def _row(obligation, value="5"):
+    return {"obligation": obligation, "base_row": 1, "inputs": {"I1": value}, "reason": "x"}
+
+
+def _fill_blank(csv_bytes):
+    """What a WinAMS capture does to blank expected values in the fakes."""
+    return csv_bytes.replace(b",\r\n", b",1\r\n")
+
+
+GAP = {"obligation_id": "b1:T", "kind": "branch", "gap_class": "MISSING_CASE",
+       "solve_status": "SAT", "decision": "x == 5"}
 
 
 @pytest.fixture()
@@ -349,33 +380,58 @@ def test_passing_generation_waits_for_review_then_approves(env):
     assert status == 400 and body["error"]["code"] == "INVALID_STATE"
 
 
-def test_llm_repairs_a_failing_candidate(env, monkeypatch):
+def test_llm_rows_close_a_coverage_gap_and_the_capture_fills_them(env, monkeypatch):
     targets = _configure(env)
-    env.bridge.generated = BAD
+    env.bridge.coverage_rows = 2
+    env.bridge.captured = _fill_blank
     seen = []
 
     def fake_chat(messages, **kwargs):
         seen.append((messages, kwargs))
-        return _llm_reply(GOOD)
+        return _llm_reply(_row("COVERAGE_C1_INCOMPLETE"))
 
     monkeypatch.setattr(provider, "chat", fake_chat)
     [job_id] = _enqueue(env, targets["f"])
     job = _job(env, job_id)
     assert job["state"] == "awaiting_review" and job["repair_rounds"] == 1
     assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [
-        ("GENERATOR", "FAIL"), ("LLM", "PASS")]
+        ("GENERATOR", "FAIL"), ("LLM", "FAIL"), ("CAPTURE", "PASS")]
     reviser = job["attempts"][1]["reviser"]
     assert reviser["model"] == "qwen3.8-27b-gsq" and len(reviser["prompt_sha256"]) == 64
+    assert reviser["claimed"] == ["COVERAGE_C1_INCOMPLETE"]
     messages, kwargs = seen[0]
     assert kwargs["model"] == "qwen3.8-27b-gsq"
     assert kwargs["timeout"] == 900
     assert "psd.4.compare" in messages[0]["content"] and "列不得改动" in messages[0]["content"]
-    assert "ORACLE_MISMATCH" in messages[1]["content"]
+    assert "COVERAGE_C1_INCOMPLETE" in messages[1]["content"] and "I1 = x" in messages[1]["content"]
 
     status, body = env.call(
-        "get", f"/jobs/{job_id}/attempts/{job['attempts'][1]['id']}/csv",
+        "get", f"/jobs/{job_id}/attempts/{job['attempts'][2]['id']}/csv",
         query_string={"format": "text"})
-    assert status == 200 and body["data"]["text"] == GOOD.decode("cp932")
+    assert status == 200
+    assert body["data"]["text"] == GOOD.decode("cp932") + ";$L$,LLM add COVERAGE_C1_INCOMPLETE\r\n,5,1\r\n"
+
+
+def test_missing_cases_on_a_pass_go_to_the_model_until_claimed_or_declined(env, monkeypatch):
+    targets = _configure(env)
+    env.bridge.captured = _fill_blank
+    env.bridge.gaps = [GAP, dict(GAP, obligation_id="b2:T"),
+                       dict(GAP, obligation_id="b3:T", gap_class="SEMANTIC_EVIDENCE")]
+    calls = []
+
+    def fake_chat(messages, **kwargs):
+        calls.append(messages[1]["content"])
+        return _llm_reply(_row("b1:T"), declined=["b2:T"])
+
+    monkeypatch.setattr(provider, "chat", fake_chat)
+    [job_id] = _enqueue(env, targets["f"])
+    job = _job(env, job_id)
+    # One round claims b1:T and declines b2:T; the evidence gap is never offered.
+    assert len(calls) == 1 and "b3:T" not in calls[0].split("## 现有数据行")[0].split("## 待补缺口")[1]
+    assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [
+        ("GENERATOR", "PASS"), ("LLM", "FAIL"), ("CAPTURE", "PASS")]
+    assert job["state"] == "awaiting_review" and job["repair_rounds"] == 1
+    assert "模型补行待确认 1，模型声明无法补齐 1，未处理 0" in job["reason"]
 
 
 def test_wrong_expected_values_are_backfilled_from_winams_without_the_model(env, monkeypatch):
@@ -396,35 +452,38 @@ def test_wrong_expected_values_are_backfilled_from_winams_without_the_model(env,
     assert capture["reviser"]["resolved_codes"] == ["ORACLE_MISMATCH"]
 
 
-def test_a_capture_that_still_fails_goes_to_the_model_once(env, monkeypatch):
+def test_a_capture_that_still_fails_goes_to_a_human_not_the_model(env, monkeypatch):
     targets = _configure(env)
     env.bridge.generated = BAD
     env.bridge.captured = BAD.replace(b"BAD", b"BAD2")
-    monkeypatch.setattr(provider, "chat", lambda *a, **k: _llm_reply(GOOD))
+    monkeypatch.setattr(provider, "chat", lambda *a, **k: pytest.fail("LLM must not run"))
     [job_id] = _enqueue(env, targets["f"])
     job = _job(env, job_id)
     assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [
-        ("GENERATOR", "FAIL"), ("CAPTURE", "FAIL"), ("LLM", "PASS")]
-    assert job["state"] == "awaiting_review" and job["repair_rounds"] == 1
+        ("GENERATOR", "FAIL"), ("CAPTURE", "FAIL")]
+    assert job["state"] == "needs_human" and job["repair_rounds"] == 0
+    assert "无法通过新增输入行解决" in job["reason"]
 
 
 @pytest.mark.parametrize("code", ["COVERAGE_C0_INCOMPLETE", "EXECUTION_PATH_DIVERGED"])
 def test_mismatches_beside_input_evidence_are_not_overwritten(env, monkeypatch, code):
-    targets = _configure(env)
+    targets = _configure(env, rounds=1)
     env.bridge.generated = BAD
     env.bridge.captured = GOOD
     env.bridge.extra_codes = (code,)
-    monkeypatch.setattr(provider, "chat", lambda *a, **k: _llm_reply(GOOD))
+    monkeypatch.setattr(provider, "chat", lambda *a, **k: _llm_reply(_row(code)))
     [job_id] = _enqueue(env, targets["f"])
     job = _job(env, job_id)
+    # Rows are added, but the capture never overwrites the mismatch.
     assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [
-        ("GENERATOR", "FAIL"), ("LLM", "PASS")]
+        ("GENERATOR", "FAIL"), ("LLM", "FAIL")]
+    assert job["state"] == "needs_human"
 
 
 def test_human_expected_values_are_never_overwritten_by_the_capture(env, monkeypatch):
     targets = _configure(env, rounds=1)
     env.bridge.generated = BAD
-    monkeypatch.setattr(provider, "chat", lambda *a, **k: _llm_reply(None))
+    monkeypatch.setattr(provider, "chat", lambda *a, **k: pytest.fail("LLM must not run"))
     [job_id] = _enqueue(env, targets["f"])
     assert _job(env, job_id)["state"] == "needs_human"
     env.bridge.captured = GOOD
@@ -432,7 +491,7 @@ def test_human_expected_values_are_never_overwritten_by_the_capture(env, monkeyp
     assert status == 202
     job = _job(env, job_id)
     assert job["state"] == "needs_human"
-    assert [a["origin"] for a in job["attempts"]] == ["GENERATOR", "LLM", "HUMAN"]
+    assert [a["origin"] for a in job["attempts"]] == ["GENERATOR", "HUMAN"]
 
 
 def test_the_generator_intent_manifest_feeds_the_completeness_check(env, tmp_path):
@@ -455,8 +514,8 @@ def test_the_generator_intent_manifest_feeds_the_completeness_check(env, tmp_pat
 
 def test_exhausted_rounds_hand_over_to_a_human(env, monkeypatch):
     targets = _configure(env, rounds=2)
-    env.bridge.generated = BAD
-    replies = [_llm_reply(BAD), _llm_reply(None)]
+    env.bridge.coverage_rows = 3
+    replies = [_llm_reply(_row("COVERAGE_C1_INCOMPLETE")), _llm_reply()]
     monkeypatch.setattr(provider, "chat", lambda *a, **k: replies.pop(0))
     [job_id] = _enqueue(env, targets["f"])
     job = _job(env, job_id)
@@ -473,6 +532,7 @@ def test_exhausted_rounds_hand_over_to_a_human(env, monkeypatch):
                          json={"csv": BAD.decode("cp932"), "note": "try"})
     assert status == 202
     assert _job(env, job_id)["state"] == "needs_human"
+    env.bridge.coverage_rows = 0
     status, _ = env.call("post", f"/jobs/{job_id}/revision",
                          json={"csv": GOOD.decode("cp932").replace("\r\n", "\n")})
     job = _job(env, job_id)
@@ -524,7 +584,8 @@ def test_stub_builds_are_normalised_and_passed_to_execution(env):
 
 def test_unreachable_model_is_an_error_and_retry_resumes_repair(env, monkeypatch):
     targets = _configure(env)
-    env.bridge.generated = BAD
+    env.bridge.coverage_rows = 2
+    env.bridge.captured = _fill_blank
 
     def down(*args, **kwargs):
         raise provider.ProviderError("connection refused")
@@ -534,7 +595,7 @@ def test_unreachable_model_is_an_error_and_retry_resumes_repair(env, monkeypatch
     job = _job(env, job_id)
     assert job["state"] == "error" and job["repair_rounds"] == 0
 
-    monkeypatch.setattr(provider, "chat", lambda *a, **k: _llm_reply(GOOD))
+    monkeypatch.setattr(provider, "chat", lambda *a, **k: _llm_reply(_row("COVERAGE_C1_INCOMPLETE")))
     env.call("post", f"/jobs/{job_id}/retry")
     job = _job(env, job_id)
     assert job["state"] == "awaiting_review" and job["repair_rounds"] == 1
@@ -557,10 +618,31 @@ def test_generation_outcomes_reach_a_human(env):
 
 
 def test_next_state_is_pure_and_total():
-    fail = {"verdict": "FAIL", "issues": [{"code": "X", "severity": "error"}]}
+    fail = {"verdict": "FAIL", "issues": [
+        {"code": "COVERAGE_C1_INCOMPLETE", "severity": "error", "repairable": True}]}
     assert pipeline.next_state(fail, "LLM", 0, 5)[0] == "repairing"
     assert pipeline.next_state(fail, "GENERATOR", 0, 0)[0] == "needs_human"
     assert pipeline.next_state(fail, "HUMAN", 0, 5)[0] == "needs_human"
+    # Rows cannot fix expected values or the file format.
+    for code in ("ORACLE_MISMATCH", "FORMAT_ENCODING"):
+        other = {"verdict": "FAIL", "issues": [{"code": code, "severity": "error", "repairable": True}]}
+        assert pipeline.next_state(other, "LLM", 0, 5)[0] == "needs_human"
+    passed = {"verdict": "PASS", "issues": []}
+    gaps = {"missing": 1, "claimed": 0, "declined": 0, "open": [GAP]}
+    assert pipeline.next_state(passed, "GENERATOR", 0, 5, gaps)[0] == "repairing"
+    assert pipeline.next_state(passed, "CAPTURE", 5, 5, gaps)[0] == "awaiting_review"
+    assert pipeline.next_state(passed, "HUMAN", 0, 5, gaps)[0] == "awaiting_review"
+    assert pipeline.next_state(passed, "GENERATOR", 0, 5)[0] == "awaiting_review"
+
+
+def test_gap_status_counts_only_explicit_missing_cases():
+    check = {"completeness": {"unresolved": [
+        GAP, dict(GAP, obligation_id="b2:T"), dict(GAP, obligation_id="b3:T"),
+        dict(GAP, obligation_id="b4:T", gap_class="SEMANTIC_EVIDENCE"),
+        {"obligation_id": "b5:T"}]}}
+    status = pipeline.gap_status(check, [{"claimed": ["b1:T"], "declined": ["b2:T", "b1:T"]}, None])
+    assert (status["missing"], status["claimed"], status["declined"]) == (3, 1, 1)
+    assert [item["obligation_id"] for item in status["open"]] == ["b3:T"]
     blocked = {"verdict": "BLOCKED", "issues": [
         {"code": "COVERAGE_MCDC_UNAVAILABLE", "severity": "error", "repairable": False}]}
     assert pipeline.next_state(blocked, "LLM", 0, 5)[0] == "needs_human"
