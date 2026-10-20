@@ -17,10 +17,10 @@
   "use strict";
 
   var LABEL = ";$L$,";
-  // The drawer shows only the comment and the input / output values; the
-  // comment column stays in view while scrolling across wide signal sets.
-  var LAYOUT = { left: [["purpose", "注释", 260]], right: [], signalSheets: false,
-                 autoRowHeight: true, freezeLeft: true, textCells: true };
+  // Each comment has its own full-width sheet row before the related values.
+  // The canonical document still has one step per case for CSV round-tripping.
+  var LAYOUT = { left: [], right: [], signalSheets: false, commentField: "purpose",
+                 autoRowHeight: false, freezeLeft: false, textCells: true };
   var MISMATCH = "#f9c9c9";
 
   function splitLine(line) {

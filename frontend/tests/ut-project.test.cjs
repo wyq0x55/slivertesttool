@@ -175,7 +175,9 @@ test("viewing a candidate opens the drawer read-only with only comments and valu
   assert.equal(opts.readOnly, true);
   assert.equal(opts.onSave, null);
   assert.match(opts.heading, /CSV · 第 1 版（生成器）/);
-  assert.deepEqual(JSON.parse(JSON.stringify(opts.layout.left)), [["purpose", "注释", 260]]);
+  assert.deepEqual(JSON.parse(JSON.stringify(opts.layout.left)), []);
+  assert.equal(opts.layout.commentField, "purpose");
+  assert.equal(opts.layout.autoRowHeight, false);
   assert.equal(item.steps.steps[0].purpose, "if (x)\nTRUE");
 });
 

@@ -53,6 +53,7 @@ export interface StepLayout {
   autoRowHeight: boolean; // grow a row to fit its multi-line step-field text
   freezeLeft: boolean;   // keep the left step fields visible while scrolling
   textCells: boolean;    // write body cells as text so "TRUE" / "00" are not reinterpreted
+  commentField?: string; // display this field as separate, full-width comment rows
 }
 // One highlighted signal cell of the 手順 sheet (0-based step / signal index).
 export interface StepMark {
@@ -112,6 +113,13 @@ export class UniverStepsView {
   private ni = 0; // current input-signal count (defines step column geometry)
   private ne = 0; // current expected-signal count
   private layout: StepLayout = DEFAULT_LAYOUT;
+  private stepRows: number[] = []; // case index -> displayed worksheet row
+  private commentRows: number[] = [];
+  private displayedRows = 0;
+  private sheetShape: [number, number] | null = null;
+  private structuralListener: { dispose(): void } | null = null;
+  private structureChanged = false;
+  private projecting = false;
   // Signals of the last setDoc(); getDoc() returns them when the layout has no
   // signal sheets to read them back from.
   private inSig: any[] = [];
@@ -371,8 +379,38 @@ export class UniverStepsView {
       const count = m.kind === "input" ? this.ni : this.ne;
       if (!(m.index >= 0 && m.index < count && m.step >= 0)) continue;
       const col = left + (m.kind === "input" ? 0 : this.ni) + m.index;
-      try { sheet.getRange(m.step + 1, col).setBackgroundColor(m.color); } catch (_e) { /* optional */ }
+      const row = this.stepRows[m.step];
+      if (row == null) continue;
+      try { sheet.getRange(row, col).setBackgroundColor(m.color); } catch (_e) { /* optional */ }
     }
+  }
+
+  private _styleCommentRows(sheet: any, cols: number): void {
+    for (const row of this.commentRows) {
+      const range = sheet.getRange(row, 0, 1, cols);
+      if (cols > 1) range.merge();
+      range.setBackgroundColor("#e7f5ec");
+      range.setHorizontalAlignment("left");
+      // CLIP keeps long comments on one line. The formula bar / cell tooltip
+      // still exposes the complete text.
+      range.setWrapStrategy(this.univerAPI.Enum.WrapStrategy.CLIP);
+    }
+  }
+
+  private _bindStructureGuard(): void {
+    if (this.structuralListener) return;
+    this.structuralListener = this.univerAPI.onCommandExecuted((command: any) => {
+      if (this.projecting || !this.layout.commentField) return;
+      const unitId = command.params && command.params.unitId;
+      if (unitId && unitId !== this.fWorkbook.getId()) return;
+      // Counts alone cannot detect sorting, moving rows or balanced
+      // insert/delete operations. Reject saving these projections after any
+      // structural command; values and individual comments remain editable.
+      const name = String(command.id || "").replace(/^sheet\.(?:command|mutation)\./, "");
+      if (/^(?:(?:insert|append|remove|delete|move)-(?:rows?|cols?|columns?|range|sheet|worksheet-merge)|add-worksheet-merge|sort-range|reorder-range|set-worksheet-(?:row|column)-count|split-text-to-columns|cut$)/.test(name)) {
+        this.structureChanged = true;
+      }
+    });
   }
 
   // Size the step-field columns and grow rows whose step-field text spans
@@ -431,10 +469,14 @@ export class UniverStepsView {
     // signal columns than the sheet was created with, getRange() throws
     // "Range is out of bounds" and the whole write aborts — leaving the view
     // showing the previous item. Widen synchronously first.
-    this._ensureSize(sheet, tall, wide);
+    const previous = sheet.getDataRange().getRange();
+    const clearRows = Math.max(tall, previous.endRow + 1);
+    const clearCols = Math.max(wide, previous.endColumn + 1);
+    this._ensureSize(sheet, clearRows, clearCols);
     // Clear a generously wide band so a narrower doc never leaves the previous
     // (wider) doc's trailing columns behind when the view is reused.
-    try { sheet.getRange(0, 0, tall, wide).clearContent(); } catch (_e) { /* best-effort */ }
+    sheet.getRange(0, 0, clearRows, clearCols).clearContent();
+    sheet.getRange(0, 0, clearRows, clearCols).setBackgroundColor(null);
     // Multi-line values must be written as rich text (cell.p) or the cell editor
     // opens blank on a value with an embedded newline — same conversion the main
     // grid uses (toCellData). setValues accepts ICellData[][], so this inlines.
@@ -521,6 +563,17 @@ export class UniverStepsView {
 
   // ------------------------------------------------------------------ setDoc --
   setDoc(doc: StepDoc, opts?: StepViewOptions): void {
+    this.projecting = true;
+    try {
+      this._setDoc(doc, opts);
+      this.structureChanged = false;
+      this._bindStructureGuard();
+    } finally {
+      this.projecting = false;
+    }
+  }
+
+  private _setDoc(doc: StepDoc, opts?: StepViewOptions): void {
     const inSig = Array.isArray(doc.input_signals) ? doc.input_signals : [];
     const exSig = Array.isArray(doc.expected_signals) ? doc.expected_signals : [];
     const steps = Array.isArray(doc.steps) ? doc.steps : [];
@@ -550,15 +603,30 @@ export class UniverStepsView {
     const exHead = exSig.map((sig: any, i: number) => s(sig && sig[0]) || "期待" + (i + 1));
     const header = layout.left.map((c) => c[1]).concat(
       inHead, exHead, layout.right.map((c) => c[1]));
-    const stepMatrix = [header].concat(steps.map((st: any) => {
+    if (!header.length) header.push("注释");
+    const stepMatrix: any[][] = [header];
+    this.stepRows = [];
+    this.commentRows = [];
+    steps.forEach((st: any) => {
+      if (layout.commentField) {
+        const comment = s(st[layout.commentField]);
+        if (comment) {
+          for (const line of comment.split(/\r\n?|\n/)) {
+            this.commentRows.push(stepMatrix.length);
+            stepMatrix.push([line].concat(header.slice(1).map(() => "")));
+          }
+        }
+      }
       const inputs = Array.isArray(st.inputs) ? st.inputs : [];
       const exps = Array.isArray(st.expecteds) ? st.expecteds : [];
       const row = layout.left.map((c) => s(st[c[0]]));
       for (let i = 0; i < this.ni; i++) row.push(s(inputs[i]));
       for (let i = 0; i < this.ne; i++) row.push(s(exps[i]));
       layout.right.forEach((c) => row.push(s(st[c[0]])));
-      return row;
-    }));
+      this.stepRows.push(stepMatrix.length);
+      stepMatrix.push(row);
+    });
+    this.displayedRows = stepMatrix.length;
 
     // The view is REUSED across items (not disposed/recreated per open — that was
     // slow and sometimes failed to display). A Univer "table" object baked in by
@@ -576,6 +644,9 @@ export class UniverStepsView {
       this._write(shEx, exMatrix);
     }
     const shStep = this._sheet(SHEET_STEP, SCAN_ROWS, header.length + 2);
+    // A reused view must drop the previous projection's merges and colours:
+    // this candidate can have comments at entirely different row positions.
+    for (const range of shStep.getMergedRanges()) range.breakApart();
     this._write(shStep, stepMatrix, layout.textCells);
     this._fitStepFields(shStep, stepMatrix);
 
@@ -585,8 +656,10 @@ export class UniverStepsView {
     if (shEx) this._styleHeader(shEx, 1);
     this._styleHeader(shStep, header.length, layout.freezeLeft ? layout.left.length : 0);
     // Distinguish 入力 vs 期待 signal columns by colour instead of a text prefix.
-    this._colorSignalColumns(shStep, this.ni, this.ne, steps.length);
+    this._colorSignalColumns(shStep, this.ni, this.ne, stepMatrix.length - 1);
+    if (layout.commentField) this._styleCommentRows(shStep, header.length);
     this._paintMarks(shStep, opts && opts.marks);
+    this.sheetShape = [shStep.getMaxRows(), shStep.getMaxColumns()];
     try {
       if (this.fWorkbook && typeof this.fWorkbook.setEditable === "function") {
         this.fWorkbook.setEditable(!(opts && opts.readOnly));
@@ -644,14 +717,68 @@ export class UniverStepsView {
   }
 
   // ------------------------------------------------------------------ getDoc --
+  private _readCommentSteps(sheet: any, rows: any[][]): any[] {
+    const width = Math.max(this.ni + this.ne, 1);
+    let comments: Set<number>;
+    if (width > 1) {
+      comments = new Set(sheet.getMergedRanges().map((range: any) => {
+        const area = range.getRange();
+        if (area.startRow < 1 || area.startRow !== area.endRow ||
+            area.startColumn !== 0 || area.endColumn !== width - 1) {
+          throw new Error("注释须独占一行，请勿合并数值单元格");
+        }
+        return area.startRow;
+      }));
+    } else {
+      // A single-column sheet has no merge that can identify a comment after
+      // inserting rows. Keep that projection fixed and reject structural edits.
+      if (!this.sheetShape || sheet.getMaxRows() !== this.sheetShape[0] ||
+          sheet.getMaxColumns() !== this.sheetShape[1]) {
+        throw new Error("单列用例请直接编辑原有单元格，增删行请使用 CSV 导入");
+      }
+      comments = new Set(this.commentRows);
+    }
+    const steps: any[] = [];
+    let pending: string[] = [];
+    const last = Math.max(rows.length, this.displayedRows);
+    for (let rowIndex = 1; rowIndex < last; rowIndex++) {
+      const row = rows[rowIndex] || [];
+      if (comments.has(rowIndex)) {
+        const line = s(row[0]);
+        if (/[\r\n]/.test(line)) throw new Error("每条注释只占一行，请勿在注释单元格内换行");
+        pending.push(line);
+        continue;
+      }
+      if (row.every((value) => !s(value)) && !this.stepRows.includes(rowIndex)) continue;
+      const step: any = {};
+      STEP_FIELDS.forEach((field) => { step[field] = ""; });
+      step.no = steps.length + 1;
+      step[this.layout.commentField!] = pending.join("\n");
+      pending = [];
+      step.inputs = Array.from({ length: this.ni }, (_, i) => s(row[i]));
+      step.expecteds = Array.from({ length: this.ne }, (_, i) => s(row[this.ni + i]));
+      steps.push(step);
+    }
+    if (pending.length) throw new Error("注释行后需要对应的数值行，请保留用例行");
+    return steps;
+  }
+
   getDoc(): StepDoc {
     const layout = this.layout;
+    if (layout.commentField && this.structureChanged) {
+      throw new Error("表格行列结构已改变，请关闭后重新打开并直接编辑单元格；增删用例请使用 CSV 导入");
+    }
     const inSig = layout.signalSheets ? this._readSignals(this._named(SHEET_IN)) : this.inSig;
     const exSig = layout.signalSheets ? this._readSignals(this._named(SHEET_EX)) : this.exSig;
     this.ni = inSig.length;
     this.ne = exSig.length;
 
-    const rows = this._readMatrix(this._named(SHEET_STEP));
+    const sheet = this._named(SHEET_STEP);
+    const rows = this._readMatrix(sheet);
+    if (layout.commentField) {
+      return { input_signals: inSig, expected_signals: exSig,
+        steps: this._readCommentSteps(sheet, rows) };
+    }
     const steps: any[] = [];
     for (let r = 1; r < rows.length; r++) {
       const row = rows[r] || [];
@@ -680,6 +807,8 @@ export class UniverStepsView {
   // items (setDoc fully resets geometry), so this is only called on a genuine
   // teardown — not on every dialog close — but kept correct for that case.
   dispose(): void {
+    this.structuralListener?.dispose();
+    this.structuralListener = null;
     try { this.cellTooltip?.dispose?.(); } catch (_e) { /* best-effort */ }
     this.cellTooltip = null;
     try {

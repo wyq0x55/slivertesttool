@@ -463,7 +463,9 @@
     // the built-in tables, which mutate this.doc live via input events.
     _pull() {
       if (this.view && typeof this.view.getDoc === "function") {
-        try { this.doc = parseDoc(this.view.getDoc()); } catch (e) { /* keep this.doc */ }
+        try { this.doc = parseDoc(this.view.getDoc()); } catch (e) {
+          if ((this.viewOpts.layout || {}).commentField) throw e;
+        }
       }
     }
 
@@ -956,11 +958,16 @@
         exNames.map((n) => `<th class="lm-st-sig-ex" title="期待信号">${esc(n)}</th>`).join("") +
         layout.right.map((c) => `<th>${esc(c[1])}</th>`).join("") + (readOnly ? "" : "<th></th>");
       const rows = this.doc.steps.map((s, i) => {
+        const commentRows = layout.commentField && s[layout.commentField]
+          ? String(s[layout.commentField]).split(/\r\n?|\n/).map((line, index) =>
+            `<tr class="lm-st-comment"><td colspan="${inNames.length + exNames.length + (readOnly ? 0 : 1)}">` +
+            `<input class="lm-input lm-st-cell" data-i="${i}" data-f="${esc(layout.commentField)}" ` +
+            `data-comment-line="${index}" value="${esc(line)}"${ro}></td></tr>`).join("") : "";
         const inCells = s.inputs.map((v, j) =>
-          `<td><input class="lm-input lm-st-cell" data-i="${i}" data-arr="inputs" data-j="${j}" value="${esc(v)}"${ro}></td>`).join("");
+          `<td${layout.commentField ? ' class="lm-st-sig-in"' : ""}><input class="lm-input lm-st-cell" data-i="${i}" data-arr="inputs" data-j="${j}" value="${esc(v)}"${ro}></td>`).join("");
         const exCells = s.expecteds.map((v, j) =>
-          `<td><input class="lm-input lm-st-cell" data-i="${i}" data-arr="expecteds" data-j="${j}" value="${esc(v)}"${ro}></td>`).join("");
-        return `<tr>
+          `<td${layout.commentField ? ' class="lm-st-sig-ex"' : ""}><input class="lm-input lm-st-cell" data-i="${i}" data-arr="expecteds" data-j="${j}" value="${esc(v)}"${ro}></td>`).join("");
+        return commentRows + `<tr>
           ${layout.left.map((c) => field(s, i, c[0], c[0] === "no" ? " lm-st-no" : "")).join("")}
           ${inCells}${exCells}
           ${layout.right.map((c) => field(s, i, c[0])).join("")}
@@ -1027,6 +1034,11 @@
         el.addEventListener("input", () => {
           const step = self.doc.steps[Number(el.dataset.i)];
           if (el.dataset.arr) step[el.dataset.arr][Number(el.dataset.j)] = el.value;
+          else if (el.dataset.commentLine != null) {
+            const lines = String(step[el.dataset.f] || "").split(/\r\n?|\n/);
+            lines[Number(el.dataset.commentLine)] = el.value;
+            step[el.dataset.f] = lines.join("\n");
+          }
           else step[el.dataset.f] = el.value;
         });
       });
@@ -1064,13 +1076,13 @@
     async _save() {
       if (this.viewOpts.readOnly) return;
       this.errEl.hidden = true;
-      await this._flushEdit();
-      this._pull();
-      const doc = this._serialize();
-      const json = JSON.stringify(doc, null, 2);
       const btn = this.dialog.querySelector("#lm-steps-save");
       btn.disabled = true;
       try {
+        await this._flushEdit();
+        this._pull();
+        const doc = this._serialize();
+        const json = JSON.stringify(doc, null, 2);
         const savedSteps = this.onSave ? await this.onSave(json, doc) : null;
         if (this.closeOnSave) { this.dialog.close(); return; }
         // Keep the bottom drawer (Univer view) open after a successful save so
