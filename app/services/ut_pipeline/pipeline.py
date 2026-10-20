@@ -277,7 +277,7 @@ def _notify_requester(job: UtJob, kind: str, title: str, body: str = "",
 
 def _new_attempt(job: UtJob, origin: str, csv_bytes: Optional[bytes], *,
                  note: str = "", reviser: Optional[dict] = None,
-                 user_id: Optional[int] = None) -> UtAttempt:
+                 user_id: Optional[int] = None, make_current: bool = True) -> UtAttempt:
     seq = (db.session.query(func.max(UtAttempt.seq)).filter_by(job_id=job.id).scalar() or 0) + 1
     path = digest = ""
     if csv_bytes is not None:
@@ -286,11 +286,12 @@ def _new_attempt(job: UtJob, origin: str, csv_bytes: Optional[bytes], *,
         target = directory / f"a{seq:02d}-{origin.lower()}.csv"
         target.write_bytes(csv_bytes)
         path, digest = str(target), hashlib.sha256(csv_bytes).hexdigest()
+    metadata = {**(reviser or {}), "parent_attempt_id": job.current_attempt_id}
     attempt = UtAttempt(job_id=job.id, seq=seq, origin=origin, csv_path=path,
-                        csv_sha256=digest, reviser=reviser, note=note, created_by=user_id)
+                        csv_sha256=digest, reviser=metadata, note=note, created_by=user_id)
     db.session.add(attempt)
     db.session.flush()
-    if path:
+    if path and make_current:
         job.current_attempt_id = attempt.id
     return attempt
 
@@ -413,7 +414,18 @@ def _capture_backfill(job: UtJob, attempt: UtAttempt, check: dict[str, Any],
 _MISSING_CASE = "MISSING_CASE"
 
 
-def gap_status(check: dict[str, Any], revisers: list[dict[str, Any]]) -> dict[str, Any]:
+def _verified_obligation_ids(check: dict[str, Any], expected_sha: str = "") -> set[str]:
+    witnesses = check.get("candidate_witnesses") or {}
+    identified = (witnesses.get("contract") == "ut-agent.candidate-witness/1"
+                  and (witnesses.get("evidence") or {}).get("identified") is True
+                  and witnesses.get("candidate_sha256") == check.get("candidate_sha256")
+                  and bool(check.get("candidate_sha256"))
+                  and (not expected_sha or expected_sha == check["candidate_sha256"]))
+    return set(witnesses.get("witnessed_obligation_ids") or ()) if identified else set()
+
+
+def gap_status(check: dict[str, Any], revisers: list[dict[str, Any]],
+               expected_sha: str = "") -> dict[str, Any]:
     """Missing cases of ``check`` against the claims and declines of model rounds.
 
     Only an explicit MISSING_CASE is work for the model; evidence gaps,
@@ -428,19 +440,22 @@ def gap_status(check: dict[str, Any], revisers: list[dict[str, Any]]) -> dict[st
         claimed.update((meta or {}).get("claimed") or ())
         declined.update((meta or {}).get("declined") or ())
     ids = {item["obligation_id"] for item in missing}
+    proven = _verified_obligation_ids(check, expected_sha)
     return {
         "missing": len(ids),
         "claimed": len(ids & claimed),
-        "declined": len((ids & declined) - claimed),
+        "witnessed": len(ids & proven),
+        "declined": len((ids & declined) - proven),
         "open": [item for item in missing
-                 if item["obligation_id"] not in claimed and item["obligation_id"] not in declined],
+                 if item["obligation_id"] not in proven and item["obligation_id"] not in declined],
     }
 
 
 def _gap_note(gaps: Optional[dict[str, Any]]) -> str:
     if not gaps or not gaps["missing"]:
         return ""
-    return (f"；缺用例 {gaps['missing']} 个：模型补行待确认 {gaps['claimed']}，"
+    return (f"；缺用例 {gaps['missing']} 个：候选输入已证实 {gaps.get('witnessed', 0)}，"
+            f"模型补行认领 {gaps['claimed']}，"
             f"模型声明无法补齐 {gaps['declined']}，未处理 {len(gaps['open'])}")
 
 
@@ -450,7 +465,9 @@ def next_state(check: dict[str, Any], origin: str, rounds: int, max_rounds: int,
     verdict = check.get("verdict")
     codes = ", ".join(_error_codes(check))
     if verdict == "PASS":
-        if gaps and gaps["open"] and origin != UtAttempt.ORIGIN_HUMAN and rounds < max_rounds:
+        if gaps and gaps["open"] and origin != UtAttempt.ORIGIN_HUMAN:
+            if rounds >= max_rounds:
+                return UtJob.NEEDS_HUMAN, f"仍有 {len(gaps['open'])} 个输入义务未证明，已到修订上限 {max_rounds}" + _gap_note(gaps)
             return UtJob.REPAIRING, ""
         return UtJob.AWAITING_REVIEW, "机器校验通过，等待人工审核" + _gap_note(gaps)
     if verdict == "BLOCKED":
@@ -476,6 +493,12 @@ def next_state(check: dict[str, Any], origin: str, rounds: int, max_rounds: int,
 
 
 def _previous_executable(job: UtJob, attempt: UtAttempt) -> Optional[UtAttempt]:
+    parent_id = (attempt.reviser or {}).get("parent_attempt_id")
+    if parent_id is not None:
+        parent = db.session.get(UtAttempt, parent_id)
+        if parent and parent.job_id == job.id and parent.seq < attempt.seq and parent.csv_path:
+            return parent
+        raise ServiceError("候选的父版本关系无效", code="INVALID_STATE")
     return (UtAttempt.query
             .filter(UtAttempt.job_id == job.id, UtAttempt.seq < attempt.seq,
                     UtAttempt.csv_path != "")
@@ -504,6 +527,9 @@ def _execute_step(job: UtJob) -> None:
     }
     if intents and Path(intents).is_file():
         arguments["intents"] = Path(intents)
+    ir_json = (job.generation or {}).get("ir_json")
+    if ir_json and Path(ir_json).is_file():
+        arguments["ir_json"] = Path(ir_json)
     bridge = get_bridge()
     execution = None
     try:
@@ -532,14 +558,27 @@ def _execute_step(job: UtJob) -> None:
         db.session.commit()
         return
     _gate(job, *next_state(check, attempt.origin, job.repair_rounds, job.max_repair_rounds,
-                           _job_gaps(job, check)))
+                           _job_gaps(job, attempt)))
     db.session.commit()
 
 
-def _job_gaps(job: UtJob, check: dict[str, Any]) -> dict[str, Any]:
-    revisers = [item.reviser for item in UtAttempt.query.filter_by(
-        job_id=job.id, origin=UtAttempt.ORIGIN_LLM)]
-    return gap_status(check, revisers)
+def _job_gaps(job: UtJob, attempt: UtAttempt) -> dict[str, Any]:
+    """Gaps of `attempt` against the model rounds that shaped it.
+
+    A staged proposal rejected before execution never became part of the
+    lineage, so its claims and declines do not count; a round that added no
+    rows (declines only) answered a lineage attempt and does.
+    """
+    attempts = {item.id: item for item in UtAttempt.query.filter_by(job_id=job.id)}
+    lineage, cursor = set(), attempt.id
+    while cursor in attempts and cursor not in lineage:
+        lineage.add(cursor)
+        cursor = (attempts[cursor].reviser or {}).get("parent_attempt_id")
+    revisers = [item.reviser for item in attempts.values()
+                if item.origin == UtAttempt.ORIGIN_LLM and (
+                    item.id in lineage or (not item.csv_path and
+                                           (item.reviser or {}).get("parent_attempt_id") in lineage))]
+    return gap_status(attempt.check or {}, revisers, attempt.csv_sha256)
 
 
 # Errors that appended input rows can address. Expected values belong to the
@@ -563,6 +602,9 @@ def _history_item(item: UtAttempt) -> dict[str, Any]:
                      declined=len(item.reviser.get("declined") or ()),
                      rejected=[rejected.get("error") for rejected in
                                (item.reviser.get("rejected") or ())[:3]])
+        witnesses = (item.check or {}).get("candidate_witnesses") or {}
+        entry["witness_feedback"] = [r for r in witnesses.get("results") or () if r.get("new")][:20]
+        entry["proposed_inputs"] = item.reviser.get("rows") or []
     return entry
 
 
@@ -572,7 +614,7 @@ def _repair_step(job: UtJob) -> None:
     check = attempt.check or {}
     history = [_history_item(item) for item in
                UtAttempt.query.filter_by(job_id=job.id).order_by(UtAttempt.seq)]
-    gaps = _job_gaps(job, check)
+    gaps = _job_gaps(job, attempt)
     try:
         revision = repair.revise(
             constraints=batch.constraints or {},
@@ -593,16 +635,51 @@ def _repair_step(job: UtJob) -> None:
         return
     job.repair_rounds += 1
     new = _new_attempt(job, UtAttempt.ORIGIN_LLM, revision.csv_bytes,
-                       reviser=revision.meta, note=revision.meta.get("error", ""))
+                       reviser=revision.meta, note=revision.meta.get("error", ""), make_current=False)
     if revision.csv_bytes is not None:
-        job.state = UtJob.EXECUTING
+        config = batch.config_snapshot or {}
+        arguments = {
+            "manifest": config["manifest_path"], "reference": Path(job.reference_csv) if job.reference_csv else None,
+            "previous": Path(attempt.csv_path),
+        }
+        for key, argument in (("intent_manifest", "intents"), ("ir_json", "ir_json")):
+            source = (job.generation or {}).get(key)
+            if source and Path(source).is_file():
+                arguments[argument] = Path(source)
+        try:
+            verification = get_bridge().check(Path(new.csv_path), **arguments)
+        except BridgeError as exc:
+            new.verdict = "INVALID"
+            new.note = f"候选检查失败：{exc}"
+            _gate(job, UtJob.ERROR, new.note)
+            db.session.commit()
+            return
+        proposed = {row.get("obligation") for row in revision.meta.get("rows") or ()}
+        missing = {gap["obligation_id"] for gap in gaps["open"]}
+        if (verification.get("verdict") == "FORMAT_OK" and
+                (proposed & missing) - _verified_obligation_ids(verification, new.csv_sha256)):
+            verification = {**verification, "verdict": "BLOCKED", "issues": [
+                *(verification.get("issues") or []),
+                {"code": "INPUT_WITNESS_EVIDENCE_MISSING", "severity": "error", "repairable": False,
+                 "message": "检查器未提供与本候选摘要绑定的输入义务证明，不能按模型认领接受候选"},
+            ]}
+        new.check = verification
+        new.verdict = verification.get("verdict")
+        if new.verdict == "FORMAT_OK":
+            job.current_attempt_id = new.id
+            job.state = UtJob.EXECUTING
+        else:
+            errors = ", ".join(_error_codes(verification))
+            new.note = f"新增行在执行前被拒绝：{errors}；当前候选保持第 {attempt.seq} 版"
+            if new.verdict == "BLOCKED" or job.repair_rounds >= job.max_repair_rounds:
+                _gate(job, UtJob.NEEDS_HUMAN, new.note)
         db.session.commit()
         return
     new.verdict = "INVALID"
     # No row was added: the checked attempt stays current. Declined gaps are
     # closed for the model, so a PASS goes to review once nothing is open.
     state, reason = next_state(check, attempt.origin, job.repair_rounds,
-                               job.max_repair_rounds, _job_gaps(job, check))
+                               job.max_repair_rounds, _job_gaps(job, attempt))
     if (state == UtJob.NEEDS_HUMAN and check.get("verdict") == "FAIL"
             and job.repair_rounds >= job.max_repair_rounds):
         reason = (f"本地模型已修正 {job.repair_rounds} 次仍未产出可用候选"
@@ -706,7 +783,7 @@ def retry(project_id: int, job_id: int, user_id: Optional[int] = None) -> UtJob:
     # An error during repair leaves a checked attempt that still wants rows
     # (FAIL, or PASS with open missing cases): resume the repair.
     wants_rows = attempt.verdict == "FAIL" or (
-        attempt.verdict == "PASS" and _job_gaps(job, attempt.check or {})["open"])
+        attempt.verdict == "PASS" and _job_gaps(job, attempt)["open"])
     _gate(job, UtJob.REPAIRING if wants_rows else UtJob.EXECUTING)
     db.session.commit()
     return job

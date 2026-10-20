@@ -129,10 +129,10 @@ class UtAgentBridge:
 
     def check(self, candidate: Path, *, manifest: str, reference: Optional[Path] = None,
               previous: Optional[Path] = None, execution: Optional[Path] = None,
-              intents: Optional[Path] = None) -> dict[str, Any]:
+              intents: Optional[Path] = None, ir_json: Optional[Path] = None) -> dict[str, Any]:
         args = ["check", *self._manifest(manifest), "--candidate", str(candidate)]
         for flag, value in (("--reference", reference), ("--previous", previous),
-                            ("--execution", execution), ("--intents", intents)):
+                            ("--execution", execution), ("--intents", intents), ("--ir-json", ir_json)):
             if value is not None:
                 args += [flag, str(value)]
         return self._run(args, timeout=self.settings.timeout)["check"]

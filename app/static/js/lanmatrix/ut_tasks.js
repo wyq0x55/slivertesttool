@@ -293,7 +293,8 @@
                       code: "代码", detail: "说明", path: "路径", message: "说明",
                       obligation: "义务", kind: "类型", decision: "判定式",
                       solve: "求解", reason: "原因", gap: "缺口",
-                      min: "下限", max: "上限", source: "证据来源", pending: "待捕获输出" };
+                      min: "下限", max: "上限", source: "证据来源", pending: "待捕获输出",
+                      verification: "输入复核" };
   // Stored check JSON comes back with sorted keys; show evidence in reading order.
   var KEY_ORDER = ["row", "column", "before", "after", "expected", "actual", "code", "path",
                    "message", "detail", "gap", "obligation", "kind", "decision", "solve", "reason"];
@@ -347,7 +348,18 @@
                  pending: (g.pending_outputs || []).join("、"), reason: g.reason };
       }) : d;
     }, ""],
+    INPUT_WITNESS_CHECK: [witnessRows, ""],
+    INPUT_WITNESS_REJECTED: [witnessRows, ""],
+    INPUT_WITNESS_UNKNOWN: [witnessRows, ""],
   };
+  function witnessRows(rows) {
+    var labels = { WITNESSED: "输入已证实", REJECTED: "不满足义务", UNKNOWN: "证据不足" };
+    return Array.isArray(rows) ? rows.map(function (row) {
+      return { row: row.row, obligation: row.obligation_id,
+               verification: labels[row.status] || row.status,
+               actual: row.observed, reason: row.reason };
+    }) : rows;
+  }
 
   function clip(text, n) { return text.length > n ? text.slice(0, n) + "…" : text; }
   function plain(v) { return v == null ? "—" : typeof v === "object" ? JSON.stringify(v) : String(v); }

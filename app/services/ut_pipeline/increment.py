@@ -56,8 +56,17 @@ def parse(text: str) -> Table:
     return Table(lines, header[1:1 + ni], header[1 + ni:], rows)
 
 
-def _inputs(table: Table, row: list[str]) -> tuple[str, ...]:
-    return tuple(cell.strip() for cell in row[1:1 + len(table.inputs)])
+def _inputs(table: Table, row: list[str], domains: dict[str, Any] | None = None) -> tuple[str, ...]:
+    columns = (domains or {}).get("columns") or []
+    result = []
+    for index, cell in enumerate(row[1:1 + len(table.inputs)]):
+        text = cell.strip()
+        if (index < len(columns) and columns[index].get("status") == "PROVEN"
+                and re.fullmatch(r"[+-]?(?:0[xX][0-9a-fA-F]+|[0-9]+)", text)):
+            value = int(text, 16 if text.lstrip("+-").lower().startswith("0x") else 10)
+            text = str(value)
+        result.append(text)
+    return tuple(result)
 
 
 def defaults(table: Table) -> list[str]:
@@ -127,7 +136,7 @@ def apply(table: Table, proposals: Any, allowed: set[str],
     if not isinstance(proposals, list):
         result.rejected.append({"error": "rows 必须是数组"})
         return result
-    seen = Counter(_inputs(table, row) for row in table.rows)
+    seen = Counter(_inputs(table, row, domains) for row in table.rows)
     ni, no = len(table.inputs), len(table.outputs)
     appended: list[str] = []
     for position, item in enumerate(proposals):
@@ -158,9 +167,9 @@ def apply(table: Table, proposals: Any, allowed: set[str],
                     raise ValueError(f"{table.token(index)} 的取值必须非空且不含逗号、引号或换行")
                 row[1 + index] = text
                 changed[table.token(index)] = text
-            vector = _inputs(table, row)
             _check_domains(table, row, domains)
-            if vector == _inputs(table, base):
+            vector = _inputs(table, row, domains)
+            if vector == _inputs(table, base, domains):
                 raise ValueError("改动后与参考行完全相同")
             if seen[vector]:
                 raise ValueError("与已有数据行的输入完全相同，不能覆盖新的义务")

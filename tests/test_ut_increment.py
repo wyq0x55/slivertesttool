@@ -86,3 +86,13 @@ def test_typed_bounds_reject_a_proposal_before_appending_and_keep_legal_rows():
     assert "INPUT_OUT_OF_RANGE" in result.rejected[0]["error"]
     assert "允许 0..1" in result.rejected[0]["error"]
     assert "I3 = a.c/z [范围 0..1]" in increment.columns_section(table, domains)
+
+
+def test_proven_numeric_equivalence_cannot_evade_duplicate_detection():
+    table = _table()
+    domains = {"contract": "ut-agent.input-domains/1", "columns": [
+        {"index": i, "column": name, "status": "PROVEN", "min": 0, "max": 255}
+        for i, name in enumerate(table.inputs, 1)]}
+    result = increment.apply(table, [{"obligation": "b1:T", "base_row": 2,
+                                      "inputs": {"I1": "0x1"}}], {"b1:T"}, domains)
+    assert result.csv_bytes is None and "完全相同" in result.rejected[0]["error"]
