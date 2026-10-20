@@ -31,12 +31,13 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
   const root = get("root");
   root.dataset.project = "4";
   get("ut-detail").hidden = true;
-  const details = [], previews = [], reviews = [], revisions = [], batches = [];
+  const details = [], previews = [], reviews = [], revisions = [], batches = [], sheets = [];
   let failList = false, onPop;
   const window = {
     LM: { projectCapabilities: capabilities },
     LMReady: Promise.resolve(),
     scrollTo() {},
+    LMStepsEditor: { open(item, opts) { sheets.push({ item, opts }); }, close() {} },
   };
   const context = vm.createContext({
     window, document: {
@@ -73,7 +74,7 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
     },
   });
   window.LMUrl = context.LMUrl;
-  for (const file of ["pill.js", "ut_common.js", page]) {
+  for (const file of ["pill.js", "ut_common.js", "ut_testcsv.js", page]) {
     vm.runInContext(fs.readFileSync(path.join(scripts, file), "utf8"), context);
     context.LMPill = window.LMPill;
     context.LMUt = window.LMUt;
@@ -85,12 +86,12 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
       target: { closest: () => ({ dataset: { job: String(id) } }) },
     });
   }
-  function pin(attempt) {
+  function pin(attempt, act) {
     return get("ut-d-attempts").listeners.click({
-      target: { closest: () => ({ dataset: { attempt: String(attempt) } }) },
+      target: { closest: () => ({ dataset: { attempt: String(attempt), ...(act ? { act } : {}) } }) },
     });
   }
-  return { get, root, details, previews, reviews, revisions, batches, open, pin, click,
+  return { get, root, details, previews, reviews, revisions, batches, sheets, open, pin, click,
     pop: (q) => onPop(q), failList: () => { failList = true; }, common: window.LMUt };
 }
 
@@ -139,30 +140,43 @@ test("same-job detail responses cannot restore an older candidate", async () => 
   assert.equal(h.get("ut-d-download").href, "/csv/1/20");
 });
 
-test("automatic preview follows the latest candidate and ignores late CSV text", async () => {
+test("the check panel follows the latest candidate without fetching CSV text", async () => {
   const h = harness();
   await ready(h);
-  const old = h.previews.at(-1);
   h.click("ut-d-refresh");
   await settle();
   h.details.at(-1).resolve(job(20));
   await settle();
-  h.previews.at(-1).resolve({ text: "new candidate" });
-  await settle();
-  old.resolve({ text: "old candidate" });
-  await settle();
-  assert.match(h.get("ut-d-csv-title").textContent, /第 2 版/);
-  assert.equal(h.get("ut-d-csv").textContent, "new candidate");
+  assert.match(h.get("ut-d-issues-title").textContent, /第 2 版.*当前版本/);
+  assert.equal(h.previews.length, 0);
 });
 
 test("historical preview is explicit and cannot approve the unseen current candidate", async () => {
   const h = harness();
   await ready(h, job(20));
   h.pin(10);
-  assert.match(h.get("ut-d-csv-title").textContent, /历史版本/);
+  assert.match(h.get("ut-d-issues-title").textContent, /历史版本/);
   assert.equal(h.get("ut-d-approve").disabled, true);
   h.pin(20);
   assert.equal(h.get("ut-d-approve").disabled, false);
+});
+
+const CSV = 'mod,"a.c/f","f test",1,1,,,,CPP,,,"",0\r\n#COMMENT,"a.c/x","a.c/f@@"\r\n' +
+  ";$L$,if (x)\r\n;$L$,TRUE\r\n,1,1\r\n;$L$,FALSE\r\n,0,0\r\n";
+
+test("viewing a candidate opens the drawer read-only with only comments and values", async () => {
+  const h = harness();
+  await ready(h);
+  h.pin(10, "view");
+  await settle();
+  h.previews.at(-1).resolve({ text: CSV });
+  await settle();
+  const { item, opts } = h.sheets.at(-1);
+  assert.equal(opts.readOnly, true);
+  assert.equal(opts.onSave, null);
+  assert.match(opts.heading, /CSV · 第 1 版（生成器）/);
+  assert.deepEqual(JSON.parse(JSON.stringify(opts.layout.left)), [["purpose", "注释", 260]]);
+  assert.equal(item.steps.steps[0].purpose, "if (x)\nTRUE");
 });
 
 test("successful revision followed by a failed refresh keeps review disabled", async () => {
@@ -171,16 +185,56 @@ test("successful revision followed by a failed refresh keeps review disabled", a
   h.click("ut-d-refresh");
   await settle();
   const stale = h.details.at(-1);
-  h.get("ut-d-revision").value = "new CSV";
-  h.click("ut-d-revise");
+  h.click("ut-d-edit-sheet");
+  await settle();
+  h.previews.at(-1).resolve({ text: CSV });
+  await settle();
+  const { item, opts } = h.sheets.at(-1);
+  assert.equal(opts.readOnly, false);
+  const doc = JSON.parse(JSON.stringify(item.steps));
+  doc.steps[1].expecteds = ["1"];
+  const saved = opts.onSave("", doc);
   h.failList();
   h.revisions[0].resolve({});
+  await saved;
   await settle();
+  assert.match(h.revisions[0].args[2], /\r\n,0,1\r\n$/);
   stale.resolve(job());
   await settle();
   assert.equal(h.get("ut-d-gate-forms").hidden, true);
   assert.equal(h.get("ut-d-approve").disabled, true);
   assert.match(h.get("ut-detail-status").textContent, /offline/);
+});
+
+test("an unchanged table is not submitted as a revision", async () => {
+  const h = harness();
+  await ready(h);
+  h.click("ut-d-edit-sheet");
+  await settle();
+  h.previews.at(-1).resolve({ text: CSV });
+  await settle();
+  const { item, opts } = h.sheets.at(-1);
+  await assert.rejects(opts.onSave("", item.steps), /没有改动/);
+  assert.equal(h.revisions.length, 0);
+});
+
+test("check issues render as structured evidence instead of raw JSON", async () => {
+  const h = harness();
+  const value = job();
+  value.attempts[0].verdict = "FAIL";
+  value.attempts[0].check = { verdict: "FAIL", issues: [
+    { code: "ORACLE_MISMATCH", severity: "error", message: "1 个期望值与 WinAMS 实际值不一致",
+      detail: [{ row: 0, column: "a.c/f@@", expected: "1", actual: 0 }] },
+    { code: "COVERAGE_C0_INCOMPLETE", severity: "error", message: "C0 50%",
+      detail: { c0: 50, c0_ratio: [1, 2], c1: null, c1_ratio: [0, -1], mcdc: null } },
+  ] };
+  await ready(h, value);
+  const html = h.get("ut-d-issues").innerHTML;
+  assert.match(html, /<table class="ut-issue-table">[\s\S]*#1[\s\S]*f@@/);
+  assert.match(html, /C0<\/b> 50%（1 \/ 2）/);
+  assert.match(html, /C1<\/b> 未测量/);
+  assert.doesNotMatch(html, /\{&quot;|\{"/);
+  assert.equal(h.get("ut-d-issues-sum").textContent, "· 2 个错误");
 });
 
 test("a page without a candidate never offers approval", async () => {
@@ -207,10 +261,12 @@ test("a reader can inspect evidence but cannot submit review or revision", async
   await ready(h);
   assert.equal(h.get("ut-d-gate-forms").hidden, true);
   h.click("ut-d-approve");
-  h.get("ut-d-revision").value = "CSV";
-  h.click("ut-d-revise");
+  h.click("ut-d-edit-sheet");
+  h.click("ut-d-import");
+  await settle();
   assert.equal(h.reviews.length, 0);
   assert.equal(h.revisions.length, 0);
+  assert.equal(h.sheets.length, 0);
 });
 
 test("dashboard keeps machine PASS separate from human approval and excludes removed functions", () => {

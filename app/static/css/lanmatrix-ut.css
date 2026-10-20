@@ -15,6 +15,7 @@
 
 /* Shared by 实施一览 and 任务与运行 */
 .ut-table td code{ font-size:12px; }
+.ut-table .pill{ white-space:nowrap; }
 .ut-table .ut-src{ max-width:260px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .ut-table tr.is-stale td{ color:var(--text-3); }
 .ut-table .ut-num{ font-variant-numeric:tabular-nums; color:var(--text-2); }
@@ -26,19 +27,46 @@
 
 /* 任务与运行 · detail */
 #ut-detail .detail-grid{ align-items:start; }
-.ut-detail-grid{ display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); gap:20px; margin-top:20px; }
-@media (max-width:960px){ .ut-detail-grid{ grid-template-columns:1fr; } }
-.ut-detail-grid .panel{ margin:0; }
 .ut-reason{ margin:0; white-space:pre-wrap; }
 .ut-review textarea{ width:100%; min-height:72px; resize:vertical; }
-.ut-code-input{ font-family:var(--mono); white-space:pre; }
 .ut-review .row{ display:flex; gap:8px; justify-content:flex-end; margin-top:8px; flex-wrap:wrap; }
 .ut-review .ut-sep{ border:0; border-top:1px solid var(--border); margin:18px 0; }
 .ut-review input{ width:100%; margin-top:8px; }
-.ut-csv{ max-height:440px; overflow:auto; }
-.ut-issues{ max-height:260px; overflow:auto; }
 .ut-attempts tr.is-current td{ font-weight:600; }
+.ut-attempts tbody tr{ cursor:pointer; }
+.ut-attempts tbody tr.is-shown td{ background:var(--brand-soft); }
+.ut-attempts tbody tr.is-shown td:first-child{ box-shadow:inset 3px 0 0 var(--brand); }
 .ut-attempts td:nth-child(2){ white-space:nowrap; }
+
+/* 校验问题: one card per issue, its evidence as a table / chips, not raw JSON */
+.ut-issue-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px; }
+.ut-issue{ border:1px solid var(--border); border-left:3px solid var(--border-strong);
+  border-radius:var(--radius-sm); padding:10px 14px; background:var(--surface); }
+.ut-issue.sev-error{ border-left-color:var(--danger); }
+.ut-issue.sev-warning{ border-left-color:var(--warn); }
+.ut-issue-head{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.ut-issue-head .pill{ white-space:nowrap; }
+.ut-issue-code{ font-family:var(--mono); font-size:12px; color:var(--text-2); }
+.ut-issue-msg{ flex:1; min-width:200px; font-size:13px; }
+.ut-issue-text{ margin:8px 0 0; font-size:12.5px; color:var(--text-2); white-space:pre-wrap; overflow-wrap:anywhere; }
+.ut-issue-items{ margin:8px 0 0; padding-left:18px; font-size:12.5px; color:var(--text-2); }
+.ut-issue-kv{ display:grid; grid-template-columns:max-content minmax(0, 1fr); gap:4px 14px; margin:8px 0 0; font-size:12.5px; }
+.ut-issue-kv dt{ color:var(--text-3); }
+.ut-issue-kv dd{ margin:0; overflow-wrap:anywhere; }
+.ut-issue-table{ width:100%; margin-top:8px; border-collapse:collapse; font-size:12.5px; }
+.ut-issue-table th{ text-align:left; font-weight:600; color:var(--text-3); font-size:11.5px; padding:4px 10px 4px 0;
+  border-bottom:1px solid var(--border); white-space:nowrap; }
+.ut-issue-table td{ padding:4px 10px 4px 0; border-bottom:1px solid var(--border); font-variant-numeric:tabular-nums;
+  max-width:420px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ut-issue-table code{ font-size:12px; }
+.ut-issue details{ margin-top:4px; }
+.ut-issue summary{ cursor:pointer; color:var(--brand); font-size:12.5px; padding:4px 0; }
+.ut-cov{ display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+.ut-cov-item{ padding:3px 10px; border-radius:999px; font-size:12.5px; background:var(--surface-2); color:var(--text-2); }
+.ut-cov-item b{ font-weight:600; margin-right:2px; }
+.ut-cov-item.is-full{ background:var(--ok-soft); color:var(--ok); }
+.ut-cov-item.is-gap{ background:var(--danger-soft); color:var(--danger); }
+.ut-cov-item.is-missing{ background:var(--warn-soft); color:var(--warn); }
 @media (max-width:640px){
   .lm-ut .segmented, .lm-ut-tasks .segmented{ max-width:100%; overflow-x:auto; }
   .ut-review, #ut-detail .panel, .ut-form-grid .panel{ min-width:0; }

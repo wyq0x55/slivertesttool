@@ -10,18 +10,23 @@
  *               inputs:[...], expecteds:[...], timing }, ...] }
  *
  * It exposes the tiny contract steps_editor.js needs:
- *   mount(host, opts) -> { setDoc(doc), getDoc(): doc, engine }
+ *   mount(host, opts) -> { setDoc(doc, viewOpts?), getDoc(): doc, engine }
  * steps_editor.js keeps ownership of the toolbar (add input/expected/step) and
  * of persistence: on save it pulls getDoc(), serialises and PATCHes the item's
  * `steps` cell through the normal optimistic-locked item API. Server stays
  * authoritative; this is purely an editing surface.
  *
- * Layout: three worksheets in one workbook —
+ * Default layout (Silver test items): three worksheets in one workbook —
  *   "入力値"  : columns [名称, 路径]
  *   "期待値"  : columns [名称, 路径]
  *   "手順"    : [手順番号, 手順目的, 操作手順, サブルーチン, 引数,
  *               <one column per input signal>, <one per expected signal>,
  *               確認タイミング]
+ *
+ * A host may pass a different StepLayout in setDoc's view options: which step
+ * fields frame the signal columns, and whether the signal names are editable
+ * on their own sheets. With `signalSheets: false` only the 手順 sheet is shown
+ * and getDoc() returns the signals given to the last setDoc() unchanged.
  */
 
 import type { UniverDeps } from "./adapter";
@@ -37,9 +42,45 @@ export interface StepDoc {
 const SHEET_IN = "入力値";
 const SHEET_EX = "期待値";
 const SHEET_STEP = "手順";
-const STEP_LEFT = ["手順番号", "手順目的", "操作手順", "サブルーチン", "引数"];
-const STEP_RIGHT = ["確認タイミング"];
 const SCAN_ROWS = 500; // upper bound when scanning a sheet back into a doc
+
+// [step field, column header, optional width in px]
+type StepColumn = [string, string, number?];
+export interface StepLayout {
+  left: StepColumn[];    // step fields before the signal columns
+  right: StepColumn[];   // step fields after them
+  signalSheets: boolean; // signal names editable on the 入力値 / 期待値 sheets
+  autoRowHeight: boolean; // grow a row to fit its multi-line step-field text
+  freezeLeft: boolean;   // keep the left step fields visible while scrolling
+  textCells: boolean;    // write body cells as text so "TRUE" / "00" are not reinterpreted
+}
+// One highlighted signal cell of the 手順 sheet (0-based step / signal index).
+export interface StepMark {
+  step: number;
+  kind: "input" | "expected";
+  index: number;
+  color: string;
+}
+export interface StepViewOptions {
+  layout?: Partial<StepLayout> | null;
+  readOnly?: boolean;
+  marks?: StepMark[];
+}
+
+const DEFAULT_LAYOUT: StepLayout = {
+  left: [["no", "手順番号"], ["purpose", "手順目的"], ["operation", "操作手順"],
+         ["subroutine", "サブルーチン"], ["args", "引数"]],
+  right: [["timing", "確認タイミング"]],
+  signalSheets: true,
+  autoRowHeight: false,
+  freezeLeft: false,
+  textCells: false,
+};
+const STEP_FIELDS = ["no", "purpose", "operation", "subroutine", "args", "timing"];
+
+function resolveLayout(layout?: Partial<StepLayout> | null): StepLayout {
+  return Object.assign({}, DEFAULT_LAYOUT, layout || {});
+}
 
 function s(v: any): string {
   return v == null ? "" : String(v);
@@ -70,6 +111,11 @@ export class UniverStepsView {
   private fWorkbook: any = null;
   private ni = 0; // current input-signal count (defines step column geometry)
   private ne = 0; // current expected-signal count
+  private layout: StepLayout = DEFAULT_LAYOUT;
+  // Signals of the last setDoc(); getDoc() returns them when the layout has no
+  // signal sheets to read them back from.
+  private inSig: any[] = [];
+  private exSig: any[] = [];
   private hasValidation = false; // whether the data-validation preset is available
   private cellTooltip: CellTooltip | null = null; // truncated-cell full-text bubble
   private _rowHeightPx = 0; // captured uniform row height (default 24px)
@@ -247,7 +293,7 @@ export class UniverStepsView {
   private _lookupLib(row: number, col: number): string | null {
     if (!this._libMap || !this._libMap.size) return null;
     if (row < 1) return null; // header row
-    if (col !== STEP_LEFT.indexOf("サブルーチン")) return null;
+    if (col !== this.layout.left.findIndex((c) => c[0] === "subroutine")) return null;
     try {
       const active = this.fWorkbook && this.fWorkbook.getActiveSheet
         ? this.fWorkbook.getActiveSheet() : null;
@@ -278,7 +324,7 @@ export class UniverStepsView {
   // rewrite — were the root cause of the step detail not refreshing when the
   // reused view switched to another item). Filter/sort are still available from
   // the toolbar via their presets.
-  private _styleHeader(sheet: any, cols: number): void {
+  private _styleHeader(sheet: any, cols: number, frozenCols = 0): void {
     if (!sheet || cols < 1) return;
     try {
       const hdr = sheet.getRange(0, 0, 1, cols);
@@ -287,7 +333,7 @@ export class UniverStepsView {
     } catch (_e) { /* best-effort */ }
     try {
       if (typeof sheet.setFreeze === "function") {
-        sheet.setFreeze({ xSplit: 0, ySplit: 1, startRow: 1, startColumn: 0 });
+        sheet.setFreeze({ xSplit: frozenCols, ySplit: 1, startRow: 1, startColumn: frozenCols });
       } else if (typeof sheet.setFrozenRows === "function") {
         sheet.setFrozenRows(1);
       }
@@ -302,7 +348,7 @@ export class UniverStepsView {
   // the left/right meta columns keep the neutral header colour.
   private _colorSignalColumns(sheet: any, ni: number, ne: number, dataRows: number): void {
     if (!sheet) return;
-    const left = STEP_LEFT.length; // first signal column index
+    const left = this.layout.left.length; // first signal column index
     const IN_HDR = "#cfe3fb", IN_BODY = "#eef6ff";   // blue  = 入力
     const EX_HDR = "#fce0c4", EX_BODY = "#fff6ec";    // amber = 期待
     const paint = (startCol: number, count: number, hdr: string, body: string) => {
@@ -314,6 +360,41 @@ export class UniverStepsView {
     };
     paint(left, ni, IN_HDR, IN_BODY);
     paint(left + ni, ne, EX_HDR, EX_BODY);
+  }
+
+  // Highlight individual signal cells (e.g. an expected value the checker
+  // disputes). Runs after _colorSignalColumns so a mark wins over the tint.
+  private _paintMarks(sheet: any, marks: StepMark[] | undefined): void {
+    if (!sheet || !marks || !marks.length) return;
+    const left = this.layout.left.length;
+    for (const m of marks) {
+      const count = m.kind === "input" ? this.ni : this.ne;
+      if (!(m.index >= 0 && m.index < count && m.step >= 0)) continue;
+      const col = left + (m.kind === "input" ? 0 : this.ni) + m.index;
+      try { sheet.getRange(m.step + 1, col).setBackgroundColor(m.color); } catch (_e) { /* optional */ }
+    }
+  }
+
+  // Size the step-field columns and grow rows whose step-field text spans
+  // several lines. Row heights are otherwise locked (see _lockRowHeights), so
+  // the extra height is forced explicitly and deterministically.
+  private _fitStepFields(sheet: any, matrix: any[][]): void {
+    if (!sheet) return;
+    const layout = this.layout;
+    const right0 = layout.left.length + this.ni + this.ne;
+    const fields: Array<[number, StepColumn]> = layout.left.map((c, i) => [i, c] as [number, StepColumn])
+      .concat(layout.right.map((c, i) => [right0 + i, c] as [number, StepColumn]));
+    for (const [col, c] of fields) {
+      if (c[2]) { try { sheet.setColumnWidth(col, c[2]); } catch (_e) { /* optional */ } }
+    }
+    if (!layout.autoRowHeight || typeof sheet.setRowHeightsForced !== "function") return;
+    const base = this._rowHeightPx > 0 ? this._rowHeightPx : 24;
+    for (let r = 1; r < matrix.length; r++) {
+      const lines = Math.max(1, ...fields.map(([col]) => s(matrix[r][col]).split("\n").length));
+      if (lines > 1) {
+        try { sheet.setRowHeightsForced(r, 1, Math.round(base * 0.85 * lines) + 4); } catch (_e) { /* optional */ }
+      }
+    }
   }
 
   // --------------------------------------------------------------- worksheets -
@@ -339,24 +420,29 @@ export class UniverStepsView {
     try { return this.fWorkbook.getSheetByName(name); } catch (_e) { return null; }
   }
 
-  private _write(sheet: any, matrix: any[][]): void {
+  private _write(sheet: any, matrix: any[][], asText = false): void {
     if (!sheet || !matrix.length) return;
     const rows = matrix.length;
     const cols = Math.max(...matrix.map((r) => r.length), 1);
     const wide = Math.max(cols + 4, 40);
+    const tall = Math.max(SCAN_ROWS, rows + 50);
     // Grow the (possibly reused) sheet so neither the clear band nor the write
     // exceeds its bounds. When the view is reused and the next item has more
     // signal columns than the sheet was created with, getRange() throws
     // "Range is out of bounds" and the whole write aborts — leaving the view
     // showing the previous item. Widen synchronously first.
-    this._ensureSize(sheet, SCAN_ROWS, wide);
+    this._ensureSize(sheet, tall, wide);
     // Clear a generously wide band so a narrower doc never leaves the previous
     // (wider) doc's trailing columns behind when the view is reused.
-    try { sheet.getRange(0, 0, SCAN_ROWS, wide).clearContent(); } catch (_e) { /* best-effort */ }
+    try { sheet.getRange(0, 0, tall, wide).clearContent(); } catch (_e) { /* best-effort */ }
     // Multi-line values must be written as rich text (cell.p) or the cell editor
     // opens blank on a value with an embedded newline — same conversion the main
     // grid uses (toCellData). setValues accepts ICellData[][], so this inlines.
-    const cellMatrix = matrix.map((r) => r.map((v) => toCellData(v)));
+    // CellValueType.STRING (1) keeps a body value exactly as given.
+    const cellMatrix = matrix.map((r, ri) => r.map((v) => {
+      const cell = toCellData(v);
+      return asText && ri > 0 && cell === v && s(v) !== "" ? { v: s(v), t: 1 } : cell;
+    }));
     try { sheet.getRange(0, 0, rows, cols).setValues(cellMatrix); } catch (e) {
       console.warn("[LMUniverSteps] write failed:", e);
     }
@@ -434,10 +520,14 @@ export class UniverStepsView {
   }
 
   // ------------------------------------------------------------------ setDoc --
-  setDoc(doc: StepDoc): void {
+  setDoc(doc: StepDoc, opts?: StepViewOptions): void {
     const inSig = Array.isArray(doc.input_signals) ? doc.input_signals : [];
     const exSig = Array.isArray(doc.expected_signals) ? doc.expected_signals : [];
     const steps = Array.isArray(doc.steps) ? doc.steps : [];
+    const layout = resolveLayout(opts && opts.layout);
+    this.layout = layout;
+    this.inSig = inSig;
+    this.exSig = exSig;
     this.ni = inSig.length;
     this.ne = exSig.length;
     try {
@@ -458,14 +548,15 @@ export class UniverStepsView {
     // not by a text prefix, so the columns stay narrow.
     const inHead = inSig.map((sig: any, i: number) => s(sig && sig[0]) || "入力" + (i + 1));
     const exHead = exSig.map((sig: any, i: number) => s(sig && sig[0]) || "期待" + (i + 1));
-    const header = STEP_LEFT.concat(inHead, exHead, STEP_RIGHT);
+    const header = layout.left.map((c) => c[1]).concat(
+      inHead, exHead, layout.right.map((c) => c[1]));
     const stepMatrix = [header].concat(steps.map((st: any) => {
       const inputs = Array.isArray(st.inputs) ? st.inputs : [];
       const exps = Array.isArray(st.expecteds) ? st.expecteds : [];
-      const row = [s(st.no), s(st.purpose), s(st.operation), s(st.subroutine), s(st.args)];
+      const row = layout.left.map((c) => s(st[c[0]]));
       for (let i = 0; i < this.ni; i++) row.push(s(inputs[i]));
       for (let i = 0; i < this.ne; i++) row.push(s(exps[i]));
-      row.push(s(st.timing));
+      layout.right.forEach((c) => row.push(s(st[c[0]])));
       return row;
     }));
 
@@ -476,20 +567,31 @@ export class UniverStepsView {
     // every table so each item is rendered as plain, fully-rewritten ranges.
     this._resetTables();
 
-    const shIn = this._sheet(SHEET_IN, SCAN_ROWS, 2);
-    const shEx = this._sheet(SHEET_EX, SCAN_ROWS, 2);
+    let shIn: any = null;
+    let shEx: any = null;
+    if (layout.signalSheets) {
+      shIn = this._sheet(SHEET_IN, SCAN_ROWS, 2);
+      shEx = this._sheet(SHEET_EX, SCAN_ROWS, 2);
+      this._write(shIn, inMatrix);
+      this._write(shEx, exMatrix);
+    }
     const shStep = this._sheet(SHEET_STEP, SCAN_ROWS, header.length + 2);
-    this._write(shIn, inMatrix);
-    this._write(shEx, exMatrix);
-    this._write(shStep, stepMatrix);
+    this._write(shStep, stepMatrix, layout.textCells);
+    this._fitStepFields(shStep, stepMatrix);
 
     // Table-like styling without a Univer table object (synchronous; see
     // _styleHeader): bold + shaded header, frozen header row.
-    this._styleHeader(shIn, 1);
-    this._styleHeader(shEx, 1);
-    this._styleHeader(shStep, header.length);
+    if (shIn) this._styleHeader(shIn, 1);
+    if (shEx) this._styleHeader(shEx, 1);
+    this._styleHeader(shStep, header.length, layout.freezeLeft ? layout.left.length : 0);
     // Distinguish 入力 vs 期待 signal columns by colour instead of a text prefix.
     this._colorSignalColumns(shStep, this.ni, this.ne, steps.length);
+    this._paintMarks(shStep, opts && opts.marks);
+    try {
+      if (this.fWorkbook && typeof this.fWorkbook.setEditable === "function") {
+        this.fWorkbook.setEditable(!(opts && opts.readOnly));
+      }
+    } catch (_e) { /* older bundle: the host still withholds save */ }
 
     // Land on the 手順 sheet so a reused view never shows the previous item's
     // active sheet.
@@ -497,6 +599,17 @@ export class UniverStepsView {
       const st = this._named(SHEET_STEP);
       if (st && typeof st.activate === "function") st.activate();
     } catch (_e) { /* best-effort */ }
+    // A reused view may carry signal sheets from an earlier layout; hide them
+    // only after 手順 is active, since the active sheet cannot be hidden.
+    [SHEET_IN, SHEET_EX].forEach((name) => {
+      const sh = this._named(name);
+      if (!sh) return;
+      try {
+        const hidden = typeof sh.isSheetHidden === "function" && sh.isSheetHidden();
+        if (layout.signalSheets && hidden) sh.showSheet();
+        else if (!layout.signalSheets && !hidden) sh.hideSheet();
+      } catch (_e) { /* best-effort */ }
+    });
   }
 
   // Remove every table in the workbook. The step view no longer auto-creates
@@ -532,8 +645,9 @@ export class UniverStepsView {
 
   // ------------------------------------------------------------------ getDoc --
   getDoc(): StepDoc {
-    const inSig = this._readSignals(this._named(SHEET_IN));
-    const exSig = this._readSignals(this._named(SHEET_EX));
+    const layout = this.layout;
+    const inSig = layout.signalSheets ? this._readSignals(this._named(SHEET_IN)) : this.inSig;
+    const exSig = layout.signalSheets ? this._readSignals(this._named(SHEET_EX)) : this.exSig;
     this.ni = inSig.length;
     this.ne = exSig.length;
 
@@ -541,23 +655,23 @@ export class UniverStepsView {
     const steps: any[] = [];
     for (let r = 1; r < rows.length; r++) {
       const row = rows[r] || [];
-      const no = s(row[0]);
-      const purpose = s(row[1]);
-      const operation = s(row[2]);
-      const subroutine = s(row[3]);
-      const args = s(row[4]);
+      const step: any = {};
+      STEP_FIELDS.forEach((f) => { step[f] = ""; });
+      layout.left.forEach((c, i) => { step[c[0]] = s(row[i]); });
       const inputs: string[] = [];
       const expecteds: string[] = [];
-      let base = 5;
+      let base = layout.left.length;
       for (let i = 0; i < this.ni; i++) inputs.push(s(row[base + i]));
       base += this.ni;
       for (let i = 0; i < this.ne; i++) expecteds.push(s(row[base + i]));
       base += this.ne;
-      const timing = s(row[base]);
+      layout.right.forEach((c, i) => { step[c[0]] = s(row[base + i]); });
       // Skip fully-empty trailing rows.
-      if (!no && !purpose && !operation && !subroutine && !args && !timing &&
+      if (STEP_FIELDS.every((f) => !step[f]) &&
           inputs.every((v) => !v) && expecteds.every((v) => !v)) continue;
-      steps.push({ no, purpose, operation, subroutine, args, inputs, expecteds, timing });
+      step.inputs = inputs;
+      step.expecteds = expecteds;
+      steps.push(step);
     }
     return { input_signals: inSig, expected_signals: exSig, steps };
   }

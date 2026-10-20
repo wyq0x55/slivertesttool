@@ -412,6 +412,13 @@
       return request("POST", `/projects/${pid}/ut/jobs/${jobId}/revision`,
         { body: { csv: csv, note: note || "" } });
     },
+    // A revised CSV file as authored (CP932 bytes are sent unchanged).
+    utReviseFile(pid, jobId, file, note) {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("note", note || "");
+      return request("POST", `/projects/${pid}/ut/jobs/${jobId}/revision`, { body: fd });
+    },
     utReview(pid, jobId, decision, note, expectedAttemptId) {
       return request("POST", `/projects/${pid}/ut/jobs/${jobId}/review`,
         { body: { decision: decision, note: note || "", expected_attempt_id: expectedAttemptId } });

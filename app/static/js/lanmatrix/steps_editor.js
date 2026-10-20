@@ -26,6 +26,17 @@
 
   const EMPTY = { input_signals: [], expected_signals: [], steps: [] };
 
+  // Step fields around the signal columns; mirrors DEFAULT_LAYOUT in
+  // frontend/src/steps_adapter.ts. A host may pass another layout to open().
+  const DEFAULT_LAYOUT = {
+    left: [["no", "手順番号"], ["purpose", "手順目的"], ["operation", "操作手順"],
+           ["subroutine", "サブルーチン"], ["args", "引数"]],
+    right: [["timing", "確認タイミング"]],
+    signalSheets: true,
+    autoRowHeight: false,
+    freezeLeft: false,
+  };
+
   function parseDoc(raw) {
     let doc = null;
     if (raw && typeof raw === "object") doc = raw;
@@ -82,7 +93,9 @@
     constructor(dialog) {
       this.dialog = dialog;
       this.host = dialog.querySelector("#lm-steps-body");
+      this.headingEl = dialog.querySelector("#lm-steps-heading");
       this.titleEl = dialog.querySelector("#lm-steps-title");
+      this.saveBtn = dialog.querySelector("#lm-steps-save");
       this.statusEl = dialog.querySelector("#lm-steps-task-status");
       this.enqueueBtn = dialog.querySelector("#lm-steps-enqueue");
       this.errEl = dialog.querySelector("#lm-steps-error");
@@ -91,6 +104,11 @@
       this.onEnqueue = null;
       this.getStatus = null;
       this.testId = "";
+      // Per-open presentation: column layout, read-only, highlighted cells.
+      this.viewOpts = { layout: null, readOnly: false, marks: [] };
+      // Save submits and closes (the host hands the result to a new workflow
+      // step) instead of being a quick in-place save.
+      this.closeOnSave = false;
       // Rendering engine: built-in HTML tables by default; upgraded to a Univer
       // Sheets view when the vendored bundle exposes window.LMUniverSteps.mount.
       this.view = null;
@@ -491,7 +509,9 @@
         if (key === "s" && !e.shiftKey) {
           e.preventDefault();
           e.stopImmediatePropagation();
-          self._save();
+          // A read-only view has nothing to save, and a submitting save starts
+          // a workflow step, which must take an explicit button press.
+          if (!self.viewOpts.readOnly && !self.closeOnSave) self._save();
           return;
         }
         if (key !== "c" || e.shiftKey) return;
@@ -706,6 +726,22 @@
       this._resetPanel();
       this.testId = (opts && opts.testId != null) ? String(opts.testId).trim() : "";
       this.fieldKey = (opts && opts.fieldKey) || "steps";
+      this.viewOpts = {
+        layout: (opts && opts.layout) || null,
+        readOnly: !!(opts && opts.readOnly),
+        marks: (opts && opts.marks) || [],
+      };
+      this.closeOnSave = !!(opts && opts.closeOnSave);
+      if (this.headingEl) this.headingEl.textContent = (opts && opts.heading) || "步骤明细编辑";
+      if (this.saveBtn) {
+        this.saveBtn.hidden = this.viewOpts.readOnly;
+        this.saveBtn.textContent = (opts && opts.saveLabel) || "保存步骤";
+      }
+      // Hosts without Lib/Const references (and the JSON view, which edits the
+      // same steps) turn both tools off.
+      const tools = !(opts && opts.references === false);
+      if (this.refToggleBtn) this.refToggleBtn.hidden = !tools;
+      if (this.jsonToggleBtn) this.jsonToggleBtn.hidden = !tools;
       this.doc = parseDoc(item[this.fieldKey]);
       this.errEl.hidden = true;
       // The enqueue button + status badge only apply to rows with a test_id.
@@ -783,11 +819,12 @@
     _rerenderFromDoc() {
       // Univer view owns the dialog body: hand it the doc and stop (never wipe
       // its canvas with innerHTML).
-      if (this.view) { this.view.setDoc(this.doc); return; }
+      if (this.view) { this.view.setDoc(this.doc, this.viewOpts); return; }
+      const layout = Object.assign({}, DEFAULT_LAYOUT, this.viewOpts.layout || {});
       this.host.innerHTML =
-        this._signalsTable("input") +
-        this._signalsTable("expected") +
-        this._stepsTable();
+        (layout.signalSheets && !this.viewOpts.readOnly
+          ? this._signalsTable("input") + this._signalsTable("expected") : "") +
+        this._stepsTable(layout, this.viewOpts.readOnly);
       this._bind();
     }
 
@@ -907,32 +944,30 @@
         </div></div>`;
     }
 
-    _stepsTable() {
+    _stepsTable(layout, readOnly) {
       const inNames = this.doc.input_signals.map((s) => s[0] || "入力");
       const exNames = this.doc.expected_signals.map((s) => s[0] || "期待");
+      const ro = readOnly ? " readonly" : "";
+      const field = (s, i, f, cls) =>
+        `<td><input class="lm-input lm-st-cell${cls || ""}" data-i="${i}" data-f="${f}" value="${esc(s[f])}"${ro}></td>`;
       const head =
-        `<th class="lm-st-no">手順番号</th><th>手順目的</th><th>操作手順</th>` +
-        `<th>サブルーチン</th><th>引数</th>` +
+        layout.left.map((c) => `<th${c[0] === "no" ? ' class="lm-st-no"' : ""}>${esc(c[1])}</th>`).join("") +
         inNames.map((n) => `<th class="lm-st-sig-in" title="入力信号">${esc(n)}</th>`).join("") +
         exNames.map((n) => `<th class="lm-st-sig-ex" title="期待信号">${esc(n)}</th>`).join("") +
-        `<th>確認タイミング</th><th></th>`;
+        layout.right.map((c) => `<th>${esc(c[1])}</th>`).join("") + (readOnly ? "" : "<th></th>");
       const rows = this.doc.steps.map((s, i) => {
         const inCells = s.inputs.map((v, j) =>
-          `<td><input class="lm-input lm-st-cell" data-i="${i}" data-arr="inputs" data-j="${j}" value="${esc(v)}"></td>`).join("");
+          `<td><input class="lm-input lm-st-cell" data-i="${i}" data-arr="inputs" data-j="${j}" value="${esc(v)}"${ro}></td>`).join("");
         const exCells = s.expecteds.map((v, j) =>
-          `<td><input class="lm-input lm-st-cell" data-i="${i}" data-arr="expecteds" data-j="${j}" value="${esc(v)}"></td>`).join("");
+          `<td><input class="lm-input lm-st-cell" data-i="${i}" data-arr="expecteds" data-j="${j}" value="${esc(v)}"${ro}></td>`).join("");
         return `<tr>
-          <td><input class="lm-input lm-st-cell lm-st-no" data-i="${i}" data-f="no" value="${esc(s.no)}"></td>
-          <td><input class="lm-input lm-st-cell" data-i="${i}" data-f="purpose" value="${esc(s.purpose)}"></td>
-          <td><input class="lm-input lm-st-cell" data-i="${i}" data-f="operation" value="${esc(s.operation)}"></td>
-          <td><input class="lm-input lm-st-cell" data-i="${i}" data-f="subroutine" value="${esc(s.subroutine)}"></td>
-          <td><input class="lm-input lm-st-cell" data-i="${i}" data-f="args" value="${esc(s.args)}"></td>
+          ${layout.left.map((c) => field(s, i, c[0], c[0] === "no" ? " lm-st-no" : "")).join("")}
           ${inCells}${exCells}
-          <td><input class="lm-input lm-st-cell" data-i="${i}" data-f="timing" value="${esc(s.timing)}"></td>
-          <td><button class="btn btn-sm lm-st-del" data-i="${i}">删除</button></td>
+          ${layout.right.map((c) => field(s, i, c[0])).join("")}
+          ${readOnly ? "" : `<td><button class="btn btn-sm lm-st-del" data-i="${i}">删除</button></td>`}
         </tr>`;
       }).join("");
-      const colspan = 7 + inNames.length + exNames.length;
+      const colspan = layout.left.length + layout.right.length + 1 + inNames.length + exNames.length;
       return `<div class="lm-st-block">
         <h4>手順 (测试步骤)</h4>
         <div class="lm-st-scroll">
@@ -940,9 +975,9 @@
           <thead><tr>${head}</tr></thead>
           <tbody>${rows || `<tr><td colspan="${colspan}" class="lm-muted">暂无步骤。</td></tr>`}</tbody>
         </table></div>
-        <div class="lm-st-actions">
+        ${readOnly ? "" : `<div class="lm-st-actions">
           <button class="btn btn-sm lm-st-add">+ 添加步骤</button>
-        </div></div>`;
+        </div>`}</div>`;
     }
 
     _bind() {
@@ -1027,6 +1062,7 @@
     }
 
     async _save() {
+      if (this.viewOpts.readOnly) return;
       this.errEl.hidden = true;
       await this._flushEdit();
       this._pull();
@@ -1036,6 +1072,7 @@
       btn.disabled = true;
       try {
         const savedSteps = this.onSave ? await this.onSave(json, doc) : null;
+        if (this.closeOnSave) { this.dialog.close(); return; }
         // Keep the bottom drawer (Univer view) open after a successful save so
         // the user can keep editing — saving via the Save button OR Ctrl/Cmd+S
         // must NOT dismiss it. The host onSave already flashes a "步骤明细已保存"
@@ -1070,6 +1107,9 @@
         this._instance = new StepsEditor(dialog);
       }
       this._instance.open(item, opts);
+    },
+    close() {
+      if (this._instance && this._instance.dialog.open) this._instance.dialog.close();
     },
     parseDoc,
   };

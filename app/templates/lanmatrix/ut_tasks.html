@@ -39,7 +39,7 @@
 
   <div class="tablecard">
     <div style="overflow-x:auto">
-      <table class="dt ut-table">
+      <table class="dt ut-table lm-tasks-table">
         <thead>
           <tr>
             <th>作业</th>
@@ -50,7 +50,7 @@
             <th>机器判定</th>
             <th>模型修正</th>
             <th>更新时间</th>
-            <th style="width:1%"></th>
+            <th class="lm-row-actions"></th>
           </tr>
         </thead>
         <tbody id="ut-rows"><tr><td colspan="9" class="muted">加载中…</td></tr></tbody>
@@ -118,12 +118,18 @@
       <div id="ut-d-revision-forms">
       <hr class="ut-sep">
       <h4>人工修订</h4>
-      <p class="muted">提交后重新执行与校验；人工修订未通过时回到人工，不再交给模型。</p>
-      <textarea id="ut-d-revision" class="ut-code-input" rows="8" aria-label="修订后的 CSV" placeholder="粘贴修订后的完整 CSV（保存时转为 CP932 / CRLF）"></textarea>
+      <p class="muted">在表格中直接修改当前版本，或导入外部修改好的 CSV（CP932）。提交后重新执行与校验；人工修订未通过时回到人工，不再交给模型。</p>
       <input id="ut-d-revision-note" aria-label="修订说明" placeholder="修订说明">
+      <input id="ut-d-import-file" type="file" accept=".csv,text/csv" hidden>
       <div class="row">
-        <button class="btn" id="ut-d-load-current" type="button">载入当前版本</button>
-        <button class="btn primary" id="ut-d-revise" type="button">提交修订并执行</button>
+        <button class="btn" id="ut-d-import" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+          导入 CSV
+        </button>
+        <button class="btn primary" id="ut-d-edit-sheet" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h18v18H3zM3 9h18M3 15h18M9 3v18"/></svg>
+          在表格中修订
+        </button>
       </div>
       </div>
       </div>
@@ -133,26 +139,31 @@
   <div class="panel" style="margin-top:20px">
     <div class="panel-bar"><h4>版本历史 <span class="submuted">· 每个候选的来源、执行与机器判定</span></h4></div>
     <div style="overflow-x:auto">
-      <table class="dt ut-table ut-attempts">
-        <thead><tr><th>#</th><th>来源</th><th>机器判定</th><th>主要问题</th><th>覆盖率</th><th>说明</th><th>时间</th><th style="width:1%"></th></tr></thead>
+      <table class="dt ut-table ut-attempts lm-tasks-table">
+        <thead><tr><th>#</th><th>来源</th><th>机器判定</th><th>主要问题</th><th>覆盖率</th><th>说明</th><th>时间</th><th class="lm-row-actions"></th></tr></thead>
         <tbody id="ut-d-attempts"></tbody>
       </table>
     </div>
   </div>
 
-  <div class="ut-detail-grid">
-    <div class="panel">
-      <div class="panel-bar"><h4 id="ut-d-csv-title">CSV</h4></div>
-      <pre id="ut-d-csv" class="term ut-csv"></pre>
+  <div class="panel" style="margin-top:20px">
+    <div class="panel-bar">
+      <h4><span id="ut-d-issues-title">校验问题</span> <span class="submuted" id="ut-d-issues-sum"></span></h4>
     </div>
-    <div class="panel">
-      <div class="panel-bar"><h4>校验问题</h4></div>
-      <pre id="ut-d-issues" class="term ut-issues"></pre>
-    </div>
+    <div id="ut-d-issues" class="ut-issues"></div>
   </div>
 </section>
+{% include "lanmatrix/_steps_dialog.html" %}
 {% endblock %}
 {% block scripts %}
+{% if univer_available %}
+<link rel="stylesheet" href="{{ static_asset_url('vendor/univer/univer.full.umd.css') }}">
+<script src="{{ static_asset_url('vendor/univer/univer.full.umd.js') }}"></script>
+{% endif %}
+<script src="{{ url_for('static', filename='js/lanmatrix/steps_ref_panel.js') }}"></script>
+<script src="{{ url_for('static', filename='js/lanmatrix/json_editor.js') }}"></script>
+<script src="{{ url_for('static', filename='js/lanmatrix/steps_editor.js') }}"></script>
 <script src="{{ url_for('static', filename='js/lanmatrix/ut_common.js') }}"></script>
+<script src="{{ url_for('static', filename='js/lanmatrix/ut_testcsv.js') }}"></script>
 <script src="{{ url_for('static', filename='js/lanmatrix/ut_tasks.js') }}"></script>
 {% endblock %}

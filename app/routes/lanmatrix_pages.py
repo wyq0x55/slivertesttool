@@ -261,7 +261,8 @@ def project_tasks(project_id: int):
     if _is_ut(proj):
         return render_template(
             "lanmatrix/ut_tasks.html", user=user.to_dict(),
-            project_id=project_id, project=proj.to_dict())
+            project_id=project_id, project=proj.to_dict(),
+            univer_available=_univer_bundle_available())
     return render_template(
         "lanmatrix/project_tasks.html", user=user.to_dict(),
         project_id=project_id,

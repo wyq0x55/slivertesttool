@@ -15,7 +15,7 @@
   var STATE = {
     queued: ["queued", "排队中"],
     generating: ["running", "生成中"],
-    executing: ["running", "WinAMS 执行中"],
+    executing: ["running", "执行中"],
     repairing: ["running", "模型修正中"],
     awaiting_review: ["pending", "待审核"],
     needs_human: ["error", "需人工"],
