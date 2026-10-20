@@ -28,6 +28,8 @@ exceptiongroup==1.3.1
     #   pycrdt
     #   pytest
     #   silver-test-platform
+execnet==2.1.2
+    # via pytest-xdist
 flask==3.1.3
     # via
     #   flask-sqlalchemy
@@ -87,6 +89,8 @@ pydantic-core==2.46.4
 pygments==2.20.0
     # via pytest
 pytest==8.4.2
+    # via pytest-xdist
+pytest-xdist==3.8.0
 python-dotenv==1.2.2
     # via silver-test-platform
 sqlalchemy==2.0.51

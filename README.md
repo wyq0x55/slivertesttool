@@ -444,10 +444,16 @@ Representative endpoints:
 ## Tests
 
 ```bash
-pytest                       # full suite (needs the deps installed)
+pytest -n auto               # full suite in parallel (needs the deps installed)
 python -m unittest tests.test_bundler   # judge bundler only (pure stdlib)
 python tests/test_silver_pool.py        # instance-pool logic (pure stdlib)
 ```
+
+The PostgreSQL tests use `TEST_DATABASE_URL` only (never `DATABASE_URL` or
+`.env`) and empty that database before each test, so its name must end with
+`_test`. With `-n`, each worker uses its own database derived from that name
+(`silvetestapp_test` -> `silvetestapp_gw0_test`, ...), created on demand, so
+the configured user needs the `CREATEDB` privilege.
 
 `tests/test_silver_pool.py` verifies the pre-warmed pool (pre-warm, reuse,
 concurrency cap, runtime resize, cancel/poison→replace, shutdown) with a

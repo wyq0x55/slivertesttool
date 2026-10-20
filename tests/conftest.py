@@ -3,8 +3,9 @@
 The platform runs exclusively on PostgreSQL, so the tests need a reachable
 PostgreSQL instance. Point them at it with ``TEST_DATABASE_URL``; if it is not
 set a local default DSN is used. ``DATABASE_URL`` is deliberately ignored. The
-target database is wiped (``drop_all`` + ``create_all``) at the start of each
-test for isolation, so its name must end with ``_test``.
+target database is emptied at the start of each test for isolation, so its name
+must end with ``_test``. Under ``pytest -n`` each worker uses its own database
+derived from that name (see ``pytest_configure``).
 
 Huey runs in immediate mode so enqueued tasks execute synchronously in-process
 (via an in-memory queue), letting the API tests exercise the full
@@ -46,6 +47,41 @@ def _require_disposable_database(url: str) -> None:
             "database name must end with '_test' (set TEST_DATABASE_URL).",
             returncode=2,
         )
+
+
+def pytest_configure(config):
+    """Give each pytest-xdist worker its own database next to the base one.
+
+    Every worker resets its database between tests, so workers sharing one
+    would wipe each other's rows. ``silvetestapp_test`` becomes
+    ``silvetestapp_gw0_test`` and so on; the base URL's user must be allowed
+    to create databases. DATABASE_URL / HUEY_DATABASE_URL follow only when
+    they named the base test database (as CI sets them).
+    """
+    worker = os.environ.get("PYTEST_XDIST_WORKER")
+    if not worker:
+        return
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.engine import make_url
+
+    base = os.environ.get("TEST_DATABASE_URL") or DEFAULT_TEST_DATABASE_URL
+    _require_disposable_database(base)
+    base_url = make_url(base)
+    name = f"{base_url.database[:-len('_test')]}_{worker}_test"
+    engine = create_engine(base_url.set(database="postgres"), isolation_level="AUTOCOMMIT")
+    try:
+        with engine.connect() as connection:
+            exists = connection.execute(
+                text("SELECT 1 FROM pg_database WHERE datname = :name"), {"name": name}).scalar()
+            if not exists:
+                connection.exec_driver_sql(f'CREATE DATABASE "{name}"')
+    finally:
+        engine.dispose()
+    worker_url = base_url.set(database=name).render_as_string(hide_password=False)
+    for variable in ("DATABASE_URL", "HUEY_DATABASE_URL"):
+        if os.environ.get(variable) == base:
+            os.environ[variable] = worker_url
+    os.environ["TEST_DATABASE_URL"] = worker_url
 
 
 _schema_rebuilt = False

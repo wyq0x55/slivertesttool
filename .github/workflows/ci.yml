@@ -74,7 +74,7 @@ jobs:
         run: python -c "import run_web, run_worker, run_collab; import app.collab.server"
 
       - name: Run backend test suite
-        run: python -m pytest -q
+        run: python -m pytest -q -n auto
 
   frontend:
     name: Frontend / production build
