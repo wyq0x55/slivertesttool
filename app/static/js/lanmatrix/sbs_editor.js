@@ -36,8 +36,27 @@
 
   const assets = global.LM_SBS_ASSETS || {};
 
+  // The highlight bundle is only needed once the modal opens, so the page just
+  // prefetches it and it is executed here, once. Resolves when it has loaded
+  // or failed; mountEditor() then picks CodeMirror or the textarea.
+  let bundleLoading = null;
+  function loadBundle() {
+    if (global.LMSbsEditor || !assets.bundle) return Promise.resolve();
+    if (!bundleLoading) {
+      bundleLoading = new Promise((resolve) => {
+        const script = document.createElement("script");
+        script.src = assets.bundle;
+        script.onload = resolve;
+        script.onerror = resolve;
+        document.head.appendChild(script);
+      });
+    }
+    return bundleLoading;
+  }
+
   // Editor abstraction: CodeMirror 6 bundle if present, else a <textarea>.
   async function mountEditor(container, doc, onChange) {
+    await loadBundle();
     if (global.LMSbsEditor && assets.wasm && assets.grammar) {
       try {
         return await global.LMSbsEditor.mount({
@@ -106,6 +125,7 @@
     modal.hidden = false;
     setStatus("载入中…");
     if ($("lm-sbs-save")) { $("lm-sbs-save").disabled = true; }
+    loadBundle();  // in parallel with the .sbs request below
 
     let data;
     try {

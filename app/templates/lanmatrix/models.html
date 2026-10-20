@@ -112,13 +112,15 @@
 {% block scripts %}
 <script>
   // Runtime asset URLs for the SBS highlight bundle (grammar + Oniguruma WASM).
-  // The bundle fetches these at mount time; absent bundle => textarea fallback.
+  // sbs_editor.js loads the bundle itself on the first modal open, and the
+  // bundle fetches grammar + WASM at mount time; any failure => textarea.
   window.LM_SBS_ASSETS = {
+    bundle: "{{ static_asset_url('vendor/sbs/sbs-editor.umd.js') }}",
     grammar: "{{ static_asset_url('vendor/sbs/sbsV202403.tmLanguage.json') }}",
     wasm: "{{ static_asset_url('vendor/sbs/onig.wasm') }}"
   };
 </script>
-<script src="{{ static_asset_url('vendor/sbs/sbs-editor.umd.js') }}" onerror="void 0"></script>
+<link rel="prefetch" as="script" href="{{ static_asset_url('vendor/sbs/sbs-editor.umd.js') }}">
 <script src="{{ url_for('static', filename='js/lanmatrix/sbs_editor.js') }}"></script>
 <script src="{{ url_for('static', filename='js/lanmatrix/project_models.js') }}"></script>
 {% endblock %}
