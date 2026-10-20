@@ -264,11 +264,28 @@
                       before: "原期望值", after: "新期望值",
                       code: "代码", detail: "说明", path: "路径", message: "说明",
                       obligation: "义务", kind: "类型", decision: "判定式",
-                      solve: "求解", reason: "原因" };
+                      solve: "求解", reason: "原因", gap: "缺口" };
   // Stored check JSON comes back with sorted keys; show evidence in reading order.
   var KEY_ORDER = ["row", "column", "before", "after", "expected", "actual", "code", "path",
-                   "message", "detail", "obligation", "kind", "decision", "solve", "reason"];
+                   "message", "detail", "gap", "obligation", "kind", "decision", "solve", "reason"];
   var PREVIEW_ROWS = 8;
+
+  // Gap classes come from the generator's structured solve evidence. Only a
+  // missing case can be closed by adding input rows; the others need evidence
+  // or a person, and 100% coverage proves neither.
+  var GAP_CLASS = {
+    MISSING_CASE: ["缺用例", "is-case"],
+    SEMANTIC_EVIDENCE: ["缺语义/环境证据", "is-evidence"],
+    INFEASIBILITY_UNCONFIRMED: ["不可达待确认", "is-infeasible"],
+  };
+  var GAP_ORDER = ["MISSING_CASE", "SEMANTIC_EVIDENCE", "INFEASIBILITY_UNCONFIRMED"];
+  var CAUSE_TEXT = {
+    VOLATILE_READ_UNPROVEN: function (g) {
+      return "单值输入已穷尽：只有单次调用内 " + (g.unstable_reads || []).join("、") +
+        " 前后读到不同值才可达；执行契约未证明读取稳定，WinAMS 每行只写一次，补输入行无法表达";
+    },
+    SEARCH_INCOMPLETE: function () { return "求解搜索未穷尽，可能存在可达输入"; },
+  };
 
   // An unresolved obligation carries every generator field; keep what a
   // reviewer needs to decide whether an input step is missing.
@@ -281,12 +298,19 @@
         (g.boundary_right_value != null ? ".." + g.boundary_right_value : ""));
     }
     if (g.case_label) facts.push("case " + g.case_label);
-    return { obligation: g.obligation_id, kind: facts.join(" · "),
+    var explain = CAUSE_TEXT[g.solve_cause];
+    return { gap: g.gap_class || "", obligation: g.obligation_id, kind: facts.join(" · "),
              decision: String(g.decision || g.description || "").replace(/\s+/g, " "),
-             solve: g.solve_status, reason: g.reason || "—" };
+             solve: g.solve_status, reason: explain ? explain(g) : g.reason || "—" };
+  }
+  function gapRows(list) {
+    function rank(g) { var i = GAP_ORDER.indexOf(g.gap_class); return i < 0 ? GAP_ORDER.length : i; }
+    return list.map(function (g, i) { return [rank(g), i, g]; })
+      .sort(function (x, y) { return x[0] - y[0] || x[1] - y[1]; })
+      .map(function (item) { return gapRow(item[2]); });
   }
   var DETAIL_VIEW = {
-    INPUT_OBLIGATION_UNRESOLVED: [function (d) { return Array.isArray(d) ? d.map(gapRow) : d; }, "ut-gap-table"],
+    INPUT_OBLIGATION_UNRESOLVED: [function (d) { return Array.isArray(d) ? gapRows(d) : d; }, "ut-gap-table"],
   };
 
   function clip(text, n) { return text.length > n ? text.slice(0, n) + "…" : text; }
@@ -304,6 +328,10 @@
 
   function cellHtml(key, value) {
     if (key === "row" && typeof value === "number") return "#" + (value + 1);
+    if (key === "gap") {
+      var gap = GAP_CLASS[value];
+      return gap ? '<span class="ut-gap ' + gap[1] + '">' + esc(gap[0]) + "</span>" : "—";
+    }
     if (key === "column" && typeof value === "string" && window.LMTestCsv) {
       return '<code title="' + esc(value) + '">' + esc(window.LMTestCsv.shortName(value)) + "</code>";
     }

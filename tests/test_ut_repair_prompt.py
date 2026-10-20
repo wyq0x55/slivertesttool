@@ -65,10 +65,24 @@ def test_completeness_gaps_precede_the_csv_and_are_not_repeated_in_the_verdict()
     assert "COVERAGE_C1_INCOMPLETE" in verdict and "INPUT_OBLIGATION_UNRESOLVED" not in verdict
 
 
+def test_only_missing_cases_are_listed_as_model_work():
+    evidence = dict(GAP, gap_class="SEMANTIC_EVIDENCE")
+    missing = dict(GAP, obligation_id="b2:T", kind="branch", gap_class="MISSING_CASE",
+                   condition_index=None, boundary_class=None, solve_status="SAT", reason="")
+    completeness = dict(COMPLETENESS, unresolved_count=2, unresolved=[evidence, missing])
+    prompt = repair._user_prompt({"function": "f"}, "#COMMENT,x",
+                                 {"verdict": "FAIL", "completeness": completeness, "issues": []},
+                                 None, [])
+
+    assert "- b2:T（branch）" in prompt
+    assert "b6:boundary:1:above:2" not in prompt
+    assert "其中 1 个缺的是语义/环境证据" in prompt
+
+
 def test_system_prompt_keeps_expected_values_with_the_capture():
     system = repair._system_prompt(CONSTRAINTS)
     assert "期望值单元格全部留空" in system and "obligation" in system
-    assert repair.PROMPT_VERSION == "ut-repair/3.1"
+    assert repair.PROMPT_VERSION == "ut-repair/3.2"
 
 
 def test_diverged_paths_do_not_assign_an_unproven_root_cause():

@@ -29,13 +29,17 @@ from typing import Any, Optional
 from ..ai import config as ai_config
 from ..ai import provider
 
-PROMPT_VERSION = "ut-repair/3.1"
+PROMPT_VERSION = "ut-repair/3.2"
 # Bound the prompt: issue details are already truncated by ut-agent.
 _MAX_DETAIL_CHARS = 6000
 _MAX_DECISION_CHARS = 200
 # Reported once in the gap section; repeating it in the verdict breaks nothing
 # but costs prompt tokens on every round.
 _GAP_CODE = "INPUT_OBLIGATION_UNRESOLVED"
+# Only a missing case can be closed with input rows. Evidence gaps and
+# unconfirmed infeasibility are counted for the model but never listed as work.
+# Reports from before gap classes keep every gap as work.
+_MISSING_CASE = "MISSING_CASE"
 
 
 @dataclass
@@ -108,7 +112,13 @@ def _completeness_section(completeness: Optional[dict[str, Any]]) -> str:
     head = (f"Baseline 义务 {completeness.get('obligations')} 个，生成 {completeness.get('csv_rows')} 行，"
             f"按基准合并 {completeness.get('merged_by_baseline')} 个，"
             f"未解决 {completeness.get('unresolved_count')} 个。")
-    gaps = "\n".join(_gap_line(item) for item in completeness.get("unresolved") or ())
+    unresolved = completeness.get("unresolved") or ()
+    work = [item for item in unresolved if item.get("gap_class", _MISSING_CASE) == _MISSING_CASE]
+    others = len(unresolved) - len(work)
+    if others:
+        head += (f"其中 {others} 个缺的是语义/环境证据或待人工确认不可达，"
+                 "补输入行无法解决，已交由人工处理，不要为它们新增行。")
+    gaps = "\n".join(_gap_line(item) for item in work)
     return ("## 输入完备性缺口（生成器没有给出已证明输入的义务）\n"
             f"{head}\n{gaps or '- 无'}")
 
