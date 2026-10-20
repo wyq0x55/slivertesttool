@@ -542,7 +542,7 @@ def _job_gaps(job: UtJob, check: dict[str, Any]) -> dict[str, Any]:
 # Errors that appended input rows can address. Expected values belong to the
 # capture, and format or column errors cannot be fixed by adding rows.
 _ROW_FIXABLE = frozenset({"EXECUTION_PATH_DIVERGED", "ROW_COUNT_BELOW_REFERENCE",
-                          "REFERENCE_CASE_REMOVED"})
+                          "REFERENCE_CASE_REMOVED", "FORMAT_NO_DATA_ROWS"})
 
 
 def _row_tags(check: dict[str, Any]) -> set[str]:
@@ -600,9 +600,12 @@ def _repair_step(job: UtJob) -> None:
     # closed for the model, so a PASS goes to review once nothing is open.
     state, reason = next_state(check, attempt.origin, job.repair_rounds,
                                job.max_repair_rounds, _job_gaps(job, check))
-    if state == UtJob.NEEDS_HUMAN and check.get("verdict") == "FAIL":
+    if (state == UtJob.NEEDS_HUMAN and check.get("verdict") == "FAIL"
+            and job.repair_rounds >= job.max_repair_rounds):
         reason = (f"本地模型已修正 {job.repair_rounds} 次仍未产出可用候选"
                   f"（上限 {job.max_repair_rounds}）")
+    elif state == UtJob.NEEDS_HUMAN and revision.meta.get("error"):
+        reason = f"{revision.meta['error']}；{reason}"
     if state != UtJob.REPAIRING:
         _gate(job, state, reason)
     db.session.commit()

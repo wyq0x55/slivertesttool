@@ -624,7 +624,10 @@ def test_next_state_is_pure_and_total():
     assert pipeline.next_state(fail, "GENERATOR", 0, 0)[0] == "needs_human"
     assert pipeline.next_state(fail, "HUMAN", 0, 5)[0] == "needs_human"
     # Rows cannot fix expected values or the file format.
-    for code in ("ORACLE_MISMATCH", "FORMAT_ENCODING"):
+    empty = {"verdict": "FAIL", "issues": [
+        {"code": "FORMAT_NO_DATA_ROWS", "severity": "error", "repairable": True}]}
+    assert pipeline.next_state(empty, "GENERATOR", 0, 5)[0] == "repairing"
+    for code in ("ORACLE_MISMATCH", "FORMAT_ENCODING", "FORMAT_INVALID"):
         other = {"verdict": "FAIL", "issues": [{"code": code, "severity": "error", "repairable": True}]}
         assert pipeline.next_state(other, "LLM", 0, 5)[0] == "needs_human"
     passed = {"verdict": "PASS", "issues": []}
