@@ -188,7 +188,10 @@
     const pending = Number(((data && data.queue_counts) || {}).pending
       || (actionable() ? rows.length : 0));
     const kpi = document.querySelector('#lm-kpi [data-v="reviews"]');
-    if (kpi) kpi.textContent = pending;
+    if (kpi) {
+      kpi.textContent = pending;
+      kpi.closest(".kpi-tile").classList.toggle("is-zero", pending === 0);
+    }
     if (count) count.textContent = rows.length ? `${rows.length} 条` : "";
     if (global.LMHome) LMHome.setTabCount("reviews", pending);
 
@@ -241,12 +244,12 @@
       return `<tr class="${r.needs_note ? "needs-note" : ""}">
         <td>${box}</td>
         <td>${esc(projName(r.project_id, projects))}</td>
-        <td><a href="${href}">${esc(label)}</a>
-            <div class="muted">${esc(r.title || "")}</div></td>
+        <td class="lm-rv-case"><a href="${href}">${esc(label)}</a>
+            <div class="muted lm-rv-path" title="${esc(r.title || "")}">${esc(r.title || "")}</div></td>
         <td>${verdictPill(r)}</td>
         <td class="lm-rv-reason">${statusCell(r)}</td>
-        <td>${esc(r.executor || "")}</td>
-        <td class="muted">${esc(r.exec_date || "")}</td>
+        <td>${esc(r.executor || "")}
+            <div class="muted lm-rv-date">${esc(r.exec_date || "")}</div></td>
         <td>
           <div class="lm-rv-acts">${acts}</div>
         </td>
@@ -278,7 +281,7 @@
       if (ex.status === 401) return;
       const host = $("lm-h-rv-rows");
       if (host) host.innerHTML =
-        `<tr><td colspan="8" class="muted">加载失败：${esc(ex.message || "")}</td></tr>`;
+        `<tr><td colspan="7" class="muted">加载失败：${esc(ex.message || "")}</td></tr>`;
     }
   }
 

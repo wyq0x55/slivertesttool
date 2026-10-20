@@ -23,6 +23,12 @@
   /* semantic */
   --ok:#12a150; --ok-soft:#e7f5ec; --warn:#c4841d; --warn-soft:#fbf1e0;
   --danger:#e5484d; --danger-soft:#fdecec; --run:#3b82c4; --run-soft:#e6f0fa;
+  /* Text in a semantic colour (pill labels, verdict words, danger buttons).
+     The base hues above are tuned for dots, borders and fills; as text on
+     their own --*-soft tint they fall to ~3:1. These darker variants of the
+     same hues reach 4.5:1 on both white and the tint. */
+  --ok-text:#0e7f3f; --warn-text:#956516; --danger-text:#d61e24;
+  --brand-text:#5461cf; --run-text:#3370a9;
 
   /* chart series
      ------------
@@ -43,7 +49,7 @@
   /* surfaces / text */
   --bg:var(--n-50); --surface:var(--n-0); --surface-2:var(--n-25);
   --border:var(--n-200); --border-strong:var(--n-300);
-  --text:var(--n-900); --text-2:var(--n-600); --text-3:var(--n-500);
+  --text:var(--n-900); --text-2:var(--n-600); --text-3:#6d717a;  /* 4.5:1 on --bg */
 
   /* effects */
   --shadow-sm:0 1px 2px rgba(16,18,24,.05);
@@ -78,6 +84,8 @@
   --text:#ededef; --text-2:#a1a5ad; --text-3:#8b8f98;
   --brand-soft:#20223a; --brand-ring:rgba(94,106,210,.45);
   --ok-soft:#12241a; --warn-soft:#2a2113; --danger-soft:#2c1717; --run-soft:#14202c;
+  --ok-text:var(--ok); --warn-text:var(--warn); --danger-text:var(--danger);
+  --brand-text:var(--brand); --run-text:var(--run);
 
   /* Lifted chart colours: same hues, raised lightness/saturation so large
      filled areas stay legible against the dark surface. Deliberately scoped to
@@ -107,7 +115,7 @@ body, body.lm-body{
    so the body must stay a plain block. */
 body.lm-has-side{ display:block; }
 ::selection{ background:var(--brand-ring); }
-a{ color:var(--brand); text-decoration:none; }
+a{ color:var(--brand-text); text-decoration:none; }
 a:hover{ color:var(--brand-hover); }
 h1,h2,h3,h4{ margin:0; }
 h1{ letter-spacing:-0.025em; font-weight:650; }
@@ -164,13 +172,13 @@ code{
 }
 .nav a svg{ width:17px; height:17px; flex:0 0 auto; opacity:.9; }
 .nav a:hover{ background:var(--surface-2); color:var(--text); }
-.nav a.active, .nav a[aria-current="page"]{ background:var(--brand-soft); color:var(--brand); }
+.nav a.active, .nav a[aria-current="page"]{ background:var(--brand-soft); color:var(--brand-text); }
 .nav a.active svg, .nav a[aria-current="page"] svg{ opacity:1; }
 .side-foot{ margin-top:auto; padding-top:12px; border-top:1px solid var(--border); }
 .side-user{ display:flex; align-items:center; gap:10px; padding:6px 6px; }
 .avatar{
   width:30px; height:30px; border-radius:50%; flex:0 0 auto; display:grid; place-items:center;
-  background:var(--brand-soft); color:var(--brand); font-weight:650; font-size:12px;
+  background:var(--brand-soft); color:var(--brand-text); font-weight:650; font-size:12px;
 }
 .side-user .who{ min-width:0; }
 .side-user .who b{ display:block; font-size:13px; color:var(--text); font-weight:600;
@@ -222,7 +230,7 @@ code{
 .btn.primary,.btn-primary{ background:var(--brand); border-color:var(--brand); color:#fff; box-shadow:var(--shadow-sm); }
 .btn.primary:hover,.btn-primary:hover{ background:var(--brand-hover); border-color:var(--brand-hover); }
 .btn.primary:active,.btn-primary:active{ background:var(--brand-active); }
-.btn.danger,.btn-danger{ color:var(--danger); }
+.btn.danger,.btn-danger{ color:var(--danger-text); }
 .btn.danger:hover,.btn-danger:hover{ background:var(--danger-soft); border-color:var(--danger); }
 .btn.ghost,.btn-ghost{ border-color:transparent; background:transparent; }
 .btn.ghost:hover,.btn-ghost:hover{ background:var(--surface-2); border-color:var(--border); }
@@ -257,9 +265,10 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .search input{ padding-left:34px; }
 
 .segmented{ display:inline-flex; background:var(--surface-2); border:1px solid var(--border);
-  border-radius:var(--radius-sm); padding:3px; gap:2px; }
+  border-radius:var(--radius-sm); padding:3px; gap:2px; flex:0 0 auto; }
 .segmented button{
   border:none; background:transparent; color:var(--text-2); font:inherit; font-size:13px; font-weight:550;
+  white-space:nowrap;
   padding:5px 12px; border-radius:6px; cursor:pointer; transition:background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 .segmented button:hover{ color:var(--text); }
@@ -274,33 +283,33 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
   font-size:12px; font-weight:600; line-height:1.4; }
 .dot{ width:7px; height:7px; border-radius:50%; flex:0 0 auto; }
 .st-queued{ background:var(--n-100); color:var(--text-2); } .st-queued .dot{ background:var(--n-400); }
-.st-running{ background:var(--run-soft); color:var(--run); } .st-running .dot{ background:var(--run); }
-.st-passed{ background:var(--ok-soft); color:var(--ok); } .st-passed .dot{ background:var(--ok); }
-.st-failed{ background:var(--danger-soft); color:var(--danger); } .st-failed .dot{ background:var(--danger); }
-.st-error{ background:var(--warn-soft); color:var(--warn); } .st-error .dot{ background:var(--warn); }
+.st-running{ background:var(--run-soft); color:var(--run-text); } .st-running .dot{ background:var(--run); }
+.st-passed{ background:var(--ok-soft); color:var(--ok-text); } .st-passed .dot{ background:var(--ok); }
+.st-failed{ background:var(--danger-soft); color:var(--danger-text); } .st-failed .dot{ background:var(--danger); }
+.st-error{ background:var(--warn-soft); color:var(--warn-text); } .st-error .dot{ background:var(--warn); }
 .st-cancelled{ background:var(--n-100); color:var(--text-3); } .st-cancelled .dot{ background:var(--n-400); }
 .st-notask{ background:var(--n-100); color:var(--text-3); } .st-notask .dot{ background:var(--n-400); }
 [data-theme="dark"] .st-notask{ background:var(--surface-2); }
-.st-on{ background:var(--ok-soft); color:var(--ok); } .st-on .dot{ background:var(--ok); }
+.st-on{ background:var(--ok-soft); color:var(--ok-text); } .st-on .dot{ background:var(--ok); }
 .st-off{ background:var(--n-100); color:var(--text-3); } .st-off .dot{ background:var(--n-400); }
 .st-draft{ background:var(--n-100); color:var(--text-2); } .st-draft .dot{ background:var(--n-400); }
-.st-active{ background:var(--ok-soft); color:var(--ok); } .st-active .dot{ background:var(--ok); }
-.st-frozen{ background:var(--warn-soft); color:var(--warn); } .st-frozen .dot{ background:var(--warn); }
+.st-active{ background:var(--ok-soft); color:var(--ok-text); } .st-active .dot{ background:var(--ok); }
+.st-frozen{ background:var(--warn-soft); color:var(--warn-text); } .st-frozen .dot{ background:var(--warn); }
 .st-archived{ background:var(--n-100); color:var(--text-3); } .st-archived .dot{ background:var(--n-400); }
 [data-theme="dark"] .st-queued,[data-theme="dark"] .st-cancelled,[data-theme="dark"] .st-off,
 [data-theme="dark"] .st-draft,[data-theme="dark"] .st-archived{ background:var(--surface-2); }
 
 .verdict{ font-size:12.5px; font-weight:600; }
-.v-pass{ color:var(--ok); } .v-fail{ color:var(--danger); } .v-error{ color:var(--warn); } .v-none{ color:var(--text-3); }
+.v-pass{ color:var(--ok-text); } .v-fail{ color:var(--danger-text); } .v-error{ color:var(--warn-text); } .v-none{ color:var(--text-3); }
 
 .tag{ display:inline-flex; align-items:center; padding:2px 8px; border-radius:6px; font-size:11.5px;
   font-weight:600; background:var(--surface-2); color:var(--text-2); border:1px solid var(--border); }
-.tag-role-admin{ background:var(--warn-soft); color:var(--warn); border-color:transparent; }
-.tag-role-editor{ background:var(--brand-soft); color:var(--brand); border-color:transparent; }
-.tag-role-reviewer{ background:var(--run-soft); color:var(--run); border-color:transparent; }
+.tag-role-admin{ background:var(--warn-soft); color:var(--warn-text); border-color:transparent; }
+.tag-role-editor{ background:var(--brand-soft); color:var(--brand-text); border-color:transparent; }
+.tag-role-reviewer{ background:var(--run-soft); color:var(--run-text); border-color:transparent; }
 .tag-role-reader{ background:var(--n-100); color:var(--text-2); border-color:transparent; }
 [data-theme="dark"] .tag-role-reader{ background:var(--surface-2); }
-.tag-req{ background:var(--danger-soft); color:var(--danger); border-color:transparent; }
+.tag-req{ background:var(--danger-soft); color:var(--danger-text); border-color:transparent; }
 .tag-ro{ background:var(--n-100); color:var(--text-3); border-color:transparent; }
 [data-theme="dark"] .tag-ro{ background:var(--surface-2); }
 .pchip{ display:inline-flex; align-items:center; gap:6px; padding:3px 9px; border-radius:999px;
@@ -320,15 +329,15 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .card-link{ position:absolute; inset:0; z-index:1; border-radius:var(--radius); }
 .card > :not(.card-link):not(.card-acts){ position:relative; z-index:2; pointer-events:none; }
 .card-top{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:14px; }
-.code-chip{ font-size:11px; font-weight:600; letter-spacing:.03em; color:var(--brand); background:var(--brand-soft);
+.code-chip{ font-size:11px; font-weight:600; letter-spacing:.03em; color:var(--brand-text); background:var(--brand-soft);
   padding:3px 8px; border-radius:6px; font-variant-numeric:tabular-nums; font-family:var(--mono); }
 .card-tags{ display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap; }
 /* Project type tag. Both types get one, in the same shape; only the hue differs. */
 .ptype{ font-size:11px; font-weight:600; padding:2px 8px; border-radius:999px;
   border:1px solid var(--border); background:var(--surface-2); color:var(--text-2); }
-.ptype-ut{ background:var(--run-soft); color:var(--run); border-color:transparent; }
+.ptype-ut{ background:var(--run-soft); color:var(--run-text); border-color:transparent; }
 .card h3{ font-size:15.5px; font-weight:600; letter-spacing:-0.015em; margin-bottom:5px; line-height:1.3; }
-.card h3 a{ color:var(--text); } .card h3 a:hover{ color:var(--brand); }
+.card h3 a{ color:var(--text); } .card h3 a:hover{ color:var(--brand-text); }
 .card .desc{ font-size:13px; color:var(--text-3); line-height:1.5; display:-webkit-box; -webkit-line-clamp:2;
   -webkit-box-orient:vertical; overflow:hidden; min-height:39px; }
 /* status dot */
@@ -344,7 +353,7 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
   border-top:1px solid var(--border); border-bottom:1px solid var(--border); }
 .metric .v{ font-size:18px; font-weight:650; letter-spacing:-0.02em; font-variant-numeric:tabular-nums; line-height:1; color:var(--text); }
 .metric .k{ font-size:11.5px; color:var(--text-3); margin-top:4px; }
-.metric .v.ok{ color:var(--ok); } .metric .v.warn{ color:var(--warn); }
+.metric .v.ok{ color:var(--ok-text); } .metric .v.warn{ color:var(--warn-text); }
 /* card foot */
 .card-foot{ display:flex; align-items:center; justify-content:space-between; }
 .stack{ display:flex; }
@@ -430,13 +439,15 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 
 /* ---- redesigned task toolbar (search + submitter select + segmented) ---- */
 .toolbar{ display:flex; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:wrap; }
-.toolbar-batch{ display:inline-flex; align-items:center; gap:8px; flex-wrap:nowrap; }
+/* margin-left:auto keeps the batch actions right-aligned both beside the
+   filters and, when the row is too narrow, on their own wrapped line. */
+.toolbar-batch{ display:inline-flex; align-items:center; gap:8px; flex-wrap:nowrap; margin-left:auto; }
 .toolbar .search{ flex:1 1 180px; max-width:420px; }
 .toolbar .search input{ width:100%; }
 
 /* task list: shorten search + submitter so the batch actions
-   (download / cancel / delete) stay on the same row */
-#lm-tasks-body .toolbar{ flex-wrap:nowrap; }
+   (download / cancel / delete) stay on the same row when it fits; below that
+   they wrap as a group instead of squeezing the status filter. */
 #lm-tasks-body .toolbar .search{ flex:0 1 180px; max-width:180px; min-width:150px; }
 #lm-tasks-body .toolbar #lm-f-submitter{ max-width:150px; }
 
@@ -465,15 +476,15 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .jhead .ji{ flex:0 0 auto; color:var(--text-3); min-width:54px; }
 .jhead .jt{ flex:1; color:var(--text-2); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .jbadge{ flex:0 0 auto; font-weight:600; font-size:11.5px; }
-.jbadge.pass{ color:var(--ok); }
-.jbadge.fail{ color:var(--danger); }
+.jbadge.pass{ color:var(--ok-text); }
+.jbadge.fail{ color:var(--danger-text); }
 .jbadge.none{ color:var(--text-3); }
 .jstep.fail > .jhead{ background:var(--danger-soft); }
 .jstep.fail > .jhead .jt{ color:var(--text); }
 .jbody{ margin:0; padding:12px 14px 14px 41px; background:var(--surface-2); border-top:1px solid var(--border);
   font-family:var(--mono); font-size:12px; line-height:1.65; color:var(--text-2); white-space:pre-wrap; overflow:auto; }
 .jbody .jck{ display:inline; border-radius:3px; }
-.jbody .jck-fail{ color:var(--danger); font-weight:600; background:var(--danger-soft); }
+.jbody .jck-fail{ color:var(--danger-text); font-weight:600; background:var(--danger-soft); }
 .jbody .jck-pass{ color:var(--text-2); }
 .jempty{ padding:22px 14px; text-align:center; color:var(--text-3); font-size:13px;
   border:1px dashed var(--border); border-radius:var(--radius-sm); }
@@ -482,7 +493,9 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 @media (max-width:720px){ .task-detail{ padding:28px 18px 48px; } }
 
 /* ===== PART 8 · ADMIN ==================================================== */
-.kpis{ display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:16px; margin-bottom:22px; }
+/* 170px lets 4 tiles share a row on a 1100px laptop (and 7 on a wide screen)
+   instead of leaving the last tile alone on its own row. */
+.kpis{ display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:16px; margin-bottom:22px; }
 .kpi{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
   box-shadow:var(--shadow-sm); padding:18px;
   transition:transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), border-color var(--dur) var(--ease); }
@@ -490,13 +503,13 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .kpi .k-top{ display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
 .kpi .ico{ width:34px; height:34px; border-radius:9px; display:grid; place-items:center; }
 .kpi .ico svg{ width:18px; height:18px; stroke-width:1.9; }
-.kpi .ic-b{ background:var(--brand-soft); color:var(--brand); }
-.kpi .ic-g{ background:var(--ok-soft); color:var(--ok); }
-.kpi .ic-o{ background:var(--warn-soft); color:var(--warn); }
-.kpi .ic-p{ background:var(--brand-soft); color:var(--brand); }
+.kpi .ic-b{ background:var(--brand-soft); color:var(--brand-text); }
+.kpi .ic-g{ background:var(--ok-soft); color:var(--ok-text); }
+.kpi .ic-o{ background:var(--warn-soft); color:var(--warn-text); }
+.kpi .ic-p{ background:var(--brand-soft); color:var(--brand-text); }
 .kpi .trend{ font-size:11.5px; font-weight:600; padding:2px 7px; border-radius:6px; }
-.kpi .trend.up{ color:var(--ok); background:var(--ok-soft); }
-.kpi .trend.flat{ color:var(--text-3); background:var(--n-100); }
+.kpi .trend.up{ color:var(--ok-text); background:var(--ok-soft); }
+.kpi .trend.flat{ color:var(--text-2); background:var(--n-100); }
 [data-theme="dark"] .kpi .trend.flat{ background:var(--surface-2); }
 .kpi .v{ font-size:28px; font-weight:680; letter-spacing:-0.03em; color:var(--text);
   line-height:1; font-variant-numeric:tabular-nums; }
@@ -508,7 +521,7 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .dt .u-name .sub{ font-size:11.5px; color:var(--text-3); }
 .dt .projchips{ display:flex; gap:5px; flex-wrap:wrap; }
 .dt .projchips .pchip{ padding:2px 7px; border-radius:5px; font-size:11px; font-family:var(--mono);
-  background:var(--brand-soft); color:var(--brand); border-color:transparent; }
+  background:var(--brand-soft); color:var(--brand-text); border-color:transparent; }
 .dt .row-acts .btn-icon{ width:30px; height:30px; padding:0; justify-content:center; }
 .dt .row-acts .btn-icon svg{ width:15px; height:15px; }
 /* Keep TEST ID on one line so the freed action-column width isn't re-consumed.
@@ -516,7 +529,7 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
    so it carries link affordance without the default underline noise. */
 .dt .lm-cell-testid{ white-space:nowrap; }
 .dt .lm-cell-testid a{ color:inherit; text-decoration:none; }
-.dt .lm-cell-testid a:hover{ color:var(--brand); text-decoration:underline; }
+.dt .lm-cell-testid a:hover{ color:var(--brand-text); text-decoration:underline; }
 /* Review sign-off column: a pill, optionally wrapping a deep link to the matrix
    row. The link must not restyle the pill, only make it clickable. */
 .dt .lm-cell-review{ white-space:nowrap; }
@@ -525,11 +538,11 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 /* Review states. Deliberately NOT reusing the run colours: a rejected review is
    not a failed run, and painting both danger-red made a signed-off failure look
    identical to a case nobody has looked at. */
-.st-pending{ background:var(--warn-soft); color:var(--warn); }
+.st-pending{ background:var(--warn-soft); color:var(--warn-text); }
 .st-pending .dot{ background:var(--warn); }
-.st-approved{ background:var(--ok-soft); color:var(--ok); }
+.st-approved{ background:var(--ok-soft); color:var(--ok-text); }
 .st-approved .dot{ background:var(--ok); }
-.st-rejected{ background:var(--danger-soft); color:var(--danger); }
+.st-rejected{ background:var(--danger-soft); color:var(--danger-text); }
 .st-rejected .dot{ background:var(--danger); }
 /* Tasks table: fit the card width (no horizontal scroll).
    1) Tighten per-cell padding. 2) Ellipsis-truncate the free-text columns
@@ -556,7 +569,7 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
   padding:9px 14px; cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-1px;
   transition:color var(--dur) var(--ease), border-color var(--dur) var(--ease); }
 .tab:hover{ color:var(--text); }
-.tab.on{ color:var(--brand); border-bottom-color:var(--brand); }
+.tab.on{ color:var(--brand-text); border-bottom-color:var(--brand); }
 .pane{ display:none; } .pane.on{ display:block; }
 /* The settings strip uses real links rather than the JS panes above, so it has
    to opt out of the global anchor colour and sit flush with the page heading
@@ -569,7 +582,8 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
   color:var(--text-3); font-size:11.5px; font-weight:600; line-height:16px; }
 .lm-home-tabs .tab-n:empty{ display:none; }
 .lm-home-tabs .tab.on .tab-n{ background:var(--brand); color:#fff; }
-.lm-home-tabs .tab-n.warn{ background:var(--warn); color:#fff; }
+/* Same soft-tint + text-token pair as the 待审核 pills in the queue below. */
+.lm-home-tabs .tab-n.warn{ background:var(--warn-soft); color:var(--warn-text); }
 
 /* Pager (see js/lanmatrix/pager.js). Right-aligned under the list it pages, so
    it reads as part of that list rather than as page furniture. */
@@ -581,7 +595,7 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .lm-settings-tabs{ margin-bottom:24px; flex-wrap:wrap; }
 .lm-settings-tabs .tab{ color:var(--text-2); text-decoration:none; display:block; }
 .lm-settings-tabs .tab:hover{ color:var(--text); }
-.lm-settings-tabs .tab.on{ color:var(--brand); }
+.lm-settings-tabs .tab.on{ color:var(--brand-text); }
 
 .dt{ width:100%; border-collapse:separate; border-spacing:0; font-size:13.5px; }
 .dt thead th{ background:var(--surface-2); color:var(--text-3); font-size:11.5px; font-weight:600;
@@ -596,7 +610,7 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .dt .u-name{ display:flex; align-items:center; gap:10px; }
 .dt th.lm-sortable{ cursor:pointer; user-select:none; }
 .dt th.lm-sortable:hover{ color:var(--text-2); }
-.dt th.lm-sorted{ color:var(--brand); }
+.dt th.lm-sorted{ color:var(--brand-text); }
 
 .sw{ position:relative; display:inline-flex; align-items:center; cursor:pointer; }
 .sw input{ position:absolute; opacity:0; width:0; height:0; }
@@ -640,10 +654,15 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .mcard:hover{ transform:translateY(-2px); box-shadow:var(--shadow-md); border-color:var(--border-strong); }
 .mcard .top{ display:flex; align-items:center; gap:12px; }
 .mcard .top .avatar{ width:42px; height:42px; font-size:15px; flex:0 0 42px; color:#fff; }
-.mcard .who{ min-width:0; }
+/* The name block takes the free width; the version sits under the name (it
+   used to share the row with the badges and squeezed the name to "is..."). */
+.mcard .who{ min-width:0; flex:1 1 auto; display:flex; flex-direction:column; align-items:flex-start; gap:4px; }
+.mcard .who .tag{ max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mcard .mbadges{ display:inline-flex; gap:6px; flex:0 0 auto; }
+.mcard .mbadges .tag{ white-space:nowrap; }
 .mcard .who b{ display:block; font-size:14.5px; font-weight:600; color:var(--text);
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.mcard .who span{ font-size:12px; color:var(--text-3); }
+.mcard .who span:not(.tag){ font-size:12px; color:var(--text-3); }
 .mcard .foot{ display:flex; align-items:center; justify-content:space-between; gap:8px;
   margin-top:16px; padding-top:14px; border-top:1px solid var(--border); }
 .roleselect{ height:30px; border:1px solid var(--border); border-radius:var(--radius-sm);
@@ -676,14 +695,14 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 
 /* ===== PART 9b · MODELS (card layout, mirrors members) ================= */
 .mcard .mico{ width:42px; height:42px; flex:0 0 42px; border-radius:11px; display:grid;
-  place-items:center; background:var(--brand-soft); color:var(--brand); }
+  place-items:center; background:var(--brand-soft); color:var(--brand-text); }
 .mcard .mico svg{ width:22px; height:22px; }
 .mcard .mpath{ margin-top:12px; font-family:var(--mono); font-size:12px; color:var(--text-2);
   background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius-sm);
   padding:8px 10px; word-break:break-all; line-height:1.5; }
 .mcard .foot .mact{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
-.tag-ok{ background:var(--ok-soft); color:var(--ok); border-color:transparent; }
-.tag-bad{ background:var(--danger-soft); color:var(--danger); border-color:transparent; }
+.tag-ok{ background:var(--ok-soft); color:var(--ok-text); border-color:transparent; }
+.tag-bad{ background:var(--danger-soft); color:var(--danger-text); border-color:transparent; }
 .tag-kind{ background:var(--n-100); color:var(--text-2); border-color:transparent; }
 .tag-cur{ display:inline-flex; align-items:center; gap:4px; background:var(--brand); color:#fff;
   border-color:transparent; font-weight:600; }
@@ -711,7 +730,7 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
   transition:border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
 .filepick:hover{ border-color:var(--brand); color:var(--text); }
 .filepick input[type=file]{ max-width:150px; font-size:11.5px; color:var(--text-3); }
-.mform-err{ margin-top:2px; background:var(--danger-soft); color:var(--danger);
+.mform-err{ margin-top:2px; background:var(--danger-soft); color:var(--danger-text);
   border-radius:var(--radius-sm); padding:9px 12px; font-size:13px; font-weight:550; }
 /* inline label wrapping a control (e.g. 模型 select) inside the upload addbar */
 .uplbl{ display:inline-flex; align-items:center; gap:8px; height:36px; font-size:12.5px; color:var(--text-2); }
@@ -720,9 +739,9 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 /* Version label. `tag-nover` is deliberately warn-tinted, not muted grey: an
    unversioned model still runs fine but its results fall into the dashboard's
    "(未标注)" bucket, and that is worth noticing before the comparison is read. */
-.tag-ver{ background:var(--brand-soft); color:var(--brand); border-color:transparent;
+.tag-ver{ background:var(--brand-soft); color:var(--brand-text); border-color:transparent;
   font-family:var(--mono); font-weight:600; }
-.tag-nover{ background:var(--warn-soft); color:var(--warn); border-color:transparent; }
+.tag-nover{ background:var(--warn-soft); color:var(--warn-text); border-color:transparent; }
 .mcard .mnote{ margin-top:8px; font-size:12.5px; color:var(--text-2); line-height:1.55;
   white-space:pre-wrap; word-break:break-word; }
 .lm-ipt-ver{ width:190px; }
@@ -734,7 +753,7 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .lm-ver-body .ipt{ width:100%; }
 .lm-ver-body textarea.ipt{ height:auto; padding:9px 12px; line-height:1.55; resize:vertical; }
 .lm-ver-hint{ margin:0 0 4px; font-size:12px; color:var(--text-3); line-height:1.6; }
-.lm-ver-err{ background:var(--danger-soft); color:var(--danger); border-radius:var(--radius-sm);
+.lm-ver-err{ background:var(--danger-soft); color:var(--danger-text); border-radius:var(--radius-sm);
   padding:9px 12px; font-size:13px; font-weight:550; }
 
 /* ===== PART 10 · FIELDS ================================================= */
@@ -748,11 +767,11 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .state{ text-align:center; padding:64px 24px; border:1px dashed var(--border); border-radius:var(--radius);
   background:var(--surface); }
 .state .glyph{ width:52px; height:52px; border-radius:14px; display:inline-grid; place-items:center;
-  background:var(--brand-soft); color:var(--brand); margin-bottom:14px; }
+  background:var(--brand-soft); color:var(--brand-text); margin-bottom:14px; }
 .state .glyph svg{ width:26px; height:26px; }
 .state h3{ font-size:16px; font-weight:600; color:var(--text); }
 .state p{ margin:6px 0 18px; color:var(--text-3); font-size:13.5px; }
-.state.err .glyph{ background:var(--danger-soft); color:var(--danger); }
+.state.err .glyph{ background:var(--danger-soft); color:var(--danger-text); }
 
 .sk{ background:linear-gradient(90deg,var(--surface-2) 25%,var(--n-100) 37%,var(--surface-2) 63%);
   background-size:400% 100%; animation:sk 1.4s ease infinite; border-radius:6px; }
@@ -799,7 +818,7 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
 .field input{ width:100%; padding:10px 12px; }
 .login-card .btn.primary{ width:100%; justify-content:center; padding:10px; margin-top:6px; }
 .login-card .alt{ margin-top:20px; text-align:center; font-size:13px; color:var(--text-3); }
-.login-err{ background:var(--danger-soft); color:var(--danger); border-radius:var(--radius-sm);
+.login-err{ background:var(--danger-soft); color:var(--danger-text); border-radius:var(--radius-sm);
   padding:9px 12px; font-size:13px; font-weight:550; margin-bottom:16px; }
 @media (max-width:860px){ .login-wrap{ grid-template-columns:1fr; } .login-aside{ display:none; } }
 
@@ -886,16 +905,16 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
    All 11 status colours were already byte-identical to their `st-*` twins, so
    the migration changed no colour -- but `.st-*` also carries the dark-theme
    overrides and the `.dot` indicator that this dialect never had. */
-.verdict-pass{ background:var(--ok-soft); color:var(--ok); }
-.verdict-fail{ background:var(--danger-soft); color:var(--danger); }
-.verdict-error{ background:var(--warn-soft); color:var(--warn); }
+.verdict-pass{ background:var(--ok-soft); color:var(--ok-text); }
+.verdict-fail{ background:var(--danger-soft); color:var(--danger-text); }
+.verdict-error{ background:var(--warn-soft); color:var(--warn-text); }
 .verdict-cancelled,.verdict-unknown{ background:var(--n-100); color:var(--text-3); }
 .lm-toolbar,.lm-statusbar,.lm-toolbar-rowops{ background:var(--surface-2); border-color:var(--border); color:var(--text-2); }
 .lm-sheet-tab{ background:var(--surface-2); color:var(--text-2); border-color:var(--border); }
 .lm-sheet-tab.active{ background:var(--surface); color:var(--text); box-shadow:inset 0 2px 0 var(--brand); }
 .lm-progress{ background:var(--n-150); border-radius:999px; }
 .lm-progress-bar{ background:linear-gradient(90deg,var(--brand),#7b86e6); border-radius:999px; }
-.lm-db-tnav-btn.is-active{ background:var(--brand-soft); color:var(--brand); }
+.lm-db-tnav-btn.is-active{ background:var(--brand-soft); color:var(--brand-text); }
 .lm-drag-handle{ color:var(--text-3); }
 .lm-login-card{ border-radius:var(--radius-lg); box-shadow:var(--shadow-md); }
 
@@ -921,9 +940,9 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
    alias with its canonical selector here so the two ALWAYS render identically
    and no page can drift. Add new markup using the canonical (non-`lm-`) name.
    NOTE: keep these grouped — splitting them re-opens the drift this fixes. */
-.lm-err,.lm-error,.login-err{ color:var(--danger); font-size:13px; }
+.lm-err,.lm-error,.login-err{ color:var(--danger-text); font-size:13px; }
 .lm-error,.login-err{ margin-top:8px; }
-.lm-req{ color:var(--danger); margin-left:2px; }
+.lm-req{ color:var(--danger-text); margin-left:2px; }
 .lm-page-head,.page-head{ display:flex; align-items:flex-end; justify-content:space-between;
   gap:24px; margin-bottom:24px; }
 .lm-page-head h1,.page-head h1{ font-size:23px; margin:0; }
@@ -941,7 +960,7 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
    .tabs underline instead of the old solid-blue pill (higher specificity than
    lanmatrix's .lm-db-tab.is-active so it wins). */
 .lm-db-tab{ border-radius:0; }
-.lm-db-tab.is-active{ background:transparent; color:var(--brand);
+.lm-db-tab.is-active{ background:transparent; color:var(--brand-text);
   border-color:transparent; border-bottom-color:var(--brand); font-weight:650; }
 .lm-db-tab:hover{ color:var(--text); background:transparent; }
 
@@ -957,7 +976,7 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
 .lm-db-overview, .lm-db-console{ width:100%; margin:0; }
 
 /* 系统管理员 badge -> warn token pill. */
-.lm-badge-admin{ background:var(--warn-soft); color:var(--warn); }
+.lm-badge-admin{ background:var(--warn-soft); color:var(--warn-text); }
 
 /* --- Table browser (left nav + grid) ------------------------------------ */
 .lm-db-browser{ height:calc(100vh - 300px); min-height:440px; }
@@ -973,7 +992,7 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
   background:var(--surface); }
 .lm-db-grid thead th{ background:var(--surface-2); }
 .lm-db-sortable:hover{ background:var(--brand-soft); }
-.lm-db-pk{ color:var(--warn); }
+.lm-db-pk{ color:var(--warn-text); }
 .lm-db-tv-foot{ color:var(--text-3); }
 
 /* --- SQL console pane (2-col: overview | console) ----------------------- */
@@ -990,7 +1009,7 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
   border-radius:var(--radius-sm); font-family:var(--mono); min-height:140px; }
 .lm-db-sql:focus{ outline:none; border-color:var(--brand); box-shadow:0 0 0 3px var(--brand-ring); }
 .lm-db-sql::placeholder{ color:var(--text-3); }
-.lm-db-write-warn{ background:var(--warn-soft); color:var(--warn); }
+.lm-db-write-warn{ background:var(--warn-soft); color:var(--warn-text); }
 .lm-db-result-meta{ color:var(--text-3); }
 .lm-db-result-wrap{ border:1px solid var(--border); border-radius:var(--radius-sm);
   background:var(--surface); max-height:min(560px,60vh); }
@@ -1035,7 +1054,7 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
 
 /* Warning glyph. Sized to align with the first line of the title. */
 .lmui-icon{ flex:0 0 auto; display:grid; place-items:center;
-  width:22px; height:22px; margin-top:1px; color:var(--danger); }
+  width:22px; height:22px; margin-top:1px; color:var(--danger-text); }
 .lmui-icon svg{ width:20px; height:20px; }
 
 .lmui-label{ font-size:12px; font-weight:600; color:var(--text-2); margin-bottom:-6px; }
@@ -1081,14 +1100,18 @@ textarea.lmui-input{ resize:vertical; min-height:76px; }
   background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
   transition:border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease); }
 .kpi-tile:hover:not(:disabled){ border-color:var(--border-strong); box-shadow:var(--shadow-sm); }
-.kpi-tile:disabled{ cursor:default; }
+/* An informational tile is not a filter: flat surface, no hover lift. */
+.kpi-tile:disabled{ cursor:default; background:var(--surface-2); }
 .kpi-tile .k{ font-size:12px; color:var(--text-3); }
 .kpi-tile .v{ font-size:24px; font-weight:650; letter-spacing:-0.02em; line-height:1;
   font-variant-numeric:tabular-nums; color:var(--text); }
-.kpi-tile .v.ok{ color:var(--ok); }
-.kpi-tile .v.bad{ color:var(--danger); }
-.kpi-tile .v.run{ color:var(--run); }
-.kpi-tile .v.brand{ color:var(--brand); }
+.kpi-tile .v.ok{ color:var(--ok-text); }
+.kpi-tile .v.bad{ color:var(--danger-text); }
+.kpi-tile .v.run{ color:var(--run-text); }
+.kpi-tile .v.mine{ color:var(--brand-text); }
+/* Work waiting on a person (reviews, blocked runs). */
+.kpi-tile .v.warn{ color:var(--warn-text); }
+.kpi-tile.is-zero .v{ color:var(--text-3); }
 /* Selected tile mirrors the segmented control's active state, so "this filter
    is on" looks the same wherever the user turned it on. */
 .kpi-tile.on{ border-color:var(--brand); box-shadow:inset 0 0 0 1px var(--brand); }
@@ -1118,9 +1141,9 @@ textarea.lmui-input{ resize:vertical; min-height:76px; }
 .proj-mini .pm-nums{ display:flex; gap:14px; margin-top:12px; font-size:12px;
   color:var(--text-3); font-variant-numeric:tabular-nums; }
 .proj-mini .pm-nums b{ font-weight:600; color:var(--text-2); }
-.proj-mini .pm-nums .ok b{ color:var(--ok); }
-.proj-mini .pm-nums .bad b{ color:var(--danger); }
-.proj-mini .pm-nums .run b{ color:var(--run); }
+.proj-mini .pm-nums .ok b{ color:var(--ok-text); }
+.proj-mini .pm-nums .bad b{ color:var(--danger-text); }
+.proj-mini .pm-nums .run b{ color:var(--run-text); }
 
 /* Project column in the cross-project task table. The cell is a link to that
    project's task list: the workspace row already deep-links to the task, so the
@@ -1128,7 +1151,7 @@ textarea.lmui-input{ resize:vertical; min-height:76px; }
 .lm-home .dt .proj-cell{ display:inline-flex; align-items:center; gap:6px;
   font-size:12px; font-weight:600; color:var(--text-2); }
 .lm-home .dt a.proj-cell{ text-decoration:none; }
-.lm-home .dt a.proj-cell:hover{ color:var(--brand); text-decoration:underline; }
+.lm-home .dt a.proj-cell:hover{ color:var(--brand-text); text-decoration:underline; }
 
 /* ============================================================
    PART 20 · LIST FOOTER (truncation notice + 加载更多)
@@ -1155,7 +1178,7 @@ textarea.lmui-input{ resize:vertical; min-height:76px; }
   font-size:12px; font-weight:600; letter-spacing:.02em;
   padding:8px 12px; border-bottom:1px solid var(--line);
   background:var(--surface); color:var(--text-2); }
-.lm-preflight.is-blocked .lm-preflight-head{ color:var(--danger); }
+.lm-preflight.is-blocked .lm-preflight-head{ color:var(--danger-text); }
 .lm-preflight-rows{ display:flex; flex-direction:column; }
 .lm-preflight-row{
   display:grid; grid-template-columns:18px 72px 1fr; gap:8px; align-items:start;
@@ -1165,9 +1188,9 @@ textarea.lmui-input{ resize:vertical; min-height:76px; }
 .lm-pf-label{ color:var(--text-2); }
 .lm-pf-text{ display:flex; flex-direction:column; gap:2px; }
 .lm-pf-hint{ color:var(--text-3); font-size:12px; }
-.lm-pf-ok .lm-pf-mark{ color:var(--ok); }
-.lm-pf-warn .lm-pf-mark{ color:var(--warn); }
-.lm-pf-blocked .lm-pf-mark{ color:var(--danger); }
+.lm-pf-ok .lm-pf-mark{ color:var(--ok-text); }
+.lm-pf-warn .lm-pf-mark{ color:var(--warn-text); }
+.lm-pf-blocked .lm-pf-mark{ color:var(--danger-text); }
 .lm-pf-info .lm-pf-mark{ color:var(--text-3); }
 
 @media (max-width:640px){
@@ -1224,11 +1247,11 @@ textarea.lmui-input{ resize:vertical; min-height:76px; }
 /* styles the per-field diff that replaced it. The `st-*` pills below are new: */
 /* the existing set covers run/project states only, so reusing one would have  */
 /* meant "已修改" borrowing the colour of "运行中".                            */
-.st-added{ background:var(--ok-soft); color:var(--ok); }
+.st-added{ background:var(--ok-soft); color:var(--ok-text); }
 .st-added .dot{ background:var(--ok); }
-.st-removed{ background:var(--danger-soft); color:var(--danger); }
+.st-removed{ background:var(--danger-soft); color:var(--danger-text); }
 .st-removed .dot{ background:var(--danger); }
-.st-changed{ background:var(--warn-soft); color:var(--warn); }
+.st-changed{ background:var(--warn-soft); color:var(--warn-text); }
 .st-changed .dot{ background:var(--warn); }
 
 .lm-diff{ width:100%; border-collapse:collapse; font-size:13px; }
@@ -1246,6 +1269,12 @@ textarea.lmui-input{ resize:vertical; min-height:76px; }
 .lm-diff del{ color:var(--text-3); text-decoration:line-through; }
 .lm-diff ins{ color:var(--text); text-decoration:underline; background:none; }
 .lm-diff tr + tr th, .lm-diff tr + tr td{ border-top:1px solid var(--line); }
+/* A large value (a whole steps JSON) is capped to a few lines and scrolls in
+   place, so one entry cannot push the time / action / actor of the row a
+   screen away; any-point wrapping keeps unspaced JSON from forming a column. */
+.lm-diff del, .lm-diff ins{ display:block; max-height:9.5em; overflow:auto;
+  overflow-wrap:anywhere; font-family:var(--mono); font-size:12px; line-height:1.55; }
+#lm-audit-rows > tr > td{ vertical-align:top; }
 
 /* Narrow viewports: the three diff columns stack rather than squeezing the
    values into one character per line. */
@@ -1278,8 +1307,8 @@ textarea.lmui-input{ resize:vertical; min-height:76px; }
 /* Remaining retention. The escalation is deliberate and small: most rows are  */
 /* ordinary text, and only the ones actually running out are coloured, so the  */
 /* warning still means something when it appears.                             */
-.lm-trash-soon{ color:var(--warn); font-weight:600; }
-.lm-trash-expired{ color:var(--danger); font-weight:600; }
+.lm-trash-soon{ color:var(--warn-text); font-weight:600; }
+.lm-trash-expired{ color:var(--danger-text); font-weight:600; }
 
 /* Page-level banner. Per-row colour is invisible once the bin is long enough  */
 /* to scroll -- which is exactly when something is most likely to lapse.       */
@@ -1289,7 +1318,7 @@ textarea.lmui-input{ resize:vertical; min-height:76px; }
   margin:12px 0;
 }
 .lm-banner-warn{
-  background:var(--warn-soft); color:var(--warn); border-color:transparent;
+  background:var(--warn-soft); color:var(--warn-text); border-color:transparent;
 }
 
 /* Shared narrow-screen page chrome, including both execution backends. */

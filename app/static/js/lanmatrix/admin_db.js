@@ -27,6 +27,14 @@
     return (n == null ? 0 : n).toLocaleString("en-US");
   }
 
+  // est_rows comes from pg_class.reltuples, which is -1 until the table has
+  // been VACUUM/ANALYZEd: that is "unknown", not a row count.
+  function fmtEstimate(n) {
+    return n == null || n < 0
+      ? '<span title="尚未统计（表还没有被 ANALYZE）">—</span>'
+      : fmtInt(n);
+  }
+
   async function loadOverview() {
     const info = document.getElementById("lm-db-info");
     info.textContent = "加载中…";
@@ -51,7 +59,7 @@
         <tr>
           <td>${esc(t.schema)}</td>
           <td class="lm-db-tname">${esc(t.name)}</td>
-          <td class="num">${fmtInt(t.est_rows)}</td>
+          <td class="num">${fmtEstimate(t.est_rows)}</td>
           <td class="num">${esc(t.size_pretty)}</td>
           <td><button class="btn btn-sm lm-db-peek" data-t="${esc(t.schema)}.${esc(t.name)}">预览</button></td>
         </tr>`).join("") ||
@@ -182,7 +190,7 @@
       nav.innerHTML = (d.tables || []).map((t) =>
         `<li><button class="lm-db-tnav-btn" data-t="${esc(t.name)}">
            <span class="lm-db-tnav-name">${esc(t.name)}</span>
-           <span class="lm-db-tnav-rows">${fmtInt(t.est_rows)}</span>
+           <span class="lm-db-tnav-rows">${fmtEstimate(t.est_rows)}</span>
          </button></li>`).join("") || `<li class="lm-muted">无表</li>`;
       nav.querySelectorAll(".lm-db-tnav-btn").forEach((b) => {
         b.addEventListener("click", () => selectTable(b.dataset.t));

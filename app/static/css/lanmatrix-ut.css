@@ -4,7 +4,7 @@
 
 #ut-status, #ut-detail-status{ margin:0 0 12px; min-height:1em; font-size:12.5px; }
 #ut-status:empty, #ut-detail-status:empty{ display:none; }
-#ut-status.is-error, #ut-detail-status.is-error{ color:var(--danger); }
+#ut-status.is-error, #ut-detail-status.is-error{ color:var(--danger-text); }
 
 /* 设置 · 项目绑定 */
 .ut-form-grid{ display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap:16px; }
@@ -67,17 +67,17 @@
 .ut-gap-table th:nth-child(5){ width:8%; }
 .ut-gap-table td:nth-child(4), .ut-gap-table td:nth-child(6){ white-space:normal; overflow-wrap:anywhere; }
 .ut-gap{ display:inline-block; padding:1px 8px; border-radius:999px; font-size:11.5px; white-space:nowrap; }
-.ut-gap.is-case{ background:var(--danger-soft); color:var(--danger); }
-.ut-gap.is-evidence{ background:var(--warn-soft); color:var(--warn); }
+.ut-gap.is-case{ background:var(--danger-soft); color:var(--danger-text); }
+.ut-gap.is-evidence{ background:var(--warn-soft); color:var(--warn-text); }
 .ut-gap.is-infeasible{ background:var(--surface-2); color:var(--text-2); }
 .ut-issue details{ margin-top:4px; }
-.ut-issue summary{ cursor:pointer; color:var(--brand); font-size:12.5px; padding:4px 0; }
+.ut-issue summary{ cursor:pointer; color:var(--brand-text); font-size:12.5px; padding:4px 0; }
 .ut-cov{ display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
 .ut-cov-item{ padding:3px 10px; border-radius:999px; font-size:12.5px; background:var(--surface-2); color:var(--text-2); }
 .ut-cov-item b{ font-weight:600; margin-right:2px; }
-.ut-cov-item.is-full{ background:var(--ok-soft); color:var(--ok); }
-.ut-cov-item.is-gap{ background:var(--danger-soft); color:var(--danger); }
-.ut-cov-item.is-missing{ background:var(--warn-soft); color:var(--warn); }
+.ut-cov-item.is-full{ background:var(--ok-soft); color:var(--ok-text); }
+.ut-cov-item.is-gap{ background:var(--danger-soft); color:var(--danger-text); }
+.ut-cov-item.is-missing{ background:var(--warn-soft); color:var(--warn-text); }
 @media (max-width:640px){
   .lm-ut .segmented, .lm-ut-tasks .segmented{ max-width:100%; overflow-x:auto; }
   .ut-review, #ut-detail .panel, .ut-form-grid .panel{ min-width:0; }
