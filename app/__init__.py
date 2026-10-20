@@ -125,10 +125,35 @@ def _install_static_compression(app: Flask) -> None:
             return url_for("static", filename=filename, v=rev)
         return url_for("static", filename=filename)
 
+    def _accepts_gzip(resp) -> bool:  # noqa: ANN001
+        accept = request.headers.get("Accept-Encoding", "")
+        return "gzip" in accept.lower() and not resp.headers.get("Content-Encoding")
+
+    def _send_gzipped(resp, gz: bytes) -> None:  # noqa: ANN001
+        resp.set_data(gz)
+        resp.headers["Content-Encoding"] = "gzip"
+        resp.headers["Content-Length"] = str(len(gz))
+        vary = resp.headers.get("Vary")
+        if not vary:
+            resp.headers["Vary"] = "Accept-Encoding"
+        elif "accept-encoding" not in vary.lower():
+            resp.headers["Vary"] = vary + ", Accept-Encoding"
+
     @app.after_request
     def _compress_and_cache(resp):  # noqa: ANN001, ANN202
         try:
             path = request.path or ""
+            if path.startswith("/api/"):
+                # JSON lists compress 10-20x (the matrix item page is ~1.3 MB raw)
+                # and task lists are re-polled every few seconds. Responses are
+                # per-request, so compress without caching; SSE streams are
+                # direct-passthrough and not JSON, so they are left alone.
+                if (resp.status_code == 200 and resp.mimetype == "application/json"
+                        and not resp.direct_passthrough and _accepts_gzip(resp)):
+                    data = resp.get_data()
+                    if len(data) >= min_size:
+                        _send_gzipped(resp, _gzip.compress(data, compresslevel=6))
+                return resp
             static_prefix = (app.static_url_path or "/static").rstrip("/") + "/"
             if not path.startswith(static_prefix):
                 return resp
@@ -147,8 +172,7 @@ def _install_static_compression(app: Flask) -> None:
             if resp.status_code != 200:
                 return resp
 
-            accept = request.headers.get("Accept-Encoding", "")
-            if "gzip" not in accept.lower() or resp.headers.get("Content-Encoding"):
+            if not _accepts_gzip(resp):
                 return resp
 
             clen = resp.content_length
@@ -164,14 +188,7 @@ def _install_static_compression(app: Flask) -> None:
                 gz = _gzip.compress(data, compresslevel=6)
                 gzip_cache[path] = (change_key, gz)
 
-            resp.set_data(gz)
-            resp.headers["Content-Encoding"] = "gzip"
-            resp.headers["Content-Length"] = str(len(gz))
-            vary = resp.headers.get("Vary")
-            if not vary:
-                resp.headers["Vary"] = "Accept-Encoding"
-            elif "accept-encoding" not in vary.lower():
-                resp.headers["Vary"] = vary + ", Accept-Encoding"
+            _send_gzipped(resp, gz)
         except Exception:  # noqa: BLE001 - never break a response over compression/cache
             return resp
         return resp
