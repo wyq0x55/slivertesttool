@@ -105,14 +105,18 @@ class UtAgentBridge:
         return self._run(args, timeout=self.settings.generate_timeout)
 
     def execute(self, unit_dir: Path, candidate: Path, out: Path,
-                stub_builds: Optional[list[str]] = None) -> dict[str, Any]:
+                stub_builds: Optional[list[str]] = None,
+                source_rel: str = "") -> dict[str, Any]:
         args = ["execute", "--unit-dir", str(unit_dir), "--candidate", str(candidate),
                 "--out", str(out), "--timeout", str(self.settings.execute_timeout)]
         if self.settings.winams:
             args += ["--winams", self.settings.winams]
-        # ut-agent picks the first build whose map defines every declared stub.
+        # ut-agent picks the first build whose map defines every declared stub
+        # and whose MCDC build instruments the source under test.
         for build in stub_builds or ():
             args += ["--stub-build", build]
+        if stub_builds and source_rel:
+            args += ["--source-rel", source_rel]
         # WinAMS gets its own timeout; leave headroom for sandbox copy and parsing.
         return self._run(args, timeout=self.settings.execute_timeout + 120)["execution"]
 

@@ -35,6 +35,7 @@ class FakeBridge:
         self.generate_error = generate_error
         self.executions = 0
         self.stub_builds = None
+        self.source_rel = None
         self.blocked_reason = {"code": "ASSET_MISSING", "path": "AMS_Setting"}
 
     def index(self, manifest, index_csv, product_root):
@@ -66,9 +67,10 @@ class FakeBridge:
             units.append(unit)
         return {"ok": True, "provenance": {"baseline_ref": "psd-rebuild@1.1"}, "units": units}
 
-    def execute(self, unit_dir, candidate, out, stub_builds=None):
+    def execute(self, unit_dir, candidate, out, stub_builds=None, source_rel=""):
         self.executions += 1
         self.stub_builds = stub_builds
+        self.source_rel = source_rel
         out.mkdir(parents=True)
         evidence = {"status": self.execution_status, "unit_dir": str(unit_dir)}
         if self.execution_status == "BLOCKED":
@@ -406,6 +408,7 @@ def test_stub_builds_are_normalised_and_passed_to_execution(env):
                                  "detail": "stub1: AMSTB_dep"}
     [job_id] = _enqueue(env, targets["f"])
     assert env.bridge.stub_builds == ["C:\\STUB\\stub1", "C:\\STUB\\stub2"]
+    assert env.bridge.source_rel == "src/a.c"
     job = _job(env, job_id)
     assert job["state"] == "blocked" and job["repair_rounds"] == 0
     assert "STUB_BUILD_UNRESOLVED stub1: AMSTB_dep" in job["reason"]

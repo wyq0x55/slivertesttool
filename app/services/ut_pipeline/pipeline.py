@@ -425,7 +425,8 @@ def _execute_step(job: UtJob) -> None:
             with _WINAMS_GATE:
                 execution = bridge.execute(
                     Path(config["work_root"]) / job.target.unit_rel, candidate, out,
-                    stub_builds=_lines(config.get("stub_builds", "")))
+                    stub_builds=_lines(config.get("stub_builds", "")),
+                    source_rel=job.target.source_rel)
             check = bridge.check(candidate, execution=out / "execution.json", **arguments)
     except BridgeError as exc:
         _gate(job, UtJob.ERROR, f"ut-agent 调用失败：{exc}")
