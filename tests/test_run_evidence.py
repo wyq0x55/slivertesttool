@@ -278,6 +278,36 @@ def test_junction_escape_is_rejected(tmp_path):
             link.unlink()
 
 
+def test_contained_junction_is_rejected_even_when_resolution_stays_inside(tmp_path):
+    from app.services.run_evidence_service import EvidenceError, checked_path
+
+    root = tmp_path / "root"
+    target = root / "real"
+    target.mkdir(parents=True)
+    link = root / "link"
+    if os.name == "nt":
+        result = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)],
+                                capture_output=True)
+        assert result.returncode == 0
+    else:
+        link.symlink_to(target, target_is_directory=True)
+    try:
+        assert checked_path(root, target / "missing" / "file") == (target / "missing" / "file").resolve()
+        # Resolution stays inside root here, so only the reparse check can
+        # refuse it; the containment wrapper keeps that reason as the cause.
+        for args in ((root, link / "file"), (link, link / "file")):
+            with pytest.raises(EvidenceError) as refused:
+                checked_path(*args)
+            assert "Reparse" in str(refused.value.__cause__)
+        with pytest.raises(EvidenceError, match="containment"):
+            checked_path(root, tmp_path / "elsewhere")
+    finally:
+        if os.name == "nt":
+            os.rmdir(link)
+        else:
+            link.unlink()
+
+
 @pytest.fixture
 def submitted(app_ctx, tmp_path, monkeypatch):
     from app.extensions import db

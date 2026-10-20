@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -27,18 +28,33 @@ def validate_segment(value):
     return value
 
 
+_REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 1024)
+# The errors pathlib's exists()/is_symlink() treat as "not there".
+_ABSENT_ERRNOS = {errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP}
+_ABSENT_WINERRORS = {21, 123, 1921}
+
+
+def _reparse_component(current):
+    """Return True when ``current`` is a symlink or reparse point (one lstat)."""
+    try:
+        info = os.lstat(current)
+    except OSError as exc:
+        if exc.errno in _ABSENT_ERRNOS or getattr(exc, "winerror", None) in _ABSENT_WINERRORS:
+            return False
+        raise
+    return stat.S_ISLNK(info.st_mode) or bool(getattr(info, "st_file_attributes", 0) & _REPARSE_POINT)
+
+
 def checked_path(root, path, *, exists=False):
     """Require lexical and resolved containment and reject every reparse component."""
     root = Path(os.path.abspath(root))
     path = Path(os.path.abspath(path))
     try:
-        ancestors = list(reversed(root.parents)) + [root]
-        ancestors.extend(list(reversed(path.parents)) + [path])
+        # Root's ancestors are usually a prefix of path's; check each once.
+        ancestors = dict.fromkeys([*reversed(root.parents), root, *reversed(path.parents), path])
         for current in ancestors:
-            if current.exists() or current.is_symlink():
-                info = current.lstat()
-                if current.is_symlink() or getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 1024):
-                    raise EvidenceError(f"Reparse path is not allowed: {current}")
+            if _reparse_component(current):
+                raise EvidenceError(f"Reparse path is not allowed: {current}")
         resolved = path.resolve(strict=exists)
         resolved.relative_to(root.resolve(strict=exists))
     except (OSError, RuntimeError, ValueError) as exc:

@@ -1,10 +1,10 @@
 """pytest fixtures: a Flask app + client backed by a PostgreSQL test database.
 
 The platform runs exclusively on PostgreSQL, so the tests need a reachable
-PostgreSQL instance. Point them at it with ``TEST_DATABASE_URL`` (falling back
-to ``DATABASE_URL``); if neither is set a local default DSN is used. The target
-database is wiped (``drop_all`` + ``create_all``) at the start of each test for
-isolation, so use a dedicated throwaway database.
+PostgreSQL instance. Point them at it with ``TEST_DATABASE_URL``; if it is not
+set a local default DSN is used. ``DATABASE_URL`` is deliberately ignored. The
+target database is wiped (``drop_all`` + ``create_all``) at the start of each
+test for isolation, so its name must end with ``_test``.
 
 Huey runs in immediate mode so enqueued tasks execute synchronously in-process
 (via an in-memory queue), letting the API tests exercise the full
@@ -35,15 +35,62 @@ DEFAULT_TEST_DATABASE_URL = (
 )
 
 
+def _require_disposable_database(url: str) -> None:
+    """Refuse to wipe a database whose name does not mark it as a test one."""
+    from sqlalchemy.engine import make_url
+
+    name = make_url(url).database or ""
+    if not name.endswith("_test"):
+        pytest.exit(
+            f"Refusing to drop all tables in database {name!r}: the test "
+            "database name must end with '_test' (set TEST_DATABASE_URL).",
+            returncode=2,
+        )
+
+
+_schema_rebuilt = False
+
+
+def _reset_database() -> None:
+    """Leave every model table empty with its id sequences restarted.
+
+    The first reset of a session drops the schema so it is rebuilt from the
+    current models. Later resets keep the tables and delete their rows instead:
+    re-running ~130 DDL statements per test was the dominant fixture cost, and
+    the row-level reset touches exactly the tables ``drop_all`` would.
+    """
+    global _schema_rebuilt
+    from sqlalchemy import text
+
+    from app import models  # noqa: F401
+    from app.extensions import db
+
+    if not _schema_rebuilt:
+        db.drop_all()
+        _schema_rebuilt = True
+        return
+    tables = db.metadata.sorted_tables
+    with db.engine.begin() as connection:
+        sequences = connection.execute(text(
+            "SELECT seq.relname FROM pg_class seq "
+            "JOIN pg_depend dep ON dep.objid = seq.oid AND dep.deptype IN ('a', 'i') "
+            "JOIN pg_class tbl ON tbl.oid = dep.refobjid "
+            "WHERE seq.relkind = 'S' AND tbl.relname = ANY(:names)"),
+            {"names": [table.name for table in tables]}).scalars().all()
+        statements = [f'DELETE FROM "{table.name}"' for table in reversed(tables)]
+        statements += [f'ALTER SEQUENCE "{name}" RESTART' for name in sequences]
+        connection.exec_driver_sql("; ".join(statements))
+
+
 @pytest.fixture()
 def app_ctx(monkeypatch):
     tmp = tempfile.mkdtemp(prefix="stp_test_")
     root = Path(tmp)
-    test_db_url = (
-        os.environ.get("TEST_DATABASE_URL")
-        or os.environ.get("DATABASE_URL")
-        or DEFAULT_TEST_DATABASE_URL
-    )
+    # Never fall back to DATABASE_URL: app.config loads .env at import time, so
+    # that variable usually names the developer's real database, and this
+    # fixture drops every table in its target.
+    test_db_url = os.environ.get("TEST_DATABASE_URL") or DEFAULT_TEST_DATABASE_URL
+    _require_disposable_database(test_db_url)
     monkeypatch.setenv("HUEY_IMMEDIATE", "1")
     monkeypatch.setenv("RUNNER_BACKEND", "mock")
     monkeypatch.setenv("INSTANCE_DIR", str(root / "instance"))
@@ -65,19 +112,15 @@ def app_ctx(monkeypatch):
     importlib.reload(config_mod)
     importlib.reload(app_pkg)
 
-    # Reset the (shared) PostgreSQL test database for isolation between tests:
-    # wipe any schema left by a previous run, then explicitly bootstrap the
-    # tables and seed the license/admin defaults into an empty database.
+    # Reset the (shared) PostgreSQL test database for isolation between tests,
+    # then explicitly bootstrap: bootstrap re-creates anything a test dropped
+    # and seeds the license/admin defaults into the now-empty tables.
     from app.bootstrap import bootstrap_app
-    from app.extensions import db
 
     try:
-        reset_app = app_pkg.create_app(config_mod.Config)
-        with reset_app.app_context():
-            from app import models  # noqa: F401
-            db.drop_all()
-
         application = app_pkg.create_app(config_mod.Config)
+        with application.app_context():
+            _reset_database()
         bootstrap_app(application)
         yield application
     finally:
