@@ -121,8 +121,9 @@ class UtAgentBridge:
             args += ["--source-rel", source_rel]
         if self.settings.omf_converter:
             args += ["--omf-converter", self.settings.omf_converter]
-        # WinAMS gets its own timeout; leave headroom for sandbox copy and parsing.
-        return self._run(args, timeout=self.settings.execute_timeout + 120)["execution"]
+        # The plain and instrumented objects are converted separately before
+        # WinAMS runs; each subprocess has its own execution timeout.
+        return self._run(args, timeout=3 * self.settings.execute_timeout + 120)["execution"]
 
     def check(self, candidate: Path, *, manifest: str, reference: Optional[Path] = None,
               previous: Optional[Path] = None, execution: Optional[Path] = None,

@@ -68,4 +68,10 @@ def test_completeness_gaps_precede_the_csv_and_are_not_repeated_in_the_verdict()
 def test_system_prompt_keeps_expected_values_with_the_capture():
     system = repair._system_prompt(CONSTRAINTS)
     assert "期望值单元格全部留空" in system and "obligation" in system
-    assert repair.PROMPT_VERSION == "ut-repair/3"
+    assert repair.PROMPT_VERSION == "ut-repair/3.1"
+
+
+def test_diverged_paths_do_not_assign_an_unproven_root_cause():
+    system = repair._system_prompt(CONSTRAINTS)
+    assert "不能仅凭冲突认定缺少输入" in system
+    assert "环境或构建原因无法排除时返回 csv:null" in system

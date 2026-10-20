@@ -31,6 +31,7 @@ def test_execution_passes_the_explicit_converter_and_source(monkeypatch, tmp_pat
     calls = []
 
     def invoke(args, *, timeout):
+        assert timeout == 3 * bridge.settings.execute_timeout + 120
         calls.append(args)
         return {"execution": {"status": "BLOCKED"}}
 
@@ -561,8 +562,9 @@ def test_next_state_is_pure_and_total():
     assert pipeline.next_state(fail, "GENERATOR", 0, 0)[0] == "needs_human"
     assert pipeline.next_state(fail, "HUMAN", 0, 5)[0] == "needs_human"
     blocked = {"verdict": "BLOCKED", "issues": [
-        {"code": "COVERAGE_UNAVAILABLE", "severity": "error"}]}
+        {"code": "COVERAGE_MCDC_UNAVAILABLE", "severity": "error", "repairable": False}]}
     assert pipeline.next_state(blocked, "LLM", 0, 5)[0] == "needs_human"
+    assert pipeline.next_state(blocked, "GENERATOR", 0, 5)[0] == "needs_human"
 
 
 def _member(app_ctx, pid, role):
