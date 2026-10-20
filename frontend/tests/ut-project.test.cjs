@@ -12,7 +12,7 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.js") {
+function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.js", lists = {}) {
   const nodes = new Map();
   function get(id) {
     if (!nodes.has(id)) nodes.set(id, {
@@ -33,6 +33,19 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
   get("ut-detail").hidden = true;
   const details = [], previews = [], reviews = [], revisions = [], batches = [], sheets = [];
   let failList = false, onPop;
+  // Browsers always provide visibility events; timers are recorded so a test
+  // can fire the next poll itself.
+  const docListeners = {}, timers = [], calls = { jobs: 0, targets: 0 };
+  const document = {
+    hidden: false,
+    addEventListener(type, listener) { docListeners[type] = listener; },
+    querySelector(selector) {
+      return selector === (page === "ut_pipeline.js" ? ".lm-ut" : ".lm-ut-tasks") ? root : null;
+    },
+    getElementById: get,
+    createElement: () => ({ className: "" }),
+    createTextNode: (value) => ({ textContent: value }),
+  };
   const window = {
     LM: { projectCapabilities: capabilities },
     LMReady: Promise.resolve(),
@@ -40,22 +53,21 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
     LMStepsEditor: { open(item, opts) { sheets.push({ item, opts }); }, close() {} },
   };
   const context = vm.createContext({
-    window, document: {
-      querySelector(selector) {
-        return selector === (page === "ut_pipeline.js" ? ".lm-ut" : ".lm-ut-tasks") ? root : null;
-      },
-      getElementById: get,
-      createElement: () => ({ className: "" }),
-      createTextNode: (value) => ({ textContent: value }),
-    },
-    setTimeout: () => 1, clearTimeout() {},
+    window, document,
+    setTimeout: (callback) => timers.push(callback), clearTimeout() {},
     LMApi: {
-      utJobs: () => failList ? Promise.reject(new Error("list offline")) : Promise.resolve([]),
+      utJobs: () => {
+        calls.jobs += 1;
+        return failList ? Promise.reject(new Error("list offline")) : Promise.resolve(lists.jobs || []);
+      },
       utBatches: () => Promise.resolve([]),
       utGetConfig: () => Promise.resolve({ manifest_path: "manifest.json" }),
-      utTargets: () => Promise.resolve([
-        { id: 1, in_index: true, row_no: 1, function: "f", source_rel: "src/a.c" },
-      ]),
+      utTargets: () => {
+        calls.targets += 1;
+        return Promise.resolve(lists.targets || [
+          { id: 1, in_index: true, row_no: 1, function: "f", source_rel: "src/a.c" },
+        ]);
+      },
       utCreateBatch(...args) {
         const d = deferred(); batches.push({ ...d, args }); return d.promise;
       },
@@ -92,7 +104,8 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
     });
   }
   return { get, root, details, previews, reviews, revisions, batches, sheets, open, pin, click,
-    pop: (q) => onPop(q), failList: () => { failList = true; }, common: window.LMUt };
+    pop: (q) => onPop(q), failList: () => { failList = true; }, common: window.LMUt,
+    document, docListeners, timers, calls };
 }
 
 function candidate(id, seq) {
@@ -351,3 +364,30 @@ test("UT jobs use the shared task row with separate result and review cells", ()
   const changed = window.LMUt.workspaceTask({ ...raw, current_attempt_id: 20 });
   assert.notEqual(window.LMTaskRow.signature(task), window.LMTaskRow.signature(changed));
 });
+
+for (const [page, lists, counter] of [
+  ["ut_tasks.js", { jobs: [{ ...job(10, "executing") }] }, "jobs"],
+  ["ut_pipeline.js", { targets: [{ id: 1, in_index: true, row_no: 1, function: "f",
+    source_rel: "src/a.c", latest_job: { id: 1, state: "executing" } }] }, "targets"],
+]) {
+  test(`${page} stops polling in a hidden tab and catches up when shown again`, async () => {
+    const h = harness({ edit: true, review: true }, page, lists);
+    await settle();
+    const before = h.calls[counter];
+    assert.ok(before >= 1 && h.timers.length >= 1, "active work schedules a poll");
+    h.document.hidden = true;
+    const scheduled = h.timers.length;
+    h.timers[h.timers.length - 1]();
+    await settle();
+    assert.equal(h.calls[counter], before, "a hidden tab does not hit the server");
+    assert.equal(h.timers.length, scheduled, "and does not reschedule");
+    h.docListeners.visibilitychange();
+    await settle();
+    assert.equal(h.calls[counter], before, "still hidden: nothing to catch up");
+    h.document.hidden = false;
+    h.docListeners.visibilitychange();
+    await settle();
+    assert.equal(h.calls[counter], before + 1, "shown again: one immediate refresh");
+    assert.ok(h.timers.length > scheduled, "which resumes polling");
+  });
+}

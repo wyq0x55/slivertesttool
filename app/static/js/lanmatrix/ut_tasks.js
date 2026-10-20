@@ -123,13 +123,24 @@
     return jobs.some(function (j) { return U.ACTIVE[j.state]; }) || (job && U.ACTIVE[job.state]);
   }
 
+  // A hidden tab skips its poll and stops rescheduling; becoming visible again
+  // refreshes once, which resumes polling while work is still active.
+  var pausedWhileHidden = false;
+  function poll() {
+    if (document.hidden) { pausedWhileHidden = true; return; }
+    refresh();
+  }
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden && pausedWhileHidden) { pausedWhileHidden = false; refresh(); }
+  });
+
   async function refresh() {
     clearTimeout(timer);
     try {
       await Promise.all([loadJobs(), loadBatches()]);
       if (openJobId) await loadJob(openJobId, detailEpoch);
     } catch (e) { say(e.message, true); }
-    if (busy()) timer = setTimeout(refresh, POLL_MS);
+    if (busy()) timer = setTimeout(poll, POLL_MS);
   }
 
   // ---------------------------------------------------------------- detail
@@ -516,7 +527,7 @@
       $("ut-d-title").textContent = "作业 #" + id;
       say(e.message, true);
     }
-    if (busy()) { clearTimeout(timer); timer = setTimeout(refresh, POLL_MS); }
+    if (busy()) { clearTimeout(timer); timer = setTimeout(poll, POLL_MS); }
   }
 
   function closeJob(opts) {

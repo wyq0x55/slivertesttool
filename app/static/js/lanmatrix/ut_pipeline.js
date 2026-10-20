@@ -69,6 +69,17 @@
     $("ut-enqueue-label").textContent = selected.size ? "加入队列（" + selected.size + "）" : "加入队列";
   }
 
+  // A hidden tab skips its poll and stops rescheduling; becoming visible again
+  // refreshes once, which resumes polling while work is still active.
+  var pausedWhileHidden = false;
+  function poll() {
+    if (document.hidden) { pausedWhileHidden = true; return; }
+    refresh();
+  }
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden && pausedWhileHidden) { pausedWhileHidden = false; refresh(); }
+  });
+
   async function refresh() {
     clearTimeout(timer);
     var epoch = ++requestEpoch;
@@ -80,7 +91,7 @@
       selected.forEach(function (id) { if (!ok.has(id)) selected.delete(id); });
       render();
     } catch (e) { say(e.message, true); }
-    if (targets.some(function (t) { return U.ACTIVE[stateOf(t)]; })) timer = setTimeout(refresh, POLL_MS);
+    if (targets.some(function (t) { return U.ACTIVE[stateOf(t)]; })) timer = setTimeout(poll, POLL_MS);
   }
 
   function syncUrl() {
