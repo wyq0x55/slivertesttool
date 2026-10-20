@@ -355,6 +355,7 @@ def test_llm_repairs_a_failing_candidate(env, monkeypatch):
     assert reviser["model"] == "qwen3.8-27b-gsq" and len(reviser["prompt_sha256"]) == 64
     messages, kwargs = seen[0]
     assert kwargs["model"] == "qwen3.8-27b-gsq"
+    assert kwargs["timeout"] == 900
     assert "psd.4.compare" in messages[0]["content"] and "列不得改动" in messages[0]["content"]
     assert "ORACLE_MISMATCH" in messages[1]["content"]
 

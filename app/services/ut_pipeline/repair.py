@@ -4,6 +4,13 @@ The model receives the constraint pack exported by ut-agent for the bound
 baseline (the same rules the checker enforces), the failing CSV and the
 machine verdict.  Its output is only a candidate: it is executed and checked
 again by ut-agent, and every outcome still ends at a human gate.
+
+Prompt layout follows prefix-cache reuse on the local model: the system
+message depends only on the batch constraint pack (shared by every function
+of the batch), and the user message runs from the most to the least stable
+part — target and current CSV, then the verdict for that CSV, then the round
+history, which changes on every round.  A round that kept the previous CSV
+therefore shares everything except the history tail.
 """
 
 from __future__ import annotations
@@ -16,7 +23,7 @@ from typing import Any, Optional
 from ..ai import config as ai_config
 from ..ai import provider
 
-PROMPT_VERSION = "ut-repair/1"
+PROMPT_VERSION = "ut-repair/2"
 # Bound the prompt: issue details are already truncated by ut-agent.
 _MAX_DETAIL_CHARS = 6000
 
@@ -36,7 +43,7 @@ def _system_prompt(constraints: dict[str, Any]) -> str:
         for rule in constraints.get("rules", ())
     )
     revision_rules = "\n".join(f"- {rule}" for rule in constraints.get("revision_rules", ()))
-    policies = json.dumps(constraints.get("policies", {}), ensure_ascii=False)
+    policies = json.dumps(constraints.get("policies", {}), ensure_ascii=False, sort_keys=True)
     return (
         "你是 WinAMS 单元测试用例（TestCsv）的修订助手。你只修订给定的 CSV，"
         "修订结果会被 ut-agent 校验器重新执行与判定，并由人工最终审核。\n\n"
@@ -69,10 +76,10 @@ def _user_prompt(target: dict[str, Any], csv_text: str, check: dict[str, Any],
     ) or "- 无"
     return (
         f"被测函数：{target.get('function')}（{target.get('source_rel')}）\n\n"
-        f"## 已有版本的判定历史\n{rounds}\n\n"
+        f"## 当前 CSV\n```csv\n{csv_text}\n```\n\n"
         f"## 当前版本的校验判定：{check.get('verdict')}\n{issues}\n\n"
         f"## 执行摘要\n{execution_summary}\n\n"
-        f"## 当前 CSV\n```csv\n{csv_text}\n```"
+        f"## 已有版本的判定历史\n{rounds}"
     )
 
 
@@ -84,7 +91,7 @@ def normalize_csv(text: str) -> bytes:
 
 def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: bytes,
            check: dict[str, Any], execution: Optional[dict[str, Any]],
-           history: list[dict[str, Any]], model: str = "") -> Revision:
+           history: list[dict[str, Any]], model: str = "", timeout: int = 900) -> Revision:
     """Ask the configured model for one revision.
 
     Raises :class:`provider.ProviderError` when the model is unreachable so the
@@ -107,7 +114,7 @@ def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: by
     }
     reply = provider.invoke_chat(messages, temperature=0.1, max_tokens=16384,
                                  json_mode=True, usage=usage, model=model or None,
-                                 timeout=300)
+                                 timeout=timeout)
     meta["usage"] = usage
     try:
         parsed = provider.extract_json(reply)

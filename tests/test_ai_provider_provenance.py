@@ -611,3 +611,16 @@ def test_immediate_route_generation_persists_worker_capture(
     assert saved["meta"]["provider_provenance"] == expected
     detail = client.get(f"/api/v1/ai/drafts/{saved['id']}").get_json()["data"]
     assert detail["meta"]["provider_provenance"] == expected
+
+
+def test_reported_prompt_cache_hits_are_recorded(monkeypatch):
+    http = Mock(return_value=http_reply(usage={
+        "prompt_tokens": 900, "completion_tokens": 5,
+        "prompt_tokens_details": {"cached_tokens": 850},
+    }))
+    monkeypatch.setattr(provider.urllib.request, "urlopen", http)
+    usage = {}
+
+    provider.invoke_chat(MESSAGES, usage=usage)
+
+    assert usage == {"input_tokens": 900, "output_tokens": 5, "cached_input_tokens": 850}

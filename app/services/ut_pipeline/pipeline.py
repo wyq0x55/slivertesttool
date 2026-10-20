@@ -457,6 +457,7 @@ def _repair_step(job: UtJob) -> None:
             execution=attempt.execution,
             history=history,
             model=(batch.config_snapshot or {}).get("repair_model", ""),
+            timeout=current_app.config["UT_REPAIR_TIMEOUT"],
         )
     except ProviderError as exc:
         # The model never answered: no round is consumed.

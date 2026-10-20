@@ -78,6 +78,8 @@ def chat(messages: list[dict[str, str]], *,
     ``usage`` is an optional out-parameter: when a dict is passed, the
     gateway-reported token counts are written into it as
     ``input_tokens`` / ``output_tokens`` (0 when the gateway omits them).
+    When the gateway reports prompt-cache details, the reused prefix length
+    is added as ``cached_input_tokens``.
     An out-parameter rather than a richer return type keeps the contract
     a plain ``str`` — test fakes that patch this function stay valid.
     """
@@ -137,6 +139,9 @@ def chat(messages: list[dict[str, str]], *,
         reported = payload.get("usage") or {}
         usage["input_tokens"] = int(reported.get("prompt_tokens") or 0)
         usage["output_tokens"] = int(reported.get("completion_tokens") or 0)
+        details = reported.get("prompt_tokens_details")
+        if isinstance(details, dict) and "cached_tokens" in details:
+            usage["cached_input_tokens"] = int(details.get("cached_tokens") or 0)
     counters = _provenance.get()
     if counters is not None:
         counters["api_response_calls"] += 1

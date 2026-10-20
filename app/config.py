@@ -200,6 +200,9 @@ class Config:
     UT_BRIDGE_TIMEOUT = _as_int(os.environ.get("UT_BRIDGE_TIMEOUT"), 120)
     # Default LLM repair rounds before a job is handed to a human.
     UT_REPAIR_MAX_ROUNDS = _as_int(os.environ.get("UT_REPAIR_MAX_ROUNDS"), 5)
+    # Seconds per repair call. A local model serves one request at a time and
+    # keeps working after a client gives up, so a short limit cascades.
+    UT_REPAIR_TIMEOUT = _as_int(os.environ.get("UT_REPAIR_TIMEOUT"), 900)
 
     # --- Upload limits ---
     MAX_UPLOAD_BYTES = _as_int(
