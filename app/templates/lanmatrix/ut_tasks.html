@@ -156,9 +156,12 @@
 {% include "lanmatrix/_steps_dialog.html" %}
 {% endblock %}
 {% block scripts %}
+{# The ~11 MB Univer bundle only upgrades the optional 手順 drawer, so the page
+   just prefetches it; steps_editor.js executes it on the drawer's first open. #}
 {% if univer_available %}
-<link rel="stylesheet" href="{{ static_asset_url('vendor/univer/univer.full.umd.css') }}">
-<script src="{{ static_asset_url('vendor/univer/univer.full.umd.js') }}"></script>
+<link id="lm-univer-lazy" rel="prefetch" as="script"
+      href="{{ static_asset_url('vendor/univer/univer.full.umd.js') }}"
+      data-css="{{ static_asset_url('vendor/univer/univer.full.umd.css') }}">
 {% endif %}
 <script src="{{ url_for('static', filename='js/lanmatrix/steps_ref_panel.js') }}"></script>
 <script src="{{ url_for('static', filename='js/lanmatrix/json_editor.js') }}"></script>

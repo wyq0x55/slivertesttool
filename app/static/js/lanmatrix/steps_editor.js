@@ -26,6 +26,33 @@
 
   const EMPTY = { input_signals: [], expected_signals: [], steps: [] };
 
+  // The Univer bundle is ~11 MB, so pages where the drawer is optional only
+  // prefetch it through <link id="lm-univer-lazy" rel="prefetch" data-css=...>
+  // and it is executed on the first open(). Resolves true once
+  // window.LMUniverSteps exists; null when the page offers no bundle at all.
+  let univerLoading = null;
+  function loadUniverBundle() {
+    if (global.LMUniverSteps) return Promise.resolve(true);
+    if (univerLoading) return univerLoading;
+    const hint = document.getElementById("lm-univer-lazy");
+    if (!hint) return null;
+    univerLoading = new Promise((resolve) => {
+      const css = hint.getAttribute("data-css");
+      if (css) {
+        const link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = css;
+        document.head.appendChild(link);
+      }
+      const script = document.createElement("script");
+      script.src = hint.href;
+      script.onload = () => resolve(!!global.LMUniverSteps);
+      script.onerror = () => resolve(false);
+      document.head.appendChild(script);
+    });
+    return univerLoading;
+  }
+
   // Step fields around the signal columns; mirrors DEFAULT_LAYOUT in
   // frontend/src/steps_adapter.ts. A host may pass another layout to open().
   const DEFAULT_LAYOUT = {
@@ -388,6 +415,7 @@
         .then(() => this.loadRef())
         .then((data) => {
           data = data || {};
+          this._refData = data;  // a Univer view mounted later still needs it
           if (this.refPanel) this.refPanel.setData(data);
           if (this.view && typeof this.view.setRefData === "function") {
             try { this.view.setRefData(data); } catch (_e) { /* best-effort */ }
@@ -415,6 +443,31 @@
           this.engine = "builtin";
         }
       }
+    }
+
+    // Pages that only prefetch the Univer bundle open with the built-in tables
+    // and switch to the Univer view once the bundle has loaded. this.doc is
+    // kept current by the built-in tables, so nothing typed is lost; the switch
+    // is skipped while the user is typing and then happens on the next open().
+    _upgradeWhenLoaded(item) {
+      if (this.view) return;
+      const loading = loadUniverBundle();
+      if (!loading) return;
+      loading.then((ok) => {
+        if (!ok || this.view || this.item !== item || !this.dialog.open) return;
+        if (this.host.contains(document.activeElement)) return;
+        this._ensureView();
+        if (!this.view) return;
+        if (this._refData && typeof this.view.setRefData === "function") {
+          try { this.view.setRefData(this._refData); } catch (_e) { /* best-effort */ }
+        }
+        this.render();
+        if (typeof this.view.resize === "function") {
+          requestAnimationFrame(() => {
+            try { this.view.resize(); } catch (_e) { /* best-effort */ }
+          });
+        }
+      });
     }
 
     // Sync the Univer steps sheet to the app's light|dark theme. Univer 0.25's
@@ -724,6 +777,7 @@
       // Re-fetch lib/const on each open so edits elsewhere are reflected; if the
       // panel is already visible, refresh it now, otherwise it loads on toggle.
       this._refLoaded = false;
+      this._refData = null;
       // The Reference Panel always starts collapsed for a newly opened item.
       this._resetPanel();
       this.testId = (opts && opts.testId != null) ? String(opts.testId).trim() : "";
@@ -771,6 +825,7 @@
       // reused view renders this item correctly without a costly re-create.
       this._ensureView();
       this.render();
+      this._upgradeWhenLoaded(item);
       // The dialog is display:none while closed, so a reused Univer canvas may
       // have been laid out against a zero-size host. Nudge a relayout once the
       // re-shown dialog has non-zero size so the grid paints on reopen.
