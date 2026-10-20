@@ -109,6 +109,13 @@
       return k.toUpperCase() + " " + (c[k] == null || c[k] < 0 ? "—" : c[k] + "%");
     }).join(" / ");
   }
+  // The linked build ut-agent chose for this run (map evidence), by folder name.
+  function stubBuild(execution) {
+    var s = execution && execution.stub_build;
+    if (!s || !s.selected) return "";
+    return '<div class="submuted" title="' + esc(s.selected) + '">构建 ' +
+      esc(String(s.selected).split(/[\\/]/).pop()) + "</div>";
+  }
   function originOf(a) {
     var r = a.reviser || {};
     var o = U.ORIGIN[a.origin] || a.origin;
@@ -166,7 +173,8 @@
         '<td class="ut-num">' + a.seq + "</td><td>" + esc(originOf(a)) + "</td>" +
         "<td>" + (a.verdict ? U.verdictPill(a.verdict) :
           (U.ACTIVE[job.state] ? U.statePill("executing") : "—")) + "</td>" +
-        "<td>" + esc(topIssues(a.check)) + "</td><td>" + esc(coverage(a.execution)) + "</td>" +
+        "<td>" + esc(topIssues(a.check)) + "</td><td>" + esc(coverage(a.execution)) +
+          stubBuild(a.execution) + "</td>" +
         '<td title="' + esc(note) + '">' + esc(note.slice(0, 60)) + "</td>" +
         '<td class="lm-cell-time"><code>' + esc(U.time(a.created_at)) + "</code></td>" +
         '<td class="ut-act">' + (a.has_csv ? '<button class="btn small ghost" type="button" data-attempt="' +

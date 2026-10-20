@@ -8,7 +8,7 @@
   var root = document.querySelector(".lm-ut-binding");
   if (!root) return;
   var pid = Number(root.dataset.project);
-  var KEYS = ["manifest_path", "index_csv", "product_root", "work_root",
+  var KEYS = ["manifest_path", "index_csv", "product_root", "work_root", "stub_builds",
               "max_repair_rounds", "repair_model"];
 
   function $(id) { return document.getElementById(id); }

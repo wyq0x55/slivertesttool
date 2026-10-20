@@ -31,6 +31,9 @@ class UtPipelineConfig(db.Model):
     product_root = db.Column(db.String(1024), nullable=False, default="")
     # Directory that holds the WinAMS unit tree named by the index (unit_rel).
     work_root = db.Column(db.String(1024), nullable=False, default="")
+    # Linked builds that differ only in stub bodies, one directory per line in
+    # priority order.  Empty keeps the build each unit project names itself.
+    stub_builds = db.Column(db.Text, nullable=False, default="")
     max_repair_rounds = db.Column(db.Integer, nullable=False, default=5)
     # Optional model override for repair; empty uses the global AI model.
     repair_model = db.Column(db.String(128), nullable=False, default="")
@@ -44,6 +47,7 @@ class UtPipelineConfig(db.Model):
             "index_csv": self.index_csv,
             "product_root": self.product_root,
             "work_root": self.work_root,
+            "stub_builds": self.stub_builds,
             "max_repair_rounds": self.max_repair_rounds,
             "repair_model": self.repair_model,
             "updated_at": _iso(self.updated_at),

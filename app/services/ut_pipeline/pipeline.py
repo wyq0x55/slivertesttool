@@ -44,13 +44,18 @@ _WINAMS_GATE = threading.Lock()
 _GENERATION_GATE = threading.Lock()
 _EXPECTED_ATTEMPT_UNSET = object()
 
-_CONFIG_TEXT_FIELDS = ("manifest_path", "index_csv", "product_root", "work_root", "repair_model")
+_CONFIG_TEXT_FIELDS = ("manifest_path", "index_csv", "product_root", "work_root",
+                       "stub_builds", "repair_model")
 _REQUIRED_FIELDS = ("manifest_path", "index_csv", "product_root", "work_root")
 _JOB_LIST_LIMIT = 500
 
 
 def get_bridge() -> UtAgentBridge:
     return UtAgentBridge(BridgeSettings.from_config(current_app.config))
+
+
+def _lines(text: str) -> list[str]:
+    return [line.strip() for line in (text or "").splitlines() if line.strip()]
 
 
 # --------------------------------------------------------------------------- #
@@ -80,7 +85,10 @@ def save_config(project_id: int, values: dict[str, Any], user_id: int) -> UtPipe
         if key in values:
             if not isinstance(values[key], str):
                 raise ServiceError(f"{key} 必须是字符串", code="VALIDATION_ERROR")
-            setattr(config, key, values[key].strip())
+            value = values[key].strip()
+            if key == "stub_builds":
+                value = "\n".join(_lines(value))
+            setattr(config, key, value)
     if "max_repair_rounds" in values:
         rounds = values["max_repair_rounds"]
         if type(rounds) is not int or not 0 <= rounds <= 20:
@@ -367,7 +375,9 @@ def next_state(check: dict[str, Any], origin: str, rounds: int, max_rounds: int)
                         if issue["code"] == "EXECUTION_BLOCKED"), None)
         if blocked is not None:
             reasons = blocked.get("detail") or []
-            listed = "; ".join(f"{item.get('code')} {item.get('path', '')}" for item in reasons[:5])
+            listed = "; ".join(
+                f"{item.get('code')} {item.get('detail') or item.get('path', '')}"
+                for item in reasons[:5])
             return UtJob.BLOCKED, f"WinAMS 执行环境不完整：{listed}"
         return UtJob.NEEDS_HUMAN, f"存在无法自动修复的问题：{codes}"
     if verdict != "FAIL":
@@ -414,7 +424,8 @@ def _execute_step(job: UtJob) -> None:
             out = _fresh_exec_dir(job, attempt)
             with _WINAMS_GATE:
                 execution = bridge.execute(
-                    Path(config["work_root"]) / job.target.unit_rel, candidate, out)
+                    Path(config["work_root"]) / job.target.unit_rel, candidate, out,
+                    stub_builds=_lines(config.get("stub_builds", "")))
             check = bridge.check(candidate, execution=out / "execution.json", **arguments)
     except BridgeError as exc:
         _gate(job, UtJob.ERROR, f"ut-agent 调用失败：{exc}")

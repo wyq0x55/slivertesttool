@@ -34,6 +34,8 @@ class FakeBridge:
         self.execution_status = execution_status
         self.generate_error = generate_error
         self.executions = 0
+        self.stub_builds = None
+        self.blocked_reason = {"code": "ASSET_MISSING", "path": "AMS_Setting"}
 
     def index(self, manifest, index_csv, product_root):
         return [
@@ -64,12 +66,13 @@ class FakeBridge:
             units.append(unit)
         return {"ok": True, "provenance": {"baseline_ref": "psd-rebuild@1.1"}, "units": units}
 
-    def execute(self, unit_dir, candidate, out):
+    def execute(self, unit_dir, candidate, out, stub_builds=None):
         self.executions += 1
+        self.stub_builds = stub_builds
         out.mkdir(parents=True)
         evidence = {"status": self.execution_status, "unit_dir": str(unit_dir)}
         if self.execution_status == "BLOCKED":
-            evidence["blocked_reasons"] = [{"code": "ASSET_MISSING", "path": "AMS_Setting"}]
+            evidence["blocked_reasons"] = [self.blocked_reason]
         (out / "execution.json").write_text(json.dumps(evidence), encoding="utf-8")
         return evidence
 
@@ -386,6 +389,26 @@ def test_blocked_environment_does_not_consume_rounds(env, monkeypatch):
     assert status == 202
     assert _job(env, job_id)["state"] == "awaiting_review"
     assert env.bridge.executions == 2
+
+
+def test_stub_builds_are_normalised_and_passed_to_execution(env):
+    status, body = env.call("put", "/config", json={
+        "manifest_path": "m.json", "index_csv": "i.csv", "product_root": "P",
+        "work_root": "W", "stub_builds": "  C:\\STUB\\stub1 \r\n\r\nC:\\STUB\\stub2\n"})
+    assert status == 200, body
+    assert body["data"]["stub_builds"] == "C:\\STUB\\stub1\nC:\\STUB\\stub2"
+    env.call("post", "/targets/import")
+    _, body = env.call("get", "/targets")
+    targets = {t["function"]: t["id"] for t in body["data"]}
+
+    env.bridge.execution_status = "BLOCKED"
+    env.bridge.blocked_reason = {"code": "STUB_BUILD_UNRESOLVED", "path": "C:\\STUB\\stub1",
+                                 "detail": "stub1: AMSTB_dep"}
+    [job_id] = _enqueue(env, targets["f"])
+    assert env.bridge.stub_builds == ["C:\\STUB\\stub1", "C:\\STUB\\stub2"]
+    job = _job(env, job_id)
+    assert job["state"] == "blocked" and job["repair_rounds"] == 0
+    assert "STUB_BUILD_UNRESOLVED stub1: AMSTB_dep" in job["reason"]
 
 
 def test_unreachable_model_is_an_error_and_retry_resumes_repair(env, monkeypatch):

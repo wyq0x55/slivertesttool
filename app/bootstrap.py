@@ -154,6 +154,9 @@ def _migrate_schema() -> None:
             "version_note": "TEXT NOT NULL DEFAULT ''",
             "deprecated_at": "TIMESTAMP",
         },
+        "ut_pipeline_configs": {
+            "stub_builds": "TEXT NOT NULL DEFAULT ''",
+        },
     }
     for table, columns in additions.items():
         if table not in existing_tables:

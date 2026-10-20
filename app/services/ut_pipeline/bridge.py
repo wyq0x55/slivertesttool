@@ -104,11 +104,15 @@ class UtAgentBridge:
             args += ["--clang-extractor", self.settings.extractor]
         return self._run(args, timeout=self.settings.generate_timeout)
 
-    def execute(self, unit_dir: Path, candidate: Path, out: Path) -> dict[str, Any]:
+    def execute(self, unit_dir: Path, candidate: Path, out: Path,
+                stub_builds: Optional[list[str]] = None) -> dict[str, Any]:
         args = ["execute", "--unit-dir", str(unit_dir), "--candidate", str(candidate),
                 "--out", str(out), "--timeout", str(self.settings.execute_timeout)]
         if self.settings.winams:
             args += ["--winams", self.settings.winams]
+        # ut-agent picks the first build whose map defines every declared stub.
+        for build in stub_builds or ():
+            args += ["--stub-build", build]
         # WinAMS gets its own timeout; leave headroom for sandbox copy and parsing.
         return self._run(args, timeout=self.settings.execute_timeout + 120)["execution"]
 

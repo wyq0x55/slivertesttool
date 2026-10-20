@@ -38,6 +38,10 @@
       <div class="field"><label for="ut-c-work_root">WinAMS 工作根</label>
         <input id="ut-c-work_root" autocomplete="off">
         <p class="ut-hint">包含索引第 5 列所指 WinAMS 单元树的目录。</p></div>
+      <div class="field"><label for="ut-c-stub_builds">Stub 构建目录</label>
+        <textarea id="ut-c-stub_builds" rows="3" autocomplete="off" spellcheck="false"
+          placeholder="…\STUB\stub1&#10;…\STUB\stub2"></textarea>
+        <p class="ut-hint">每行一个已链接构建，按优先级排列；执行时选用第一个 map 含全部 stub 的构建。留空则使用单元工程自带的构建。</p></div>
     </section>
     <section class="panel">
       <h4>本地模型修正</h4>
