@@ -30,6 +30,7 @@ class BridgeSettings:
     timeout: int
     generate_timeout: int
     execute_timeout: int
+    omf_converter: str = ""
 
     @classmethod
     def from_config(cls, config) -> "BridgeSettings":
@@ -41,6 +42,7 @@ class BridgeSettings:
             timeout=int(config.get("UT_BRIDGE_TIMEOUT", 120)),
             generate_timeout=int(config.get("UT_GENERATE_TIMEOUT", 3600)),
             execute_timeout=int(config.get("UT_EXECUTE_TIMEOUT", 300)),
+            omf_converter=config.get("UT_OMF_CONVERTER", ""),
         )
 
 
@@ -117,6 +119,8 @@ class UtAgentBridge:
             args += ["--stub-build", build]
         if stub_builds and source_rel:
             args += ["--source-rel", source_rel]
+        if self.settings.omf_converter:
+            args += ["--omf-converter", self.settings.omf_converter]
         # WinAMS gets its own timeout; leave headroom for sandbox copy and parsing.
         return self._run(args, timeout=self.settings.execute_timeout + 120)["execution"]
 

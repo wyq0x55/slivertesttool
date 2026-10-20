@@ -18,10 +18,29 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.services.ai import provider  # noqa: E402
 from app.services.ut_pipeline import pipeline  # noqa: E402
-from app.services.ut_pipeline.bridge import BridgeError  # noqa: E402
+from app.services.ut_pipeline.bridge import BridgeError, BridgeSettings, UtAgentBridge  # noqa: E402
 
 GOOD = b'mod,"a.c/f","f",1,1\r\n#COMMENT,x,ret\r\n,0,1\r\n'
 BAD = b'mod,"a.c/f","f",1,1\r\n#COMMENT,x,ret\r\n,0,BAD\r\n'
+
+
+def test_execution_passes_the_explicit_converter_and_source(monkeypatch, tmp_path):
+    bridge = UtAgentBridge(BridgeSettings.from_config({
+        "UT_OMF_CONVERTER": r"C:\WinAMS\BIN\v850ghsomf.exe",
+    }))
+    calls = []
+
+    def invoke(args, *, timeout):
+        calls.append(args)
+        return {"execution": {"status": "BLOCKED"}}
+
+    monkeypatch.setattr(bridge, "_run", invoke)
+    bridge.execute(tmp_path, tmp_path / "c.csv", tmp_path / "out",
+                   stub_builds=["S1", "S2"], source_rel="src/a.c")
+    [args] = calls
+    assert args[args.index("--source-rel") + 1] == "src/a.c"
+    assert args[args.index("--omf-converter") + 1] == r"C:\WinAMS\BIN\v850ghsomf.exe"
+    assert [args[i + 1] for i, value in enumerate(args) if value == "--stub-build"] == ["S1", "S2"]
 
 
 class FakeBridge:
