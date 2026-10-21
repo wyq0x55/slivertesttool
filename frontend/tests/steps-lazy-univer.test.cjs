@@ -16,7 +16,7 @@ function section(start, end) {
 }
 
 const LOADER = section("let univerLoading", "// Step fields around the signal columns");
-const UPGRADE = section("_upgradeWhenLoaded(item) {", "// Sync the Univer steps sheet");
+const UPGRADE = section("_renderWhenLoaded(item) {", "// Sync the Univer steps sheet");
 
 // A page with an optional <link id="lm-univer-lazy">; appended <script>s are
 // recorded so a test decides whether the bundle loads or fails.
@@ -35,10 +35,12 @@ function page({ hint = true } = {}) {
       };
     },
   };
-  const context = vm.createContext({ global, document, requestAnimationFrame: (callback) => callback() });
+  const timers = [];
+  const context = vm.createContext({ global, document, requestAnimationFrame: (callback) => callback(),
+    setTimeout: (callback, ms) => timers.push({ callback, ms }) });
   vm.runInContext(`${LOADER}; global.load = loadUniverBundle;
     global.Editor = class { ${UPGRADE} };`, context);
-  return { global, document, appended, scripts: () => appended.filter((node) => node.tag === "script") };
+  return { global, document, appended, timers, scripts: () => appended.filter((node) => node.tag === "script") };
 }
 
 function editor(env, item) {
@@ -47,20 +49,20 @@ function editor(env, item) {
   const instance = new env.global.Editor();
   Object.assign(instance, {
     item, view: null, dialog: { open: true }, _refData: { lib: ["SUB"] }, rendered: [],
-    host: { contains: (node) => node === "inside-host" },
+    host: { innerHTML: "" },
     _ensureView() { this.view = env.global.LMUniverSteps ? view : null; },
     render() { this.rendered.push(this.view ? "univer" : "builtin"); },
   });
   return { instance, view };
 }
 
-test("a page without the lazy hint keeps the built-in tables and loads nothing", () => {
+test("a page without the lazy hint renders the built-in tables at once and loads nothing", () => {
   const env = page({ hint: false });
   assert.equal(env.global.load(), null);
   const { instance } = editor(env, { id: 1 });
-  instance._upgradeWhenLoaded(instance.item);
+  assert.equal(instance._renderWhenLoaded(instance.item), false);
   assert.equal(env.appended.length, 0);
-  assert.equal(instance.view, null);
+  assert.equal(instance.host.innerHTML, "");
 });
 
 test("the bundle and its stylesheet are requested once, however often the drawer opens", () => {
@@ -72,11 +74,13 @@ test("the bundle and its stylesheet are requested once, however often the drawer
   assert.equal(env.scripts()[0].src, "/static/vendor/univer/univer.full.umd.js?v=abc");
 });
 
-test("the open drawer upgrades to Univer with the reference data it already loaded", async () => {
+test("the drawer waits behind a placeholder and renders straight into Univer", async () => {
   const env = page();
   const item = { id: 7 };
   const { instance, view } = editor(env, item);
-  instance._upgradeWhenLoaded(item);
+  assert.equal(instance._renderWhenLoaded(item), true);
+  assert.match(instance.host.innerHTML, /正在加载表格编辑器/);
+  assert.deepEqual(instance.rendered, []);           // no built-in tables first
   env.global.LMUniverSteps = { mount() {} };
   env.scripts()[0].onload();
   await settle();
@@ -84,18 +88,33 @@ test("the open drawer upgrades to Univer with the reference data it already load
   assert.deepEqual(instance.rendered, ["univer"]);
   assert.deepEqual(view.refData, { lib: ["SUB"] });
   assert.equal(view.resized, 1);
+  env.timers[0].callback();                          // the late timeout is a no-op
+  assert.deepEqual(instance.rendered, ["univer"]);
 });
 
-for (const [name, change] of [
-  ["the user is typing in the built-in tables", (instance, env) => { env.document.activeElement = "inside-host"; }],
-  ["the drawer was closed", (instance) => { instance.dialog.open = false; }],
-  ["another item was opened", (instance) => { instance.item = { id: 8 }; }],
-]) {
-  test(`no upgrade happens when ${name}`, async () => {
+test("a bundle that fails or is too slow falls back to the built-in tables", async () => {
+  for (const settleLoad of [(env) => env.scripts()[0].onerror(), (env) => env.timers[0].callback()]) {
     const env = page();
     const item = { id: 7 };
     const { instance } = editor(env, item);
-    instance._upgradeWhenLoaded(item);
+    instance._renderWhenLoaded(item);
+    assert.equal(env.timers[0].ms, 15000);
+    settleLoad(env);
+    await settle();
+    assert.equal(instance.view, null);
+    assert.deepEqual(instance.rendered, ["builtin"]);
+  }
+});
+
+for (const [name, change] of [
+  ["the drawer was closed", (instance) => { instance.dialog.open = false; }],
+  ["another item was opened", (instance) => { instance.item = { id: 8 }; }],
+]) {
+  test(`nothing renders for a stale wait when ${name}`, async () => {
+    const env = page();
+    const item = { id: 7 };
+    const { instance } = editor(env, item);
+    instance._renderWhenLoaded(item);
     change(instance, env);
     env.global.LMUniverSteps = { mount() {} };
     env.scripts()[0].onload();
@@ -104,15 +123,3 @@ for (const [name, change] of [
     assert.deepEqual(instance.rendered, []);
   });
 }
-
-test("a bundle that fails to load leaves the built-in tables in place", async () => {
-  const env = page();
-  const item = { id: 7 };
-  const { instance } = editor(env, item);
-  instance._upgradeWhenLoaded(item);
-  env.scripts()[0].onerror();
-  assert.equal(await env.global.load(), false);
-  await settle();
-  assert.equal(instance.view, null);
-  assert.deepEqual(instance.rendered, []);
-});

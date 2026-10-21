@@ -31,6 +31,9 @@
   // and it is executed on the first open(). Resolves true once
   // window.LMUniverSteps exists; null when the page offers no bundle at all.
   let univerLoading = null;
+  // How long an open drawer waits for the bundle before using the built-in
+  // tables. A prefetched bundle executes in about a second.
+  const UNIVER_WAIT_MS = 15000;
   function loadUniverBundle() {
     if (global.LMUniverSteps) return Promise.resolve(true);
     if (univerLoading) return univerLoading;
@@ -445,29 +448,37 @@
       }
     }
 
-    // Pages that only prefetch the Univer bundle open with the built-in tables
-    // and switch to the Univer view once the bundle has loaded. this.doc is
-    // kept current by the built-in tables, so nothing typed is lost; the switch
-    // is skipped while the user is typing and then happens on the next open().
-    _upgradeWhenLoaded(item) {
-      if (this.view) return;
+    // Pages that only prefetch the Univer bundle wait for it behind a short
+    // placeholder and then render straight into Univer. Rendering the built-in
+    // tables first and swapping them out a moment later read as the drawer
+    // turning into a different editor. A bundle that fails, or takes longer
+    // than UNIVER_WAIT_MS, falls back to the built-in tables. Returns true when
+    // it took over the first render.
+    _renderWhenLoaded(item) {
+      if (this.view) return false;
       const loading = loadUniverBundle();
-      if (!loading) return;
-      loading.then((ok) => {
-        if (!ok || this.view || this.item !== item || !this.dialog.open) return;
-        if (this.host.contains(document.activeElement)) return;
-        this._ensureView();
-        if (!this.view) return;
-        if (this._refData && typeof this.view.setRefData === "function") {
+      if (!loading) return false;
+      const token = {};
+      this._awaitingUniver = token;
+      this.host.innerHTML = '<div class="lm-steps-loading" role="status">正在加载表格编辑器…</div>';
+      const finish = (ok) => {
+        if (this._awaitingUniver !== token) return;   // already finished, or another open
+        this._awaitingUniver = null;
+        if (this.item !== item || !this.dialog.open) return;
+        if (ok) this._ensureView();
+        if (this.view && this._refData && typeof this.view.setRefData === "function") {
           try { this.view.setRefData(this._refData); } catch (_e) { /* best-effort */ }
         }
         this.render();
-        if (typeof this.view.resize === "function") {
+        if (this.view && typeof this.view.resize === "function") {
           requestAnimationFrame(() => {
             try { this.view.resize(); } catch (_e) { /* best-effort */ }
           });
         }
-      });
+      };
+      loading.then(finish);
+      setTimeout(() => finish(false), UNIVER_WAIT_MS);
+      return true;
     }
 
     // Sync the Univer steps sheet to the app's light|dark theme. Univer 0.25's
@@ -824,8 +835,7 @@
       // setDoc() (called by render()) resets the sheet + table geometry, so the
       // reused view renders this item correctly without a costly re-create.
       this._ensureView();
-      this.render();
-      this._upgradeWhenLoaded(item);
+      if (!this._renderWhenLoaded(item)) this.render();
       // The dialog is display:none while closed, so a reused Univer canvas may
       // have been laid out against a zero-size host. Nudge a relayout once the
       // re-shown dialog has non-zero size so the grid paints on reopen.
@@ -877,6 +887,9 @@
       // Univer view owns the dialog body: hand it the doc and stop (never wipe
       // its canvas with innerHTML).
       if (this.view) { this.view.setDoc(this.doc, this.viewOpts); return; }
+      // Waiting for the Univer bundle: this.doc stays current and is rendered
+      // once the wait ends, so nothing flashes the built-in tables meanwhile.
+      if (this._awaitingUniver) return;
       const layout = Object.assign({}, DEFAULT_LAYOUT, this.viewOpts.layout || {});
       this.host.innerHTML =
         (layout.signalSheets && !this.viewOpts.readOnly
