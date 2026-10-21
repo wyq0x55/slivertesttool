@@ -426,6 +426,12 @@
     utRetry(pid, jobId) {
       return request("POST", `/projects/${pid}/ut/jobs/${jobId}/retry`, { body: {} });
     },
+    utStop(pid, jobId) {
+      return request("POST", `/projects/${pid}/ut/jobs/${jobId}/stop`, { body: {} });
+    },
+    utStopBatch(pid, batchId) {
+      return request("POST", `/projects/${pid}/ut/batches/${batchId}/stop`, { body: {} });
+    },
   };
 
   global.LMApi = LMApi;

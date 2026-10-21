@@ -24,9 +24,13 @@ STATE_ZH = {
     UtJob.AWAITING_REVIEW: "待审核", UtJob.NEEDS_HUMAN: "需人工",
     UtJob.BLOCKED: "环境阻塞", UtJob.ERROR: "异常",
     UtJob.APPROVED: "审核通过", UtJob.REJECTED: "审核驳回",
+    UtJob.STOPPED: "已停止",
 }
 # Gates an editor can clear (revision / retry) without the review capability.
 _EDITOR_GATES = (UtJob.NEEDS_HUMAN, UtJob.BLOCKED, UtJob.ERROR)
+# A gate job is work only while it is its target's latest job: queueing the
+# function again replaces it, and the older one would otherwise wait forever.
+_IS_LATEST = UtJob.target.has(UtTarget.latest_job_id == UtJob.id)
 
 def _task_status():
     """One SQL projection for list filters and counters.
@@ -60,7 +64,7 @@ def _pending_filter(user: LMUser, roles: Mapping[int, Optional[str]]):
     for pid, role in roles.items():
         states = actionable_states(role, user.is_system_admin)
         if states:
-            clauses.append(db.and_(UtJob.project_id == pid, UtJob.state.in_(states)))
+            clauses.append(db.and_(UtJob.project_id == pid, UtJob.state.in_(states), _IS_LATEST))
     return db.or_(*clauses) if clauses else None
 
 
@@ -83,7 +87,7 @@ def _scoped(user: LMUser, roles: Mapping[int, Optional[str]], status: str, role:
     if role == ROLE_REQUESTER:
         query = query.filter(UtBatch.created_by == user.id)
         if status == PENDING:
-            return query.filter(UtJob.state.in_(UtJob.HUMAN_GATES))
+            return query.filter(UtJob.state.in_(UtJob.HUMAN_GATES), _IS_LATEST)
         if status == STATUS_ALL:
             return query.filter(UtJob.state.in_(UtJob.HUMAN_GATES + UtJob.FINAL))
         return query.filter(UtJob.state.in_(_final_states(status)))

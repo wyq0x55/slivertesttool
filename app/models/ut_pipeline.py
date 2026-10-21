@@ -146,10 +146,15 @@ class UtJob(db.Model):
     ERROR = "error"
     APPROVED = "approved"
     REJECTED = "rejected"
+    # Halted on request.  Keeps its candidate and evidence and accepts every
+    # human action, but waits on nobody, so it is outside the pending queues.
+    STOPPED = "stopped"
 
     ACTIVE = (QUEUED, GENERATING, EXECUTING, REPAIRING)
     # States a human must act on.  Every machine outcome lands in one of these.
     HUMAN_GATES = (AWAITING_REVIEW, NEEDS_HUMAN, BLOCKED, ERROR)
+    # States that accept revision / review / retry.
+    ACTIONABLE = HUMAN_GATES + (STOPPED,)
     FINAL = (APPROVED, REJECTED)
 
     id = db.Column(db.Integer, primary_key=True)
@@ -182,8 +187,19 @@ class UtJob(db.Model):
     reviewed_by = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True)
     reviewed_at = db.Column(db.DateTime, nullable=True)
     review_note = db.Column(db.Text, nullable=False, default="")
+    # A stop request for a job whose worker is inside an external call
+    # (generation, WinAMS, model).  The worker honours it at the next step
+    # boundary, so the running call finishes and its evidence is recorded.
+    stop_requested_at = db.Column(db.DateTime, nullable=True)
+    stop_requested_by = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True)
 
     target = db.relationship("UtTarget", lazy="select")
+
+    @property
+    def superseded_by(self) -> int | None:
+        """The newer job of the same target, when this one is no longer its latest."""
+        latest = self.target.latest_job_id if self.target else None
+        return latest if latest and latest != self.id else None
 
     def to_dict(self, *, attempts: list | None = None) -> dict:
         entry = {
@@ -204,6 +220,8 @@ class UtJob(db.Model):
             "reviewed_by": self.reviewed_by,
             "reviewed_at": _iso(self.reviewed_at),
             "review_note": self.review_note,
+            "stop_requested": self.stop_requested_at is not None and self.state in self.ACTIVE,
+            "superseded_by": self.superseded_by,
         }
         if attempts is not None:
             entry["generation"] = self.generation

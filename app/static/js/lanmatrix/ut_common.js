@@ -22,7 +22,11 @@
     blocked: ["error", "环境阻塞"],
     error: ["failed", "异常"],
     approved: ["passed", "审核通过"],
-    rejected: ["cancelled", "审核驳回"]
+    rejected: ["cancelled", "审核驳回"],
+    stopped: ["cancelled", "已停止"],
+    /* Display-only: an active job whose stop request the worker has not
+       reached yet (it finishes the running WinAMS / model call first). */
+    stopping: ["running", "停止中"]
   };
   var VERDICT = {
     PASS: ["passed", "PASS"], FORMAT_OK: ["pending", "仅格式通过"],
@@ -33,6 +37,16 @@
   /* Machine outcomes that wait for a person. */
   var GATES = { awaiting_review: 1, needs_human: 1, blocked: 1, error: 1 };
 
+  /* The state to display: a pending stop request reads as 停止中. */
+  function jobState(job) {
+    return job.stop_requested && ACTIVE[job.state] ? "stopping" : job.state;
+  }
+  /* Accepts revision / review / retry: a gate or a stopped job, unless the
+     function was queued again (the server refuses superseded jobs). */
+  function actionable(job) {
+    return !!(job && (GATES[job.state] || job.state === "stopped") && !job.superseded_by);
+  }
+
   /* Segmented filters shared by 实施一览 and 任务与运行. `test` sees a state
    * (or null for a target that was never queued). */
   var FILTERS = {
@@ -42,6 +56,7 @@
     awaiting_review: function (s) { return s === "awaiting_review"; },
     needs_human: function (s) { return s === "needs_human"; },
     trouble: function (s) { return s === "blocked" || s === "error"; },
+    stopped: function (s) { return s === "stopped"; },
     approved: function (s) { return s === "approved"; },
     rejected: function (s) { return s === "rejected"; }
   };
@@ -147,7 +162,7 @@
 
   window.LMUt = {
     STATE: STATE, VERDICT: VERDICT, ORIGIN: ORIGIN, ACTIVE: ACTIVE, GATES: GATES,
-    FILTERS: FILTERS, esc: esc, statePill: statePill, applyState: applyState,
+    FILTERS: FILTERS, jobState: jobState, actionable: actionable, esc: esc, statePill: statePill, applyState: applyState,
     verdictPill: verdictPill, time: time, say: say, can: can, selectFilter: selectFilter,
     dashboardSnapshot: dashboardSnapshot, workspaceTask: workspaceTask, workspaceCells: workspaceCells
   };

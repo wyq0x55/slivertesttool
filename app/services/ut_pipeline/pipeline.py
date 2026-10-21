@@ -17,8 +17,12 @@
     human gates (awaiting_review, needs_human, blocked, error):
         upload revision → executing · approve → approved · reject → rejected
         retry (blocked, error) → executing | repairing
+    stop (any active state) → stopped, at the next step boundary
+        stopped accepts the human-gate actions; retry resumes it
 
-No machine outcome is final: every path ends at a human gate.
+No machine outcome is final: every path ends at a human gate.  A job whose
+target was queued again is superseded: it stays visible but read-only, and
+only the target's latest job counts as work.
 
 A missing case is an obligation the generator could not give a proven input
 row for (``gap_class`` MISSING_CASE in the completeness report).  The model
@@ -317,6 +321,12 @@ def run_generation(batch_id: int) -> list[int]:
     if batch is None or batch.status != UtBatch.STATUS_GENERATING:
         return []
     jobs = UtJob.query.filter_by(batch_id=batch_id, state=UtJob.QUEUED).all()
+    if not jobs:
+        # Every job was stopped before generation started.
+        batch.status = UtBatch.STATUS_DONE
+        batch.finished_at = _utcnow()
+        db.session.commit()
+        return []
     for job in jobs:
         job.state = UtJob.GENERATING
     db.session.commit()
@@ -359,6 +369,9 @@ def run_generation(batch_id: int) -> list[int]:
                                note=f"generation status {job.generation_status}")
         # The generator CSV is the baseline reference every revision must keep.
         job.reference_csv = attempt.csv_path
+        if job.stop_requested_at is not None:
+            _halt(job)
+            continue
         job.state = UtJob.EXECUTING
         ready.append(job.id)
     batch.status = UtBatch.STATUS_RUNNING
@@ -699,6 +712,10 @@ def advance_job(job_id: int) -> None:
         if job is None:
             return
         batch_id = job.batch_id
+        if job.state in UtJob.ACTIVE and job.stop_requested_at is not None:
+            _halt(job)
+            db.session.commit()
+            break
         if job.state == UtJob.EXECUTING:
             _execute_step(job)
         elif job.state == UtJob.REPAIRING:
@@ -711,14 +728,77 @@ def advance_job(job_id: int) -> None:
 # --------------------------------------------------------------------------- #
 # Human actions
 # --------------------------------------------------------------------------- #
-def _locked_job(project_id: int, job_id: int) -> UtJob:
+def _row_lock(project_id: int, job_id: int) -> UtJob:
     job = (UtJob.query.filter_by(id=job_id, project_id=project_id)
            .with_for_update(of=UtJob).populate_existing().first())
     if job is None:
         raise ServiceError("作业不存在", code="NOT_FOUND")
-    if job.state not in UtJob.HUMAN_GATES:
-        raise ServiceError(f"作业当前状态为 {job.state}，不接受该操作", code="INVALID_STATE")
     return job
+
+
+def _locked_job(project_id: int, job_id: int) -> UtJob:
+    job = _row_lock(project_id, job_id)
+    if job.state not in UtJob.ACTIONABLE:
+        raise ServiceError(f"作业当前状态为 {job.state}，不接受该操作", code="INVALID_STATE")
+    if job.superseded_by:
+        # Acting on an older candidate would sign off or rerun work the
+        # requester already replaced by queueing the function again.
+        raise ServiceError(f"该函数已有更新的作业 #{job.superseded_by}，旧作业只读",
+                           code="SUPERSEDED")
+    return job
+
+
+def _halt(job: UtJob) -> None:
+    """Park an active job the user asked to stop; candidate and evidence stay."""
+    job.state = UtJob.STOPPED
+    job.reason = "已按请求停止；当前候选、机器判定与修订记录均已保留，可继续或重新入队"
+
+
+def _resume(job: UtJob) -> None:
+    job.stop_requested_at = None
+    job.stop_requested_by = None
+
+
+def stop_job(project_id: int, job_id: int, user_id: int) -> UtJob:
+    """Stop one active job.
+
+    A queued job has no worker yet and stops at once.  A running one finishes
+    its current external call (the WinAMS run or model reply is evidence worth
+    keeping) and stops at the next step boundary.
+    """
+    job = _row_lock(project_id, job_id)
+    if job.state not in UtJob.ACTIVE:
+        raise ServiceError(f"作业当前状态为 {job.state}，没有可停止的运行", code="INVALID_STATE")
+    _request_stop(job, user_id)
+    db.session.commit()
+    return job
+
+
+def stop_batch(project_id: int, batch_id: int, user_id: int) -> dict[str, int]:
+    batch = UtBatch.query.filter_by(id=batch_id, project_id=project_id).first()
+    if batch is None:
+        raise ServiceError("批次不存在", code="NOT_FOUND")
+    jobs = (UtJob.query.filter(UtJob.batch_id == batch_id, UtJob.state.in_(UtJob.ACTIVE))
+            .with_for_update(of=UtJob).populate_existing().all())
+    if not jobs:
+        raise ServiceError("该批次没有运行中的作业", code="INVALID_STATE")
+    stopped = sum(_request_stop(job, user_id, batch_wide=True) for job in jobs)
+    db.session.commit()
+    return {"requested": len(jobs), "stopped": stopped, "stopping": len(jobs) - stopped}
+
+
+def _request_stop(job: UtJob, user_id: int, *, batch_wide: bool = False) -> int:
+    """Return 1 when the job stopped now, 0 when its worker will stop it."""
+    if job.stop_requested_at is None:
+        job.stop_requested_at = _utcnow()
+        job.stop_requested_by = user_id
+        audit.record("ut.job.stop", actor_id=user_id, object_type="ut_job", object_id=job.id,
+                     project_id=job.project_id, old_value={"state": job.state},
+                     new_value={"batch_id": job.batch_id, "batch_wide": batch_wide})
+    if job.state == UtJob.QUEUED:
+        _halt(job)
+        return 1
+    return 0
 
 
 def submit_revision(project_id: int, job_id: int, csv_bytes: bytes, user_id: int,
@@ -726,6 +806,7 @@ def submit_revision(project_id: int, job_id: int, csv_bytes: bytes, user_id: int
     if not csv_bytes:
         raise ServiceError("CSV 不能为空", code="VALIDATION_ERROR")
     job = _locked_job(project_id, job_id)
+    _resume(job)
     _new_attempt(job, UtAttempt.ORIGIN_HUMAN, csv_bytes, note=note, user_id=user_id)
     _gate(job, UtJob.EXECUTING)
     job.last_verdict = ""
@@ -760,6 +841,8 @@ def review(project_id: int, job_id: int, decision: str, user_id: int, note: str 
     job.reviewed_by = user_id
     job.reviewed_at = _utcnow()
     job.review_note = note
+    # The gate reason explained why the job waited; once decided it is stale.
+    job.reason = ""
     approved = job.state == UtJob.APPROVED
     audit.record("ut.job.approve" if approved else "ut.job.reject", actor_id=user_id,
                  object_type="ut_job", object_id=job.id, project_id=project_id,
@@ -773,11 +856,12 @@ def review(project_id: int, job_id: int, decision: str, user_id: int, note: str 
 
 def retry(project_id: int, job_id: int, user_id: Optional[int] = None) -> UtJob:
     job = _locked_job(project_id, job_id)
-    if job.state not in (UtJob.BLOCKED, UtJob.ERROR):
-        raise ServiceError("只有 blocked / error 状态的作业可以重试", code="INVALID_STATE")
+    if job.state not in (UtJob.BLOCKED, UtJob.ERROR, UtJob.STOPPED):
+        raise ServiceError("只有 blocked / error / stopped 状态的作业可以重试", code="INVALID_STATE")
     attempt = db.session.get(UtAttempt, job.current_attempt_id) if job.current_attempt_id else None
     if attempt is None:
-        raise ServiceError("生成阶段失败的作业请重新加入队列", code="INVALID_STATE")
+        raise ServiceError("生成阶段失败或停止的作业请重新加入队列", code="INVALID_STATE")
+    _resume(job)
     audit.record("ut.job.retry", actor_id=user_id, object_type="ut_job", object_id=job.id,
                  project_id=project_id, old_value={"state": job.state, "reason": job.reason})
     # An error during repair leaves a checked attempt that still wants rows

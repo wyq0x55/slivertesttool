@@ -32,6 +32,7 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
   root.dataset.project = "4";
   get("ut-detail").hidden = true;
   const details = [], previews = [], reviews = [], revisions = [], batches = [], sheets = [];
+  const stops = [];
   let failList = false, onPop;
   // Browsers always provide visibility events; timers are recorded so a test
   // can fire the next poll itself.
@@ -78,6 +79,7 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
       utAttemptUrl: (pid, job, attempt) => `/csv/${job}/${attempt}`,
       utReview(...args) { const d = deferred(); reviews.push({ ...d, args }); return d.promise; },
       utRevise(...args) { const d = deferred(); revisions.push({ ...d, args }); return d.promise; },
+      utStop(pid, id) { const d = deferred(); stops.push({ ...d, id }); return d.promise; },
     },
     LMUI: { alert: async () => {} },
     LMUrl: {
@@ -103,7 +105,7 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
       target: { closest: () => ({ dataset: { attempt: String(attempt), ...(act ? { act } : {}) } }) },
     });
   }
-  return { get, root, details, previews, reviews, revisions, batches, sheets, open, pin, click,
+  return { get, root, details, previews, reviews, revisions, batches, sheets, stops, open, pin, click,
     pop: (q) => onPop(q), failList: () => { failList = true; }, common: window.LMUt,
     document, docListeners, timers, calls };
 }
@@ -391,3 +393,78 @@ for (const [page, lists, counter] of [
     assert.ok(h.timers.length > scheduled, "which resumes polling");
   });
 }
+
+test("a stop request reads as 停止中 and only gates or stopped jobs accept actions", () => {
+  const { common } = harness();
+  assert.equal(common.jobState({ state: "executing", stop_requested: true }), "stopping");
+  assert.equal(common.jobState({ state: "needs_human", stop_requested: true }), "needs_human");
+  assert.equal(common.actionable({ state: "stopped" }), true);
+  assert.equal(common.actionable({ state: "needs_human", superseded_by: 9 }), false);
+  assert.equal(common.actionable({ state: "executing" }), false);
+});
+
+function listed(id, state, extra = {}) {
+  return { id, batch_id: 1, state, current_attempt_id: 10, repair_rounds: 0, max_repair_rounds: 5,
+    target: { function: "f" + id, source_rel: "src/a.c", source_name: "a.c" }, ...extra };
+}
+
+test("superseded jobs leave the working list until asked for", async () => {
+  const h = harness(undefined, "ut_tasks.js", { jobs: [
+    listed(3, "awaiting_review"), listed(2, "stopped"), listed(1, "needs_human", { superseded_by: 3 }),
+  ] });
+  await settle();
+  let rows = h.get("ut-rows").innerHTML;
+  assert.doesNotMatch(rows, /"ut-num">#1</);
+  assert.equal(h.get("ut-old-wrap").hidden, false);
+  assert.equal(h.get("ut-old-n").textContent, 1);
+  // A stopped job can be resumed from the list.
+  assert.match(rows, /title="继续"[^>]*data-retry="2"/);
+
+  const toggle = h.get("ut-show-old");
+  toggle.checked = true;
+  toggle.listeners.change.call(toggle);
+  rows = h.get("ut-rows").innerHTML;
+  assert.match(rows, /<tr class="is-stale"><td class="ut-num">#1</);
+  assert.match(rows, /已被 #3 取代/);
+  assert.doesNotMatch(rows, /data-retry="1"/);
+});
+
+test("an active job offers 停止 until its stop is requested", async () => {
+  const h = harness(undefined, "ut_tasks.js", { jobs: [
+    listed(5, "executing"), listed(4, "repairing", { stop_requested: true }),
+  ] });
+  await settle();
+  const rows = h.get("ut-rows").innerHTML;
+  assert.match(rows, /data-stop="5"/);
+  assert.doesNotMatch(rows, /data-stop="4"/);
+  assert.match(rows, /停止中/);
+});
+
+test("a superseded job opens read-only with a link to its replacement", async () => {
+  const h = harness();
+  await ready(h, { ...job(10, "needs_human"), superseded_by: 7 });
+  assert.equal(h.get("ut-d-superseded").hidden, false);
+  assert.match(h.get("ut-d-superseded").innerHTML, /data-open-job="7"/);
+  assert.equal(h.get("ut-d-gate-forms").hidden, true);
+  assert.equal(h.get("ut-d-retry").hidden, true);
+});
+
+test("a stopped job can be resumed, revised or reviewed; a running one can be stopped", async () => {
+  const h = harness();
+  await ready(h, job(10, "stopped"));
+  assert.equal(h.get("ut-d-gate-forms").hidden, false);
+  assert.equal(h.get("ut-d-retry").hidden, false);
+  assert.equal(h.get("ut-d-retry-label").textContent, "继续");
+  assert.equal(h.get("ut-d-stop").hidden, true);
+  assert.match(h.get("ut-d-gate-hint").textContent, /已停止/);
+
+  h.click("ut-d-refresh");
+  await settle();
+  h.details.at(-1).resolve(job(10, "executing"));
+  await settle();
+  assert.equal(h.get("ut-d-stop").hidden, false);
+  h.click("ut-d-stop");
+  await settle();
+  assert.deepEqual(h.stops.map((s) => s.id), [1]);
+});
+
