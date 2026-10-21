@@ -28,7 +28,7 @@ from ..ai import config as ai_config
 from ..ai import provider
 from . import increment
 
-PROMPT_VERSION = "ut-repair/7.0"
+PROMPT_VERSION = "ut-repair/7.1"
 # Bound the prompt: issue details are already truncated by ut-agent.
 _MAX_DETAIL_CHARS = 6000
 _MAX_DECISION_CHARS = 200
@@ -37,6 +37,9 @@ _GAP_CODE = "INPUT_OBLIGATION_UNRESOLVED"
 _MAX_PROMPT_CHARS = 96000
 _MAX_ROW_CHARS = 12000
 _MAX_HISTORY = 3
+# ut-agent gap reasons that concern outputs only (see _gap_reason).
+_ORACLE_PREFIX = "缺少期望值 oracle:"
+_INCOMPLETE = "semantic evaluation incomplete"
 
 
 @dataclass
@@ -112,9 +115,31 @@ def _gap_line(item: dict[str, Any]) -> str:
                    for c in item.get("constraints") or ()]
     if constraints:
         line += f" / 求解约束：{'; '.join(constraints)}"
-    if item.get("reason"):
-        line += f"：{item['reason'][:_MAX_DECISION_CHARS]}"
+    reason = _gap_reason(str(item.get("reason") or ""))
+    if reason:
+        line += f"：{reason}"
     return line
+
+
+def _gap_reason(reason: str) -> str:
+    """Keep the input-side cause; summarize output-oracle noise.
+
+    ut-agent lists every output without an expected value and every
+    evaluation left incomplete by them.  Expected values are settled by the
+    WinAMS capture, so they are no reason to decline an input row, yet on
+    real data they filled the whole truncated reason.
+    """
+    kept, oracles = [], 0
+    for part in (p.strip() for p in reason.split("; ")):
+        if part.startswith(_ORACLE_PREFIX):
+            oracles += 1
+        elif part and _INCOMPLETE not in part:
+            kept.append(part)
+    text = "; ".join(kept)[:_MAX_DECISION_CHARS]
+    if oracles:
+        note = f"另缺 {oracles} 个输出期望值（由 WinAMS 捕获回填，不是放弃补行的理由）"
+        text = f"{text}；{note}" if text else note
+    return text
 
 
 def _gaps_section(completeness: Optional[dict[str, Any]], open_gaps: list[dict[str, Any]]) -> str:
