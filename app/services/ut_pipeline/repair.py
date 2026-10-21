@@ -329,11 +329,15 @@ def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: by
     except (UnicodeDecodeError, increment.TableError) as exc:
         meta["error"] = f"当前 CSV 无法追加行：{exc}"
         return Revision(None, meta)
-    current_prefix = _make_prefix(constraints, target, table, check)
-    if prefix_snapshot is not None and prefix_snapshot != current_prefix:
+    prefix = _make_prefix(constraints, target, table, check)
+    # Drift is a change of evidence, not of rendering: the editable-column
+    # scope follows the round's check (a coverage error widens it), so the
+    # rendered prefix may differ round to round while the digest holds.
+    if prefix_snapshot is not None and (
+            prefix_snapshot.get("version") != prefix["version"]
+            or prefix_snapshot.get("evidence_sha256") != prefix["evidence_sha256"]):
         meta.update(error="固定提示词的基准、列或语义证据已变化，需重新生成并审核", code="PROMPT_PREFIX_CHANGED")
         return Revision(None, meta)
-    prefix = prefix_snapshot or current_prefix
     messages = [
         {"role": "system", "content": prefix["system"]},
         {"role": "user", "content": _user_prompt(target, table, check, execution, history,

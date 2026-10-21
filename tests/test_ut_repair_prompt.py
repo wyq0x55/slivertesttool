@@ -257,3 +257,26 @@ def test_unmapped_runtime_coverage_gap_keeps_full_input_scope():
     check = _scoped_check()
     check["issues"] = [{"code": "COVERAGE_C1_INCOMPLETE", "severity": "error"}]
     assert repair._editable_columns(table, check) is None
+
+
+def test_a_coverage_error_clearing_between_rounds_is_not_prefix_drift(monkeypatch):
+    # Round 1 has a coverage gap, so every input column is editable; once a
+    # row closes it the scope narrows to the typed operands. Same evidence.
+    csv = ('mod,"a.c/f","f",8,1\r\n#COMMENT,' + ",".join(f'"a.c/v{i}"' for i in range(8)) +
+           ',"a.c/f@@"\r\n,' + ",".join("0" * 8) + ",1\r\n").encode("cp932")
+    target = {"function": "f", "source_rel": "src/f.c"}
+    first = dict(_scoped_check(), issues=[{"code": "COVERAGE_C1_INCOMPLETE", "severity": "error"}])
+    second = dict(_scoped_check(), verdict="PASS", issues=[])
+    snapshot = repair.prompt_prefix(CONSTRAINTS, target, csv, first)
+    assert repair.prompt_prefix(CONSTRAINTS, target, csv, second)["function"] != snapshot["function"]
+    sent = []
+    monkeypatch.setattr(ai_config, "get_ai_config", lambda: {ai_config.KEY_MODEL: "m"})
+    monkeypatch.setattr(repair.provider, "invoke_chat",
+                        lambda messages, **k: sent.append(messages) or '{"rows": [], "declined": []}')
+    result = repair.revise(constraints=CONSTRAINTS, target=target, csv_bytes=csv, check=second,
+                           execution=None, history=[], open_gaps=[], allowed=set(),
+                           prefix_snapshot=snapshot)
+    assert result.meta.get("code") is None and len(sent) == 1
+    # The prompt shows the scope the validator enforces this round.
+    assert "I1 =" not in sent[0][1]["content"] and "I2 =" in sent[0][1]["content"]
+
