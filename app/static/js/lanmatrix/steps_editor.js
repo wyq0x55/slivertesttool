@@ -25,12 +25,17 @@
   }
 
   const EMPTY = { input_signals: [], expected_signals: [], steps: [] };
+  // A branch decision comment line (TestCsv); see _bindDecisionJump.
+  const DECISION_LINE = /^\s*(?:else\s+)?(?:if|switch|while|for)\s*\(/;
 
   // The Univer bundle is ~11 MB, so pages where the drawer is optional only
   // prefetch it through <link id="lm-univer-lazy" rel="prefetch" data-css=...>
   // and it is executed on the first open(). Resolves true once
   // window.LMUniverSteps exists; null when the page offers no bundle at all.
   let univerLoading = null;
+  // How long an open drawer waits for the bundle before using the built-in
+  // tables. A prefetched bundle executes in about a second.
+  const UNIVER_WAIT_MS = 15000;
   function loadUniverBundle() {
     if (global.LMUniverSteps) return Promise.resolve(true);
     if (univerLoading) return univerLoading;
@@ -437,6 +442,7 @@
           this.view = mgr.mount(this.host, {});
           this.engine = "univer";
           try { this._syncDark(); } catch (_e) {}
+          try { this._bindDecisionJump(); } catch (_e) {}
         } catch (e) {
           console.warn("Univer steps mount failed, using built-in editor:", e);
           this.view = null;
@@ -445,29 +451,73 @@
       }
     }
 
-    // Pages that only prefetch the Univer bundle open with the built-in tables
-    // and switch to the Univer view once the bundle has loaded. this.doc is
-    // kept current by the built-in tables, so nothing typed is lost; the switch
-    // is skipped while the user is typing and then happens on the next open().
-    _upgradeWhenLoaded(item) {
-      if (this.view) return;
+    // Pages that only prefetch the Univer bundle wait for it behind a short
+    // placeholder and then render straight into Univer. Rendering the built-in
+    // tables first and swapping them out a moment later read as the drawer
+    // turning into a different editor. A bundle that fails, or takes longer
+    // than UNIVER_WAIT_MS, falls back to the built-in tables. Returns true when
+    // it took over the first render.
+    _renderWhenLoaded(item) {
+      if (this.view) return false;
       const loading = loadUniverBundle();
-      if (!loading) return;
-      loading.then((ok) => {
-        if (!ok || this.view || this.item !== item || !this.dialog.open) return;
-        if (this.host.contains(document.activeElement)) return;
-        this._ensureView();
-        if (!this.view) return;
-        if (this._refData && typeof this.view.setRefData === "function") {
+      if (!loading) return false;
+      const token = {};
+      this._awaitingUniver = token;
+      this.host.innerHTML = '<div class="lm-steps-loading" role="status">正在加载表格编辑器…</div>';
+      const finish = (ok) => {
+        if (this._awaitingUniver !== token) return;   // already finished, or another open
+        this._awaitingUniver = null;
+        if (this.item !== item || !this.dialog.open) return;
+        if (ok) this._ensureView();
+        if (this.view && this._refData && typeof this.view.setRefData === "function") {
           try { this.view.setRefData(this._refData); } catch (_e) { /* best-effort */ }
         }
         this.render();
-        if (typeof this.view.resize === "function") {
+        if (this.view && typeof this.view.resize === "function") {
           requestAnimationFrame(() => {
             try { this.view.resize(); } catch (_e) { /* best-effort */ }
           });
         }
+      };
+      loading.then(finish);
+      setTimeout(() => finish(false), UNIVER_WAIT_MS);
+      return true;
+    }
+
+    // Clicking a branch decision comment ("if ( … )") jumps to the first input
+    // cell the host marked for that step: in a TestCsv those are the values the
+    // decision reads, often hundreds of columns to the right. Only decision
+    // lines jump, so outcome rows (TRUE / FALSE) stay editable comments; a
+    // sheet without input marks (every Silver steps table) never moves.
+    _bindDecisionJump() {
+      const view = this.view;
+      const api = view && view.univerAPI;
+      if (!api || !api.Event || !api.Event.CellClicked || typeof api.addEvent !== "function") return;
+      this._jumpListener = api.addEvent(api.Event.CellClicked, (p) => {
+        try { this._jumpFromDecision(p && p.row); } catch (_e) { /* best-effort */ }
       });
+    }
+
+    _jumpFromDecision(row) {
+      const view = this.view;
+      if (!view || typeof row !== "number") return;
+      const commentRows = Array.from(view.commentRows || []);
+      const stepRows = view.stepRows || [];
+      if (commentRows.indexOf(row) < 0) return;
+      const sheet = view.univerAPI.getActiveWorkbook().getActiveSheet();
+      if (!DECISION_LINE.test(String(sheet.getRange(row, 0).getValue() || ""))) return;
+      // A comment row belongs to the step whose value row follows it.
+      const step = stepRows.findIndex((stepRow) => stepRow > row);
+      if (step < 0) return;
+      const inputs = (this.viewOpts.marks || [])
+        .filter((m) => m.step === step && m.kind === "input").map((m) => m.index);
+      if (!inputs.length) return;
+      const left = ((view.layout && view.layout.left) || []).length;
+      const col = left + Math.min.apply(null, inputs);
+      sheet.getRange(stepRows[step], col).activate();
+      // activate() moves the selection, not the viewport: bring the column in,
+      // with a few columns of context and the decision row still on screen.
+      if (typeof sheet.scrollToCell === "function") sheet.scrollToCell(Math.max(row - 1, 1), Math.max(col - 3, 0));
     }
 
     // Sync the Univer steps sheet to the app's light|dark theme. Univer 0.25's
@@ -500,6 +550,10 @@
       if (this._darkObserver) {
         try { this._darkObserver.disconnect(); } catch (_e) { /* best-effort */ }
         this._darkObserver = null;
+      }
+      if (this._jumpListener) {
+        try { this._jumpListener.dispose(); } catch (_e) { /* best-effort */ }
+        this._jumpListener = null;
       }
       if (this.view) {
         try {
@@ -824,8 +878,7 @@
       // setDoc() (called by render()) resets the sheet + table geometry, so the
       // reused view renders this item correctly without a costly re-create.
       this._ensureView();
-      this.render();
-      this._upgradeWhenLoaded(item);
+      if (!this._renderWhenLoaded(item)) this.render();
       // The dialog is display:none while closed, so a reused Univer canvas may
       // have been laid out against a zero-size host. Nudge a relayout once the
       // re-shown dialog has non-zero size so the grid paints on reopen.
@@ -877,6 +930,9 @@
       // Univer view owns the dialog body: hand it the doc and stop (never wipe
       // its canvas with innerHTML).
       if (this.view) { this.view.setDoc(this.doc, this.viewOpts); return; }
+      // Waiting for the Univer bundle: this.doc stays current and is rendered
+      // once the wait ends, so nothing flashes the built-in tables meanwhile.
+      if (this._awaitingUniver) return;
       const layout = Object.assign({}, DEFAULT_LAYOUT, this.viewOpts.layout || {});
       this.host.innerHTML =
         (layout.signalSheets && !this.viewOpts.readOnly
