@@ -41,8 +41,8 @@
       '<td><input type="checkbox" data-target="' + t.id + '"' +
       (selected.has(t.id) ? " checked" : "") + (selectable(t) ? "" : " disabled") + "></td>" +
       '<td class="ut-num">' + esc(t.row_no) + "</td>" +
-      "<td><code>" + esc(t.function) + "</code></td>" +
-      '<td class="ut-src" title="' + esc(t.source_rel) + '">' + esc(t.source_name) + "</td>" +
+      "<td><code>" + esc(t.function) + "</code>" +
+        '<div class="ut-src submuted" title="' + esc(t.source_rel) + '">' + esc(t.source_name) + "</div></td>" +
       "<td>" + U.statePill(j && j.state, tip) + "</td>" +
       "<td>" + U.verdictPill(j && j.last_verdict) + "</td>" +
       '<td class="ut-num">' + (j ? esc(j.repair_rounds) : "—") + "</td>" +
@@ -61,7 +61,7 @@
       " · 审核通过 " + (counts.approved || 0);
     var rows = targets.filter(visible);
     $("ut-rows").innerHTML = rows.length ? rows.map(row).join("") :
-      '<tr><td colspan="8" class="muted">' + (targets.length ? "没有符合条件的函数" :
+      '<tr><td colspan="7" class="muted">' + (targets.length ? "没有符合条件的函数" :
         "尚未读取索引：确认项目绑定后点击「重新读取索引」") + "</td></tr>";
     var boxes = rows.filter(selectable);
     $("ut-all").checked = boxes.length > 0 && boxes.every(function (t) { return selected.has(t.id); });

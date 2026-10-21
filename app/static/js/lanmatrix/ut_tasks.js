@@ -73,9 +73,9 @@
       return "<tr>" +
         '<td class="ut-num">#' + j.id + "</td>" +
         '<td class="lm-cell-testid"><a href="?job=' + j.id + '" data-job="' + j.id + '"><code>' +
-          esc(t.function || "") + "</code></a></td>" +
-        '<td class="ut-src" title="' + esc(t.source_rel || "") + '">' + esc(t.source_name || "") + "</td>" +
-        '<td class="ut-num">#' + j.batch_id + "</td>" +
+          esc(t.function || "") + "</code></a>" +
+          '<div class="ut-src submuted" title="' + esc(t.source_rel || "") + '">' +
+          esc(t.source_name || "") + " · 批次 #" + j.batch_id + "</div></td>" +
         "<td>" + U.statePill(j.state) + "</td>" +
         "<td>" + U.verdictPill(j.last_verdict) + "</td>" +
         '<td class="ut-num">' + j.repair_rounds + " / " + j.max_repair_rounds + "</td>" +
@@ -83,7 +83,7 @@
         '<td class="lm-row-actions"><span class="row-acts">' +
         iconButton(U.GATES[j.state] ? "审核" : "查看", ICO.view, 'data-job="' + j.id + '"') +
         retry + download + "</span></td></tr>";
-    }).join("") : '<tr><td colspan="9" class="muted">' +
+    }).join("") : '<tr><td colspan="7" class="muted">' +
       (jobs.length ? "没有符合条件的作业" : "还没有作业：在「实施一览」勾选函数后加入队列") + "</td></tr>";
   }
 
@@ -144,17 +144,25 @@
   }
 
   // ---------------------------------------------------------------- detail
+  // Engine codes (COVERAGE_C0_INCOMPLETE) have no break opportunity of their
+  // own; one per line, breakable after each underscore, so the column does not
+  // push the table past a laptop-width panel.
+  function wrapCode(text) { return esc(text).replace(/([_/])/g, "$1<wbr>"); }
   function topIssues(check) {
     if (!check) return "—";
     return (check.issues || []).filter(function (i) { return i.severity === "error"; })
-      .slice(0, 3).map(function (i) { return i.code; }).join(", ") || "—";
+      .slice(0, 3).map(function (i) { return "<div>" + wrapCode(i.code) + "</div>"; }).join("") || "—";
   }
+  // One metric per line, each kept whole: joined into a sentence the column
+  // squeezed "C0 100% / C1 100% / MCDC 100%" into a seven-line sliver.
   function coverage(execution) {
     var c = execution && execution.coverage;
     if (!c) return "—";
-    return ["c0", "c1", "mcdc"].map(function (k) {
-      return k.toUpperCase() + " " + (c[k] == null || c[k] < 0 ? "—" : c[k] + "%");
-    }).join(" / ");
+    return '<div class="ut-cov-mini">' + [["c0", "C0"], ["c1", "C1"], ["mcdc", "MC/DC"]].map(function (k) {
+      var v = c[k[0]], measured = typeof v === "number" && v >= 0;
+      return '<span class="' + (!measured ? "is-missing" : v >= 100 ? "is-full" : "is-gap") +
+        '"><b>' + k[1] + "</b> " + (measured ? esc(v + "%") : "—") + "</span>";
+    }).join("") + "</div>";
   }
   // The linked build ut-agent chose for this run (map evidence), by folder name.
   function stubBuild(execution) {
@@ -163,11 +171,14 @@
     return '<div class="submuted" title="' + esc(s.selected) + '">构建 ' +
       esc(String(s.selected).split(/[\\/]/).pop()) + "</div>";
   }
+  // The qualifier (source version, model name) goes on a muted second line so
+  // the column stays as narrow as the origin word itself.
   function originOf(a) {
     var r = a.reviser || {};
-    var o = U.ORIGIN[a.origin] || a.origin;
-    if (a.origin === "CAPTURE" && r.from_attempt) return o + "（第 " + r.from_attempt + " 版）";
-    return a.origin === "LLM" && r.model ? o + "（" + r.model + "）" : o;
+    var o = esc(U.ORIGIN[a.origin] || a.origin);
+    var detail = a.origin === "CAPTURE" && r.from_attempt ? "来自第 " + r.from_attempt + " 版"
+      : a.origin === "LLM" && r.model ? r.model : "";
+    return detail ? o + '<div class="submuted">' + wrapCode(detail) + "</div>" : o;
   }
   // A model round only appends input rows; say what it added, what the
   // platform refused and what it declined before its own rationale.
@@ -243,12 +254,12 @@
           iconLink("下载 CSV", ICO.download, LMApi.utAttemptUrl(pid, job.id, a.id))
         : "";
       return '<tr data-attempt="' + a.id + '"' + (isCurrent ? ' class="is-current" title="当前版本"' : "") + ">" +
-        '<td class="ut-num">' + a.seq + "</td><td>" + esc(originOf(a)) + "</td>" +
+        '<td class="ut-num">' + a.seq + "</td><td>" + originOf(a) + "</td>" +
         "<td>" + (a.verdict ? U.verdictPill(a.verdict) :
           (U.ACTIVE[job.state] ? U.statePill("executing") : "—")) + "</td>" +
-        "<td>" + esc(topIssues(a.check)) + "</td><td>" + esc(coverage(a.execution)) +
+        '<td class="ut-att-issues">' + topIssues(a.check) + "</td><td>" + coverage(a.execution) +
           stubBuild(a.execution) + "</td>" +
-        '<td title="' + esc(note) + '">' + esc(note.slice(0, 60)) + "</td>" +
+        '<td class="ut-att-note" title="' + esc(note) + '">' + esc(note.slice(0, 60)) + "</td>" +
         '<td class="lm-cell-time"><code>' + esc(U.time(a.created_at)) + "</code></td>" +
         '<td class="lm-row-actions"><span class="row-acts">' + acts + "</span></td></tr>";
     }).join("") || '<tr><td colspan="8" class="muted">尚无版本</td></tr>';
@@ -405,7 +416,7 @@
     function table(items) {
       return '<table class="ut-issue-table' + (extraClass ? " " + extraClass : "") +
         '"><thead><tr>' + keys.map(function (k) {
-        return "<th>" + esc(DETAIL_KEYS[k] || k) + "</th>";
+        return '<th class="k-' + esc(k) + '">' + esc(DETAIL_KEYS[k] || k) + "</th>";
       }).join("") + "</tr></thead><tbody>" + body(items) + "</tbody></table>";
     }
     var head = list.slice(0, PREVIEW_ROWS), rest = list.slice(PREVIEW_ROWS);

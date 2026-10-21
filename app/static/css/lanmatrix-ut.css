@@ -17,6 +17,9 @@
 .ut-table td code{ font-size:12px; }
 .ut-table .pill{ white-space:nowrap; }
 .ut-table .ut-src{ max-width:260px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+/* Under the function name (实施一览, job list): one column instead of two or
+   three keeps the trailing columns and row actions on screen at laptop width. */
+.ut-table div.ut-src{ margin-top:2px; font-size:12px; }
 .ut-table tr.is-stale td{ color:var(--text-3); }
 .ut-table .ut-num{ font-variant-numeric:tabular-nums; color:var(--text-2); }
 .ut-table td.ut-act{ text-align:right; white-space:nowrap; }
@@ -37,6 +40,20 @@
 .ut-attempts tbody tr.is-shown td{ background:var(--brand-soft); }
 .ut-attempts tbody tr.is-shown td:first-child{ box-shadow:inset 3px 0 0 var(--brand); }
 .ut-attempts td:nth-child(2){ white-space:nowrap; }
+.ut-attempts td:nth-child(2) .submuted{ font-size:12px; white-space:normal; min-width:8em; }
+/* Notes quote engine codes (NEEDS_REVIEW, ORACLE_MISMATCH) with no break
+   opportunity; let them break so this column, not the table, absorbs width. */
+.ut-att-issues{ font-family:var(--mono); font-size:12px; color:var(--text-2); }
+.ut-att-issues div{ min-width:15ch; }  /* ORACLE_MISMATCH whole; longer codes break at "_" */
+.ut-attempts .ut-att-note{ min-width:120px; overflow-wrap:anywhere; }
+/* Date over time: the width a one-line timestamp takes is what the issue
+   codes and notes beside it need. */
+.ut-attempts .lm-cell-time code{ display:inline-block; width:min-content; white-space:normal; text-align:center; line-height:1.4; }
+.ut-cov-mini{ display:flex; flex-direction:column; font-size:12px; line-height:1.5; font-variant-numeric:tabular-nums; }
+.ut-cov-mini span{ white-space:nowrap; color:var(--text-2); }
+.ut-cov-mini b{ display:inline-block; min-width:3.6em; font-weight:500; color:var(--text-3); }
+.ut-cov-mini .is-gap{ color:var(--danger-text); }
+.ut-cov-mini .is-missing{ color:var(--warn-text); }
 
 /* 校验问题: one card per issue, its evidence as a table / chips, not raw JSON */
 .ut-issue-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px; }
@@ -59,13 +76,20 @@
 .ut-issue-table td{ padding:4px 10px 4px 0; border-bottom:1px solid var(--border); font-variant-numeric:tabular-nums;
   max-width:420px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ut-issue-table code{ font-size:12px; }
+/* Fixed layout splits width evenly; short values (row numbers, 0/1 oracle
+   values) do not need a quarter of it while the signal name beside them is cut. */
+.ut-issue-table th.k-row{ width:64px; }
+.ut-issue-table th:is(.k-before, .k-after, .k-expected, .k-actual){ width:16%; }
 /* Input-completeness gaps: the decision is what a reviewer reads, so it gets the room and wraps. */
-.ut-gap-table th:nth-child(1){ width:12%; }
-.ut-gap-table th:nth-child(2){ width:17%; }
-.ut-gap-table th:nth-child(3){ width:15%; }
-.ut-gap-table th:nth-child(4){ width:26%; }
-.ut-gap-table th:nth-child(5){ width:8%; }
-.ut-gap-table td:nth-child(4), .ut-gap-table td:nth-child(6){ white-space:normal; overflow-wrap:anywhere; }
+.ut-gap-table th:nth-child(1){ width:11%; }
+.ut-gap-table th:nth-child(2){ width:18%; }
+.ut-gap-table th:nth-child(3){ width:16%; }
+.ut-gap-table th:nth-child(4){ width:25%; }
+.ut-gap-table th:nth-child(5){ width:11%; }
+/* Every field here is part of the decision (which obligation, what kind, why
+   the solver gave up), so cells wrap instead of being cut to "b6:bou…". */
+.ut-gap-table td{ white-space:normal; overflow-wrap:anywhere; vertical-align:top; }
+.ut-gap-table td:nth-child(5){ overflow-wrap:normal; }  /* UNKNOWN / UNSAT stay whole */
 .ut-gap{ display:inline-block; padding:1px 8px; border-radius:999px; font-size:11.5px; white-space:nowrap; }
 .ut-gap.is-case{ background:var(--danger-soft); color:var(--danger-text); }
 .ut-gap.is-evidence{ background:var(--warn-soft); color:var(--warn-text); }
