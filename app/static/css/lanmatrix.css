@@ -2,7 +2,7 @@
 .lm-body { background: var(--surface); color: var(--text); }
 .lm-navbar { background: var(--brand); }
 .lm-navbar .brand, .lm-navbar .nav-links a { color: var(--brand-soft); }
-.lm-user { color: var(--brand); margin-left: 12px; }
+.lm-user { color: var(--brand-text); margin-left: 12px; }
 /* <main> landmark wrapper around the page content. display:contents keeps it
    transparent to layout, so the editor / list pages lay out exactly as before
    while still exposing a single main landmark for a11y. */
@@ -30,7 +30,7 @@
    (PART 16 + PART 16b), which loads after this file and already overrode every one
    of them. The copies removed here were not just dead — they encoded a botched
    token remap that painted neutral borders and secondary text in the BRAND colour
-   (`.lm-muted{color:var(--brand)}`), gave `.lm-table` invisible `var(--surface)`
+   (`.lm-muted{color:var(--brand-text)}`), gave `.lm-table` invisible `var(--surface)`
    borders, and defined no-op hovers. Do not re-add them here. The badge pair
    (lm-badge / lm-status-*) went further and was retired outright in Phase 8;
    the surviving vocabulary is .pill / .st-* (design-system.css PART 4). */
@@ -61,7 +61,7 @@
 .lm-side-toggle:hover { background: rgba(255,255,255,.12); }
 .lm-side-nav { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; }
 .lm-side-cap { padding: 8px 10px 2px; font-size: 11px; letter-spacing: .04em;
-  text-transform: uppercase; color: var(--brand); white-space: nowrap; }
+  text-transform: uppercase; color: var(--brand-text); white-space: nowrap; }
 .lm-side-sep { height: 1px; background: rgba(255,255,255,.10); margin: 8px 6px; }
 .lm-side-link { display: flex; align-items: center; gap: 10px; padding: 9px 10px;
   border-radius: 7px; color: var(--brand-soft); text-decoration: none; white-space: nowrap;
@@ -71,7 +71,7 @@
 .lm-side-tx { overflow: hidden; text-overflow: ellipsis; }
 .lm-side-bottom { border-top: 1px solid rgba(255,255,255,.10); padding-top: 8px; margin-top: 4px; }
 .lm-side-user { display: flex; align-items: center; gap: 10px; padding: 6px 10px;
-  font-size: 13px; color: var(--brand); white-space: nowrap; }
+  font-size: 13px; color: var(--brand-text); white-space: nowrap; }
 /* Collapsed rail: icons only. */
 .lm-side--collapsed .lm-side-tx,
 .lm-side--collapsed .lm-side-cap { display: none; }
@@ -103,7 +103,7 @@ html:has(.lm-editor), body:has(.lm-editor) { height: 100%; overflow: hidden; }
   border-bottom: 1px solid var(--border); }
 .lm-sheet-tabs[hidden] { display: none; }
 .lm-sheet-tab { padding: 6px 16px; border: 1px solid var(--border); border-bottom: none;
-  border-radius: 6px 6px 0 0; background: var(--surface); color: var(--brand); cursor: pointer;
+  border-radius: 6px 6px 0 0; background: var(--surface); color: var(--brand-text); cursor: pointer;
   font-size: 13px; }
 .lm-sheet-tab.active { background: var(--surface); color: var(--text); font-weight: 600;
   box-shadow: inset 0 2px 0 var(--brand); }
@@ -112,7 +112,7 @@ html:has(.lm-editor), body:has(.lm-editor) { height: 100%; overflow: hidden; }
    living INSIDE Univer's native footer (compact, transparent, on one line). The
    fallback grid reveals it as a thin bottom bar via .lm-footer-slot--bottom. */
 .lm-footer-slot { display: flex; gap: 12px; align-items: center; font-size: 12px;
-  color: var(--brand); white-space: nowrap; padding: 0 10px; }
+  color: var(--brand-text); white-space: nowrap; padding: 0 10px; }
 .lm-footer-slot[hidden] { display: none; }
 .lm-footer-slot--bottom { padding: 6px 16px; background: var(--surface);
   border-top: 1px solid var(--border); font-size: 13px; }
@@ -142,10 +142,22 @@ footer:has(> .lm-univer-footerpager) > section {
    the centred tabs — status group on the left, action group on the right — so
    the app controls share Univer's own top bar on the SAME line as the tabs.
    Kept compact so they never exceed the 36px row (header clips overflow). */
-.lm-univer-tbslot { position: absolute; top: 0; height: 36px; display: flex;
-  align-items: center; gap: 8px; z-index: 11; }
-.lm-univer-tbslot--left { left: 12px; }
-.lm-univer-tbslot--right { right: 12px; }
+.lm-univer-tbslot { min-height: 36px; display: flex; align-items: center; gap: 8px; z-index: 11; }
+/* The slots used to be absolutely docked over the tab row. Once the row tools
+   joined the right group it grew wider than the space beside the centred tabs
+   and covered 开始/公式/数据 (and, on a laptop, the project title too). The
+   headerbar is now a grid: [status | tabs | actions] on the first row, the
+   ribbon tools on the second, so nothing can overlap; when the actions do not
+   fit they wrap inside their own cell and the row grows instead. */
+header[data-u-comp="headerbar"]:has(> .lm-univer-tbslot) {
+  display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: center; }
+header[data-u-comp="headerbar"]:has(> .lm-univer-tbslot) > * { grid-column: 1 / -1; }
+header[data-u-comp="headerbar"] > .lm-univer-tbslot--left { grid-column: 1; grid-row: 1; padding-left: 12px; }
+header[data-u-comp="headerbar"] > [data-u-comp="ribbon-header-menu"] { grid-column: 2; grid-row: 1; padding: 0 8px; }
+header[data-u-comp="headerbar"] > .lm-univer-tbslot--right { grid-column: 3; grid-row: 1;
+  justify-content: flex-end; flex-wrap: wrap; row-gap: 4px; padding: 4px 12px 4px 0; }
+header[data-u-comp="headerbar"] > .lm-univer-tbslot--right .lm-tb-right { display: flex; flex-wrap: wrap;
+  justify-content: flex-end; align-items: center; gap: 6px; row-gap: 4px; flex: 1 1 auto; min-width: 0; }
 .lm-univer-tbslot .lm-tb-left,
 .lm-univer-tbslot .lm-tb-right { flex: 0 0 auto; }
 /* Shrink the adopted controls to fit the slim tab row. */
@@ -161,7 +173,7 @@ footer:has(> .lm-univer-footerpager) > section {
   height: 22px; border: 1px solid var(--border); border-radius: 6px; overflow: visible;
   background: var(--surface); }
 .lm-kubun-arrow { width: 24px; height: 20px; border: none; background: transparent;
-  color: var(--brand); cursor: pointer; font-size: 14px; line-height: 1; padding: 0; }
+  color: var(--brand-text); cursor: pointer; font-size: 14px; line-height: 1; padding: 0; }
 .lm-kubun-arrow:first-child { border-right: 1px solid var(--border); }
 .lm-kubun-arrow:last-child { border-left: 1px solid var(--border); }
 .lm-kubun-arrow:hover:not(:disabled) { background: var(--surface); color: var(--text); }
@@ -186,7 +198,7 @@ footer:has(> .lm-univer-footerpager) > section {
 .lm-grid .lm-selcol { min-width: 30px; width: 30px; text-align: center; background: var(--surface);
   position: sticky; left: 0; z-index: 1; padding: 4px; cursor: pointer; }
 .lm-grid thead th.lm-selcol { z-index: 3; }
-.lm-grid .lm-rownum { min-width: 40px; text-align: right; color: var(--brand); background: var(--surface);
+.lm-grid .lm-rownum { min-width: 40px; text-align: right; color: var(--brand-text); background: var(--surface);
   position: sticky; left: 30px; cursor: pointer; user-select: none; }
 .lm-grid tbody tr.lm-row-selected > td { background: var(--brand-soft); }
 .lm-grid tbody tr.lm-row-selected > .lm-selcol,
@@ -194,7 +206,7 @@ footer:has(> .lm-univer-footerpager) > section {
 .lm-row-sel, .lm-sel-all { cursor: pointer; }
 .lm-cell { white-space: pre-wrap; word-break: break-word; }
 .lm-cell[contenteditable]:focus { outline: 2px solid var(--brand); background: var(--brand-soft); }
-.lm-ro { background: var(--surface); color: var(--brand); }
+.lm-ro { background: var(--surface); color: var(--brand-text); }
 .lm-saving { background: var(--warn-soft); }
 .lm-saved { background: var(--ok-soft); }
 .lm-cell-error { background: var(--danger-soft); box-shadow: inset 0 0 0 2px var(--danger); }
@@ -219,7 +231,7 @@ select.lm-cell-control[multiple] { min-height: 46px; }
 .lm-queue-row:last-child { border-bottom: none; }
 .lm-queue-row:hover { background: var(--brand-soft); }
 .lm-queue-row input[type=checkbox] { margin-top: 3px; }
-.lm-queue-row .lm-queue-tid { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--brand); font-weight: 600; }
+.lm-queue-row .lm-queue-tid { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--brand-text); font-weight: 600; }
 .lm-queue-row .lm-queue-desc { color: var(--text-2); font-size: 13px; }
 .lm-queue-res { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 3px;
   font-size: 11px; font-weight: 600; line-height: 18px; vertical-align: middle; color: var(--text); }
@@ -250,7 +262,7 @@ select.lm-cell-control[multiple] { min-height: 46px; }
 .lm-toolbar-rowops { padding: 6px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
 .lm-toolbar-rowops .lm-hint { font-size: 12px; }
 /* .btn[disabled] now lives with the rest of .btn in design-system.css. */
-#lm-sel-info { margin-left: 6px; font-weight: 600; color: var(--brand); }
+#lm-sel-info { margin-left: 6px; font-weight: 600; color: var(--brand-text); }
 
 .lm-ctxmenu { position: fixed; z-index: 1000; margin: 0; padding: 4px 0; list-style: none;
   min-width: 168px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
@@ -263,7 +275,7 @@ select.lm-cell-control[multiple] { min-height: 46px; }
 .lm-actcol { white-space: nowrap; text-align: center; }
 .lm-actcol .btn { margin: 0 2px; }
 .lm-steps-btn { padding: 1px 8px; }
-.lm-del-btn { padding: 1px 8px; color: var(--danger); border-color: var(--danger-soft); }
+.lm-del-btn { padding: 1px 8px; color: var(--danger-text); border-color: var(--danger-soft); }
 .lm-del-btn:hover { background: var(--danger-soft); }
 
 /* The step-detail editor is a bottom drawer (with a Full-Screen toggle). It is
@@ -395,7 +407,7 @@ body.lm-refpanel-resizing { cursor: col-resize; user-select: none; }
 .lm-ref-item.is-copyfail { background: var(--danger-soft); border-color: var(--danger); }
 .lm-ref-title { display: flex; color: var(--text-2); justify-content: space-between; align-items: center;
   gap: 8px; font-weight: 600; font-size: 13px; word-break: break-all; }
-.lm-ref-copy { flex: 0 0 auto; font-weight: 400; font-size: 11px; color: var(--brand); }
+.lm-ref-copy { flex: 0 0 auto; font-weight: 400; font-size: 11px; color: var(--brand-text); }
 .lm-ref-sub { font-size: 12px; color: var(--text-2); margin-top: 2px; word-break: break-all; }
 .lm-ref-note { font-size: 11px; color: var(--text-3); margin-top: 2px;
   white-space: pre-wrap; word-break: break-word; }
@@ -454,7 +466,7 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
   border-radius: 10px; padding: 14px 16px; }
 .lm-db-info { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; margin-bottom: 16px; }
 .lm-db-kv { display: flex; flex-direction: column; font-size: 13px; }
-.lm-db-kv > span { color: var(--brand); font-size: 12px; }
+.lm-db-kv > span { color: var(--brand-text); font-size: 12px; }
 .lm-db-kv > b { word-break: break-all; }
 .lm-db-kv-wide { grid-column: 1 / -1; }
 .lm-db-tables-wrap { max-height: 420px; overflow: auto; }
@@ -462,13 +474,13 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
 .lm-db-tables .lm-db-tname { font-family: ui-monospace, Menlo, Consolas, monospace; }
 .lm-db-console-tools { display: flex; justify-content: space-between; align-items: center;
   gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
-.lm-db-ro { font-size: 13px; color: var(--brand); display: flex; align-items: center; gap: 6px; }
+.lm-db-ro { font-size: 13px; color: var(--brand-text); display: flex; align-items: center; gap: 6px; }
 .lm-db-sql { width: 100%; min-height: 120px; box-sizing: border-box; resize: vertical;
   font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; line-height: 1.5;
   border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
 .lm-db-sql:focus { outline: 2px solid var(--brand); }
 .lm-db-write-warn { margin-top: 8px; padding: 8px 12px; border-radius: 6px;
-  background: var(--warn-soft); color: var(--warn); font-size: 13px; }
+  background: var(--warn-soft); color: var(--warn-text); font-size: 13px; }
 .lm-db-result-meta { margin: 10px 0 6px; font-size: 13px; }
 .lm-db-result-wrap { max-height: 460px; overflow: auto; border: 1px solid var(--surface); border-radius: 8px; }
 .lm-db-result { font-size: 13px; }
@@ -479,7 +491,7 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
 
 /* --- DB admin: tabs + no-SQL table browser (v2.11.0) ----------------- */
 .lm-db-tabs { display: inline-flex; gap: 4px; margin-left: 16px; }
-.lm-db-tab { border: 1px solid var(--border); background: var(--surface); color: var(--brand);
+.lm-db-tab { border: 1px solid var(--border); background: var(--surface); color: var(--brand-text);
   padding: 5px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; }
 .lm-db-tab.is-active { background: var(--brand); color: #fff; border-color: var(--brand); }
 .lm-db-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -498,7 +510,7 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
   gap: 0; min-height: 0; overflow: hidden; }
 .lm-db-tablelist { border-right: 1px solid var(--border); background: var(--surface); overflow: auto; }
 .lm-db-tablelist-head { padding: 10px 14px; font-weight: 600; font-size: 13px;
-  color: var(--brand); border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); }
+  color: var(--brand-text); border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); }
 .lm-db-tablelist ul { list-style: none; margin: 0; padding: 0; }
 .lm-db-tnav-btn { width: 100%; display: flex; justify-content: space-between; align-items: center;
   gap: 8px; border: none; background: none; padding: 8px 14px; cursor: pointer; text-align: left;
@@ -506,7 +518,7 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
 .lm-db-tnav-btn:hover { background: var(--surface); }
 .lm-db-tnav-btn.is-active { background: var(--brand-soft); font-weight: 600; }
 .lm-db-tnav-name { font-family: ui-monospace, Menlo, Consolas, monospace; word-break: break-all; }
-.lm-db-tnav-rows { color: var(--brand); font-size: 12px; }
+.lm-db-tnav-rows { color: var(--brand-text); font-size: 12px; }
 
 .lm-db-tableview { display: flex; flex-direction: column; min-width: 0; overflow: hidden; padding: 12px 16px; }
 .lm-db-tableview-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
@@ -519,7 +531,7 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
 .lm-db-grid thead th { position: sticky; top: 0; z-index: 1; }
 .lm-db-sortable { cursor: pointer; user-select: none; }
 .lm-db-sortable:hover { background: var(--brand-soft); }
-.lm-db-pk { color: var(--warn); }
+.lm-db-pk { color: var(--warn-text); }
 .lm-db-opcol { white-space: nowrap; text-align: center; font-family: inherit; }
 .lm-db-opcol .btn { margin: 0 2px; }
 .lm-db-tv-foot { display: flex; gap: 16px; align-items: center; padding-top: 8px; }
@@ -528,17 +540,17 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
   max-height: 60vh; overflow: auto; }
 .lm-db-field-row { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 .lm-db-field-label { display: flex; flex-direction: column; }
-.lm-db-field-label em { color: var(--brand); font-style: normal; font-size: 11px; }
+.lm-db-field-label em { color: var(--brand-text); font-style: normal; font-size: 11px; }
 .lm-db-field { width: 100%; box-sizing: border-box; font-family: ui-monospace, Menlo, Consolas, monospace; }
 .lm-db-field-ta { min-height: 56px; resize: vertical; }
-.lm-db-field:disabled { background: var(--surface); color: var(--brand); }
+.lm-db-field:disabled { background: var(--surface); color: var(--brand-text); }
 @media (max-width: 720px) { .lm-db-row-form { grid-template-columns: 1fr; } }
 
 /* --- Admin console + per-project tasks / members (v2.12.0) ------------ */
 .lm-subnav { display: inline-flex; gap: 6px; }
 .lm-inline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
 .lm-grow { flex: 1; min-width: 200px; }
-.btn-danger { border-color: var(--danger-soft); color: var(--danger); }
+.btn-danger { border-color: var(--danger-soft); color: var(--danger-text); }
 .btn-danger:hover { background: var(--danger-soft); }
 .lm-row-actions { white-space: nowrap; }
 .lm-row-actions .btn { margin: 0 2px; }
@@ -550,7 +562,7 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
 
 /* Console tabs. */
 .lm-tabs { display: inline-flex; gap: 4px; margin: 8px 0 16px; }
-.lm-tab { border: 1px solid var(--border); background: var(--surface); color: var(--brand);
+.lm-tab { border: 1px solid var(--border); background: var(--surface); color: var(--brand-text);
   padding: 6px 16px; border-radius: 8px; cursor: pointer; font-size: 13px; }
 .lm-tab.lm-active { background: var(--brand); color: #fff; border-color: var(--brand); }
 .lm-tabpane[hidden] { display: none; }
@@ -616,10 +628,10 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
 
 /* Real-time collaboration badge states (editor toolbar). The offline state is
    made unmistakable so a dropped socket is never masked by a stale peer count. */
-.lm-collab-on { background: var(--ok-soft); color: var(--ok); }
-.lm-collab-wait { background: var(--surface); color: var(--brand); }
+.lm-collab-on { background: var(--ok-soft); color: var(--ok-text); }
+.lm-collab-wait { background: var(--surface); color: var(--brand-text); }
 .lm-collab-off {
-  background: var(--danger-soft); color: var(--danger); font-weight: 600;
+  background: var(--danger-soft); color: var(--danger-text); font-weight: 600;
   animation: lm-collab-pulse 1.4s ease-in-out infinite;
 }
 @keyframes lm-collab-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
@@ -725,7 +737,7 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
   border-bottom: 1px solid var(--border);
 }
 .lm-modal-head h3 { margin: 0; font-size: 15px; flex: 1; }
-.lm-modal-head #lm-sbs-title { color: var(--brand); font-weight: 400; }
+.lm-modal-head #lm-sbs-title { color: var(--brand-text); font-weight: 400; }
 .lm-modal-foot {
   display: flex;
   align-items: center;
@@ -764,12 +776,12 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
 .lm-sbs-status {
   padding: 6px 12px;
   font-size: 12px;
-  color: var(--brand);
+  color: var(--brand-text);
   min-height: 20px;
 }
-.lm-sbs-status.lm-sbs-ok { color: var(--ok); }
-.lm-sbs-status.lm-sbs-warn { color: var(--warn); }
-.lm-sbs-status.lm-sbs-err { color: var(--danger); }
+.lm-sbs-status.lm-sbs-ok { color: var(--ok-text); }
+.lm-sbs-status.lm-sbs-warn { color: var(--warn-text); }
+.lm-sbs-status.lm-sbs-err { color: var(--danger-text); }
 .lm-sbs-conflict {
   display: flex;
   align-items: center;
@@ -815,10 +827,10 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
 .lm-sbs-rev:hover { background: var(--surface); }
 .lm-sbs-rev-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .lm-sbs-rev-time { font-size: 12px; }
-.lm-sbs-rev-size { font-size: 11px; color: var(--brand); }
+.lm-sbs-rev-size { font-size: 11px; color: var(--brand-text); }
 .lm-sbs-rev-cur {
   font-size: 11px;
-  color: var(--ok);
+  color: var(--ok-text);
   background: var(--ok-soft);
   border-radius: 4px;
   padding: 0 5px;

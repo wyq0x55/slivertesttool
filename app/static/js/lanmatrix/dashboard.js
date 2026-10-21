@@ -42,7 +42,13 @@
 
   function setKpi(key, value) {
     const el = document.querySelector(`#lm-dash-kpi [data-v="${key}"]`);
-    if (el) el.textContent = value;
+    if (!el) return;
+    el.textContent = value;
+    // Same convention as the workbench: a zero headline is muted so the
+    // coloured tiles are the ones that need someone.
+    if (el.classList.contains("v")) {
+      el.closest(".kpi-tile").classList.toggle("is-zero", Number(value) === 0);
+    }
   }
 
   function renderKpis(s, review) {

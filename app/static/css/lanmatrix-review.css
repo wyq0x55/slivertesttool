@@ -13,13 +13,14 @@
 
 .lm-notif-dot {
   position: absolute;
-  top: 2px;
-  right: 2px;
+  /* Hang off the button's corner: inside it, a "99+" covers the bell. */
+  top: -6px;
+  right: -6px;
   min-width: 16px;
   height: 16px;
   padding: 0 4px;
   border-radius: 999px;
-  background: var(--danger);
+  background: var(--danger-text);  /* white on it reaches 4.5:1 */
   color: #fff;
   font-size: 10px;
   font-weight: 600;
@@ -177,7 +178,7 @@
 .lm-rv-scope.is-on {
   background: var(--brand-soft);
   border-color: var(--brand);
-  color: var(--brand);
+  color: var(--brand-text);
 }
 .lm-rv-badge {
   display: inline-block;
@@ -209,11 +210,18 @@
    uselessness. */
 .lm-rv-reason {
   color: var(--text-2);
+  min-width: 200px;
   max-width: 420px;
   white-space: pre-wrap;
   word-break: break-word;
 }
 .lm-rv-reason:empty::after { content: "—"; color: var(--text-3); }
+/* The case column yields its width to the reason: the id wraps, and the long
+   source path is cut to one line (full text on hover). */
+.lm-rv-case { max-width: 200px; }
+.lm-rv-case a { overflow-wrap: anywhere; }
+.lm-rv-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lm-rv-date { white-space: nowrap; }
 
 /* A row needing an individual decision is visually separated from the bulk-
    approvable majority, so a reviewer clearing 300 passes cannot sweep one past
@@ -257,7 +265,7 @@
   font-style: normal;
   color: var(--text-3);
 }
-.lm-rv-pol-err { font-size: 12px; color: var(--danger); }
+.lm-rv-pol-err { font-size: 12px; color: var(--danger-text); }
 
 /* Per-テスト区分 reviewer routing. An ordered list, so the ordinal is shown:
    precedence is "first match wins", and a rule's position is the only thing
@@ -322,7 +330,7 @@
   color: var(--text-3);
   text-decoration: none;
 }
-.lm-backlink:hover { color: var(--brand); }
+.lm-backlink:hover { color: var(--brand-text); }
 .lm-backlink svg { width: 13px; height: 13px; }
 
 /* --------------------------------------------------------------------------

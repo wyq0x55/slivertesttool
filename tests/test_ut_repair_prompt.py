@@ -70,7 +70,7 @@ def test_system_prompt_asks_for_rows_not_a_csv():
     system = repair._system_prompt(CONSTRAINTS)
     assert '"rows"' in system and '"declined"' in system and "不要输出 CSV" in system
     assert "不能仅凭冲突认定缺少输入" in system
-    assert repair.PROMPT_VERSION == "ut-repair/4.1"
+    assert repair.PROMPT_VERSION == "ut-repair/5.0"
 
 
 def _revise(monkeypatch, reply, allowed=frozenset({"b6:boundary:1:above:2"})):
@@ -90,7 +90,7 @@ def test_reply_rows_are_appended_and_claims_recorded(monkeypatch):
     assert revision.csv_bytes.decode("cp932") == CSV + ";$L$,LLM add b6:boundary:1:above:2\r\n,0,2,\r\n"
     assert revision.meta["claimed"] == ["b6:boundary:1:above:2"]
     assert [item["index"] for item in revision.meta["rejected"]] == [1]
-    assert revision.meta["prompt_version"] == "ut-repair/4.1"
+    assert revision.meta["prompt_version"] == "ut-repair/5.0"
 
 
 def test_a_declining_reply_adds_nothing(monkeypatch):
@@ -100,3 +100,19 @@ def test_a_declining_reply_adds_nothing(monkeypatch):
     assert revision.csv_bytes is None
     assert revision.meta["declined"] == ["b6:boundary:1:above:2"]
     assert "声明无法补齐 1 个" in revision.meta["error"]
+
+
+def test_typed_context_and_checker_feedback_survive_as_whole_records():
+    context = [{"obligation_id": GAP["obligation_id"], "path": [{
+        "branch_id": "b0", "required_outcome": False, "atoms": [{
+            "variable": "x", "input_tokens": ["I1"], "operator": ">=", "boundary": 5,
+            "binding": "DIRECT_INPUT",
+        }]}]}]
+    feedback = [{"obligation_id": GAP["obligation_id"], "row": 2, "status": "REJECTED",
+                 "observed": 4, "reason": "expected boundary 5", "new": True}]
+    check = {**CHECK, "candidate_witnesses": {"repair_context": context, "results": feedback}}
+    prompt = _user(CSV, check, [], [GAP])
+    assert prompt.index("## 义务语义证据") < prompt.index("## 待补缺口")
+    assert '"required_outcome": false' in prompt and '"input_tokens": ["I1"]' in prompt
+    assert '"observed": 4' in prompt and "expected boundary 5" in prompt
+    assert json.loads(repair._bounded_records([{"id": 1}, {"too_long": "x" * 100}], 20)) == [{"id": 1}]

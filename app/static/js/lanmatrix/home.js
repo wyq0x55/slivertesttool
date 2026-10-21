@@ -175,8 +175,16 @@
   function renderKpi(kpi) {
     Object.keys(kpi || {}).forEach((k) => {
       const el = document.querySelector(`#lm-kpi [data-v="${k}"]`);
-      if (el) el.textContent = kpi[k];
+      if (el) setKpiValue(el, kpi[k]);
     });
+  }
+
+  // A zero renders muted so the tiles that need attention are the coloured
+  // ones; "失败 0" in red would ask for a look at nothing.
+  function setKpiValue(el, value) {
+    el.textContent = value;
+    const tile = el.closest(".kpi-tile");
+    if (tile) tile.classList.toggle("is-zero", Number(value) === 0);
   }
 
   function renderProjects(projects) {

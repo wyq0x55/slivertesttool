@@ -27,7 +27,7 @@ from ..ai import config as ai_config
 from ..ai import provider
 from . import increment
 
-PROMPT_VERSION = "ut-repair/4.1"
+PROMPT_VERSION = "ut-repair/5.0"
 # Bound the prompt: issue details are already truncated by ut-agent.
 _MAX_DETAIL_CHARS = 6000
 _MAX_DECISION_CHARS = 200
@@ -74,6 +74,11 @@ def _system_prompt(constraints: dict[str, Any]) -> str:
         "- obligation 只能是「待补缺口」中的义务 ID，或「校验判定」中的问题代码（例如覆盖率不足）。\n"
         "- 依据判定式与列含义推出取值并写在 reason 中；不要猜测，推不出的义务放进 declined 并说明原因。\n"
         "- 新增行的输入不能与任何已有行完全相同。\n"
+        "- 程序会用实际新增行重新检查义务、父分支路径和 MC/DC 配对；认领义务不等于满足义务。"
+        "被拒绝的行不会进入 WinAMS，下一轮请依据程序反馈修正输入，而非重复相同行。\n"
+        "- 一轮候选被拒绝时，当前 CSV 保持不变。该轮中已证实的提议如需保留，须与修正行一起重新提出。\n"
+        "- 只能依据给出的精确输入映射或类型化依赖证据推导控制关系；NO_DIRECT_INPUT 表示没有直接列映射，"
+        "不能用名称相似的缓冲区字段代替 ROM 配置或内部局部变量。证据不足时写入 declined。\n"
         "- EXECUTION_PATH_DIVERGED 表示桩函数调用次数与预测冲突；可能来自输入手順、构建或运行配置，"
         "不能仅凭冲突认定缺少输入。只在给定语义证据支持时新增行；否则不新增，在 rationale 中说明，交由人工检查。"
     )
@@ -122,21 +127,36 @@ def _gaps_section(completeness: Optional[dict[str, Any]], open_gaps: list[dict[s
 def _user_prompt(target: dict[str, Any], table: increment.Table, check: dict[str, Any],
                  execution: Optional[dict[str, Any]], history: list[dict[str, Any]],
                  open_gaps: list[dict[str, Any]]) -> str:
-    issues = json.dumps(
-        [issue for issue in check.get("issues", ()) if issue.get("code") != _GAP_CODE],
-        ensure_ascii=False)[:_MAX_DETAIL_CHARS]
+    issues = _bounded_records(
+        [issue for issue in check.get("issues", ()) if issue.get("code") not in
+         {_GAP_CODE, "OUTPUT_ORACLE_PENDING"}],
+        _MAX_DETAIL_CHARS)
     execution_summary = json.dumps(
         {key: (execution or {}).get(key) for key in ("status", "exit_code", "diagnostic", "coverage")},
         ensure_ascii=False,
     )
     rounds = "\n".join(_history_line(item) for item in history) or "- 无"
+    witnesses = check.get("candidate_witnesses") or {}
+    context = witnesses.get("repair_context") or []
+    # Whole records only: never cut a typed expression halfway through JSON.
+    typed = []
+    for record in context:
+        expanded = json.dumps(typed + [record], ensure_ascii=False, sort_keys=True)
+        if len(expanded) > 16000:
+            break
+        typed.append(record)
+    semantic_context = json.dumps(typed, ensure_ascii=False, sort_keys=True)
+    feedback = json.dumps([row for row in witnesses.get("results") or () if row.get("new")][:20],
+                          ensure_ascii=False, sort_keys=True)
     return (
         f"被测函数：{target.get('function')}（{target.get('source_rel')}）\n\n"
         f"## 输入列（{len(table.inputs)} 个；输出列 {len(table.outputs)} 个，不可改）\n"
-        f"{increment.columns_section(table)}\n\n"
+        f"{increment.columns_section(table, (check.get('input_ranges') or {}).get('contract'))}\n\n"
+        f"## 义务语义证据（同一函数固定，未列出的控制关系不能猜测）\n{semantic_context}\n\n"
         f"{_gaps_section(check.get('completeness'), open_gaps)}\n\n"
         f"## 现有数据行（{len(table.rows)} 行）\n{increment.rows_section(table)}\n\n"
         f"## 当前版本的校验判定：{check.get('verdict')}\n{issues}\n\n"
+        f"## 上轮新增行的程序检查反馈\n{feedback}\n\n"
         f"## 执行摘要\n{execution_summary}\n\n"
         f"## 已有版本的判定历史\n{rounds}"
     )
@@ -148,7 +168,20 @@ def _history_line(item: dict[str, Any]) -> str:
         line += f"；新增 {item['added']} 行，声明无法补齐 {item.get('declined', 0)} 个"
     for error in item.get("rejected") or ():
         line += f"；被拒：{error}"
+    if item.get("witness_feedback"):
+        line += "\n程序检查：" + _bounded_records(item["witness_feedback"], _MAX_DETAIL_CHARS)
+        line += "\n该轮提议：" + _bounded_records(item.get("proposed_inputs") or [], _MAX_DETAIL_CHARS)
     return line
+
+
+def _bounded_records(records: list[dict[str, Any]], limit: int) -> str:
+    result = []
+    for record in records:
+        expanded = json.dumps(result + [record], ensure_ascii=False, sort_keys=True)
+        if len(expanded) > limit:
+            break
+        result.append(record)
+    return json.dumps(result, ensure_ascii=False, sort_keys=True)
 
 
 def _declined(parsed: dict[str, Any], allowed: set[str]) -> list[str]:
@@ -206,10 +239,13 @@ def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: by
         meta["reply_head"] = (reply or "")[:2000]
         return Revision(None, meta)
     meta["rationale"] = str(parsed.get("rationale") or "")
-    applied = increment.apply(table, parsed.get("rows") or [], allowed)
+    applied = increment.apply(table, parsed.get("rows") or [], allowed,
+                              (check.get("input_ranges") or {}).get("contract"))
     claimed = [row["obligation"] for row in applied.accepted]
     meta.update(rows=applied.accepted, rejected=applied.rejected, claimed=claimed,
                 declined=[oid for oid in _declined(parsed, allowed) if oid not in claimed])
+    meta["declined_reasons"] = [item for item in parsed.get("declined") or ()
+                                if isinstance(item, dict) and item.get("obligation") in meta["declined"]]
     if applied.csv_bytes is None:
         reasons = "；".join(item["error"] for item in applied.rejected[:3])
         meta["error"] = ("模型未新增可用行" + (f"：{reasons}" if reasons else "")

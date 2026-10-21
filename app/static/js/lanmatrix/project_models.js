@@ -73,9 +73,8 @@
            ${selectable ? 'role="button" tabindex="0" title="设为当前模型"' : ""}>
         <div class="top">
           <span class="mico">${CUBE}</span>
-          <div class="who"><b>${esc(m.name)}</b><span>${kind}</span></div>
-          <span style="flex:1"></span>
-          ${verBadge}${curBadge}${status}
+          <div class="who"><b title="${esc(m.name)}">${esc(m.name)}</b>${verBadge}</div>
+          <span class="mbadges">${curBadge}${status}</span>
         </div>
         <div class="mpath">${esc(m.path || "—")}</div>
         ${note}

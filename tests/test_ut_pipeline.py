@@ -9,6 +9,7 @@ affected job to its next human gate before returning.
 from __future__ import annotations
 
 import json
+import hashlib
 import sys
 from pathlib import Path
 
@@ -37,9 +38,10 @@ def test_execution_passes_the_explicit_converter_and_source(monkeypatch, tmp_pat
 
     monkeypatch.setattr(bridge, "_run", invoke)
     bridge.execute(tmp_path, tmp_path / "c.csv", tmp_path / "out",
-                   stub_builds=["S1", "S2"], source_rel="src/a.c")
+                   stub_builds=["S1", "S2"], source_rel="src/a.c", intents=tmp_path / "intents.json")
     [args] = calls
     assert args[args.index("--source-rel") + 1] == "src/a.c"
+    assert args[args.index("--intents") + 1] == str(tmp_path / "intents.json")
     assert args[args.index("--omf-converter") + 1] == r"C:\WinAMS\BIN\v850ghsomf.exe"
     assert [args[i + 1] for i, value in enumerate(args) if value == "--stub-build"] == ["S1", "S2"]
 
@@ -96,7 +98,7 @@ class FakeBridge:
             units.append(unit)
         return {"ok": True, "provenance": {"baseline_ref": "psd-rebuild@1.1"}, "units": units}
 
-    def execute(self, unit_dir, candidate, out, stub_builds=None, source_rel=""):
+    def execute(self, unit_dir, candidate, out, stub_builds=None, source_rel="", intents=None):
         self.executions += 1
         self.stub_builds = stub_builds
         self.source_rel = source_rel
@@ -114,20 +116,34 @@ class FakeBridge:
         return evidence
 
     def check(self, candidate, *, manifest, reference=None, previous=None, execution=None,
-              intents=None):
+              intents=None, ir_json=None):
         self.checked_intents.append(intents)
+        data = Path(candidate).read_bytes()
+        rows = [line for line in data.split(b"\r\n") if line.startswith(b",")]
+        completeness = {"unresolved_count": len(self.gaps), "unresolved": self.gaps}
+        digest = hashlib.sha256(data).hexdigest()
+        proved = ["b1:T"] if b",5," in data and b"LLM add b1:T" in data else []
+        results = [{"row": len(rows) - 1, "obligation_id": "b1:T",
+                    "status": "WITNESSED" if proved else "REJECTED", "new": True,
+                    "observed": bool(proved), "reason": "x must equal 5"}] if (
+                        self.gaps and b"LLM add b1:T" in data) else []
+        base = {"completeness": completeness, "candidate_sha256": digest,
+                "candidate_witnesses": {"contract": "ut-agent.candidate-witness/1",
+                    "evidence": {"identified": True}, "candidate_sha256": digest,
+                    "witnessed_obligation_ids": proved, "results": results}}
         if execution is None:
-            return {"verdict": "FORMAT_OK", "issues": []}
+            if results and not proved:
+                return {**base, "verdict": "FAIL", "issues": [{
+                    "code": "INPUT_WITNESS_REJECTED", "severity": "error", "repairable": True,
+                    "message": "x must equal 5", "detail": results}]}
+            return {**base, "verdict": "FORMAT_OK", "issues": []}
         evidence = json.loads(Path(execution).read_text(encoding="utf-8"))
         if evidence["status"] == "BLOCKED":
             return {"verdict": "BLOCKED", "issues": [{
                 "code": "EXECUTION_BLOCKED", "severity": "error", "repairable": False,
                 "message": "env", "detail": evidence["blocked_reasons"]}]}
-        data = Path(candidate).read_bytes()
-        rows = [line for line in data.split(b"\r\n") if line.startswith(b",")]
-        completeness = {"unresolved_count": len(self.gaps), "unresolved": self.gaps}
         if b"BAD" in data:
-            return {"verdict": "FAIL", "completeness": completeness, "issues": [{
+            return {**base, "verdict": "FAIL", "issues": [{
                 "code": "ORACLE_MISMATCH", "severity": "error", "repairable": True,
                 "message": "1 mismatch", "detail": [{"row": 0, "column": "ret"}]}] + [
                 {"code": code, "severity": "error", "repairable": True, "message": code}
@@ -139,7 +155,7 @@ class FakeBridge:
         if any(row.endswith(b",") for row in rows):
             issues.append({"code": "EXPECTED_VALUE_PENDING", "severity": "error",
                            "repairable": True, "message": "blank expected"})
-        return {"verdict": "FAIL" if issues else "PASS", "completeness": completeness,
+        return {**base, "verdict": "FAIL" if issues else "PASS",
                 "issues": issues}
 
 
@@ -431,7 +447,82 @@ def test_missing_cases_on_a_pass_go_to_the_model_until_claimed_or_declined(env, 
     assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [
         ("GENERATOR", "PASS"), ("LLM", "FAIL"), ("CAPTURE", "PASS")]
     assert job["state"] == "awaiting_review" and job["repair_rounds"] == 1
-    assert "模型补行待确认 1，模型声明无法补齐 1，未处理 0" in job["reason"]
+    assert "候选输入已证实 1，模型补行认领 1，模型声明无法补齐 1，未处理 0" in job["reason"]
+
+
+def test_rejected_witness_stays_out_of_current_candidate_and_winams(env, monkeypatch):
+    targets = _configure(env)
+    env.bridge.gaps = [GAP]
+    env.bridge.captured = _fill_blank
+    replies = [_llm_reply(_row("b1:T", "2")), _llm_reply(_row("b1:T", "5"))]
+    seen = []
+
+    def chat(messages, **kwargs):
+        seen.append(messages[1]["content"])
+        return replies.pop(0)
+
+    monkeypatch.setattr(provider, "chat", chat)
+    [job_id] = _enqueue(env, targets["f"])
+    job = _job(env, job_id)
+    assert job["state"] == "awaiting_review" and job["repair_rounds"] == 2
+    assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [
+        ("GENERATOR", "PASS"), ("LLM", "FAIL"), ("LLM", "FAIL"), ("CAPTURE", "PASS")]
+    assert env.bridge.executions == 3  # generator, valid proposal, capture recheck
+    generator, rejected, accepted, capture = job["attempts"]
+    assert rejected["has_csv"] and "INPUT_WITNESS_REJECTED" in [
+        issue["code"] for issue in rejected["check"]["issues"]]
+    assert accepted["reviser"]["parent_attempt_id"] == generator["id"]
+    assert capture["reviser"]["parent_attempt_id"] == accepted["id"]
+    assert "x must equal 5" in seen[1] and '"observed": false' in seen[1]
+    assert '"I1": "2"' in seen[1]
+    status, body = env.call("get", f"/jobs/{job_id}/attempts/{capture['id']}/csv",
+                            query_string={"format": "text"})
+    assert status == 200 and ",2," not in body["data"]["text"] and ",5," in body["data"]["text"]
+
+
+def test_a_claim_without_current_checker_evidence_goes_to_a_human(env, monkeypatch):
+    targets = _configure(env)
+    env.bridge.gaps = [GAP]
+    original_check = env.bridge.check
+
+    def no_proof(*args, **kwargs):
+        result = original_check(*args, **kwargs)
+        result.pop("candidate_witnesses", None)
+        return result
+
+    env.bridge.check = no_proof
+    monkeypatch.setattr(provider, "chat", lambda *a, **k: _llm_reply(_row("b1:T")))
+    [job_id] = _enqueue(env, targets["f"])
+    job = _job(env, job_id)
+    assert job["state"] == "needs_human" and env.bridge.executions == 1
+    assert job["current_attempt_id"] == job["attempts"][0]["id"]
+    assert job["attempts"][1]["verdict"] == "BLOCKED"
+
+
+def test_declines_of_a_rejected_proposal_do_not_close_gaps(env, monkeypatch):
+    targets = _configure(env)
+    env.bridge.gaps = [GAP, dict(GAP, obligation_id="b2:T")]
+    env.bridge.captured = _fill_blank
+    replies = [_llm_reply(_row("b1:T", "2"), declined=["b2:T"]),
+               _llm_reply(_row("b1:T", "5")),
+               _llm_reply(declined=["b2:T"])]
+    monkeypatch.setattr(provider, "chat", lambda *a, **k: replies.pop(0))
+    [job_id] = _enqueue(env, targets["f"])
+    job = _job(env, job_id)
+    # The rejected round's decline is discarded with its rows, so b2:T is
+    # offered again until a round on the accepted lineage declines it.
+    assert not replies and job["repair_rounds"] == 3
+    assert job["state"] == "awaiting_review"
+    assert "模型声明无法补齐 1，未处理 0" in job["reason"]
+
+
+def test_a_stored_witness_only_counts_for_its_own_csv():
+    check = {"completeness": {"unresolved": [GAP]}, "candidate_sha256": "a",
+             "candidate_witnesses": {"contract": "ut-agent.candidate-witness/1",
+                                     "evidence": {"identified": True}, "candidate_sha256": "a",
+                                     "witnessed_obligation_ids": ["b1:T"]}}
+    assert pipeline.gap_status(check, [], "a")["open"] == []
+    assert pipeline.gap_status(check, [], "b")["open"] == [GAP]
 
 
 def test_wrong_expected_values_are_backfilled_from_winams_without_the_model(env, monkeypatch):
@@ -633,7 +724,7 @@ def test_next_state_is_pure_and_total():
     passed = {"verdict": "PASS", "issues": []}
     gaps = {"missing": 1, "claimed": 0, "declined": 0, "open": [GAP]}
     assert pipeline.next_state(passed, "GENERATOR", 0, 5, gaps)[0] == "repairing"
-    assert pipeline.next_state(passed, "CAPTURE", 5, 5, gaps)[0] == "awaiting_review"
+    assert pipeline.next_state(passed, "CAPTURE", 5, 5, gaps)[0] == "needs_human"
     assert pipeline.next_state(passed, "HUMAN", 0, 5, gaps)[0] == "awaiting_review"
     assert pipeline.next_state(passed, "GENERATOR", 0, 5)[0] == "awaiting_review"
 
@@ -644,12 +735,25 @@ def test_gap_status_counts_only_explicit_missing_cases():
         dict(GAP, obligation_id="b4:T", gap_class="SEMANTIC_EVIDENCE"),
         {"obligation_id": "b5:T"}]}}
     status = pipeline.gap_status(check, [{"claimed": ["b1:T"], "declined": ["b2:T", "b1:T"]}, None])
-    assert (status["missing"], status["claimed"], status["declined"]) == (3, 1, 1)
+    assert (status["missing"], status["claimed"], status["declined"]) == (3, 1, 2)
     assert [item["obligation_id"] for item in status["open"]] == ["b3:T"]
     blocked = {"verdict": "BLOCKED", "issues": [
         {"code": "COVERAGE_MCDC_UNAVAILABLE", "severity": "error", "repairable": False}]}
     assert pipeline.next_state(blocked, "LLM", 0, 5)[0] == "needs_human"
     assert pipeline.next_state(blocked, "GENERATOR", 0, 5)[0] == "needs_human"
+
+
+def test_historical_claims_cannot_close_a_gap_or_survive_csv_replacement():
+    check = {"completeness": {"unresolved": [GAP]}}
+    history = [{"claimed": ["b1:T"]}]
+    assert pipeline.gap_status(check, history)["open"] == [GAP]
+    check.update(candidate_sha256="current", candidate_witnesses={
+        "contract": "ut-agent.candidate-witness/1", "evidence": {"identified": True},
+        "candidate_sha256": "current", "witnessed_obligation_ids": ["b1:T"]})
+    assert pipeline.gap_status(check, history)["witnessed"] == 1
+    assert pipeline.gap_status(check, history)["open"] == []
+    check["candidate_sha256"] = "replacement"
+    assert pipeline.gap_status(check, history)["open"] == [GAP]
 
 
 def _member(app_ctx, pid, role):

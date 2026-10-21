@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
@@ -55,8 +56,17 @@ def parse(text: str) -> Table:
     return Table(lines, header[1:1 + ni], header[1 + ni:], rows)
 
 
-def _inputs(table: Table, row: list[str]) -> tuple[str, ...]:
-    return tuple(cell.strip() for cell in row[1:1 + len(table.inputs)])
+def _inputs(table: Table, row: list[str], domains: dict[str, Any] | None = None) -> tuple[str, ...]:
+    columns = (domains or {}).get("columns") or []
+    result = []
+    for index, cell in enumerate(row[1:1 + len(table.inputs)]):
+        text = cell.strip()
+        if (index < len(columns) and columns[index].get("status") == "PROVEN"
+                and re.fullmatch(r"[+-]?(?:0[xX][0-9a-fA-F]+|[0-9]+)", text)):
+            value = int(text, 16 if text.lstrip("+-").lower().startswith("0x") else 10)
+            text = str(value)
+        result.append(text)
+    return tuple(result)
 
 
 def defaults(table: Table) -> list[str]:
@@ -68,9 +78,17 @@ def defaults(table: Table) -> list[str]:
     return result
 
 
-def columns_section(table: Table) -> str:
+def columns_section(table: Table, domains: dict[str, Any] | None = None) -> str:
     """Input columns with their tokens; fixed for a job, so it caches."""
-    return "\n".join(f"{table.token(i)} = {name}" for i, name in enumerate(table.inputs))
+    columns = (domains or {}).get("columns") or []
+    def describe(index, name):
+        suffix = ""
+        if index < len(columns) and columns[index].get("column") == name:
+            domain = columns[index]
+            if domain.get("status") == "PROVEN":
+                suffix = f" [范围 {domain['min']}..{domain['max']}]"
+        return f"{table.token(index)} = {name}{suffix}"
+    return "\n".join(describe(i, name) for i, name in enumerate(table.inputs))
 
 
 def rows_section(table: Table) -> str:
@@ -107,7 +125,8 @@ def _column_index(table: Table, key: Any) -> int:
     raise ValueError(f"未知输入列 {key}（只能改输入列，用 I1..I{len(table.inputs)}）")
 
 
-def apply(table: Table, proposals: Any, allowed: set[str]) -> Applied:
+def apply(table: Table, proposals: Any, allowed: set[str],
+          domains: dict[str, Any] | None = None) -> Applied:
     """Validate proposals one by one and append the accepted rows.
 
     A rejected proposal never blocks the others; it is reported back so the
@@ -117,7 +136,7 @@ def apply(table: Table, proposals: Any, allowed: set[str]) -> Applied:
     if not isinstance(proposals, list):
         result.rejected.append({"error": "rows 必须是数组"})
         return result
-    seen = Counter(_inputs(table, row) for row in table.rows)
+    seen = Counter(_inputs(table, row, domains) for row in table.rows)
     ni, no = len(table.inputs), len(table.outputs)
     appended: list[str] = []
     for position, item in enumerate(proposals):
@@ -148,8 +167,9 @@ def apply(table: Table, proposals: Any, allowed: set[str]) -> Applied:
                     raise ValueError(f"{table.token(index)} 的取值必须非空且不含逗号、引号或换行")
                 row[1 + index] = text
                 changed[table.token(index)] = text
-            vector = _inputs(table, row)
-            if vector == _inputs(table, base):
+            _check_domains(table, row, domains)
+            vector = _inputs(table, row, domains)
+            if vector == _inputs(table, base, domains):
                 raise ValueError("改动后与参考行完全相同")
             if seen[vector]:
                 raise ValueError("与已有数据行的输入完全相同，不能覆盖新的义务")
@@ -171,3 +191,30 @@ def apply(table: Table, proposals: Any, allowed: set[str]) -> Applied:
             result.rejected.append({"error": f"无法按 CP932 编码：{exc}"})
             result.accepted.clear()
     return result
+
+
+def _check_domains(table: Table, row: list[str], domains: dict[str, Any] | None) -> None:
+    """Enforce the generator's numeric bounds before accepting a proposal."""
+    if not domains:
+        return
+    columns = domains.get("columns") or []
+    if (domains.get("contract") != "ut-agent.input-domains/1"
+            or len(columns) != len(table.inputs)
+            or any(c.get("index") != i or c.get("column") != name
+                   for i, (c, name) in enumerate(zip(columns, table.inputs), 1))):
+        raise ValueError("输入类型契约与列不一致，需人工检查")
+    for column, cell in zip(columns, row[1:]):
+        text = cell.strip()
+        if not text:
+            continue
+        if column.get("status") == "NEEDS_REVIEW":
+            raise ValueError(f"输入类型证据冲突：{column['column']}")
+        if column.get("status") != "PROVEN":
+            continue
+        if not re.fullmatch(r"[+-]?(?:0[xX][0-9a-fA-F]+|[0-9]+)", text):
+            raise ValueError(f"输入值无法按已证明的整数类型检查：{column['column']}={text}")
+        value = int(text, 16 if text.lstrip("+-").lower().startswith("0x") else 10)
+        if not column["min"] <= value <= column["max"]:
+            raise ValueError(
+                f"INPUT_OUT_OF_RANGE {column['column']}={text}；"
+                f"允许 {column['min']}..{column['max']}，不截断；来源 {column.get('source', '')}")

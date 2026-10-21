@@ -266,7 +266,7 @@ test("input-completeness gaps show the obligation, decision and solver status on
   ] };
   await ready(h, value);
   const html = h.get("ut-d-issues").innerHTML;
-  assert.match(html, /ut-gap-table">[\s\S]*<th>义务<\/th><th>类型<\/th><th>判定式<\/th><th>求解<\/th><th>原因<\/th><\/tr>/);
+  assert.match(html, /ut-gap-table">[\s\S]*<th class="k-obligation">义务<\/th><th class="k-kind">类型<\/th><th class="k-decision">判定式<\/th><th class="k-solve">求解<\/th><th class="k-reason">原因<\/th><\/tr>/);
   assert.match(html, /b6:boundary:1:above:2<\/td><td[^>]*>boundary · 条件 1 · above 2<\/td><td title="\( A == b \)">\( A == b \)<\/td><td[^>]*>UNKNOWN<\/td><td[^>]*>volatile read/);
   assert.doesNotMatch(html, /psd\.4\.compare|intent_status/);
   assert.equal(h.get("ut-d-issues-sum").textContent, "· 1 个警告");

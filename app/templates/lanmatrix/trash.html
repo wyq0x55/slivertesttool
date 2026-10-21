@@ -4,19 +4,20 @@
 {% block title %}回收站{% endblock %}
 {% block crumb %}{{ project_crumb(project_id, "回收站", "设置") }}{% endblock %}
 {% block content %}
-<div class="lm-page" data-project-id="{{ project_id }}"
+<div class="content lm-trash" data-project-id="{{ project_id }}"
      data-can-restore="{{ 1 if can_restore else 0 }}"
      data-can-purge="{{ 1 if can_purge else 0 }}">
   {{ settings_tabs(project_id, "trash") }}
-  <div class="lm-page-head">
-    <h1>回收站</h1>
+  <div class="page-head">
+    <div class="ttl">
+      <h1>回收站</h1>
+      <!-- The retention policy is stated on the page, not only per row: a user
+           who lands here needs to know the rules before scanning the list.
+           Filled in from the server's own RETENTION_DAYS so the copy cannot
+           drift from the sweep that actually deletes things. -->
+      <p id="lm-trash-retention">删除的内容会保留一段时间，之后自动彻底删除。</p>
+    </div>
   </div>
-
-  <!-- The retention policy is stated on the page, not only per row: a user who
-       lands here needs to know the rules before scanning the list. Filled in
-       from the server's own RETENTION_DAYS so the copy cannot drift from the
-       sweep that actually deletes things. -->
-  <p class="lm-muted" id="lm-trash-retention">删除的内容会保留一段时间，之后自动彻底删除。</p>
 
   <p class="lm-banner lm-banner-warn" id="lm-trash-notice" role="status"
      aria-live="polite" hidden></p>
@@ -35,6 +36,7 @@
 
   <p id="lm-trash-info" class="lm-muted" role="status" aria-live="polite">加载中…</p>
 
+  <div class="tablecard"><div style="overflow-x:auto">
   <table class="lm-table lm-trash-table">
     <thead>
       <tr>
@@ -46,13 +48,14 @@
       <tr><td colspan="6" class="lm-muted">加载中…</td></tr>
     </tbody>
   </table>
+  </div></div>
 </div>
 {% endblock %}
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/lanmatrix/trash.js') }}"></script>
 <script>
 (function () {
-  var root = document.querySelector(".lm-page");
+  var root = document.querySelector(".lm-trash");
   LMTrash.init({
     root: root,
     api: LMApi,
