@@ -51,7 +51,6 @@
 .ut-banner .spacer{ flex:1; }
 
 /* 任务与运行 · detail */
-#ut-detail .detail-grid{ align-items:start; }
 .ut-reason{ margin:0; white-space:pre-wrap; }
 .ut-review textarea{ width:100%; min-height:72px; resize:vertical; }
 .ut-review .row{ display:flex; gap:8px; justify-content:flex-end; margin-top:8px; flex-wrap:wrap; }
