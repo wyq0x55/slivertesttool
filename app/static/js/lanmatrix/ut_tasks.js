@@ -625,7 +625,7 @@
     var branch = window.LMTestCsv.branchMarks(model);
     window.LMStepsEditor.open({ id: a.id, title: t.function || ("作业 #" + id), steps: window.LMTestCsv.toDoc(model) }, {
       heading: "CSV · " + versionLabel(a) + (edit ? " · 人工修订" : "") +
-        (branch.length ? " · 黄色：分支判定读取的输入" : ""),
+        (branch.length ? " · 黄色：分支判定读取的输入（点击判定行跳转）" : ""),
       layout: window.LMTestCsv.LAYOUT, readOnly: !edit, references: false,
       marks: window.LMTestCsv.marks(model, a.check).concat(branch),
       saveLabel: "提交修订并执行", closeOnSave: true,

@@ -123,3 +123,41 @@ for (const [name, change] of [
     assert.deepEqual(instance.rendered, []);
   });
 }
+
+const JUMP = section("_jumpFromDecision(row) {", "// Sync the Univer steps sheet");
+const DECISION_LINE = section("const DECISION_LINE", "\n");
+
+function jumper(cells, marks) {
+  const activated = [], scrolled = [];
+  const context = vm.createContext({});
+  vm.runInContext(`${DECISION_LINE}; this.Editor = class { ${JUMP} };`, context);
+  const instance = new context.Editor();
+  instance.viewOpts = { marks };
+  instance.view = {
+    commentRows: [1, 2, 4, 6], stepRows: [3, 5, 7], layout: { left: [] },
+    univerAPI: { getActiveWorkbook: () => ({ getActiveSheet: () => ({
+      getRange: (row, col) => ({ getValue: () => cells[row], activate: () => activated.push([row, col]) }),
+      scrollToCell: (row, col) => scrolled.push([row, col]),
+    }) }) },
+  };
+  return { instance, activated, scrolled };
+}
+
+test("clicking a decision row jumps to the first input it reads", () => {
+  const cells = { 1: "if ( ((u1)1) == cu1_valid )", 2: "TRUE", 4: "FALSE", 6: "else if ( x == 1 )" };
+  const marks = [{ step: 0, kind: "input", index: 166 }, { step: 0, kind: "input", index: 40 },
+    { step: 0, kind: "expected", index: 2 }, { step: 2, kind: "input", index: 7 }];
+  const { instance, activated, scrolled } = jumper(cells, marks);
+  instance._jumpFromDecision(1);
+  instance._jumpFromDecision(6);
+  assert.deepEqual(activated, [[3, 40], [7, 7]]);
+  assert.deepEqual(scrolled, [[1, 37], [5, 4]]);   // context columns, decision row kept
+});
+
+test("outcome rows, value rows and unmarked steps do not move the sheet", () => {
+  const cells = { 1: "if ( a )", 2: "TRUE", 4: "FALSE", 6: "if ( b )" };
+  const { instance, activated } = jumper(cells, [{ step: 0, kind: "input", index: 3 }]);
+  for (const row of [2, 3, 4, 6, 99]) instance._jumpFromDecision(row);
+  assert.deepEqual(activated, []);
+});
+

@@ -25,6 +25,8 @@
   }
 
   const EMPTY = { input_signals: [], expected_signals: [], steps: [] };
+  // A branch decision comment line (TestCsv); see _bindDecisionJump.
+  const DECISION_LINE = /^\s*(?:else\s+)?(?:if|switch|while|for)\s*\(/;
 
   // The Univer bundle is ~11 MB, so pages where the drawer is optional only
   // prefetch it through <link id="lm-univer-lazy" rel="prefetch" data-css=...>
@@ -440,6 +442,7 @@
           this.view = mgr.mount(this.host, {});
           this.engine = "univer";
           try { this._syncDark(); } catch (_e) {}
+          try { this._bindDecisionJump(); } catch (_e) {}
         } catch (e) {
           console.warn("Univer steps mount failed, using built-in editor:", e);
           this.view = null;
@@ -481,6 +484,42 @@
       return true;
     }
 
+    // Clicking a branch decision comment ("if ( … )") jumps to the first input
+    // cell the host marked for that step: in a TestCsv those are the values the
+    // decision reads, often hundreds of columns to the right. Only decision
+    // lines jump, so outcome rows (TRUE / FALSE) stay editable comments; a
+    // sheet without input marks (every Silver steps table) never moves.
+    _bindDecisionJump() {
+      const view = this.view;
+      const api = view && view.univerAPI;
+      if (!api || !api.Event || !api.Event.CellClicked || typeof api.addEvent !== "function") return;
+      this._jumpListener = api.addEvent(api.Event.CellClicked, (p) => {
+        try { this._jumpFromDecision(p && p.row); } catch (_e) { /* best-effort */ }
+      });
+    }
+
+    _jumpFromDecision(row) {
+      const view = this.view;
+      if (!view || typeof row !== "number") return;
+      const commentRows = Array.from(view.commentRows || []);
+      const stepRows = view.stepRows || [];
+      if (commentRows.indexOf(row) < 0) return;
+      const sheet = view.univerAPI.getActiveWorkbook().getActiveSheet();
+      if (!DECISION_LINE.test(String(sheet.getRange(row, 0).getValue() || ""))) return;
+      // A comment row belongs to the step whose value row follows it.
+      const step = stepRows.findIndex((stepRow) => stepRow > row);
+      if (step < 0) return;
+      const inputs = (this.viewOpts.marks || [])
+        .filter((m) => m.step === step && m.kind === "input").map((m) => m.index);
+      if (!inputs.length) return;
+      const left = ((view.layout && view.layout.left) || []).length;
+      const col = left + Math.min.apply(null, inputs);
+      sheet.getRange(stepRows[step], col).activate();
+      // activate() moves the selection, not the viewport: bring the column in,
+      // with a few columns of context and the decision row still on screen.
+      if (typeof sheet.scrollToCell === "function") sheet.scrollToCell(Math.max(row - 1, 1), Math.max(col - 3, 0));
+    }
+
     // Sync the Univer steps sheet to the app's light|dark theme. Univer 0.25's
     // univerAPI.toggleDarkMode(bool) darkens both the chrome (.univer-dark) and
     // the canvas render theme; the app theme lives on <html data-theme>. Guarded
@@ -511,6 +550,10 @@
       if (this._darkObserver) {
         try { this._darkObserver.disconnect(); } catch (_e) { /* best-effort */ }
         this._darkObserver = null;
+      }
+      if (this._jumpListener) {
+        try { this._jumpListener.dispose(); } catch (_e) { /* best-effort */ }
+        this._jumpListener = null;
       }
       if (this.view) {
         try {
