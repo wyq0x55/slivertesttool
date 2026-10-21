@@ -78,11 +78,24 @@ def test_output_oracle_noise_is_summarized_and_the_input_cause_kept():
                                              "（由 WinAMS 捕获回填，不是放弃补行的理由）")
 
 
+def test_boundary_facts_never_render_a_missing_value_as_none():
+    def facts(**bound):
+        line = repair._gap_line(dict(GAP, **bound))
+        return line[line.index("（") + 1:line.index("）")]
+    assert facts() == "boundary, 条件 1, above 2"
+    assert facts(boundary_value=0) == "boundary, 条件 1, above 0"
+    assert facts(boundary_value=1, boundary_right_value=5) == "boundary, 条件 1, above 1..5"
+    assert facts(boundary_class="loop-entry", boundary_value=None) == "boundary, 条件 1, loop-entry"
+    assert facts(boundary_class="loop-entry", boundary_value="") == "boundary, 条件 1, loop-entry"
+    assert facts(boundary_value=None, boundary_right_value=5) == "boundary, 条件 1, above ?..5"
+    assert "None" not in repair._gap_line(dict(GAP, boundary_class="loop-entry", boundary_value=None))
+
+
 def test_system_prompt_asks_for_rows_not_a_csv():
     system = repair._system_prompt(CONSTRAINTS)
     assert '"rows"' in system and '"declined"' in system and "不要输出 CSV" in system
     assert "不能仅凭冲突认定缺少输入" in system
-    assert repair.PROMPT_VERSION == "ut-repair/7.1"
+    assert repair.PROMPT_VERSION == "ut-repair/7.2"
 
 
 def _revise(monkeypatch, reply, allowed=frozenset({"b6:boundary:1:above:2"})):
@@ -102,7 +115,7 @@ def test_reply_rows_are_appended_and_claims_recorded(monkeypatch):
     assert revision.csv_bytes.decode("cp932") == CSV + ";$L$,LLM add b6:boundary:1:above:2\r\n,0,2,\r\n"
     assert revision.meta["claimed"] == ["b6:boundary:1:above:2"]
     assert [item["index"] for item in revision.meta["rejected"]] == [1]
-    assert revision.meta["prompt_version"] == "ut-repair/7.1"
+    assert revision.meta["prompt_version"] == "ut-repair/7.2"
 
 
 def test_a_declining_reply_adds_nothing(monkeypatch):

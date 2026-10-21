@@ -28,7 +28,7 @@ from ..ai import config as ai_config
 from ..ai import provider
 from . import increment
 
-PROMPT_VERSION = "ut-repair/7.1"
+PROMPT_VERSION = "ut-repair/7.2"
 # Bound the prompt: issue details are already truncated by ut-agent.
 _MAX_DETAIL_CHARS = 6000
 _MAX_DECISION_CHARS = 200
@@ -101,10 +101,11 @@ def _gap_line(item: dict[str, Any]) -> str:
     if item.get("condition_index") is not None:
         facts.append(f"条件 {item['condition_index']}")
     if item.get("boundary_class"):
-        bound = item.get("boundary_value")
-        if item.get("boundary_right_value") is not None:
-            bound = f"{bound}..{item['boundary_right_value']}"
-        facts.append(f"{item['boundary_class']} {bound}")
+        # Some classes (e.g. loop-entry) carry no value; never render "None".
+        left, right = (item.get(k) for k in ("boundary_value", "boundary_right_value"))
+        left, right = ("" if v is None else str(v) for v in (left, right))
+        bound = f"{left or '?'}..{right}" if right else left
+        facts.append(f"{item['boundary_class']} {bound}" if bound else item["boundary_class"])
     if item.get("case_label"):
         facts.append(f"case {item['case_label']}")
     decision = " ".join(str(item.get("decision") or item.get("description") or "").split())
