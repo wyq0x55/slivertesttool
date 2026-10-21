@@ -33,6 +33,16 @@
     return (t.function + " " + t.source_rel).toLowerCase().indexOf(q) >= 0;
   }
 
+  // The job link joins the shared hover strip of the task lists: 审核 when
+  // the job waits on a person, 查看 otherwise; the job number is its tooltip.
+  function jobLink(j) {
+    var verb = U.GATES[j.state] || j.state === "stopped" ? "审核" : "查看";
+    var title = verb + "作业 #" + j.id;
+    var icon = (window.LMTaskRow && LMTaskRow.ICO && LMTaskRow.ICO.view) || esc(verb);
+    return '<a class="btn small btn-icon" href="/lanmatrix/projects/' + pid + "/tasks?job=" + j.id +
+      '" title="' + title + '" aria-label="' + title + '">' + icon + "</a>";
+  }
+
   function row(t) {
     var j = t.latest_job;
     var tip = j && j.state === "approved" && j.last_verdict && j.last_verdict !== "PASS"
@@ -46,8 +56,7 @@
       "<td>" + U.statePill(j && j.state, tip) + "</td>" +
       "<td>" + U.verdictPill(j && j.last_verdict) + "</td>" +
       '<td class="ut-num">' + (j ? esc(j.repair_rounds) : "—") + "</td>" +
-      '<td class="ut-act">' + (j ? '<a class="btn small ghost" href="/lanmatrix/projects/' + pid +
-        "/tasks?job=" + j.id + '">作业 #' + j.id + "</a>" : "") + "</td></tr>";
+      '<td class="lm-row-actions"><span class="row-acts">' + (j ? jobLink(j) : "") + "</span></td></tr>";
   }
 
   function render() {

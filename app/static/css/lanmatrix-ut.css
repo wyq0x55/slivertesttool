@@ -44,7 +44,6 @@
   border-radius:var(--radius-sm); background:var(--surface-2); color:var(--text-2); font-size:13px; }
 .ut-superseded a{ color:var(--brand-text); font-weight:600; }
 .ut-table .ut-num{ font-variant-numeric:tabular-nums; color:var(--text-2); }
-.ut-table td.ut-act{ text-align:right; white-space:nowrap; }
 .ut-banner{ display:flex; align-items:center; gap:12px; margin-bottom:16px; padding:12px 16px;
   border:1px solid var(--border); border-radius:var(--radius); background:var(--warn-soft);
   color:var(--text-2); font-size:13px; }

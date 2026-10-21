@@ -510,3 +510,19 @@ test("consecutive model rounds without a candidate fold into one row", async () 
   assert.match(html, />收起</);
 });
 
+test("实施一览 opens a job from the shared hover strip", async () => {
+  const h = harness(undefined, "ut_pipeline.js", { targets: [
+    { id: 1, in_index: true, row_no: 1, function: "f", source_rel: "src/a.c", source_name: "a.c",
+      latest_job: { id: 30, state: "awaiting_review", repair_rounds: 0 } },
+    { id: 2, in_index: true, row_no: 2, function: "g", source_rel: "src/a.c", source_name: "a.c",
+      latest_job: { id: 31, state: "approved", repair_rounds: 0 } },
+    { id: 3, in_index: true, row_no: 3, function: "h", source_rel: "src/a.c", source_name: "a.c" },
+  ] });
+  await settle();
+  const html = h.get("ut-rows").innerHTML;
+  assert.match(html, /<td class="lm-row-actions"><span class="row-acts"><a class="btn small btn-icon" href="\/lanmatrix\/projects\/4\/tasks\?job=30" title="审核作业 #30"/);
+  assert.match(html, /title="查看作业 #31"/);
+  assert.match(html, /<td class="lm-row-actions"><span class="row-acts"><\/span><\/td><\/tr>$/);
+  assert.doesNotMatch(html, /btn small ghost/);
+});
+
