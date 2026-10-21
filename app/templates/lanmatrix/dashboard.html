@@ -166,8 +166,8 @@
 {% block scripts %}
 {% if charts_available %}
 <script src="{{ static_asset_url('vendor/charts/echarts.min.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/charts_theme.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/charts_theme.js') }}"></script>
 {% endif %}
-{% if is_ut %}<script src="{{ url_for('static', filename='js/lanmatrix/ut_common.js') }}"></script>{% endif %}
-<script src="{{ url_for('static', filename='js/lanmatrix/dashboard.js') }}"></script>
+{% if is_ut %}<script src="{{ static_asset_url('js/lanmatrix/ut_common.js') }}"></script>{% endif %}
+<script src="{{ static_asset_url('js/lanmatrix/dashboard.js') }}"></script>
 {% endblock %}

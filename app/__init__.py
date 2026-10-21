@@ -74,12 +74,14 @@ def create_app(config_object: type[Config] = Config) -> Flask:
 
 
 def _install_static_compression(app: Flask) -> None:
-    """Serve large static assets efficiently without stale vendor deployments.
+    """Serve static assets efficiently without stale deployments.
 
-    Vendor bundles keep stable filenames for the offline deployment workflow,
-    so template URLs carry a short content revision. Only a URL whose revision
-    matches the current file receives one-year immutable caching. Rebuilding a
-    bundle therefore changes its URL without renaming the checked-in artifact.
+    Assets keep stable filenames (vendor bundles for the offline deployment
+    workflow, the app's own JS/CSS for readable templates), so template URLs
+    carry a short content revision. Only a URL whose revision matches the
+    current file receives one-year immutable caching; any other request is
+    revalidated. Changing a file therefore changes its URL without renaming it,
+    and a deployment never pairs a new page with a cached old script.
 
     Large text assets are gzip-compressed on demand. The in-process gzip cache
     is keyed by the file revision rather than content length, so a same-size
@@ -160,12 +162,12 @@ def _install_static_compression(app: Flask) -> None:
             filename = path[len(static_prefix):]
             current_rev = _revision(filename)
 
-            if "/vendor/" in path:
-                requested_rev = (request.args.get("v") or "").strip()
-                if current_rev and requested_rev == current_rev:
-                    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
-                else:
-                    resp.headers["Cache-Control"] = "no-cache"
+            requested_rev = (request.args.get("v") or "").strip()
+            if current_rev and requested_rev == current_rev:
+                resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            else:
+                # Unversioned (e.g. url() inside a stylesheet) or stale: revalidate.
+                resp.headers["Cache-Control"] = "no-cache"
 
             if not path.endswith((".js", ".css", ".json", ".svg", ".map")):
                 return resp

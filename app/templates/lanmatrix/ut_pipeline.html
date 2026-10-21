@@ -1,7 +1,7 @@
 {% extends "lanmatrix/base_lm.html" %}
 {% from "lanmatrix/_crumb.html" import project_crumb %}
 {% from "lanmatrix/_ut_filters.html" import ut_filters %}
-{% block styles %}<link rel="stylesheet" href="{{ url_for('static', filename='css/lanmatrix-ut.css') }}">{% endblock %}
+{% block styles %}<link rel="stylesheet" href="{{ static_asset_url('css/lanmatrix-ut.css') }}">{% endblock %}
 {% block title %}实施一览{% endblock %}
 {% block crumb %}{{ project_crumb(project_id, "实施一览") }}{% endblock %}
 {% block content %}
@@ -65,6 +65,6 @@
 </div>
 {% endblock %}
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/lanmatrix/ut_common.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/ut_pipeline.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/ut_common.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/ut_pipeline.js') }}"></script>
 {% endblock %}

@@ -93,3 +93,28 @@ def test_static_asset_url_versions_the_bundle(app, relpath):
     assert emitted == _content_revision(relpath), (
         f"{relpath} revision does not match its content; a deployment could pin "
         f"a stale bundle (emitted={emitted})")
+
+
+UNVERSIONED_STATIC_URL = re.compile(r"""url_for\(\s*['"]static['"]""")
+
+
+def test_no_template_links_any_static_asset_without_a_revision():
+    """The app's own JS/CSS change on every release; a cached old script under
+    a new page breaks it, so every static URL carries a revision."""
+    offenders = [f"{path.relative_to(TEMPLATES_DIR.parent.parent)}:{lineno}"
+                 for path in _iter_template_files()
+                 for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+                 if UNVERSIONED_STATIC_URL.search(line)]
+    assert not offenders, "use static_asset_url():\n" + "\n".join(offenders)
+
+
+def test_own_assets_are_immutable_only_at_their_current_revision(app):
+    relpath = "js/lanmatrix/ut_tasks.js"
+    with app.test_request_context():
+        url = app.jinja_env.globals["static_asset_url"](relpath)
+    assert url.endswith("?v=" + _content_revision(relpath))
+    client = app.test_client()
+    assert "immutable" in client.get(url).headers["Cache-Control"]
+    assert client.get(url.split("?")[0]).headers["Cache-Control"] == "no-cache"
+    assert client.get(url.split("?")[0] + "?v=stale").headers["Cache-Control"] == "no-cache"
+

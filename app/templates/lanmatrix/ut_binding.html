@@ -1,7 +1,7 @@
 {% extends "lanmatrix/base_lm.html" %}
 {% from "lanmatrix/_crumb.html" import project_crumb %}
 {% from "lanmatrix/_settings_tabs.html" import settings_tabs with context %}
-{% block styles %}<link rel="stylesheet" href="{{ url_for('static', filename='css/lanmatrix-ut.css') }}">{% endblock %}
+{% block styles %}<link rel="stylesheet" href="{{ static_asset_url('css/lanmatrix-ut.css') }}">{% endblock %}
 {% block title %}项目绑定{% endblock %}
 {% block crumb %}{{ project_crumb(project_id, "项目绑定", "设置") }}{% endblock %}
 {% block content %}
@@ -56,6 +56,6 @@
 </div>
 {% endblock %}
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/lanmatrix/ut_common.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/ut_binding.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/ut_common.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/ut_binding.js') }}"></script>
 {% endblock %}

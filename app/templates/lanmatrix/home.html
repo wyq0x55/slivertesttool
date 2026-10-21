@@ -1,6 +1,6 @@
 {% extends "lanmatrix/base_lm.html" %}
 {% block title %}工作台{% endblock %}
-{% block styles %}<link rel="stylesheet" href="{{ url_for('static', filename='css/lanmatrix-ut.css') }}">{% endblock %}
+{% block styles %}<link rel="stylesheet" href="{{ static_asset_url('css/lanmatrix-ut.css') }}">{% endblock %}
 {% block crumb %}<b>工作台</b>{% endblock %}
 {% block content %}
 <div class="content lm-home">
@@ -293,17 +293,17 @@
       href="{{ static_asset_url('vendor/univer/univer.full.umd.js') }}"
       data-css="{{ static_asset_url('vendor/univer/univer.full.umd.css') }}">
 {% endif %}
-<script src="{{ url_for('static', filename='js/lanmatrix/steps_ref_panel.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/json_editor.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/steps_editor.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/steps_ref_panel.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/json_editor.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/steps_editor.js') }}"></script>
 {# Shared client-side pager used by every list on this page. #}
-<script src="{{ url_for('static', filename='js/lanmatrix/pager.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/pager.js') }}"></script>
 {# Domain-specific values for the shared task table. #}
-<script src="{{ url_for('static', filename='js/lanmatrix/ut_common.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/home.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/ut_common.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/home.js') }}"></script>
 {# Review queue. Independent of home.js: it owns its own section and reload, so
    a failure in one list cannot blank the other. #}
-<script src="{{ url_for('static', filename='js/lanmatrix/workspace_reviews.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/workspace_reviews.js') }}"></script>
 {# 不要 sign-off queue. Same independence: it must keep working if the verdict
    queue fails, and vice versa. #}
 {% endblock %}

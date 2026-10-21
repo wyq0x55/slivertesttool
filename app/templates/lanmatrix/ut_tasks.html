@@ -1,7 +1,7 @@
 {% extends "lanmatrix/base_lm.html" %}
 {% from "lanmatrix/_crumb.html" import project_crumb %}
 {% from "lanmatrix/_ut_filters.html" import ut_filters %}
-{% block styles %}<link rel="stylesheet" href="{{ url_for('static', filename='css/lanmatrix-ut.css') }}">{% endblock %}
+{% block styles %}<link rel="stylesheet" href="{{ static_asset_url('css/lanmatrix-ut.css') }}">{% endblock %}
 {% block title %}任务/运行{% endblock %}
 {% block crumb %}{{ project_crumb(project_id, "任务 / 运行") }}{% endblock %}
 {% block content %}
@@ -175,10 +175,10 @@
       href="{{ static_asset_url('vendor/univer/univer.full.umd.js') }}"
       data-css="{{ static_asset_url('vendor/univer/univer.full.umd.css') }}">
 {% endif %}
-<script src="{{ url_for('static', filename='js/lanmatrix/steps_ref_panel.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/json_editor.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/steps_editor.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/ut_common.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/ut_testcsv.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/ut_tasks.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/steps_ref_panel.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/json_editor.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/steps_editor.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/ut_common.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/ut_testcsv.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/ut_tasks.js') }}"></script>
 {% endblock %}

@@ -175,11 +175,11 @@
 {% if collab_available %}
 <script defer src="{{ static_asset_url('vendor/collab/collab.umd.js') }}"></script>
 {% endif %}
-<script defer src="{{ url_for('static', filename='js/lanmatrix/rowtools.js') }}"></script>
-<script defer src="{{ url_for('static', filename='js/lanmatrix/grid.js') }}"></script>
-<script defer src="{{ url_for('static', filename='js/lanmatrix/steps_ref_panel.js') }}"></script>
-<script defer src="{{ url_for('static', filename='js/lanmatrix/json_editor.js') }}"></script>
-<script defer src="{{ url_for('static', filename='js/lanmatrix/steps_editor.js') }}"></script>
-<script defer src="{{ url_for('static', filename='js/lanmatrix/collab.js') }}"></script>
-<script defer src="{{ url_for('static', filename='js/lanmatrix/editor.js') }}"></script>
+<script defer src="{{ static_asset_url('js/lanmatrix/rowtools.js') }}"></script>
+<script defer src="{{ static_asset_url('js/lanmatrix/grid.js') }}"></script>
+<script defer src="{{ static_asset_url('js/lanmatrix/steps_ref_panel.js') }}"></script>
+<script defer src="{{ static_asset_url('js/lanmatrix/json_editor.js') }}"></script>
+<script defer src="{{ static_asset_url('js/lanmatrix/steps_editor.js') }}"></script>
+<script defer src="{{ static_asset_url('js/lanmatrix/collab.js') }}"></script>
+<script defer src="{{ static_asset_url('js/lanmatrix/editor.js') }}"></script>
 {% endblock %}
