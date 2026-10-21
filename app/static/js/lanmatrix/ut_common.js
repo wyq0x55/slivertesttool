@@ -37,6 +37,34 @@
   /* Machine outcomes that wait for a person. */
   var GATES = { awaiting_review: 1, needs_human: 1, blocked: 1, error: 1 };
 
+  /* Gate code (models.ut_pipeline.GateCode) -> [label, what to do next].
+   * The reason text carries the specifics; this says which action fits. */
+  var RETRY = "点「重试」继续。";
+  var REQUEUE = "处理后从「实施一览」重新入队。";
+  var REVISE = "请人工修订，或在审核意见中说明后通过 / 驳回。";
+  var GATE = {
+    MACHINE_PASS: ["机器通过", "机器校验通过。核对版本历史与校验问题后决定通过或驳回。"],
+    OPEN_GAPS_EXHAUSTED: ["仍有缺口", "机器校验通过，但仍有输入义务未证明，模型修订已到上限。" + REVISE],
+    ROUNDS_EXHAUSTED: ["修订已到上限", "本地模型已用完修订轮数。" + REVISE],
+    NOT_ROW_FIXABLE: ["需改期望值或格式", "剩余问题不能靠新增输入行解决。" + REVISE],
+    HUMAN_REVISION_FAILED: ["人工修订未通过", "人工修订仍未通过校验，不会交给模型。" + REVISE],
+    CANDIDATE_REJECTED: ["新增行被拒", "模型新增的行在执行前被检查拒绝，当前版本未变。" + REVISE],
+    MODEL_STALLED: ["模型无进展", "模型本轮没有提出任何新增行，输入未变，重复调用不会有不同结果。" + REVISE],
+    CHECK_BLOCKED: ["不可自动修复", "校验发现无法通过修订解决的问题。" + REVISE],
+    UNKNOWN_VERDICT: ["未知判定", "ut-agent 返回了平台不认识的判定，请确认 ut-agent 版本。"],
+    NO_TESTCSV: ["未生成 CSV", "生成器没有产出 TestCsv，无法执行。" + REQUEUE],
+    PROMPT_PREFIX_CHANGED: ["证据已变化", "基准、列或语义证据与本作业的固定提示词不一致，未调用模型。" + REQUEUE],
+    PROMPT_BUDGET_EXCEEDED: ["上下文超限", "修订上下文超出预算，未调用模型，不计修订次数。" + REVISE],
+    ENV_BLOCKED: ["环境阻塞", "WinAMS 执行环境不完整。修好后" + RETRY],
+    GENERATION_FAILED: ["生成失败", "ut-agent 生成失败。" + REQUEUE],
+    TOOL_ERROR: ["工具异常", "ut-agent 调用失败。确认 ut-agent 正常后" + RETRY],
+    MODEL_UNAVAILABLE: ["模型不可用", "本地模型没有响应，本轮不计修订次数。服务恢复后" + RETRY + "也可以直接人工修订。"],
+    INTERNAL_ERROR: ["内部错误", "平台内部错误。" + RETRY],
+    INTERRUPTED: ["运行中断", "worker 在运行中被中断，当前版本与证据已保留。确认 worker 正常后" + RETRY],
+    STOPPED: ["已停止", "作业已停止，当前版本和机器证据都已保留：可以继续运行、人工修订，或直接审核。"]
+  };
+  function gateInfo(job) { return (job && GATE[job.gate_code]) || null; }
+
   /* The state to display: a pending stop request reads as 停止中. */
   function jobState(job) {
     return job.stop_requested && ACTIVE[job.state] ? "stopping" : job.state;
@@ -162,7 +190,7 @@
 
   window.LMUt = {
     STATE: STATE, VERDICT: VERDICT, ORIGIN: ORIGIN, ACTIVE: ACTIVE, GATES: GATES,
-    FILTERS: FILTERS, jobState: jobState, actionable: actionable, esc: esc, statePill: statePill, applyState: applyState,
+    FILTERS: FILTERS, jobState: jobState, actionable: actionable, GATE: GATE, gateInfo: gateInfo, esc: esc, statePill: statePill, applyState: applyState,
     verdictPill: verdictPill, time: time, say: say, can: can, selectFilter: selectFilter,
     dashboardSnapshot: dashboardSnapshot, workspaceTask: workspaceTask, workspaceCells: workspaceCells
   };

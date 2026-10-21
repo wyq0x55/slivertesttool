@@ -11,14 +11,16 @@ mode), vLLM / Ollama local gateways, and most intranet LLM proxies.
 
 from __future__ import annotations
 
+import http.client
 import json
 import re
+import time
 import urllib.error
 import urllib.request
-from urllib.parse import urlparse
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Iterator, Optional
+from urllib.parse import urlparse
 
 from . import config
 
@@ -66,7 +68,8 @@ def chat(messages: list[dict[str, str]], *,
          json_mode: bool = True,
          timeout: Optional[int] = None,
          usage: Optional[dict[str, int]] = None,
-         model: Optional[str] = None) -> str:
+         model: Optional[str] = None,
+         stream: bool = False) -> str:
     """Call the configured model once and return the assistant text.
 
     ``temperature`` defaults low: test-case generation wants determinism and
@@ -97,6 +100,8 @@ def chat(messages: list[dict[str, str]], *,
     if json_mode:
         # Honoured by OpenAI-compatible gateways; ignored gracefully otherwise.
         body["response_format"] = {"type": "json_object"}
+    if stream:
+        body.update(stream=True, stream_options={"include_usage": True})
     req = urllib.request.Request(
         url,
         data=json.dumps(body).encode("utf-8"),
@@ -118,10 +123,12 @@ def chat(messages: list[dict[str, str]], *,
     # every other endpoint keeps the default ``urlopen`` handling.
     open_url = (urllib.request.build_opener(urllib.request.ProxyHandler({})).open
                 if is_local else urllib.request.urlopen)
+    started = time.monotonic()
     try:
         with open_url(
                 req, timeout=timeout or cfg[config.KEY_TIMEOUT]) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
+            payload = (_stream_payload(resp, usage, started) if stream else
+                       json.loads(resp.read().decode("utf-8")))
     except urllib.error.HTTPError as exc:
         detail = ""
         try:
@@ -129,13 +136,15 @@ def chat(messages: list[dict[str, str]], *,
         except Exception:  # noqa: BLE001
             pass
         raise ProviderError(f"AI 接口返回 HTTP {exc.code}：{detail}") from exc
-    except (urllib.error.URLError, OSError, ValueError) as exc:
+    except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as exc:
         raise ProviderError(f"AI 接口无法访问：{exc}") from exc
     try:
         content = payload["choices"][0]["message"]["content"] or ""
     except (KeyError, IndexError, TypeError) as exc:
         raise ProviderError(f"AI 响应格式异常：{json.dumps(payload)[:500]}") from exc
     if usage is not None:
+        if stream:
+            usage["elapsed_ms"] = round((time.monotonic() - started) * 1000)
         reported = payload.get("usage") or {}
         usage["input_tokens"] = int(reported.get("prompt_tokens") or 0)
         usage["output_tokens"] = int(reported.get("completion_tokens") or 0)
@@ -146,6 +155,76 @@ def chat(messages: list[dict[str, str]], *,
     if counters is not None:
         counters["api_response_calls"] += 1
     return content
+
+
+def _stream_payload(response, usage: Optional[dict[str, int]], started: float) -> dict[str, Any]:
+    """Collect complete SSE events; a dropped connection is never a reply."""
+    fragments, reported, event = [], {}, []
+    finished = False
+    completed = False
+    event_name = ""
+
+    def consume(lines):
+        nonlocal reported, finished, completed
+        if event_name not in {"", "message", "chat.completion.chunk"}:
+            raise ProviderError("AI 流式接口返回错误或未知事件")
+        if not lines:
+            return
+        data = "\n".join(lines)
+        if data == "[DONE]":
+            if not completed:
+                raise ProviderError("AI 流式响应缺少成功结束状态")
+            finished = True
+            return
+        chunk = json.loads(data)
+        if not isinstance(chunk, dict):
+            raise ProviderError("AI 流式响应格式异常")
+        if chunk.get("error"):
+            raise ProviderError("AI 流式接口返回错误")
+        if usage is not None and "first_event_ms" not in usage:
+            usage["first_event_ms"] = round((time.monotonic() - started) * 1000)
+        if isinstance(chunk.get("usage"), dict):
+            reported = chunk["usage"]
+        choices = chunk.get("choices") or []
+        if not isinstance(choices, list):
+            raise ProviderError("AI 流式选项格式异常")
+        for choice in choices:
+            if not isinstance(choice, dict) or not isinstance(choice.get("delta") or {}, dict):
+                raise ProviderError("AI 流式选项格式异常")
+            if choice.get("index", 0) != 0:
+                continue
+            text = (choice.get("delta") or {}).get("content")
+            if text:
+                if completed:
+                    raise ProviderError("AI 流式响应在完成后继续输出文本")
+                if not isinstance(text, str):
+                    raise ProviderError("AI 流式文本格式异常")
+                if usage is not None and "first_text_ms" not in usage:
+                    usage["first_text_ms"] = round((time.monotonic() - started) * 1000)
+                fragments.append(text)
+            reason = choice.get("finish_reason")
+            if reason is not None and reason != "stop":
+                raise ProviderError("AI 流式输出未完成，无法作为修订结果")
+            if reason == "stop":
+                completed = True
+
+    for raw in response:
+        line = raw.decode("utf-8").rstrip("\r\n")
+        if not line:
+            consume(event)
+            event = []
+            event_name = ""
+            if finished:
+                break
+        elif line.startswith("data:"):
+            event.append(line[5:].lstrip(" "))
+        elif line.startswith("event:"):
+            event_name = line[6:].strip()
+    if event:
+        consume(event)
+    if not finished:
+        raise ProviderError("AI 流式连接提前结束，未收到完成标记")
+    return {"choices": [{"message": {"content": "".join(fragments)}}], "usage": reported}
 
 
 _FENCE_RE = re.compile(r"^```[a-zA-Z0-9_-]*\s*|\s*```$")

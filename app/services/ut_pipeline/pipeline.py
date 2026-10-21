@@ -43,6 +43,7 @@ from sqlalchemy import func
 
 from ...extensions import db
 from ...models import UtAttempt, UtBatch, UtJob, UtPipelineConfig, UtTarget
+from ...models.ut_pipeline import GateCode
 from ...models.lanmatrix import _utcnow
 from ..ai.provider import ProviderError
 from ..lanmatrix import audit
@@ -242,10 +243,11 @@ def _job_dir(job: UtJob) -> Path:
     return _batch_dir(job.project_id, job.batch_id) / f"j{job.id}"
 
 
-def _gate(job: UtJob, state: str, reason: str = "") -> None:
+def _gate(job: UtJob, state: str, reason: str = "", code: str = "") -> None:
     reached_gate = state in UtJob.HUMAN_GATES and job.state != state
     job.state = state
     job.reason = reason
+    job.gate_code = code if state in UtJob.ACTIONABLE else ""
     if reached_gate:
         _notify_requester(job, notify_svc.TASK_FINISHED, _GATE_TITLES[state], reason)
 
@@ -345,7 +347,7 @@ def run_generation(batch_id: int) -> list[int]:
         batch.error = str(exc)
         batch.finished_at = _utcnow()
         for job in jobs:
-            _gate(job, UtJob.ERROR, f"生成失败：{exc}")
+            _gate(job, UtJob.ERROR, f"生成失败：{exc}", GateCode.GENERATION_FAILED)
         db.session.commit()
         return []
     batch.constraints = constraints
@@ -355,14 +357,14 @@ def run_generation(batch_id: int) -> list[int]:
     for job in jobs:
         unit = units.get(job.target.function)
         if unit is None:
-            _gate(job, UtJob.ERROR, "生成结果中缺少该函数")
+            _gate(job, UtJob.ERROR, "生成结果中缺少该函数", GateCode.GENERATION_FAILED)
             continue
         job.generation_status = str(unit.get("status") or "")
         job.generation = unit
         if not unit.get("testcsv"):
             detail = unit.get("error") or unit.get("projection_failure") or ""
             _gate(job, UtJob.NEEDS_HUMAN,
-                  f"生成器未产出 TestCsv（{job.generation_status}）：{detail}")
+                  f"生成器未产出 TestCsv（{job.generation_status}）：{detail}", GateCode.NO_TESTCSV)
             continue
         attempt = _new_attempt(job, UtAttempt.ORIGIN_GENERATOR,
                                Path(unit["testcsv"]).read_bytes(),
@@ -473,16 +475,17 @@ def _gap_note(gaps: Optional[dict[str, Any]]) -> str:
 
 
 def next_state(check: dict[str, Any], origin: str, rounds: int, max_rounds: int,
-               gaps: Optional[dict[str, Any]] = None) -> tuple[str, str]:
-    """Pure transition after one checked attempt."""
+               gaps: Optional[dict[str, Any]] = None) -> tuple[str, str, str]:
+    """Pure transition after one checked attempt: (state, reason, gate code)."""
     verdict = check.get("verdict")
     codes = ", ".join(_error_codes(check))
     if verdict == "PASS":
         if gaps and gaps["open"] and origin != UtAttempt.ORIGIN_HUMAN:
             if rounds >= max_rounds:
-                return UtJob.NEEDS_HUMAN, f"仍有 {len(gaps['open'])} 个输入义务未证明，已到修订上限 {max_rounds}" + _gap_note(gaps)
-            return UtJob.REPAIRING, ""
-        return UtJob.AWAITING_REVIEW, "机器校验通过，等待人工审核" + _gap_note(gaps)
+                return (UtJob.NEEDS_HUMAN, f"仍有 {len(gaps['open'])} 个输入义务未证明，已到修订上限 {max_rounds}"
+                        + _gap_note(gaps), GateCode.OPEN_GAPS_EXHAUSTED)
+            return UtJob.REPAIRING, "", ""
+        return UtJob.AWAITING_REVIEW, "机器校验通过，等待人工审核" + _gap_note(gaps), GateCode.MACHINE_PASS
     if verdict == "BLOCKED":
         blocked = next((issue for issue in check.get("issues", ())
                         if issue["code"] == "EXECUTION_BLOCKED"), None)
@@ -491,18 +494,19 @@ def next_state(check: dict[str, Any], origin: str, rounds: int, max_rounds: int,
             listed = "; ".join(
                 f"{item.get('code')} {item.get('detail') or item.get('path', '')}"
                 for item in reasons[:5])
-            return UtJob.BLOCKED, f"WinAMS 执行环境不完整：{listed}"
-        return UtJob.NEEDS_HUMAN, f"存在无法自动修复的问题：{codes}"
+            return UtJob.BLOCKED, f"WinAMS 执行环境不完整：{listed}", GateCode.ENV_BLOCKED
+        return UtJob.NEEDS_HUMAN, f"存在无法自动修复的问题：{codes}", GateCode.CHECK_BLOCKED
     if verdict != "FAIL":
-        return UtJob.NEEDS_HUMAN, f"未知判定：{verdict}"
+        return UtJob.NEEDS_HUMAN, f"未知判定：{verdict}", GateCode.UNKNOWN_VERDICT
     if origin == UtAttempt.ORIGIN_HUMAN:
-        return UtJob.NEEDS_HUMAN, f"人工修订仍未通过校验：{codes}"
+        return UtJob.NEEDS_HUMAN, f"人工修订仍未通过校验：{codes}", GateCode.HUMAN_REVISION_FAILED
     if not _row_tags(check) and not (gaps and gaps["open"]):
         # The model only adds input rows; nothing here can be closed that way.
-        return UtJob.NEEDS_HUMAN, f"剩余问题无法通过新增输入行解决：{codes}"
+        return UtJob.NEEDS_HUMAN, f"剩余问题无法通过新增输入行解决：{codes}", GateCode.NOT_ROW_FIXABLE
     if rounds >= max_rounds:
-        return UtJob.NEEDS_HUMAN, f"本地模型已修正 {rounds} 次仍未通过（上限 {max_rounds}）：{codes}"
-    return UtJob.REPAIRING, ""
+        return (UtJob.NEEDS_HUMAN, f"本地模型已修正 {rounds} 次仍未通过（上限 {max_rounds}）：{codes}",
+                GateCode.ROUNDS_EXHAUSTED)
+    return UtJob.REPAIRING, "", ""
 
 
 def _previous_executable(job: UtJob, attempt: UtAttempt) -> Optional[UtAttempt]:
@@ -560,7 +564,7 @@ def _execute_step(job: UtJob) -> None:
                     source_rel=job.target.source_rel, **execute_args)
             check = bridge.check(candidate, execution=out / "execution.json", **arguments)
     except BridgeError as exc:
-        _gate(job, UtJob.ERROR, f"ut-agent 调用失败：{exc}")
+        _gate(job, UtJob.ERROR, f"ut-agent 调用失败：{exc}", GateCode.TOOL_ERROR)
         db.session.commit()
         return
     attempt.check = check
@@ -628,11 +632,26 @@ def _repair_step(job: UtJob) -> None:
     history = [_history_item(item) for item in
                UtAttempt.query.filter_by(job_id=job.id).order_by(UtAttempt.seq)]
     gaps = _job_gaps(job, attempt)
+    generation = dict(job.generation or {})
+    csv_bytes = Path(attempt.csv_path).read_bytes()
+    # Freeze the cacheable prefix in durable job metadata, including restarts.
+    # A changed prompt version starts a new snapshot; same-version drift is
+    # rejected by revise rather than silently replacing semantic evidence.
+    prefix = generation.get("repair_prompt_prefix")
+    if not prefix or prefix.get("version") != repair.PROMPT_VERSION:
+        try:
+            prefix = repair.prompt_prefix(batch.constraints or {}, job.target.to_dict(), csv_bytes, check)
+        except (UnicodeDecodeError, repair.increment.TableError):
+            prefix = None
+        if prefix is not None:
+            generation["repair_prompt_prefix"] = prefix
+            job.generation = generation
+            db.session.commit()
     try:
         revision = repair.revise(
             constraints=batch.constraints or {},
             target=job.target.to_dict(),
-            csv_bytes=Path(attempt.csv_path).read_bytes(),
+            csv_bytes=csv_bytes,
             check=check,
             execution=attempt.execution,
             history=history,
@@ -640,10 +659,19 @@ def _repair_step(job: UtJob) -> None:
             allowed={item["obligation_id"] for item in gaps["open"]} | _row_tags(check),
             model=(batch.config_snapshot or {}).get("repair_model", ""),
             timeout=current_app.config["UT_REPAIR_TIMEOUT"],
+            prefix_snapshot=prefix,
         )
     except ProviderError as exc:
         # The model never answered: no round is consumed.
-        _gate(job, UtJob.ERROR, f"本地模型不可用：{exc}")
+        _gate(job, UtJob.ERROR, f"本地模型不可用：{exc}", GateCode.MODEL_UNAVAILABLE)
+        db.session.commit()
+        return
+    if revision.meta.get("code") in {"PROMPT_PREFIX_CHANGED", "PROMPT_BUDGET_EXCEEDED"}:
+        new = _new_attempt(job, UtAttempt.ORIGIN_LLM, None,
+                           reviser={**revision.meta, "model_contacted": False},
+                           note=revision.meta["error"], make_current=False)
+        new.verdict = "BLOCKED"
+        _gate(job, UtJob.NEEDS_HUMAN, new.note, revision.meta["code"])
         db.session.commit()
         return
     job.repair_rounds += 1
@@ -664,7 +692,7 @@ def _repair_step(job: UtJob) -> None:
         except BridgeError as exc:
             new.verdict = "INVALID"
             new.note = f"候选检查失败：{exc}"
-            _gate(job, UtJob.ERROR, new.note)
+            _gate(job, UtJob.ERROR, new.note, GateCode.TOOL_ERROR)
             db.session.commit()
             return
         proposed = {row.get("obligation") for row in revision.meta.get("rows") or ()}
@@ -685,23 +713,43 @@ def _repair_step(job: UtJob) -> None:
             errors = ", ".join(_error_codes(verification))
             new.note = f"新增行在执行前被拒绝：{errors}；当前候选保持第 {attempt.seq} 版"
             if new.verdict == "BLOCKED" or job.repair_rounds >= job.max_repair_rounds:
-                _gate(job, UtJob.NEEDS_HUMAN, new.note)
+                _gate(job, UtJob.NEEDS_HUMAN, new.note, GateCode.CANDIDATE_REJECTED)
         db.session.commit()
         return
     new.verdict = "INVALID"
     # No row was added: the checked attempt stays current. Declined gaps are
     # closed for the model, so a PASS goes to review once nothing is open.
-    state, reason = next_state(check, attempt.origin, job.repair_rounds,
-                               job.max_repair_rounds, _job_gaps(job, attempt))
+    state, reason, code = next_state(check, attempt.origin, job.repair_rounds,
+                                     job.max_repair_rounds, _job_gaps(job, attempt))
     if (state == UtJob.NEEDS_HUMAN and check.get("verdict") == "FAIL"
             and job.repair_rounds >= job.max_repair_rounds):
         reason = (f"本地模型已修正 {job.repair_rounds} 次仍未产出可用候选"
                   f"（上限 {job.max_repair_rounds}）")
+        code = GateCode.ROUNDS_EXHAUSTED
     elif state == UtJob.NEEDS_HUMAN and revision.meta.get("error"):
         reason = f"{revision.meta['error']}；{reason}"
+    elif state == UtJob.REPAIRING and _stalled(revision.meta):
+        # The next round would see the same candidate, check and gaps: a
+        # model that proposed nothing would only decline again (on real
+        # data 10 of 11 rounds did, until the round limit ran out).
+        state, code = UtJob.NEEDS_HUMAN, GateCode.MODEL_STALLED
+        declined = len(revision.meta.get("declined") or ())
+        reason = ("本地模型本轮没有提出任何新增行" +
+                  (f"（声明无法补齐 {declined} 个）" if declined else "") +
+                  "，输入没有变化，不再重复调用" +
+                  (f"；模型说明：{revision.meta['rationale'][:200]}" if revision.meta.get("rationale") else ""))
     if state != UtJob.REPAIRING:
-        _gate(job, state, reason)
+        _gate(job, state, reason, code)
     db.session.commit()
+
+
+def _stalled(meta: dict[str, Any]) -> bool:
+    """A parsed reply with no rows at all, not even rejected ones.
+
+    Rejected rows come back as checker feedback the next round can act on,
+    and an unparsable reply may be transient; neither is a stall.
+    """
+    return "rationale" in meta and not meta.get("rows") and not meta.get("rejected")
 
 
 def advance_job(job_id: int) -> None:
@@ -723,6 +771,56 @@ def advance_job(job_id: int) -> None:
         else:
             break
     _refresh_batch(batch_id)
+
+
+_INTERRUPTED_STEP = {UtJob.QUEUED: "排队", UtJob.GENERATING: "生成",
+                     UtJob.EXECUTING: "执行与校验", UtJob.REPAIRING: "模型修订"}
+
+
+def recover_interrupted(pending_jobs: set[int], pending_batches: set[int]) -> dict[str, list[int]]:
+    """Route active jobs no worker will ever drive to a human gate.
+
+    Call at worker start-up, before consumers run: an active job then has no
+    live driver, and unless a queued task (``pending_*``) will pick it up,
+    the worker that owned it died mid-step. The job is not re-run on its own
+    -- a step that crashed the worker would crash it again on every restart
+    -- but parked with its candidate and evidence for a person to retry.
+    """
+    result: dict[str, list[int]] = {"interrupted": [], "stopped": [], "pending": []}
+    jobs = (UtJob.query.filter(UtJob.state.in_(UtJob.ACTIVE))
+            .with_for_update(of=UtJob).populate_existing().all())
+    failed_batches: set[int] = set()
+    for job in jobs:
+        before_generation = job.state in (UtJob.QUEUED, UtJob.GENERATING)
+        if job.id in pending_jobs or (before_generation and job.batch_id in pending_batches):
+            result["pending"].append(job.id)
+            continue
+        if job.stop_requested_at is not None:
+            _halt(job)
+            result["stopped"].append(job.id)
+        elif before_generation or job.current_attempt_id is None:
+            _gate(job, UtJob.ERROR,
+                  f"worker 在{_INTERRUPTED_STEP[job.state]}阶段中断，尚无可继续的候选；请从实施一览重新入队",
+                  GateCode.INTERRUPTED)
+            failed_batches.add(job.batch_id)
+            result["interrupted"].append(job.id)
+        else:
+            _gate(job, UtJob.ERROR,
+                  f"worker 在{_INTERRUPTED_STEP[job.state]}阶段中断；当前版本与已有证据均已保留，"
+                  "确认 worker 正常后点「重试」继续",
+                  GateCode.INTERRUPTED)
+            result["interrupted"].append(job.id)
+        audit.record("ut.job.interrupted", actor_id=None, object_type="ut_job", object_id=job.id,
+                     project_id=job.project_id, new_value={"state": job.state, "gate_code": job.gate_code})
+    for batch in UtBatch.query.filter(UtBatch.id.in_(failed_batches),
+                                      UtBatch.status == UtBatch.STATUS_GENERATING):
+        batch.status = UtBatch.STATUS_FAILED
+        batch.error = "worker 在生成阶段中断"
+        batch.finished_at = _utcnow()
+    db.session.commit()
+    for batch_id in {job.batch_id for job in jobs}:
+        _refresh_batch(batch_id)
+    return result
 
 
 # --------------------------------------------------------------------------- #
@@ -752,6 +850,7 @@ def _halt(job: UtJob) -> None:
     """Park an active job the user asked to stop; candidate and evidence stay."""
     job.state = UtJob.STOPPED
     job.reason = "已按请求停止；当前候选、机器判定与修订记录均已保留，可继续或重新入队"
+    job.gate_code = GateCode.STOPPED
 
 
 def _resume(job: UtJob) -> None:
@@ -843,6 +942,7 @@ def review(project_id: int, job_id: int, decision: str, user_id: int, note: str 
     job.review_note = note
     # The gate reason explained why the job waited; once decided it is stale.
     job.reason = ""
+    job.gate_code = ""
     approved = job.state == UtJob.APPROVED
     audit.record("ut.job.approve" if approved else "ut.job.reject", actor_id=user_id,
                  object_type="ut_job", object_id=job.id, project_id=project_id,

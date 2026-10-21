@@ -158,6 +158,7 @@ def _migrate_schema() -> None:
             "stub_builds": "TEXT NOT NULL DEFAULT ''",
         },
         "ut_jobs": {
+            "gate_code": "VARCHAR(32) NOT NULL DEFAULT ''",
             "stop_requested_at": "TIMESTAMP",
             "stop_requested_by": "INTEGER REFERENCES lm_users(id) ON DELETE SET NULL",
         },

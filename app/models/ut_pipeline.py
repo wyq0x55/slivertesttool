@@ -131,6 +131,34 @@ class UtBatch(db.Model):
         }
 
 
+class GateCode:
+    """Why a job stopped at a human gate; the reason text says the details.
+
+    The client maps each code to the next step a person should take, so a
+    new code needs a hint in ut_common.js.
+    """
+
+    MACHINE_PASS = "MACHINE_PASS"                    # awaiting_review
+    OPEN_GAPS_EXHAUSTED = "OPEN_GAPS_EXHAUSTED"      # PASS, missing cases open, no rounds left
+    ROUNDS_EXHAUSTED = "ROUNDS_EXHAUSTED"
+    NOT_ROW_FIXABLE = "NOT_ROW_FIXABLE"              # expected values / format: rows cannot help
+    HUMAN_REVISION_FAILED = "HUMAN_REVISION_FAILED"
+    CANDIDATE_REJECTED = "CANDIDATE_REJECTED"        # model rows refused before execution
+    MODEL_STALLED = "MODEL_STALLED"                  # model proposed nothing; input unchanged
+    CHECK_BLOCKED = "CHECK_BLOCKED"
+    UNKNOWN_VERDICT = "UNKNOWN_VERDICT"
+    NO_TESTCSV = "NO_TESTCSV"
+    PROMPT_PREFIX_CHANGED = "PROMPT_PREFIX_CHANGED"
+    PROMPT_BUDGET_EXCEEDED = "PROMPT_BUDGET_EXCEEDED"
+    ENV_BLOCKED = "ENV_BLOCKED"                      # blocked
+    GENERATION_FAILED = "GENERATION_FAILED"          # error ...
+    TOOL_ERROR = "TOOL_ERROR"
+    MODEL_UNAVAILABLE = "MODEL_UNAVAILABLE"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
+    INTERRUPTED = "INTERRUPTED"
+    STOPPED = "STOPPED"                              # stopped
+
+
 class UtJob(db.Model):
     """One target inside one batch; owns the pipeline state."""
 
@@ -182,6 +210,8 @@ class UtJob(db.Model):
     last_verdict = db.Column(db.String(16), nullable=False, default="")
     # Why the job stopped at a human gate (rounds exhausted, blocked, error...).
     reason = db.Column(db.Text, nullable=False, default="")
+    # The same as a GateCode, for routing the next step; empty off a gate.
+    gate_code = db.Column(db.String(32), nullable=False, default="")
     created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
     reviewed_by = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True)
@@ -215,6 +245,7 @@ class UtJob(db.Model):
             "current_attempt_id": self.current_attempt_id,
             "last_verdict": self.last_verdict or None,
             "reason": self.reason or None,
+            "gate_code": self.gate_code or None,
             "created_at": _iso(self.created_at),
             "updated_at": _iso(self.updated_at),
             "reviewed_by": self.reviewed_by,

@@ -126,7 +126,8 @@ def _column_index(table: Table, key: Any) -> int:
 
 
 def apply(table: Table, proposals: Any, allowed: set[str],
-          domains: dict[str, Any] | None = None) -> Applied:
+          domains: dict[str, Any] | None = None, *,
+          editable_columns: set[int] | None = None) -> Applied:
     """Validate proposals one by one and append the accepted rows.
 
     A rejected proposal never blocks the others; it is reported back so the
@@ -162,6 +163,8 @@ def apply(table: Table, proposals: Any, allowed: set[str],
             changed = {}
             for key, value in changes.items():
                 index = _column_index(table, key)
+                if editable_columns is not None and index not in editable_columns:
+                    raise ValueError(f"{table.token(index)} 不在本轮类型化证据对应的可修改输入列中")
                 text = str(value).strip() if value is not None else ""
                 if not text or _UNSAFE & set(text):
                     raise ValueError(f"{table.token(index)} 的取值必须非空且不含逗号、引号或换行")
