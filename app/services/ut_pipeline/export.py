@@ -16,6 +16,7 @@ import hashlib
 import io
 import json
 import zipfile
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Optional
 
@@ -131,5 +132,6 @@ def build_archive(project_id: int, user_id: int, batch_id: Optional[int] = None)
                  object_id=project_id, project_id=project_id,
                  new_value={"batch_id": batch_id, "files": len(entries)})
     db.session.commit()
-    stamp = created.strftime("%Y%m%d-%H%M%S")
+    # Local time in the file name (it is read by people); the manifest keeps UTC.
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     return buffer.getvalue(), f"ut-approved-p{project_id}{f'-b{batch_id}' if batch_id else ''}-{stamp}.zip"

@@ -261,18 +261,22 @@
     $("ut-repair-sum").textContent = total
       ? `共 ${total} 轮：有效 ${useful}（${percent(useful, total)}），无进展 ${stalled}（${percent(stalled, total)}）`
       : "";
-    body.innerHTML = rows.length ? rows.map((m) => "<tr>" +
-      `<td><code>${esc(m.model)}</code></td><td class="ut-num">${m.jobs}</td>` +
-      `<td class="ut-num">${m.rounds}</td>` +
-      `<td class="ut-num">${m.useful} <span class="submuted">${percent(m.useful, m.rounds)}</span></td>` +
-      `<td class="ut-num">${m.passed}</td><td class="ut-num">${m.stalled}</td>` +
-      `<td class="ut-num">${m.rejected}</td><td class="ut-num">${m.refused}</td>` +
-      `<td class="ut-num">${m.unusable}</td>` +
+    body.innerHTML = rows.length ? rows.map((m) => {
+      // The rarer fruitless outcomes share a column; the tooltip splits them.
+      const other = m.rejected + m.refused + m.unusable;
+      const otherTip = `行被拒 ${m.rejected} · 执行前拒绝 ${m.refused} · 回复不可用 ${m.unusable}`;
+      return "<tr>" +
+      `<td class="ut-repair-model" title="${esc(m.model)}"><code>${esc(m.model)}</code></td>` +
+      `<td class="ut-num">${m.jobs}</td><td class="ut-num">${m.rounds}</td>` +
+      `<td class="ut-num" title="执行通过 ${m.passed}">${m.useful} <span class="submuted">${percent(m.useful, m.rounds)}</span></td>` +
+      `<td class="ut-num">${m.stalled}</td>` +
+      `<td class="ut-num" title="${otherTip}">${other}</td>` +
       `<td class="ut-num">${m.avg_input_tokens.toLocaleString()}</td>` +
       `<td class="ut-num">${m.cache_ratio == null ? "\u2014" : Math.round(m.cache_ratio * 100) + "%"}</td>` +
       `<td class="ut-num">${m.avg_elapsed_ms == null ? "\u2014" : (m.avg_elapsed_ms / 1000).toFixed(1) + " s"}</td>` +
-      "</tr>").join("")
-      : '<tr><td colspan="12" class="muted">还没有调用过本地模型</td></tr>';
+      "</tr>";
+    }).join("")
+      : '<tr><td colspan="9" class="muted">还没有调用过本地模型</td></tr>';
   }
 
   async function load() {

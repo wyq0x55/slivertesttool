@@ -28,9 +28,12 @@
 .ut-repair-sum{ margin:0 0 8px; font-size:13px; color:var(--text-2); }
 .ut-repair-sum:empty{ display:none; }
 .ut-repair-table th{ white-space:nowrap; }
+.ut-repair-table td{ white-space:nowrap; }
+.ut-repair-model{ max-width:150px; overflow:hidden; text-overflow:ellipsis; }
 /* Fruitless model rounds folded into one row of the version history. */
 .ut-attempts tr.ut-att-run td{ background:var(--surface-2); color:var(--text-2); font-size:12.5px; cursor:default; }
 .ut-attempts tr.ut-att-run .btn{ margin-left:6px; }
+.ut-attempts tr.ut-att-run td:first-child{ white-space:nowrap; }
 /* Selected batch summary under the job-list toolbar. */
 .ut-batch-info{ display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; margin:-4px 0 12px;
   font-size:12.5px; color:var(--text-2); }
