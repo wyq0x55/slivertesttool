@@ -34,6 +34,14 @@ class UtPipelineConfig(db.Model):
     # Linked builds that differ only in stub bodies, one directory per line in
     # priority order.  Empty keeps the build each unit project names itself.
     stub_builds = db.Column(db.Text, nullable=False, default="")
+    execution_backend = db.Column(db.String(16), nullable=False, default="winams")
+    stub_mode = db.Column(db.String(16), nullable=False, default="deterministic")
+    stub_model = db.Column(db.String(128), nullable=False, default="")
+    stub_max_rounds = db.Column(db.Integer, nullable=False, default=2)
+    host_clang = db.Column(db.String(1024), nullable=False, default="clang")
+    host_llvm_cov = db.Column(db.String(1024), nullable=False, default="llvm-cov")
+    host_llvm_profdata = db.Column(db.String(1024), nullable=False, default="llvm-profdata")
+    host_profile_runtime = db.Column(db.String(1024), nullable=False, default="")
     max_repair_rounds = db.Column(db.Integer, nullable=False, default=5)
     # Optional model override for repair; empty uses the global AI model.
     repair_model = db.Column(db.String(128), nullable=False, default="")
@@ -48,6 +56,14 @@ class UtPipelineConfig(db.Model):
             "product_root": self.product_root,
             "work_root": self.work_root,
             "stub_builds": self.stub_builds,
+            "execution_backend": self.execution_backend,
+            "stub_mode": self.stub_mode,
+            "stub_model": self.stub_model,
+            "stub_max_rounds": self.stub_max_rounds,
+            "host_clang": self.host_clang,
+            "host_llvm_cov": self.host_llvm_cov,
+            "host_llvm_profdata": self.host_llvm_profdata,
+            "host_profile_runtime": self.host_profile_runtime,
             "max_repair_rounds": self.max_repair_rounds,
             "repair_model": self.repair_model,
             "updated_at": _iso(self.updated_at),
@@ -241,6 +257,7 @@ class UtJob(db.Model):
             "repair_rounds": self.repair_rounds,
             "max_repair_rounds": self.max_repair_rounds,
             "generation_status": self.generation_status,
+            "execution_backend": (self.generation or {}).get("execution_backend", "winams"),
             "has_reference": bool(self.reference_csv),
             "current_attempt_id": self.current_attempt_id,
             "last_verdict": self.last_verdict or None,
@@ -312,5 +329,7 @@ def _execution_summary(execution: dict | None) -> dict | None:
     """Drop the bulky per-cell capture diff; the check already lists conflicts."""
     if not execution:
         return None
-    keep = ("status", "exit_code", "diagnostic", "blocked_reasons", "coverage", "sandbox")
+    keep = ("status", "exit_code", "diagnostic", "blocked_reasons", "coverage", "sandbox",
+            "evidence_source", "counts_as_target_evidence", "delivery_validated", "reason",
+            "stub_generation")
     return {key: execution.get(key) for key in keep if key in execution}

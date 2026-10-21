@@ -156,6 +156,14 @@ def _migrate_schema() -> None:
         },
         "ut_pipeline_configs": {
             "stub_builds": "TEXT NOT NULL DEFAULT ''",
+            "execution_backend": "VARCHAR(16) NOT NULL DEFAULT 'winams'",
+            "stub_mode": "VARCHAR(16) NOT NULL DEFAULT 'deterministic'",
+            "stub_model": "VARCHAR(128) NOT NULL DEFAULT ''",
+            "stub_max_rounds": "INTEGER NOT NULL DEFAULT 2",
+            "host_clang": "VARCHAR(1024) NOT NULL DEFAULT 'clang'",
+            "host_llvm_cov": "VARCHAR(1024) NOT NULL DEFAULT 'llvm-cov'",
+            "host_llvm_profdata": "VARCHAR(1024) NOT NULL DEFAULT 'llvm-profdata'",
+            "host_profile_runtime": "VARCHAR(1024) NOT NULL DEFAULT ''",
         },
         "ut_jobs": {
             "gate_code": "VARCHAR(32) NOT NULL DEFAULT ''",

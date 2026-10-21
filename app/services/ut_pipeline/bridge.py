@@ -127,6 +127,35 @@ class UtAgentBridge:
         # WinAMS runs; each subprocess has its own execution timeout.
         return self._run(args, timeout=3 * self.settings.execute_timeout + 120)["execution"]
 
+    @staticmethod
+    def _host_args(ir_json: Path, intents: Path, reference: Path,
+                   candidate: Path, out: Path) -> list[str]:
+        return ["--ir-json", str(ir_json), "--intents", str(intents),
+                "--reference", str(reference), "--candidate", str(candidate), "--out", str(out)]
+
+    def host_prepare(self, *, ir_json: Path, intents: Path, reference: Path,
+                     candidate: Path, out: Path) -> dict[str, Any]:
+        return self._run(["host-prepare", *self._host_args(
+            ir_json, intents, reference, candidate, out)], timeout=self.settings.timeout)["prepared"]
+
+    def host_execute(self, *, ir_json: Path, intents: Path, reference: Path,
+                     candidate: Path, out: Path, config: dict,
+                     stub_request: Optional[Path] = None,
+                     stub_response: Optional[Path] = None) -> dict[str, Any]:
+        args = ["host-execute", *self._host_args(ir_json, intents, reference, candidate, out),
+                "--timeout", str(self.settings.execute_timeout)]
+        for flag, value in (("--clang", config.get("host_clang", "clang")),
+                            ("--llvm-cov", config.get("host_llvm_cov", "llvm-cov")),
+                            ("--llvm-profdata", config.get("host_llvm_profdata", "llvm-profdata")),
+                            ("--profile-runtime", config.get("host_profile_runtime")),
+                            ("--stub-request", stub_request), ("--stub-response", stub_response)):
+            if value:
+                args += [flag, str(value)]
+        document = self._run(args, timeout=3 * self.settings.execute_timeout + 120)
+        if not isinstance(document.get("execution"), dict) or not isinstance(document.get("check"), dict):
+            raise BridgeError("host-execute returned no execution/check evidence")
+        return {"execution": document["execution"], "check": document["check"]}
+
     def check(self, candidate: Path, *, manifest: str, reference: Optional[Path] = None,
               previous: Optional[Path] = None, execution: Optional[Path] = None,
               intents: Optional[Path] = None, ir_json: Optional[Path] = None) -> dict[str, Any]:

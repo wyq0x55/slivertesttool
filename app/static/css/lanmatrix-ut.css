@@ -127,3 +127,8 @@
   .ut-review, #ut-detail .panel, .ut-form-grid .panel{ min-width:0; }
   #ut-detail .dtitle h1{ overflow-wrap:anywhere; }
 }
+/* Keep candidate evidence readable without widening the job history table. */
+.lm-ut-binding .ut-form-grid { align-items: start; }
+.ut-host-evidence { padding: 16px; }
+.ut-artifact-list { display: flex; flex-wrap: wrap; gap: 8px 24px; padding-left: 20px; }
+.ut-artifact-list li { overflow-wrap: anywhere; }

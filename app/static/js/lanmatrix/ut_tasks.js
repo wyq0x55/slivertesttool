@@ -227,6 +227,16 @@
   function coverage(execution) {
     var c = execution && execution.coverage;
     if (!c) return "—";
+    if (execution.evidence_source === "HOST_EXECUTION") {
+      return '<div class="ut-cov-mini">' + [["lines", "行"], ["branches", "分支"], ["mcdc", "MC/DC"]].map(function (k) {
+        var metric = c[k[0]] || {};
+        var measured = typeof metric.percent === "number" && metric.percent >= 0;
+        return '<span><b>' + k[1] + "</b> " + (measured ? esc(metric.percent) + "%" +
+          (typeof metric.covered === "number" && typeof metric.total === "number"
+            ? "（" + esc(metric.covered) + " / " + esc(metric.total) + "）" : "")
+          : esc(metric.status || "未测量")) + "</span>";
+      }).join("") + "</div>";
+    }
     return '<div class="ut-cov-mini">' + [["c0", "C0"], ["c1", "C1"], ["mcdc", "MC/DC"]].map(function (k) {
       var v = c[k[0]], measured = typeof v === "number" && v >= 0;
       return '<span class="' + (!measured ? "is-missing" : v >= 100 ? "is-full" : "is-gap") +
@@ -239,6 +249,31 @@
     if (!s || !s.selected) return "";
     return '<div class="submuted" title="' + esc(s.selected) + '">构建 ' +
       esc(String(s.selected).split(/[\\/]/).pop()) + "</div>";
+  }
+
+  function hostEvidence(attempt) {
+    var execution = attempt.execution || {};
+    var panel = $("ut-d-host");
+    panel.hidden = execution.evidence_source !== "HOST_EXECUTION";
+    if (panel.hidden) return;
+    $("ut-d-host-summary").innerHTML = "<p><b>" + esc(execution.status || "") + "</b> · " +
+      esc(execution.reason || "") + "</p>" + coverage(execution);
+    var generation = execution.stub_generation || {};
+    $("ut-d-stub-rounds").innerHTML = "<p>Stub 模式：" + esc(generation.mode || "deterministic") +
+      (generation.model ? " · 模型：" + esc(generation.model) : "") +
+      (generation.skipped ? " · " + esc(generation.skipped) : "") + "</p>" +
+      ((generation.rounds || []).length ? '<table class="ut-issue-table"><thead><tr><th>轮次</th><th>状态</th>' +
+        '<th>Token（输入 / 输出）</th><th>说明</th></tr></thead><tbody>' + generation.rounds.map(function (round) {
+          var usage = round.usage || {};
+          return "<tr><td>" + esc(round.round) + "</td><td>" + esc(round.status) + "</td><td>" +
+            esc(usage.input_tokens == null ? "—" : usage.input_tokens) + " / " +
+            esc(usage.output_tokens == null ? "—" : usage.output_tokens) + "</td><td>" +
+            esc(round.reason || round.proposal_status || "") + "</td></tr>";
+        }).join("") + "</tbody></table>" : "");
+    $("ut-d-host-artifacts").innerHTML = '<ul class="ut-artifact-list">' + (generation.artifacts || []).map(function (artifact) {
+      return '<li><a href="' + esc(LMApi.utArtifactUrl(pid, job.id, attempt.id, artifact.id)) + '">' +
+        esc(artifact.name) + '</a> <code class="submuted">' + esc((artifact.sha256 || "").slice(0, 12)) + "</code></li>";
+    }).join("") + "</ul>";
   }
   // The qualifier (source version, model name) goes on a muted second line so
   // the column stays as narrow as the origin word itself.
@@ -282,7 +317,7 @@
         job.superseded_by + "\">#" + job.superseded_by + "</a>。本作业只保留为历史记录，不能再审核或修订。"
       : "";
     $("ut-d-sub").textContent = "作业 #" + job.id + " · " + (t.source_rel || "");
-    $("ut-d-verdict").innerHTML = U.verdictPill(job.last_verdict);
+    $("ut-d-verdict").innerHTML = U.verdictPill(job.last_verdict, job.execution_backend);
     $("ut-d-function").textContent = t.function || "";
     $("ut-d-source").textContent = t.source_rel || "";
     var b = job.batch || {};
@@ -345,7 +380,8 @@
       return head + '<tr data-attempt="' + a.id + '"' + (isCurrent ? ' class="is-current" title="当前版本"' : "") +
         (run ? ' data-run-member="' + run.key + '"' + (folded ? " hidden" : "") : "") + ">" +
         '<td class="ut-num">' + a.seq + "</td><td>" + originOf(a) + "</td>" +
-        "<td>" + (a.verdict ? U.verdictPill(a.verdict) :
+        "<td>" + (a.verdict ? U.verdictPill(a.verdict,
+          a.execution && a.execution.evidence_source === "HOST_EXECUTION" ? "clang" : "winams") :
           (U.ACTIVE[job.state] ? U.statePill("executing") : "—")) + "</td>" +
         '<td class="ut-att-issues">' + topIssues(a.check) + "</td><td>" + coverage(a.execution) +
           stubBuild(a.execution) + "</td>" +
@@ -356,6 +392,7 @@
     var wanted = shownAttempt || job.current_attempt_id;
     if (wanted) select(wanted, false);
     else {
+      $("ut-d-host").hidden = true;
       $("ut-d-issues-title").textContent = "校验问题";
       $("ut-d-issues-sum").textContent = "";
       $("ut-d-issues").innerHTML = '<p class="muted">尚无版本，尚未校验</p>';
@@ -417,6 +454,7 @@
     });
     setActionBusy(actionPending);
     renderIssues(a);
+    hostEvidence(a);
   }
 
   function versionLabel(a) {

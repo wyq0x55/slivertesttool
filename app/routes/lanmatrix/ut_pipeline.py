@@ -117,6 +117,15 @@ def attempt_csv(project_id: int, job_id: int, attempt_id: int):
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
+@bp.get("/jobs/<int:job_id>/attempts/<int:attempt_id>/artifacts/<artifact_id>")
+@login_required
+def attempt_artifact(project_id: int, job_id: int, attempt_id: int, artifact_id: str):
+    _project_and_role(project_id, "project.view")
+    data, name = pipeline.attempt_artifact(project_id, job_id, attempt_id, artifact_id)
+    return Response(data, mimetype="application/octet-stream", headers={
+        "Content-Disposition": f'attachment; filename="{name}"', "X-Content-Type-Options": "nosniff"})
+
+
 @bp.post("/jobs/<int:job_id>/revision")
 @login_required
 def submit_revision(project_id: int, job_id: int):

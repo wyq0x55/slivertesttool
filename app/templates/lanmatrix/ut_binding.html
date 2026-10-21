@@ -10,7 +10,7 @@
   <div class="page-head">
     <div class="ttl">
       <h1>项目绑定</h1>
-      <p>ut-agent 项目清单、函数索引与 WinAMS 工作目录。入队时冻结当时的绑定，之后修改只影响新批次。</p>
+      <p>入队时冻结项目绑定、执行器与 Stub 设置，之后修改只影响新批次。</p>
     </div>
     <div class="head-actions">
       <button class="btn primary" id="ut-config-save" type="button"{% if not project_capabilities.configure %} hidden{% endif %}>
@@ -32,9 +32,15 @@
         <p class="ut-hint">实施一览从这里读取待测函数。</p></div>
     </section>
     <section class="panel">
-      <h4>WinAMS</h4>
+      <h4>执行器</h4>
+      <div class="field"><label for="ut-c-execution_backend">执行后端</label>
+        <select id="ut-c-execution_backend"><option value="winams">WinAMS</option><option value="clang">Clang 主机（实验）</option></select></div>
       <div class="field"><label for="ut-c-product_root">Product / Soft 根目录</label>
         <input id="ut-c-product_root" autocomplete="off"></div>
+      <p class="ut-hint">Clang 只执行与生成器意图绑定的 CSV；未映射的行或期望值改动会阻塞。主机证据不代表目标执行或正式交付验收。</p>
+    </section>
+    <section class="panel" id="ut-winams-controls">
+      <h4>WinAMS</h4>
       <div class="field"><label for="ut-c-work_root">WinAMS 工作根</label>
         <input id="ut-c-work_root" autocomplete="off">
         <p class="ut-hint">包含索引第 5 列所指 WinAMS 单元树的目录。</p></div>
@@ -43,8 +49,22 @@
           placeholder="…\STUB\stub1&#10;…\STUB\stub2"></textarea>
         <p class="ut-hint">每行一个已链接构建（含 MCDC 子目录），按优先级排列；执行时选用第一个定义了全部 stub、且 MCDC 构建对被测源文件插桩的构建。留空则使用单元工程自带的构建。</p></div>
     </section>
+    <section class="panel" id="ut-host-controls" hidden>
+      <h4>Clang 主机工具</h4>
+      <div class="field"><label for="ut-c-host_clang">Clang</label><input id="ut-c-host_clang" value="clang" autocomplete="off"></div>
+      <div class="field"><label for="ut-c-host_llvm_cov">llvm-cov</label><input id="ut-c-host_llvm_cov" value="llvm-cov" autocomplete="off"></div>
+      <div class="field"><label for="ut-c-host_llvm_profdata">llvm-profdata</label><input id="ut-c-host_llvm_profdata" value="llvm-profdata" autocomplete="off"></div>
+      <div class="field"><label for="ut-c-host_profile_runtime">Profile runtime（可选路径）</label><input id="ut-c-host_profile_runtime" autocomplete="off"></div>
+      <div class="field"><label for="ut-c-stub_mode">Stub 模式</label>
+        <select id="ut-c-stub_mode"><option value="deterministic">确定性模板</option><option value="llm">本地模型候选（实验）</option></select></div>
+      <div id="ut-stub-llm-controls" hidden>
+        <div class="field"><label for="ut-c-stub_model">Stub 模型</label><input id="ut-c-stub_model" autocomplete="off" placeholder="留空使用全局 AI 模型"></div>
+        <div class="field"><label for="ut-c-stub_max_rounds">Stub 候选轮数</label><input id="ut-c-stub_max_rounds" type="number" min="1" max="5" step="1" value="2"></div>
+        <p class="ut-hint">复用全局 AI 网关设置。模型只提议 Stub 函数体，宿主模板由工具控制；每轮编译与运行证据保留并交人工审核。无 Stub 时不调用模型。</p>
+      </div>
+    </section>
     <section class="panel">
-      <h4>本地模型修正</h4>
+      <h4 id="ut-csv-repair-heading">WinAMS CSV 本地模型修正</h4>
       <div class="field"><label for="ut-c-max_repair_rounds">修正上限（次）</label>
         <input id="ut-c-max_repair_rounds" type="number" min="0" max="20" step="1">
         <p class="ut-hint">达到上限仍未通过时转人工处理。</p></div>
