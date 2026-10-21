@@ -16,6 +16,12 @@
       <p>单元测试作业：生成、WinAMS 执行、校验、本地模型修正，最终停在人工审核</p>
     </div>
     <div class="head-actions">
+      {# The hand-off after approval: each function's approved CSV plus a
+         manifest of who approved what, from which generator. #}
+      <a class="btn" id="ut-export" hidden title="每个函数最近一次审核通过的 CSV，附生成器版本、修订记录与审核人清单">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+        <span id="ut-export-label">导出已通过版本</span>
+      </a>
       <button class="btn" id="ut-refresh" type="button">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/></svg>
         刷新

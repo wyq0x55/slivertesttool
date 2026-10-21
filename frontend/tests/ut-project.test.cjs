@@ -77,6 +77,7 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
         const d = deferred(); previews.push({ ...d, job, attempt }); return d.promise;
       },
       utAttemptUrl: (pid, job, attempt) => `/csv/${job}/${attempt}`,
+      utExportUrl: (pid, batch) => `/export/${batch || "all"}`,
       utReview(...args) { const d = deferred(); reviews.push({ ...d, args }); return d.promise; },
       utRevise(...args) { const d = deferred(); revisions.push({ ...d, args }); return d.promise; },
       utStop(pid, id) { const d = deferred(); stops.push({ ...d, id }); return d.promise; },

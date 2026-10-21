@@ -71,6 +71,13 @@
   function renderRows() {
     var rows = jobs.filter(visible);
     var old = jobs.filter(function (j) { return j.superseded_by; }).length;
+    // Export follows the batch filter; one function counts once.
+    var approved = {};
+    jobs.forEach(function (j) { if (j.state === "approved") approved[(j.target || {}).id || j.id] = 1; });
+    var approvedCount = Object.keys(approved).length;
+    $("ut-export").hidden = !approvedCount;
+    $("ut-export").href = LMApi.utExportUrl(pid, batchId);
+    $("ut-export-label").textContent = "导出已通过版本（" + approvedCount + "）";
     $("ut-old-wrap").hidden = !old;
     $("ut-old-n").textContent = old;
     $("ut-rows").innerHTML = rows.length ? rows.map(function (j) {
