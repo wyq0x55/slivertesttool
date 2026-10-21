@@ -27,11 +27,14 @@
   var ICO_EDIT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
     'stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/>' +
     '<path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
+  var STOP_ICO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>';
 
   var jobs = [];
   var filter = (window.LMUrl && LMUrl.get("filter")) || "";
   var query = (window.LMUrl && LMUrl.get("q")) || "";
   var batchId = (window.LMUrl && LMUrl.get("batch")) || "";
+  var showOld = false;
+  var batches = [];
   var job = null;
   var openJobId = null;
   var shownAttempt = null;
@@ -55,6 +58,7 @@
 
   // ------------------------------------------------------------------ list
   function visible(j) {
+    if (j.superseded_by && !showOld) return false;
     if (!(U.FILTERS[filter] || U.FILTERS[""])(j.state)) return false;
     if (!query) return true;
     var t = j.target || {};
@@ -64,25 +68,32 @@
 
   function renderRows() {
     var rows = jobs.filter(visible);
+    var old = jobs.filter(function (j) { return j.superseded_by; }).length;
+    $("ut-old-wrap").hidden = !old;
+    $("ut-old-n").textContent = old;
     $("ut-rows").innerHTML = rows.length ? rows.map(function (j) {
       var t = j.target || {};
-      var retry = U.can("edit") && j.current_attempt_id && (j.state === "blocked" || j.state === "error")
-        ? iconButton("重试", ICO.retest, 'data-retry="' + j.id + '"') : "";
+      var resumable = j.state === "blocked" || j.state === "error" || j.state === "stopped";
+      var retry = U.can("edit") && j.current_attempt_id && resumable && !j.superseded_by
+        ? iconButton(j.state === "stopped" ? "继续" : "重试", ICO.retest, 'data-retry="' + j.id + '"') : "";
+      var stop = U.can("edit") && U.ACTIVE[j.state] && !j.stop_requested
+        ? iconButton("停止", STOP_ICO, 'data-stop="' + j.id + '"') : "";
       var download = j.current_attempt_id
         ? iconLink("下载当前版本", ICO.download, LMApi.utAttemptUrl(pid, j.id, j.current_attempt_id)) : "";
-      return "<tr>" +
+      return "<tr" + (j.superseded_by ? ' class="is-stale"' : "") + ">" +
         '<td class="ut-num">#' + j.id + "</td>" +
         '<td class="lm-cell-testid"><a href="?job=' + j.id + '" data-job="' + j.id + '"><code>' +
           esc(t.function || "") + "</code></a>" +
           '<div class="ut-src submuted" title="' + esc(t.source_rel || "") + '">' +
           esc(t.source_name || "") + " · 批次 #" + j.batch_id + "</div></td>" +
-        "<td>" + U.statePill(j.state) + "</td>" +
+        "<td>" + U.statePill(U.jobState(j)) +
+          (j.superseded_by ? '<div class="submuted">已被 #' + j.superseded_by + " 取代</div>" : "") + "</td>" +
         "<td>" + U.verdictPill(j.last_verdict) + "</td>" +
         '<td class="ut-num">' + j.repair_rounds + " / " + j.max_repair_rounds + "</td>" +
         '<td class="lm-cell-time"><code>' + esc(U.time(j.updated_at)) + "</code></td>" +
         '<td class="lm-row-actions"><span class="row-acts">' +
-        iconButton(U.GATES[j.state] ? "审核" : "查看", ICO.view, 'data-job="' + j.id + '"') +
-        retry + download + "</span></td></tr>";
+        iconButton(U.actionable(j) ? "审核" : "查看", ICO.view, 'data-job="' + j.id + '"') +
+        stop + retry + download + "</span></td></tr>";
     }).join("") : '<tr><td colspan="7" class="muted">' +
       (jobs.length ? "没有符合条件的作业" : "还没有作业：在「实施一览」勾选函数后加入队列") + "</td></tr>";
   }
@@ -99,8 +110,32 @@
     await refresh();
   }
 
+  function stopNote(job) {
+    return job.state === "queued" ? "已停止" : "将在当前 WinAMS / 模型调用结束后停止，已得到的结果会保留";
+  }
+
+  async function stopFromList(id, button) {
+    if (!U.can("edit")) return;
+    button.disabled = true;
+    try {
+      var stopped = await LMApi.utStop(pid, id);
+      say("作业 #" + id + " " + stopNote(stopped));
+    } catch (e) {
+      say(e.message, true);
+    }
+    await refresh();
+  }
+
+  function selectedBatchActive() {
+    var b = batches.find(function (item) { return String(item.id) === String(batchId); });
+    if (!b) return 0;
+    return Object.keys(b.states).reduce(function (sum, state) {
+      return sum + (U.ACTIVE[state] ? b.states[state] : 0);
+    }, 0);
+  }
+
   async function loadBatches() {
-    var batches = await LMApi.utBatches(pid);
+    batches = await LMApi.utBatches(pid);
     var sel = $("ut-batch");
     sel.innerHTML = '<option value="">全部批次</option>' + batches.map(function (b) {
       var n = Object.keys(b.states).reduce(function (s, k) { return s + b.states[k]; }, 0);
@@ -109,6 +144,7 @@
         " · " + n + " 个作业" + (prov.baseline_ref ? " · " + esc(prov.baseline_ref) : "") + "</option>";
     }).join("");
     sel.value = batchId;
+    $("ut-batch-stop").hidden = !U.can("edit") || !selectedBatchActive();
   }
 
   async function loadJobs() {
@@ -201,10 +237,17 @@
 
   function renderJob() {
     var t = job.target || {};
-    var gate = !!U.GATES[job.state];
+    var gate = U.actionable(job);
+    var shown = U.jobState(job);
     $("ut-d-title").textContent = t.function || ("作业 #" + job.id);
-    U.applyState($("ut-d-hstate"), job.state);
-    U.applyState($("ut-d-state"), job.state);
+    U.applyState($("ut-d-hstate"), shown);
+    U.applyState($("ut-d-state"), shown);
+    var banner = $("ut-d-superseded");
+    banner.hidden = !job.superseded_by;
+    banner.innerHTML = job.superseded_by
+      ? "该函数已重新入队，最新作业是 <a href=\"?job=" + job.superseded_by + "\" data-open-job=\"" +
+        job.superseded_by + "\">#" + job.superseded_by + "</a>。本作业只保留为历史记录，不能再审核或修订。"
+      : "";
     $("ut-d-sub").textContent = "作业 #" + job.id + " · " + (t.source_rel || "");
     $("ut-d-verdict").innerHTML = U.verdictPill(job.last_verdict);
     $("ut-d-function").textContent = t.function || "";
@@ -221,11 +264,17 @@
         (job.review_note ? " · " + job.review_note : "") : "—";
     $("ut-d-updated").textContent = U.time(job.updated_at);
     $("ut-d-reason").textContent = job.reason || "—";
-    $("ut-d-retry").hidden = !U.can("edit") || !(job.state === "blocked" || job.state === "error");
+    var resumable = job.state === "blocked" || job.state === "error" || job.state === "stopped";
+    $("ut-d-retry").hidden = !U.can("edit") || !resumable || !!job.superseded_by;
+    $("ut-d-retry-label").textContent = job.state === "stopped" ? "继续" : "重试";
+    $("ut-d-stop").hidden = !U.can("edit") || !U.ACTIVE[job.state] || !!job.stop_requested;
 
     var decided = job.state === "approved" || job.state === "rejected";
     $("ut-d-gate-hint").textContent = gate
-      ? "审核的是当前版本。机器判定未通过时，通过必须填写意见。"
+      ? (job.state === "stopped" ? "作业已停止，当前版本和机器证据都已保留：可以继续运行、人工修订，或直接审核。" : "") +
+        "审核的是当前版本。机器判定未通过时，通过必须填写意见。"
+      : job.superseded_by ? "已被更新的作业取代，只读。"
+      : job.stop_requested ? "已请求停止：当前调用结束后停止，已得到的结果会保留。"
       : decided
         ? (U.STATE[job.state][1] + (job.reviewed_at ? " · " + U.time(job.reviewed_at) : "") +
            (job.review_note ? " · " + job.review_note : ""))
@@ -293,7 +342,7 @@
     return "第 " + a.seq + " 版（" + (U.ORIGIN[a.origin] || a.origin) + "）";
   }
   function canRevise() {
-    return !!(job && U.GATES[job.state] && U.can("edit") &&
+    return !!(job && U.actionable(job) && U.can("edit") &&
       (job.attempts || []).some(function (a) { return a.id === job.current_attempt_id && a.has_csv; }));
   }
 
@@ -643,6 +692,8 @@
   $("ut-rows").addEventListener("click", function (e) {
     var r = e.target.closest("[data-retry]");
     if (r && r.dataset.retry) { retryFromList(Number(r.dataset.retry), r); return; }
+    var s = e.target.closest("[data-stop]");
+    if (s && s.dataset.stop) { stopFromList(Number(s.dataset.stop), s); return; }
     var b = e.target.closest("[data-job]");
     if (!b) return;
     if (e.preventDefault) e.preventDefault();
@@ -662,6 +713,38 @@
   $("ut-d-issues").addEventListener("click", function (e) {
     var b = e.target.closest("[data-sheet]");
     if (b) openSheet(Number(b.dataset.sheet), false);
+  });
+  $("ut-show-old").addEventListener("change", function () { showOld = this.checked; renderRows(); });
+  $("ut-batch-stop").addEventListener("click", async function () {
+    var id = batchId, active = selectedBatchActive();
+    if (!id || !active || !U.can("edit")) return;
+    var ok = await LMUI.confirm({
+      title: "停止批次 #" + id,
+      body: "停止该批次中 " + active + " 个进行中的作业。正在执行的 WinAMS 或模型调用会先完成，" +
+        "结果保留；之后可在作业详情中继续。",
+      confirmText: "停止批次",
+    });
+    if (!ok) return;
+    try {
+      var r = await LMApi.utStopBatch(pid, Number(id));
+      say("批次 #" + id + "：已停止 " + r.stopped + " 个" +
+        (r.stopping ? "，" + r.stopping + " 个将在当前调用结束后停止" : ""));
+    } catch (e) {
+      say(e.message, true);
+    }
+    refresh();
+  });
+  $("ut-d-superseded").addEventListener("click", function (e) {
+    var a = e.target.closest("[data-open-job]");
+    if (!a) return;
+    if (e.preventDefault) e.preventDefault();
+    openJob(Number(a.dataset.openJob));
+  });
+  $("ut-d-stop").addEventListener("click", function () {
+    if (!job || !U.can("edit")) return;
+    var id = job.id, queued = job.state === "queued";
+    act(function () { return LMApi.utStop(pid, id); },
+      queued ? "已停止" : "已请求停止：当前调用结束后停止");
   });
   $("ut-d-retry").addEventListener("click", function () {
     if (!job || !U.can("edit")) return;

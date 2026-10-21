@@ -11,7 +11,9 @@
     GET  /jobs/<id>/attempts/<aid>/csv   CP932 download; ?format=text for preview
     POST /jobs/<id>/revision             human revision: {csv, note} or multipart file
     POST /jobs/<id>/review               {decision: approve|reject, note} (item.review)
-    POST /jobs/<id>/retry                blocked / error → resume (item.edit)
+    POST /jobs/<id>/retry                blocked / error / stopped → resume (item.edit)
+    POST /jobs/<id>/stop                 stop an active job (item.edit)
+    POST /batches/<id>/stop              stop every active job of a batch (item.edit)
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ bp = Blueprint("lanmatrix_ut", __name__, url_prefix="/api/v1/projects/<int:proje
 register_common(bp)
 
 _STATES = ("queued", "generating", "executing", "repairing", "awaiting_review",
-           "needs_human", "blocked", "error", "approved", "rejected")
+           "needs_human", "blocked", "error", "approved", "rejected", "stopped")
 
 
 def _body() -> dict:
@@ -156,3 +158,18 @@ def retry(project_id: int, job_id: int):
     job = pipeline.retry(project_id, job_id, g.user.id)
     ut_tasks.ut_advance_job(job.id)
     return ok(job.to_dict(), status=202)
+
+
+@bp.post("/jobs/<int:job_id>/stop")
+@login_required
+def stop_job(project_id: int, job_id: int):
+    _project_and_role(project_id, "item.edit")
+    job = pipeline.stop_job(project_id, job_id, g.user.id)
+    return ok(job.to_dict(), status=202)
+
+
+@bp.post("/batches/<int:batch_id>/stop")
+@login_required
+def stop_batch(project_id: int, batch_id: int):
+    _project_and_role(project_id, "item.edit")
+    return ok(pipeline.stop_batch(project_id, batch_id, g.user.id), status=202)

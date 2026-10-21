@@ -34,7 +34,16 @@
       <input type="search" id="ut-q" placeholder="搜索函数 / 源文件…" autocomplete="off">
     </div>
     <select id="ut-batch" class="selbox" title="按批次筛选"><option value="">全部批次</option></select>
+    <button class="btn" id="ut-batch-stop" type="button" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+      停止批次
+    </button>
     {{ ut_filters(show_rejected=true) }}
+    {# Older jobs of a function queued again: kept as history, hidden from the
+       working list by default so every row shown is current work. #}
+    <label class="ut-old-toggle" id="ut-old-wrap" hidden>
+      <input type="checkbox" id="ut-show-old"> 显示已被取代的 <span id="ut-old-n"></span> 个
+    </label>
   </div>
 
   <div class="tablecard">
@@ -72,9 +81,13 @@
     </div>
     <div class="head-actions">
       <button class="btn small" id="ut-d-refresh" type="button">刷新</button>
+      <button class="btn small" id="ut-d-stop" type="button" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+        停止
+      </button>
       <button class="btn small" id="ut-d-retry" type="button" hidden>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-        重试
+        <span id="ut-d-retry-label">重试</span>
       </button>
       <a class="btn small" id="ut-d-download" hidden>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
@@ -83,6 +96,7 @@
     </div>
   </div>
   <p id="ut-detail-status" role="status" aria-live="polite"></p>
+  <p class="ut-superseded" id="ut-d-superseded" hidden></p>
 
   <div class="detail-grid">
     <div class="panel">

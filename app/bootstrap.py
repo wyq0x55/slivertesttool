@@ -157,6 +157,10 @@ def _migrate_schema() -> None:
         "ut_pipeline_configs": {
             "stub_builds": "TEXT NOT NULL DEFAULT ''",
         },
+        "ut_jobs": {
+            "stop_requested_at": "TIMESTAMP",
+            "stop_requested_by": "INTEGER REFERENCES lm_users(id) ON DELETE SET NULL",
+        },
     }
     for table, columns in additions.items():
         if table not in existing_tables:
