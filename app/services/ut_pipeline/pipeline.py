@@ -986,6 +986,66 @@ def list_jobs(project_id: int, *, state: Optional[str] = None,
     return [job.to_dict() for job in query.order_by(UtJob.id.desc()).limit(_JOB_LIST_LIMIT)]
 
 
+def _round_outcome(attempt: UtAttempt) -> str:
+    """One model round, from what it left behind (works for older records too)."""
+    meta = attempt.reviser if isinstance(attempt.reviser, dict) else {}
+    if meta.get("model_contacted") is False:
+        return "guarded"              # prompt guard stopped it before the model
+    if attempt.csv_path:
+        if attempt.execution is not None:
+            return "passed" if attempt.verdict == "PASS" else "executed"
+        return "refused"              # rows appended but refused before execution
+    if "rationale" not in meta:
+        return "unusable"             # reply was not usable JSON
+    return "rejected" if meta.get("rejected") else "stalled"
+
+
+def repair_stats(project_id: int) -> dict[str, Any]:
+    """How much the local model's rounds actually produced, per model.
+
+    A round counts once the model was asked. ``useful`` is a candidate that
+    reached WinAMS; ``stalled`` proposed nothing at all, ``rejected`` only
+    rows the validator refused.
+    """
+    attempts = (UtAttempt.query.join(UtJob, UtJob.id == UtAttempt.job_id)
+                .filter(UtJob.project_id == project_id, UtAttempt.origin == UtAttempt.ORIGIN_LLM)
+                .all())
+    models: dict[str, dict[str, Any]] = {}
+    for attempt in attempts:
+        meta = attempt.reviser if isinstance(attempt.reviser, dict) else {}
+        entry = models.setdefault(meta.get("model") or "未记录", {
+            "rounds": 0, "guarded": 0, "passed": 0, "executed": 0, "refused": 0,
+            "rejected": 0, "stalled": 0, "unusable": 0, "jobs": set(),
+            "input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0,
+            "elapsed_ms": [],
+        })
+        outcome = _round_outcome(attempt)
+        entry[outcome] += 1
+        if outcome == "guarded":
+            continue
+        entry["rounds"] += 1
+        entry["jobs"].add(attempt.job_id)
+        usage = meta.get("usage") if isinstance(meta.get("usage"), dict) else {}
+        for key in ("input_tokens", "cached_input_tokens", "output_tokens"):
+            entry[key] += int(usage.get(key) or 0)
+        if usage.get("elapsed_ms"):
+            entry["elapsed_ms"].append(int(usage["elapsed_ms"]))
+    rows = []
+    for model, entry in sorted(models.items()):
+        rounds, elapsed = entry["rounds"], entry.pop("elapsed_ms")
+        entry["jobs"] = len(entry["jobs"])
+        entry.update(
+            model=model,
+            useful=entry["passed"] + entry["executed"],
+            avg_input_tokens=round(entry["input_tokens"] / rounds) if rounds else 0,
+            cache_ratio=(round(entry["cached_input_tokens"] / entry["input_tokens"], 3)
+                         if entry["input_tokens"] else None),
+            avg_elapsed_ms=round(sum(elapsed) / len(elapsed)) if elapsed else None,
+        )
+        rows.append(entry)
+    return {"models": rows}
+
+
 def job_detail(project_id: int, job_id: int) -> dict[str, Any]:
     job = UtJob.query.filter_by(id=job_id, project_id=project_id).first()
     if job is None:

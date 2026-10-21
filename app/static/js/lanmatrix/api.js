@@ -426,6 +426,9 @@
     utRetry(pid, jobId) {
       return request("POST", `/projects/${pid}/ut/jobs/${jobId}/retry`, { body: {} });
     },
+    utRepairStats(pid) {
+      return request("GET", `/projects/${pid}/ut/repair-stats`);
+    },
     utStop(pid, jobId) {
       return request("POST", `/projects/${pid}/ut/jobs/${jobId}/stop`, { body: {} });
     },

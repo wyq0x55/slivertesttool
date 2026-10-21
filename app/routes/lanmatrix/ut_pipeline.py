@@ -7,6 +7,7 @@
     POST /batches                        {target_ids, label} → queue (item.edit)
     GET  /batches                        batches with per-state counts
     GET  /jobs                           ?state&batch_id
+    GET  /repair-stats                   model-round outcomes per model
     GET  /jobs/<id>                      job + every attempt (origin, verdict, evidence)
     GET  /jobs/<id>/attempts/<aid>/csv   CP932 download; ?format=text for preview
     POST /jobs/<id>/revision             human revision: {csv, note} or multipart file
@@ -173,3 +174,10 @@ def stop_job(project_id: int, job_id: int):
 def stop_batch(project_id: int, batch_id: int):
     _project_and_role(project_id, "item.edit")
     return ok(pipeline.stop_batch(project_id, batch_id, g.user.id), status=202)
+
+
+@bp.get("/repair-stats")
+@login_required
+def repair_stats(project_id: int):
+    _project_and_role(project_id, "project.view")
+    return ok(pipeline.repair_stats(project_id))

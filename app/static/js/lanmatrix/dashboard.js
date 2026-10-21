@@ -246,6 +246,35 @@
     box.innerHTML = esc(msg);
   }
 
+  function percent(part, whole) {
+    return whole ? Math.round(100 * part / whole) + "%" : "\u2014";
+  }
+
+  async function loadRepairStats() {
+    const body = $("ut-repair-rows");
+    if (!body) return;
+    const stats = await LMApi.utRepairStats(projectId);
+    const rows = stats.models || [];
+    const total = rows.reduce((sum, m) => sum + m.rounds, 0);
+    const useful = rows.reduce((sum, m) => sum + m.useful, 0);
+    const stalled = rows.reduce((sum, m) => sum + m.stalled, 0);
+    $("ut-repair-sum").textContent = total
+      ? `共 ${total} 轮：有效 ${useful}（${percent(useful, total)}），无进展 ${stalled}（${percent(stalled, total)}）`
+      : "";
+    body.innerHTML = rows.length ? rows.map((m) => "<tr>" +
+      `<td><code>${esc(m.model)}</code></td><td class="ut-num">${m.jobs}</td>` +
+      `<td class="ut-num">${m.rounds}</td>` +
+      `<td class="ut-num">${m.useful} <span class="submuted">${percent(m.useful, m.rounds)}</span></td>` +
+      `<td class="ut-num">${m.passed}</td><td class="ut-num">${m.stalled}</td>` +
+      `<td class="ut-num">${m.rejected}</td><td class="ut-num">${m.refused}</td>` +
+      `<td class="ut-num">${m.unusable}</td>` +
+      `<td class="ut-num">${m.avg_input_tokens.toLocaleString()}</td>` +
+      `<td class="ut-num">${m.cache_ratio == null ? "\u2014" : Math.round(m.cache_ratio * 100) + "%"}</td>` +
+      `<td class="ut-num">${m.avg_elapsed_ms == null ? "\u2014" : (m.avg_elapsed_ms / 1000).toFixed(1) + " s"}</td>` +
+      "</tr>").join("")
+      : '<tr><td colspan="12" class="muted">还没有调用过本地模型</td></tr>';
+  }
+
   async function load() {
     const btn = $("lm-dash-refresh");
     if (btn) btn.disabled = true;
@@ -265,6 +294,7 @@
       if (grid && chartsReady()) grid.hidden = empty;
 
       if (!empty) renderCharts();
+      if (isUt) await loadRepairStats();
     } catch (ex) {
       if (ex.status === 401) return; // the API layer handles the redirect
       showError(`加载失败：${ex.message || "未知错误"}`);
