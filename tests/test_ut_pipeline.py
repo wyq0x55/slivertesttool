@@ -525,6 +525,20 @@ def test_a_stored_witness_only_counts_for_its_own_csv():
     assert pipeline.gap_status(check, [], "b")["open"] == [GAP]
 
 
+def test_prompt_budget_failure_stops_without_a_model_round(env, monkeypatch):
+    targets = _configure(env)
+    env.bridge.gaps = [GAP]
+    monkeypatch.setattr(pipeline.repair, "_MAX_PROMPT_CHARS", 1)
+    monkeypatch.setattr(provider, "chat", lambda *a, **k: pytest.fail("model must not run"))
+    [job_id] = _enqueue(env, targets["f"])
+    job = _job(env, job_id)
+    assert job["state"] == "needs_human" and job["repair_rounds"] == 0
+    last = job["attempts"][-1]
+    assert last["reviser"]["code"] == "PROMPT_BUDGET_EXCEEDED"
+    assert last["reviser"]["model_contacted"] is False and last["verdict"] == "BLOCKED"
+    assert env.bridge.executions == 1
+
+
 def test_wrong_expected_values_are_backfilled_from_winams_without_the_model(env, monkeypatch):
     targets = _configure(env)
     env.bridge.generated = BAD

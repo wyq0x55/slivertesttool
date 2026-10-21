@@ -63,6 +63,16 @@ def test_nothing_accepted_returns_no_csv():
     assert increment.apply(_table(), "rows", {"b1:T"}).rejected
 
 
+def test_hidden_input_columns_cannot_be_changed_but_are_copied_from_base():
+    result = increment.apply(_table(), [
+        {"obligation": "b1:T", "base_row": 1, "inputs": {"I1": "2"}},
+        {"obligation": "b1:T", "base_row": 1, "inputs": {"a.c/x": "2"}},
+        {"obligation": "b1:T", "base_row": 1, "inputs": {"I3": "4"}},
+    ], {"b1:T"}, editable_columns={2})
+    assert len(result.rejected) == 2 and len(result.accepted) == 1
+    assert result.csv_bytes.decode("cp932").endswith(",1,0,4,\r\n")
+
+
 def test_a_csv_without_rows_starts_from_a_blank_row():
     empty = increment.parse(CSV.split(";$L$")[0])
     assert increment.rows_section(empty).startswith("无数据行")

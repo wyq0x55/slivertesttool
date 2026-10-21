@@ -70,7 +70,7 @@ def test_system_prompt_asks_for_rows_not_a_csv():
     system = repair._system_prompt(CONSTRAINTS)
     assert '"rows"' in system and '"declined"' in system and "不要输出 CSV" in system
     assert "不能仅凭冲突认定缺少输入" in system
-    assert repair.PROMPT_VERSION == "ut-repair/5.0"
+    assert repair.PROMPT_VERSION == "ut-repair/7.0"
 
 
 def _revise(monkeypatch, reply, allowed=frozenset({"b6:boundary:1:above:2"})):
@@ -90,7 +90,7 @@ def test_reply_rows_are_appended_and_claims_recorded(monkeypatch):
     assert revision.csv_bytes.decode("cp932") == CSV + ";$L$,LLM add b6:boundary:1:above:2\r\n,0,2,\r\n"
     assert revision.meta["claimed"] == ["b6:boundary:1:above:2"]
     assert [item["index"] for item in revision.meta["rejected"]] == [1]
-    assert revision.meta["prompt_version"] == "ut-repair/5.0"
+    assert revision.meta["prompt_version"] == "ut-repair/7.0"
 
 
 def test_a_declining_reply_adds_nothing(monkeypatch):
@@ -116,3 +116,144 @@ def test_typed_context_and_checker_feedback_survive_as_whole_records():
     assert '"required_outcome": false' in prompt and '"input_tokens": ["I1"]' in prompt
     assert '"observed": 4' in prompt and "expected boundary 5" in prompt
     assert json.loads(repair._bounded_records([{"id": 1}, {"too_long": "x" * 100}], 20)) == [{"id": 1}]
+
+
+def test_prefix_survives_changed_round_state_and_records_separate_hashes(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ai_config, "get_ai_config", lambda: {ai_config.KEY_MODEL: "m"})
+    def invoke(messages, **kwargs):
+        calls.append((messages, kwargs))
+        kwargs["usage"].update(input_tokens=1200, output_tokens=30, cached_input_tokens=1000)
+        return '{"rows": [], "declined": []}'
+    monkeypatch.setattr(repair.provider, "invoke_chat", invoke)
+    target = {"function": "f", "source_rel": "src/f.c"}
+    prefix = repair.prompt_prefix(CONSTRAINTS, target, CSV.encode("cp932"), CHECK)
+    results = []
+    for history, gaps in (([], [GAP]), ([{"seq": 2, "origin": "LLM", "verdict": "FAIL", "codes": []}], [])):
+        results.append(repair.revise(constraints=CONSTRAINTS, target=target, csv_bytes=CSV.encode("cp932"),
+                                     check=CHECK, execution=None, history=history, open_gaps=gaps,
+                                     allowed=set(), prefix_snapshot=json.loads(json.dumps(prefix))))
+    assert results[0].meta["prefix"] == results[1].meta["prefix"]
+    assert calls[0][0][0] == calls[1][0][0]
+    assert all(messages[1]["content"].startswith(prefix["function"]) for messages, _ in calls)
+    assert all(kwargs["stream"] for _, kwargs in calls)
+    assert results[1].meta["usage"]["cached_input_tokens"] == 1000
+
+
+def test_changed_prefix_evidence_stops_before_contacting_model(monkeypatch):
+    prefix = repair.prompt_prefix(CONSTRAINTS, {"function": "old"}, CSV.encode("cp932"), CHECK)
+    monkeypatch.setattr(repair.provider, "invoke_chat", lambda *a, **k: (_ for _ in ()).throw(AssertionError()))
+    result = repair.revise(constraints=CONSTRAINTS, target={"function": "new"}, csv_bytes=CSV.encode("cp932"),
+                           check=CHECK, execution=None, history=[], open_gaps=[], allowed=set(), prefix_snapshot=prefix)
+    assert result.csv_bytes is None and result.meta["code"] == "PROMPT_PREFIX_CHANGED"
+
+
+def test_oversized_essential_context_is_not_sent_or_silently_truncated(monkeypatch):
+    monkeypatch.setattr(repair.provider, "invoke_chat", lambda *a, **k: (_ for _ in ()).throw(AssertionError()))
+    constraints = dict(CONSTRAINTS, revision_rules=["x" * 130000])
+    result = repair.revise(constraints=constraints, target={"function": "f"}, csv_bytes=CSV.encode("cp932"),
+                           check=CHECK, execution=None, history=[], open_gaps=[], allowed=set())
+    assert result.meta["code"] == "PROMPT_BUDGET_EXCEEDED"
+
+
+def test_reference_rows_budget_preserves_whole_rows_and_original_numbers(monkeypatch):
+    monkeypatch.setattr(repair, "_MAX_ROW_CHARS", 120)
+    table = increment.parse(CSV + "".join(f",{n},0,1\r\n" for n in range(100)))
+    text = repair._reference_rows(table)
+    assert "#1:" in text and "省略" in text
+    assert all("I1=" in line or "全部默认" in line for line in text.splitlines() if line.startswith("#"))
+
+
+def test_column_compression_preserves_exact_names_and_tokens():
+    names = ["long_source_path/to/file.c/global_struct.member" + str(i) for i in range(8)]
+    table = increment.Table([], names, [], [])
+    text = repair._columns_section(table, {})
+    aliases = {}
+    for line in text.splitlines():
+        if line.startswith("$P"):
+            key, value = line.split(" = ", 1)
+            aliases[key] = json.loads(value)
+        elif line.startswith("I"):
+            token, name = line.split(" = ", 1)
+            for key in sorted(aliases, key=len, reverse=True):
+                if name.startswith(key):
+                    name = aliases[key] + name[len(key):]
+                    break
+            assert name == names[int(token[1:]) - 1]
+    assert aliases and len(text) < len(increment.columns_section(table))
+
+
+def test_verified_winams_records_reach_dynamic_prompt_without_changing_prefix():
+    check = dict(CHECK, coverage_feedback={"records": [
+        {"report_line": 18, "c1_observation": "T/-", "mapping_status": "UNKNOWN"}]})
+    prompt = _user(CSV, check, [])
+    assert '"c1_observation": "T/-"' in prompt and '"mapping_status": "UNKNOWN"' in prompt
+    table = increment.parse(CSV)
+    assert repair._function_prompt({"function": "f"}, table, check) == repair._function_prompt({"function": "f"}, table, CHECK)
+
+
+def test_evidence_beyond_render_budget_still_invalidates_prefix(monkeypatch):
+    context = [{"obligation_id": f"b{i:03d}:T", "path": [{"boundary": 1, "data": "x" * 500}]}
+               for i in range(100)]
+    check = dict(CHECK, candidate_witnesses={"repair_context": context})
+    target = {"function": "f"}
+    prefix = repair.prompt_prefix(CONSTRAINTS, target, CSV.encode("cp932"), check)
+    context[-1]["path"][0]["boundary"] = 99
+    current = repair.prompt_prefix(CONSTRAINTS, target, CSV.encode("cp932"), check)
+    assert current["function"] == prefix["function"]
+    assert current["evidence_sha256"] != prefix["evidence_sha256"]
+    monkeypatch.setattr(repair.provider, "invoke_chat", lambda *a, **k: (_ for _ in ()).throw(AssertionError()))
+    result = repair.revise(constraints=CONSTRAINTS, target=target, csv_bytes=CSV.encode("cp932"),
+                           check=check, execution=None, history=[], open_gaps=[], allowed=set(), prefix_snapshot=prefix)
+    assert result.meta["code"] == "PROMPT_PREFIX_CHANGED"
+
+
+def _scoped_check():
+    return {**CHECK, "candidate_witnesses": {
+        "contract": "ut-agent.candidate-witness/1", "evidence": {"identified": True},
+        "repair_context_contract": "ut-agent.repair-context/2",
+        "input_scope_complete": True,
+        "repair_context": [{"obligation_id": "b0:T", "path": [{"atoms": [
+            {"input_tokens": ["I2"], "right_input_tokens": ["I5"], "mask_input_tokens": ["I7"]}]}]}]}}
+
+
+def test_only_identified_operand_columns_are_rendered_and_rows_keep_original_tokens():
+    table = increment.Table([], [f"source.c/value_{i}" for i in range(10)], [],
+                            [[""] + [str(i) for i in range(10)]])
+    check = _scoped_check()
+    assert repair._editable_columns(table, check) == {1, 4, 6}
+    assert repair._columns_section(table, check).splitlines() == [
+        "I2 = source.c/value_1", "I5 = source.c/value_4", "I7 = source.c/value_6"]
+    assert "#1: I2=1 I5=4 I7=6" in repair._reference_rows(table, check)
+    assert "I1=" not in repair._reference_rows(table, check)
+    check["candidate_witnesses"]["evidence"]["identified"] = False
+    assert repair._editable_columns(table, check) is None
+
+
+def test_scoped_prompt_reduces_large_table_without_renumbering_columns():
+    table = increment.Table([], [f"source.c/long_global_struct.member_{i}" for i in range(718)], [], [])
+    rendered = repair._function_prompt({"function": "f"}, table, _scoped_check())
+    assert len(rendered) < 2000
+    assert "I2 =" in rendered and "I5 =" in rendered and "I7 =" in rendered and "I1 =" not in rendered
+
+
+def test_legacy_context_without_rhs_binding_contract_is_not_narrowed():
+    table = increment.parse(CSV)
+    check = _scoped_check()
+    del check["candidate_witnesses"]["repair_context_contract"]
+    assert repair._editable_columns(table, check) is None
+
+
+def test_partial_direct_binding_does_not_hide_upstream_inputs():
+    table = increment.parse(CSV)
+    check = _scoped_check()
+    check["candidate_witnesses"]["input_scope_complete"] = False
+    assert repair._editable_columns(table, check) is None
+    assert "I1 = a.c/x" in repair._columns_section(table, check)
+
+
+def test_unmapped_runtime_coverage_gap_keeps_full_input_scope():
+    table = increment.parse(CSV)
+    check = _scoped_check()
+    check["issues"] = [{"code": "COVERAGE_C1_INCOMPLETE", "severity": "error"}]
+    assert repair._editable_columns(table, check) is None

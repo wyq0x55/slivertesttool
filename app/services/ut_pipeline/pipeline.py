@@ -628,11 +628,26 @@ def _repair_step(job: UtJob) -> None:
     history = [_history_item(item) for item in
                UtAttempt.query.filter_by(job_id=job.id).order_by(UtAttempt.seq)]
     gaps = _job_gaps(job, attempt)
+    generation = dict(job.generation or {})
+    csv_bytes = Path(attempt.csv_path).read_bytes()
+    # Freeze the cacheable prefix in durable job metadata, including restarts.
+    # A changed prompt version starts a new snapshot; same-version drift is
+    # rejected by revise rather than silently replacing semantic evidence.
+    prefix = generation.get("repair_prompt_prefix")
+    if not prefix or prefix.get("version") != repair.PROMPT_VERSION:
+        try:
+            prefix = repair.prompt_prefix(batch.constraints or {}, job.target.to_dict(), csv_bytes, check)
+        except (UnicodeDecodeError, repair.increment.TableError):
+            prefix = None
+        if prefix is not None:
+            generation["repair_prompt_prefix"] = prefix
+            job.generation = generation
+            db.session.commit()
     try:
         revision = repair.revise(
             constraints=batch.constraints or {},
             target=job.target.to_dict(),
-            csv_bytes=Path(attempt.csv_path).read_bytes(),
+            csv_bytes=csv_bytes,
             check=check,
             execution=attempt.execution,
             history=history,
@@ -640,10 +655,19 @@ def _repair_step(job: UtJob) -> None:
             allowed={item["obligation_id"] for item in gaps["open"]} | _row_tags(check),
             model=(batch.config_snapshot or {}).get("repair_model", ""),
             timeout=current_app.config["UT_REPAIR_TIMEOUT"],
+            prefix_snapshot=prefix,
         )
     except ProviderError as exc:
         # The model never answered: no round is consumed.
         _gate(job, UtJob.ERROR, f"本地模型不可用：{exc}")
+        db.session.commit()
+        return
+    if revision.meta.get("code") in {"PROMPT_PREFIX_CHANGED", "PROMPT_BUDGET_EXCEEDED"}:
+        new = _new_attempt(job, UtAttempt.ORIGIN_LLM, None,
+                           reviser={**revision.meta, "model_contacted": False},
+                           note=revision.meta["error"], make_current=False)
+        new.verdict = "BLOCKED"
+        _gate(job, UtJob.NEEDS_HUMAN, new.note)
         db.session.commit()
         return
     job.repair_rounds += 1

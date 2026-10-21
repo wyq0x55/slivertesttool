@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -27,12 +28,15 @@ from ..ai import config as ai_config
 from ..ai import provider
 from . import increment
 
-PROMPT_VERSION = "ut-repair/5.0"
+PROMPT_VERSION = "ut-repair/7.0"
 # Bound the prompt: issue details are already truncated by ut-agent.
 _MAX_DETAIL_CHARS = 6000
 _MAX_DECISION_CHARS = 200
 # Reported in the gap section; repeating it in the verdict costs tokens.
 _GAP_CODE = "INPUT_OBLIGATION_UNRESOLVED"
+_MAX_PROMPT_CHARS = 96000
+_MAX_ROW_CHARS = 12000
+_MAX_HISTORY = 3
 
 
 @dataclass
@@ -47,7 +51,7 @@ def _system_prompt(constraints: dict[str, Any]) -> str:
     coverage = constraints.get("coverage_policy") or {}
     rules = "\n".join(
         f"- {rule.get('rule_id')}: {rule.get('meaning')}（{rule.get('source', '')}）"
-        for rule in constraints.get("rules", ())
+        for rule in sorted(constraints.get("rules", ()), key=lambda r: str(r.get("rule_id", "")))
     )
     revision_rules = "\n".join(f"- {rule}" for rule in constraints.get("revision_rules", ()))
     policies = json.dumps(constraints.get("policies", {}), ensure_ascii=False, sort_keys=True)
@@ -81,6 +85,9 @@ def _system_prompt(constraints: dict[str, Any]) -> str:
         "不能用名称相似的缓冲区字段代替 ROM 配置或内部局部变量。证据不足时写入 declined。\n"
         "- EXECUTION_PATH_DIVERGED 表示桩函数调用次数与预测冲突；可能来自输入手順、构建或运行配置，"
         "不能仅凭冲突认定缺少输入。只在给定语义证据支持时新增行；否则不新增，在 rationale 中说明，交由人工检查。"
+        "\n- WinAMS 分支记录只证明已执行版本的覆盖状态；UNKNOWN 映射、覆盖百分比和汇编地址"
+        "不能代替类型化输入见证，也不能证明某个新增行已经走通分支。"
+        "\n- 简短输出取值依据，每轮最多新增 20 行；不要复述提示词和历史。"
     )
 
 
@@ -124,9 +131,125 @@ def _gaps_section(completeness: Optional[dict[str, Any]], open_gaps: list[dict[s
     return f"## 待补缺口（缺用例：生成器没有给出已证明输入的义务）\n{head}\n{gaps or '- 无'}"
 
 
+def _editable_columns(table: increment.Table, check: dict[str, Any]) -> Optional[set[int]]:
+    if any(issue.get("severity") == "error" and str(issue.get("code", "")).startswith("COVERAGE_")
+           for issue in check.get("issues") or []):
+        # Runtime coverage is not yet correlated with the typed gap paths.
+        return None
+    witnesses = check.get("candidate_witnesses") or {}
+    if (witnesses.get("contract") != "ut-agent.candidate-witness/1"
+            or witnesses.get("repair_context_contract") != "ut-agent.repair-context/2"
+            or witnesses.get("input_scope_complete") is not True
+            or (witnesses.get("evidence") or {}).get("identified") is not True):
+        return None
+    tokens = set()
+    for record in witnesses.get("repair_context") or []:
+        for branch in record.get("path") or []:
+            for atom in branch.get("atoms") or []:
+                for key in ("input_tokens", "right_input_tokens", "mask_input_tokens"):
+                    tokens.update(atom.get(key) or [])
+    if not tokens or any(not re.fullmatch(r"I[1-9][0-9]*", t) for t in tokens):
+        return None
+    columns = {int(token[1:]) - 1 for token in tokens}
+    return columns if max(columns) < len(table.inputs) else None
+
+
+def _columns_section(table: increment.Table, check: dict[str, Any]) -> str:
+    """Factor repeated exact column-name prefixes without changing I<n> IDs."""
+    rendered = increment.columns_section(table, (check.get("input_ranges") or {}).get("contract"))
+    visible = _editable_columns(table, check)
+    visible = visible if visible is not None else set(range(len(table.inputs)))
+    candidates: dict[str, list[int]] = {}
+    for index, name in enumerate(table.inputs):
+        if index not in visible:
+            continue
+        for match in re.finditer(r"[/\.@]", name):
+            prefix = name[:match.end()]
+            if len(prefix) >= 24:
+                candidates.setdefault(prefix, []).append(index)
+    selected, covered = [], set()
+    for prefix, indexes in sorted(candidates.items(), key=lambda item: (
+            -(len(item[0]) - 8) * (len(item[1]) - 1), item[0])):
+        remaining = [i for i in indexes if i not in covered]
+        if len(remaining) < 4:
+            continue
+        selected.append((prefix, remaining))
+        covered.update(remaining)
+        if len(selected) >= 16:
+            break
+    if not selected:
+        return "\n".join(line for i, line in enumerate(rendered.splitlines()) if i in visible)
+    lines = rendered.splitlines()
+    aliases = []
+    for number, (prefix, indexes) in enumerate(selected, 1):
+        token = f"$P{number}"
+        aliases.append(f"{token} = {json.dumps(prefix, ensure_ascii=False)}")
+        for index in indexes:
+            head = f"I{index + 1} = {prefix}"
+            if lines[index].startswith(head):
+                lines[index] = f"I{index + 1} = {token}" + lines[index][len(head):]
+    return ("列名采用精确前缀拼接（$P<n> + 后缀），输入仍用 I<n> 引用：\n" +
+            "\n".join(aliases + [line for i, line in enumerate(lines) if i in visible]))
+
+
+def _function_prompt(target: dict[str, Any], table: increment.Table, check: dict[str, Any]) -> str:
+    context = (check.get("candidate_witnesses") or {}).get("repair_context") or []
+    context = sorted(context, key=lambda r: str(r.get("obligation_id", "")))
+    semantic_context = _bounded_records(context, 16000)
+    omitted = len(context) - len(json.loads(semantic_context))
+    return (
+        f"被测函数：{target.get('function')}（{target.get('source_rel')}）\n\n"
+        f"## 输入列（{len(table.inputs)} 个；输出列 {len(table.outputs)} 个，不可改）\n"
+        f"{_columns_section(table, check)}\n\n"
+        "只修改上面列出的输入列；未列出的列保留参考行原值，不能用名称相似的列代替。\n\n"
+        f"## 义务语义证据（同一函数固定，未列出的控制关系不能猜测）\n{semantic_context}\n"
+        f"未列出的语义记录：{omitted}；对应义务若缺证据请 declined。\n\n"
+    )
+
+
+def prompt_prefix(constraints: dict[str, Any], target: dict[str, Any], csv_bytes: bytes,
+                  check: dict[str, Any]) -> dict[str, str]:
+    """Persist this snapshot on the job; no round state enters the prefix."""
+    table = increment.parse(csv_bytes.decode("cp932"))
+    return _make_prefix(constraints, target, table, check)
+
+
+def _make_prefix(constraints, target, table, check):
+    # Hash complete evidence independently of bounded/compressed rendering.
+    facts = {"constraints": constraints,
+             "target": {k: target.get(k) for k in ("id", "project_id", "source_rel", "unit_rel", "function")},
+             "inputs": table.inputs, "outputs": table.outputs,
+             "input_contract": (check.get("input_ranges") or {}).get("contract"),
+             "repair_context_contract": (check.get("candidate_witnesses") or {}).get("repair_context_contract"),
+             "input_scope_complete": (check.get("candidate_witnesses") or {}).get("input_scope_complete"),
+             "semantic_context": sorted((check.get("candidate_witnesses") or {}).get("repair_context") or [],
+                                        key=lambda r: str(r.get("obligation_id", "")))}
+    digest = hashlib.sha256(json.dumps(facts, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    return {"version": PROMPT_VERSION, "system": _system_prompt(constraints),
+            "function": _function_prompt(target, table, check), "evidence_sha256": digest}
+
+
+def _reference_rows(table: increment.Table, check: Optional[dict[str, Any]] = None) -> str:
+    visible = _editable_columns(table, check or {})
+    if visible is not None:
+        lines = ["仅显示可修改输入；其余输入从 base_row 复制。"]
+        lines.extend(f"#{n}: " + " ".join(f"I{i + 1}={row[i + 1] or '(空)'}" for i in sorted(visible))
+                     for n, row in enumerate(table.rows, 1))
+    else:
+        lines = increment.rows_section(table).splitlines()
+    selected, used = [], 0
+    for line in lines:
+        if used + len(line) > _MAX_ROW_CHARS:
+            break
+        selected.append(line)
+        used += len(line) + 1
+    omitted = len(lines) - len(selected)
+    return "\n".join(selected) + (f"\n省略 {omitted} 条记录；仅使用已列出的参考行编号，或 base_row 0。" if omitted else "")
+
+
 def _user_prompt(target: dict[str, Any], table: increment.Table, check: dict[str, Any],
                  execution: Optional[dict[str, Any]], history: list[dict[str, Any]],
-                 open_gaps: list[dict[str, Any]]) -> str:
+                 open_gaps: list[dict[str, Any]], *, function_prefix: Optional[str] = None) -> str:
     issues = _bounded_records(
         [issue for issue in check.get("issues", ()) if issue.get("code") not in
          {_GAP_CODE, "OUTPUT_ORACLE_PENDING"}],
@@ -135,29 +258,18 @@ def _user_prompt(target: dict[str, Any], table: increment.Table, check: dict[str
         {key: (execution or {}).get(key) for key in ("status", "exit_code", "diagnostic", "coverage")},
         ensure_ascii=False,
     )
-    rounds = "\n".join(_history_line(item) for item in history) or "- 无"
+    rounds = "\n".join(_history_line(item) for item in history[-_MAX_HISTORY:]) or "- 无"
     witnesses = check.get("candidate_witnesses") or {}
-    context = witnesses.get("repair_context") or []
-    # Whole records only: never cut a typed expression halfway through JSON.
-    typed = []
-    for record in context:
-        expanded = json.dumps(typed + [record], ensure_ascii=False, sort_keys=True)
-        if len(expanded) > 16000:
-            break
-        typed.append(record)
-    semantic_context = json.dumps(typed, ensure_ascii=False, sort_keys=True)
     feedback = json.dumps([row for row in witnesses.get("results") or () if row.get("new")][:20],
                           ensure_ascii=False, sort_keys=True)
     return (
-        f"被测函数：{target.get('function')}（{target.get('source_rel')}）\n\n"
-        f"## 输入列（{len(table.inputs)} 个；输出列 {len(table.outputs)} 个，不可改）\n"
-        f"{increment.columns_section(table, (check.get('input_ranges') or {}).get('contract'))}\n\n"
-        f"## 义务语义证据（同一函数固定，未列出的控制关系不能猜测）\n{semantic_context}\n\n"
+        (function_prefix if function_prefix is not None else _function_prompt(target, table, check)) +
         f"{_gaps_section(check.get('completeness'), open_gaps)}\n\n"
-        f"## 现有数据行（{len(table.rows)} 行）\n{increment.rows_section(table)}\n\n"
+        f"## 现有数据行（{len(table.rows)} 行）\n{_reference_rows(table, check)}\n\n"
         f"## 当前版本的校验判定：{check.get('verdict')}\n{issues}\n\n"
         f"## 上轮新增行的程序检查反馈\n{feedback}\n\n"
         f"## 执行摘要\n{execution_summary}\n\n"
+        f"## WinAMS 实际分支覆盖证据\n{_bounded_records((check.get('coverage_feedback') or {}).get('records') or [], 6000)}\n\n"
         f"## 已有版本的判定历史\n{rounds}"
     )
 
@@ -202,7 +314,8 @@ def normalize_csv(text: str) -> bytes:
 def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: bytes,
            check: dict[str, Any], execution: Optional[dict[str, Any]],
            history: list[dict[str, Any]], open_gaps: list[dict[str, Any]], allowed: set[str],
-           model: str = "", timeout: int = 900) -> Revision:
+           model: str = "", timeout: int = 900,
+           prefix_snapshot: Optional[dict[str, str]] = None) -> Revision:
     """Ask the configured model for input rows and append the valid ones.
 
     Raises :class:`provider.ProviderError` when the model is unreachable so the
@@ -216,11 +329,28 @@ def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: by
     except (UnicodeDecodeError, increment.TableError) as exc:
         meta["error"] = f"当前 CSV 无法追加行：{exc}"
         return Revision(None, meta)
+    current_prefix = _make_prefix(constraints, target, table, check)
+    if prefix_snapshot is not None and prefix_snapshot != current_prefix:
+        meta.update(error="固定提示词的基准、列或语义证据已变化，需重新生成并审核", code="PROMPT_PREFIX_CHANGED")
+        return Revision(None, meta)
+    prefix = prefix_snapshot or current_prefix
     messages = [
-        {"role": "system", "content": _system_prompt(constraints)},
+        {"role": "system", "content": prefix["system"]},
         {"role": "user", "content": _user_prompt(target, table, check, execution, history,
-                                                 open_gaps)},
+                                                 open_gaps, function_prefix=prefix["function"])},
     ]
+    meta["prefix"] = {
+        "project_sha256": hashlib.sha256(prefix["system"].encode("utf-8")).hexdigest(),
+        "function_sha256": hashlib.sha256((prefix["system"] + prefix["function"]).encode("utf-8")).hexdigest(),
+        "project_chars": len(prefix["system"]), "function_chars": len(prefix["function"]),
+        "evidence_sha256": prefix["evidence_sha256"],
+    }
+    meta["prompt_chars"] = sum(len(m["content"]) for m in messages)
+    editable = _editable_columns(table, check)
+    meta["editable_input_columns"] = len(editable) if editable is not None else len(table.inputs)
+    if meta["prompt_chars"] > _MAX_PROMPT_CHARS:
+        meta.update(error="修订上下文超出预算，需人工缩小处理范围", code="PROMPT_BUDGET_EXCEEDED")
+        return Revision(None, meta)
     meta["prompt_sha256"] = hashlib.sha256(
         json.dumps(messages, ensure_ascii=False).encode("utf-8")).hexdigest()
     usage: dict[str, int] = {}
@@ -228,7 +358,7 @@ def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: by
     meta["model"] = model or configured
     reply = provider.invoke_chat(messages, temperature=0.1, max_tokens=8192,
                                  json_mode=True, usage=usage, model=model or None,
-                                 timeout=timeout)
+                                 timeout=timeout, stream=True)
     meta["usage"] = usage
     try:
         parsed = provider.extract_json(reply)
@@ -240,7 +370,7 @@ def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: by
         return Revision(None, meta)
     meta["rationale"] = str(parsed.get("rationale") or "")
     applied = increment.apply(table, parsed.get("rows") or [], allowed,
-                              (check.get("input_ranges") or {}).get("contract"))
+                              (check.get("input_ranges") or {}).get("contract"), editable_columns=editable)
     claimed = [row["obligation"] for row in applied.accepted]
     meta.update(rows=applied.accepted, rejected=applied.rejected, claimed=claimed,
                 declined=[oid for oid in _declined(parsed, allowed) if oid not in claimed])
