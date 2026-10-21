@@ -22,6 +22,14 @@
   var LAYOUT = { left: [], right: [], signalSheets: false, commentField: "purpose",
                  autoRowHeight: false, freezeLeft: false, textCells: true };
   var MISMATCH = "#f9c9c9";
+  // Input values a branch decision reads: the cells a reviewer checks first.
+  var BRANCH_INPUT = "#fff0b3";
+  var DECISION = /^\s*(?:else\s+)?(?:if|switch|while|for)\s*\(/;
+  // C keywords and the project's scalar type aliases (casts such as (u1)1).
+  var NOT_A_VARIABLE = {};
+  ("if else switch case while for do return sizeof unsigned signed char short int long float double " +
+   "void const volatile struct union enum u1 u2 u4 u8 s1 s2 s4 s8 f4 f8 bl b1 TRUE FALSE NULL")
+    .split(" ").forEach(function (word) { NOT_A_VARIABLE[word] = true; });
 
   function splitLine(line) {
     var fields = [], cur = "", quoted = false;
@@ -133,6 +141,62 @@
     return out.join("\r\n") + "\r\n";
   }
 
+  // An access path such as cu1_valid, xs[1].mode or p->state.
+  var PATH = /[A-Za-z_]\w*(?:\s*(?:\[[^\]]*\]|\.\s*[A-Za-z_]\w*|->\s*[A-Za-z_]\w*))*/g;
+  function escapeRe(text) { return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+
+  /* Paths a decision comment reads, e.g. "if ( ((u1)1) == cu1_psd_slsw_valid )",
+     each as a pattern over column names: a literal index must match, a
+     computed one ([i]) stands for any element. */
+  function decisionPaths(line) {
+    if (!DECISION.test(line)) return null;
+    var seen = {}, out = [];
+    (line.match(PATH) || []).forEach(function (raw) {
+      var path = raw.replace(/\s+/g, "");
+      var root = path.match(/^[A-Za-z_]\w*/)[0];
+      if (NOT_A_VARIABLE[root] && path === root) return;   // keyword or cast type
+      if (seen[path]) return;
+      seen[path] = true;
+      var pattern = path.split(/(\[[^\]]*\])/).map(function (part) {
+        if (part.charAt(0) !== "[") return escapeRe(part);
+        return /^\[\s*\d+[uUlL]*\s*\]$/.test(part) ? escapeRe(part.replace(/[uUlL\s]/g, "")) : "\\[\\d+\\]";
+      }).join("");
+      // The path itself, or one of its members / elements / stub returns.
+      out.push(new RegExp("^" + pattern + "(?:$|[.\\[@]|->)"));
+    });
+    return out;
+  }
+
+  function columnReads(column, pattern) { return pattern.test(shortName(column)); }
+
+  /* Input cells of the variables each branch decision reads, from the decision's
+     row up to the next decision (its outcome and MC/DC rows included). */
+  function branchMarks(model) {
+    var inputs = model.columns.slice(0, model.ni);
+    var cache = {};
+    function columnsOf(patterns) {
+      var key = patterns.map(String).join(" ");
+      if (!cache[key]) {
+        cache[key] = [];
+        inputs.forEach(function (column, index) {
+          if (patterns.some(function (pattern) { return columnReads(column, pattern); })) cache[key].push(index);
+        });
+      }
+      return cache[key];
+    }
+    var found = [], current = [];
+    model.rows.forEach(function (row, step) {
+      commentOf(row.lead).split("\n").forEach(function (line) {
+        var paths = decisionPaths(line);
+        if (paths) current = columnsOf(paths);
+      });
+      current.forEach(function (index) {
+        found.push({ step: step, kind: "input", index: index, color: BRANCH_INPUT });
+      });
+    });
+    return found;
+  }
+
   /* Cells the checker disputes (ORACLE_MISMATCH: 0-based data row + output column). */
   function marks(model, check) {
     var outputs = model.columns.slice(model.ni, model.ni + model.no);
@@ -150,5 +214,5 @@
   }
 
   window.LMTestCsv = { LAYOUT: LAYOUT, parse: parse, toDoc: toDoc, serialize: serialize,
-                       marks: marks, shortName: shortName };
+                       marks: marks, branchMarks: branchMarks, shortName: shortName };
 })(window);
