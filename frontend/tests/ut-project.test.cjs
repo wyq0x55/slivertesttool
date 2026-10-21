@@ -77,6 +77,7 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
         const d = deferred(); previews.push({ ...d, job, attempt }); return d.promise;
       },
       utAttemptUrl: (pid, job, attempt) => `/csv/${job}/${attempt}`,
+      utArtifactUrl: (pid, job, attempt, artifact) => `/artifact/${job}/${attempt}/${artifact}`,
       utExportUrl: (pid, batch) => `/export/${batch || "all"}`,
       utReview(...args) { const d = deferred(); reviews.push({ ...d, args }); return d.promise; },
       utRevise(...args) { const d = deferred(); revisions.push({ ...d, args }); return d.promise; },
@@ -253,6 +254,26 @@ test("check issues render as structured evidence instead of raw JSON", async () 
   assert.match(html, /C1<\/b> 未测量/);
   assert.doesNotMatch(html, /\{&quot;|\{"/);
   assert.equal(h.get("ut-d-issues-sum").textContent, "· 2 个错误");
+});
+
+test("host evidence keeps line/branch metrics, unknown MC/DC and stub artifacts explicit", async () => {
+  const h = harness();
+  const value = job();
+  value.attempts[0].execution = { evidence_source: "HOST_EXECUTION", status: "HOST_PASS",
+    counts_as_target_evidence: false,
+    coverage: { lines: { percent: 75, covered: 3, total: 4 },
+      branches: { percent: 50, covered: 1, total: 2 }, mcdc: { status: "UNSUPPORTED" } },
+    stub_generation: { mode: "llm", model: "<stub-model>",
+      rounds: [{ round: 1, status: "HOST_PASS", usage: { input_tokens: 10, output_tokens: 5 } }],
+      artifacts: [{ id: "abc", name: "round-1/proposal.json", sha256: "abcdef" }] } };
+  await ready(h, value);
+  assert.equal(h.get("ut-d-host").hidden, false);
+  assert.match(h.get("ut-d-host-summary").innerHTML, /行<\/b> 75%（3 \/ 4）/);
+  assert.match(h.get("ut-d-host-summary").innerHTML, /分支<\/b> 50%（1 \/ 2）/);
+  assert.match(h.get("ut-d-host-summary").innerHTML, /MC\/DC<\/b> UNSUPPORTED/);
+  assert.doesNotMatch(h.get("ut-d-host-summary").innerHTML, /C0|C1|100%/);
+  assert.match(h.get("ut-d-stub-rounds").innerHTML, /&lt;stub-model&gt;[\s\S]*10 \/ 5/);
+  assert.match(h.get("ut-d-host-artifacts").innerHTML, /href="\/artifact\/1\/10\/abc"/);
 });
 
 test("input-completeness gaps show the obligation, decision and solver status only", async () => {

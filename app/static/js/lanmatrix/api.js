@@ -408,6 +408,9 @@
     utAttemptUrl(pid, jobId, attemptId) {
       return `${BASE}/projects/${pid}/ut/jobs/${jobId}/attempts/${attemptId}/csv`;
     },
+    utArtifactUrl(pid, jobId, attemptId, artifactId) {
+      return `${BASE}/projects/${pid}/ut/jobs/${jobId}/attempts/${attemptId}/artifacts/${encodeURIComponent(artifactId)}`;
+    },
     utRevise(pid, jobId, csv, note) {
       return request("POST", `/projects/${pid}/ut/jobs/${jobId}/revision`,
         { body: { csv: csv, note: note || "" } });

@@ -49,7 +49,7 @@ from ..ai.provider import ProviderError
 from ..lanmatrix import audit
 from ..lanmatrix import notification_service as notify_svc
 from ..lanmatrix.errors import ServiceError, VersionConflict
-from . import repair
+from . import host, repair
 from .bridge import BridgeError, BridgeSettings, UtAgentBridge
 
 # The worker is one process with a thread pool.  WinAMS runs and project-wide
@@ -59,8 +59,10 @@ _GENERATION_GATE = threading.Lock()
 _EXPECTED_ATTEMPT_UNSET = object()
 
 _CONFIG_TEXT_FIELDS = ("manifest_path", "index_csv", "product_root", "work_root",
-                       "stub_builds", "repair_model")
-_REQUIRED_FIELDS = ("manifest_path", "index_csv", "product_root", "work_root")
+                       "stub_builds", "repair_model", "execution_backend", "stub_mode",
+                       "stub_model", "host_clang", "host_llvm_cov", "host_llvm_profdata",
+                       "host_profile_runtime")
+_REQUIRED_FIELDS = ("manifest_path", "index_csv", "product_root")
 _JOB_LIST_LIMIT = 500
 
 
@@ -81,9 +83,10 @@ def get_config(project_id: int) -> Optional[UtPipelineConfig]:
 
 def require_config(project_id: int) -> UtPipelineConfig:
     config = get_config(project_id)
-    if config is None or not all(getattr(config, key) for key in _REQUIRED_FIELDS):
+    required = _REQUIRED_FIELDS + (("work_root",) if config is None or config.execution_backend == "winams" else ())
+    if config is None or not all(getattr(config, key) for key in required):
         raise ServiceError(
-            "请先配置 ut-agent 项目绑定（ProjectManifest / 索引 CSV / Product 根 / WinAMS 工作根）",
+            "请先配置 ut-agent 项目绑定（ProjectManifest / 索引 CSV / Product 根；WinAMS 还需工作根）",
             code="UT_NOT_CONFIGURED")
     return config
 
@@ -91,23 +94,39 @@ def require_config(project_id: int) -> UtPipelineConfig:
 def save_config(project_id: int, values: dict[str, Any], user_id: int) -> UtPipelineConfig:
     existing = get_config(project_id)
     before = existing.to_dict() if existing else None
+    normalized = {}
+    for key in _CONFIG_TEXT_FIELDS:
+        if key in values:
+            if not isinstance(values[key], str):
+                raise ServiceError(f"{key} must be a string", code="VALIDATION_ERROR")
+            value = values[key].strip()
+            limit = 128 if key in ("stub_model", "repair_model") else 1024
+            if key != "stub_builds" and len(value) > limit:
+                raise ServiceError(f"{key} exceeds {limit} characters", code="VALIDATION_ERROR")
+            normalized[key] = "\n".join(_lines(value)) if key == "stub_builds" else value
+    for key, default, allowed in (("execution_backend", "winams", ("winams", "clang")),
+                                  ("stub_mode", "deterministic", ("deterministic", "llm"))):
+        effective = normalized.get(key, getattr(existing, key, default))
+        if effective not in allowed:
+            raise ServiceError(f"{key} must be one of {', '.join(allowed)}", code="VALIDATION_ERROR")
+        normalized[key] = effective
+    if normalized["stub_mode"] == "llm" and normalized["execution_backend"] != "clang":
+        raise ServiceError("LLM stubs require the clang execution backend", code="VALIDATION_ERROR")
+    for key in ("host_clang", "host_llvm_cov", "host_llvm_profdata"):
+        if key in normalized and not normalized[key]:
+            raise ServiceError(f"{key} must not be empty", code="VALIDATION_ERROR")
+    for key, low, high in (("max_repair_rounds", 0, 20), ("stub_max_rounds", 1, 5)):
+        if key in values:
+            value = values[key]
+            if type(value) is not int or not low <= value <= high:
+                raise ServiceError(f"{key} must be an integer from {low} to {high}", code="VALIDATION_ERROR")
+            normalized[key] = value
     config = existing or UtPipelineConfig(
         project_id=project_id,
         max_repair_rounds=current_app.config["UT_REPAIR_MAX_ROUNDS"],
     )
-    for key in _CONFIG_TEXT_FIELDS:
-        if key in values:
-            if not isinstance(values[key], str):
-                raise ServiceError(f"{key} 必须是字符串", code="VALIDATION_ERROR")
-            value = values[key].strip()
-            if key == "stub_builds":
-                value = "\n".join(_lines(value))
-            setattr(config, key, value)
-    if "max_repair_rounds" in values:
-        rounds = values["max_repair_rounds"]
-        if type(rounds) is not int or not 0 <= rounds <= 20:
-            raise ServiceError("max_repair_rounds 必须是 0–20 的整数", code="VALIDATION_ERROR")
-        config.max_repair_rounds = rounds
+    for key, value in normalized.items():
+        setattr(config, key, value)
     config.updated_by = user_id
     db.session.add(config)
     db.session.flush()
@@ -163,7 +182,8 @@ def _job_summary(job: Optional[UtJob]) -> Optional[dict[str, Any]]:
     if job is None:
         return None
     return {"id": job.id, "batch_id": job.batch_id, "state": job.state,
-            "repair_rounds": job.repair_rounds, "last_verdict": job.last_verdict or None}
+            "repair_rounds": job.repair_rounds, "last_verdict": job.last_verdict or None,
+            "execution_backend": (job.generation or {}).get("execution_backend", "winams")}
 
 
 def list_targets(project_id: int) -> list[dict[str, Any]]:
@@ -360,7 +380,7 @@ def run_generation(batch_id: int) -> list[int]:
             _gate(job, UtJob.ERROR, "生成结果中缺少该函数", GateCode.GENERATION_FAILED)
             continue
         job.generation_status = str(unit.get("status") or "")
-        job.generation = unit
+        job.generation = {**unit, "execution_backend": config.get("execution_backend", "winams")}
         if not unit.get("testcsv"):
             detail = unit.get("error") or unit.get("projection_failure") or ""
             _gate(job, UtJob.NEEDS_HUMAN,
@@ -405,6 +425,8 @@ _CAPTURABLE_ORIGINS = frozenset({UtAttempt.ORIGIN_GENERATOR, UtAttempt.ORIGIN_LL
 def _capture_backfill(job: UtJob, attempt: UtAttempt, check: dict[str, Any],
                       execution: Optional[dict[str, Any]]) -> bool:
     """Queue the WinAMS-captured CSV as the next attempt; True when queued."""
+    if (execution or {}).get("evidence_source") == "HOST_EXECUTION" or check.get("evidence_source") == "HOST_EXECUTION":
+        return False
     codes = set(_error_codes(check))
     if (check.get("verdict") != "FAIL" or attempt.origin not in _CAPTURABLE_ORIGINS
             or not codes or not codes <= _ORACLE_CODES):
@@ -534,6 +556,9 @@ def _fresh_exec_dir(job: UtJob, attempt: UtAttempt) -> Path:
 def _execute_step(job: UtJob) -> None:
     attempt = db.session.get(UtAttempt, job.current_attempt_id)
     config = db.session.get(UtBatch, job.batch_id).config_snapshot or {}
+    if config.get("execution_backend", "winams") == "clang":
+        _execute_host_step(job, attempt, config)
+        return
     candidate = Path(attempt.csv_path)
     previous = _previous_executable(job, attempt)
     intents = (job.generation or {}).get("intent_manifest")
@@ -576,6 +601,46 @@ def _execute_step(job: UtJob) -> None:
         return
     _gate(job, *next_state(check, attempt.origin, job.repair_rounds, job.max_repair_rounds,
                            _job_gaps(job, attempt)))
+    db.session.commit()
+
+
+def _execute_host_step(job: UtJob, attempt: UtAttempt, config: dict) -> None:
+    """Host evidence is experimental and never enters the WinAMS checker/repair loop."""
+    generation = job.generation or {}
+
+    def persist(execution):
+        attempt.execution = execution
+        db.session.commit()
+
+    def continuing():
+        db.session.refresh(job, attribute_names=["stop_requested_at", "stop_requested_by"])
+        return job.stop_requested_at is None
+
+    try:
+        execution, check = host.execute(
+            bridge=get_bridge(), ir_json=generation.get("ir_json"),
+            intents=generation.get("intent_manifest"), reference=job.reference_csv,
+            candidate=attempt.csv_path, out=_fresh_exec_dir(job, attempt), config=config,
+            model_timeout=current_app.config["UT_REPAIR_TIMEOUT"],
+            persist=persist, continuing=continuing)
+    except ProviderError as exc:
+        _gate(job, UtJob.ERROR, f"本地模型不可用：{exc}", GateCode.MODEL_UNAVAILABLE)
+    except BridgeError as exc:
+        _gate(job, UtJob.ERROR, f"ut-agent 调用失败：{exc}", GateCode.TOOL_ERROR)
+    else:
+        attempt.execution, attempt.check, attempt.verdict = execution, check, check["verdict"]
+        job.last_verdict = check["verdict"]
+        if not continuing():
+            _halt(job)
+        elif check["verdict"] == "PASS":
+            _gate(job, UtJob.AWAITING_REVIEW,
+                  "Clang 主机候选校验通过，等待人工审核；不代表目标执行或正式交付验收", GateCode.MACHINE_PASS)
+        else:
+            reason = execution.get("reason") or "; ".join(
+                str(issue.get("message", issue.get("code", ""))) for issue in check.get("issues", ()))
+            _gate(job, UtJob.NEEDS_HUMAN, f"Clang 主机候选需人工处理：{reason}", GateCode.CHECK_BLOCKED)
+    if not continuing():
+        _halt(job)
     db.session.commit()
 
 
@@ -968,7 +1033,16 @@ def retry(project_id: int, job_id: int, user_id: Optional[int] = None) -> UtJob:
     # (FAIL, or PASS with open missing cases): resume the repair.
     wants_rows = attempt.verdict == "FAIL" or (
         attempt.verdict == "PASS" and _job_gaps(job, attempt)["open"])
-    _gate(job, UtJob.REPAIRING if wants_rows else UtJob.EXECUTING)
+    config = db.session.get(UtBatch, job.batch_id).config_snapshot or {}
+    if config.get("execution_backend") == "clang" and config.get("stub_mode") == "llm":
+        # A fresh model reply changes the reviewed candidate even when CSV bytes
+        # stay identical or preparation failed before evidence was captured.
+        # Preserve the previous attempt and stale-review fence in every case.
+        _new_attempt(job, attempt.origin, Path(attempt.csv_path).read_bytes(),
+                     note="Host stub retry; CSV unchanged, candidate evidence version renewed",
+                     reviser={"host_retry_of": attempt.id}, user_id=user_id)
+    _gate(job, UtJob.REPAIRING if wants_rows and config.get("execution_backend", "winams") != "clang"
+          else UtJob.EXECUTING)
     db.session.commit()
     return job
 
@@ -1063,3 +1137,28 @@ def attempt_csv(project_id: int, job_id: int, attempt_id: int) -> tuple[bytes, s
     if attempt is None or not attempt.csv_path:
         raise ServiceError("该版本没有 CSV", code="NOT_FOUND")
     return Path(attempt.csv_path).read_bytes(), Path(attempt.csv_path).name
+
+
+def attempt_artifact(project_id: int, job_id: int, attempt_id: int, artifact_id: str) -> tuple[bytes, str]:
+    attempt = (UtAttempt.query.join(UtJob, UtJob.id == UtAttempt.job_id)
+               .filter(UtAttempt.id == attempt_id, UtJob.id == job_id,
+                       UtJob.project_id == project_id).first())
+    if attempt is None:
+        raise ServiceError("Artifact not found", code="NOT_FOUND")
+    metadata = (attempt.execution or {}).get("stub_generation") or {}
+    artifact = next((item for item in metadata.get("artifacts", ()) if item.get("id") == artifact_id), None)
+    root = metadata.get("artifact_root")
+    if artifact is None or not root:
+        raise ServiceError("Artifact not found", code="NOT_FOUND")
+    job = db.session.get(UtJob, job_id)
+    base = Path(root).resolve()
+    path = (base / artifact["name"]).resolve()
+    if not base.is_relative_to(_job_dir(job).resolve()) or not path.is_relative_to(base):
+        raise ServiceError("Artifact location is invalid", code="INTEGRITY_ERROR")
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        raise ServiceError("Artifact is missing", code="NOT_FOUND") from exc
+    if hashlib.sha256(data).hexdigest() != artifact.get("sha256"):
+        raise ServiceError("Artifact changed after capture", code="INTEGRITY_ERROR")
+    return data, path.name

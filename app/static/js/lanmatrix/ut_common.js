@@ -100,9 +100,11 @@
     var m = STATE[state] || ["notask", state || "未执行"];
     LMPill.apply(el, m[0], m[1]);
   }
-  function verdictPill(verdict) {
+  function verdictPill(verdict, backend) {
     if (!verdict) return '<span class="muted">—</span>';
     var m = VERDICT[verdict] || ["pending", verdict];
+    if (backend === "clang") return LMPill.html(m[0], "主机 " + verdict,
+      "仅主机观测比较；实测覆盖率不代表基准覆盖率验收，不计入目标证据或正式交付验收");
     return LMPill.html(m[0], m[1], "机器判定：" + verdict);
   }
   function time(iso) {
@@ -132,7 +134,7 @@
     return {
       kind: "ut_job", task_id: "ut:" + job.id, project_id: job.project_id,
       test_id: (job.target || {}).function || ("作业 #" + job.id),
-      sil_name: "WinAMS", submitter: job.submitter || "",
+      sil_name: job.execution_backend === "clang" ? "Clang 主机（实验）" : "WinAMS", submitter: job.submitter || "",
       status: job.task_status, created_at: job.created_at, finished_at: job.updated_at,
       review: {
         status: job.state === "approved" || job.state === "rejected" ? job.state
@@ -147,7 +149,7 @@
     var decided = job.state === "approved" || job.state === "rejected";
     return {
       status: ACTIVE[job.state] ? statePill(job.state)
-        : job.last_verdict ? verdictPill(job.last_verdict)
+        : job.last_verdict ? verdictPill(job.last_verdict, job.execution_backend)
           : job.generation_status === "ERROR" ? LMPill.html("error", "生成异常")
             : LMPill.html("notask", "未判定"),
       // Decided and awaiting jobs read with the run list's review vocabulary
