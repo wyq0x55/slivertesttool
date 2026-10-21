@@ -33,7 +33,7 @@ def main() -> None:
         app.run(host=Config.HOST, port=Config.PORT, threaded=True)
         return
 
-    print(f"Silver Test Platform v{__version__} -> http://{Config.HOST}:{Config.PORT}")
+    print(f"Test Platform v{__version__} -> http://{Config.HOST}:{Config.PORT}")
     # ``threads`` must be generous: each open SSE stream holds one thread.
     serve(app, host=Config.HOST, port=Config.PORT, threads=max(16, Config.HUEY_WORKERS * 2))
 

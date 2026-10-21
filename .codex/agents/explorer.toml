@@ -1,5 +1,5 @@
 name = "explorer"
-description = "Read-only Silver Test Platform repository explorer for locating ownership, call paths, configuration, and tests."
+description = "Read-only Test Platform repository explorer for locating ownership, call paths, configuration, and tests."
 model = "deepseek-v4.1-flash"
 model_reasoning_effort = "high"
 sandbox_mode = "read-only"

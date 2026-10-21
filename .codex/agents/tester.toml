@@ -1,5 +1,5 @@
 name = "tester"
-description = "Targeted verification subagent for Silver Test Platform changes."
+description = "Targeted verification subagent for Test Platform changes."
 model = "deepseek-v4.1-flash"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"

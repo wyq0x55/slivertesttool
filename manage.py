@@ -11,7 +11,7 @@ from app.logging_setup import configure as configure_logging
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Silver Test Platform management")
+    parser = argparse.ArgumentParser(description="Test Platform management")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser(
         "bootstrap",

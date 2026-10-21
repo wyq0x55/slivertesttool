@@ -1,5 +1,5 @@
 name = "worker"
-description = "Bounded implementation subagent for one owned Silver Test Platform subsystem."
+description = "Bounded implementation subagent for one owned Test Platform subsystem."
 model = "deepseek-v4.1-flash"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"

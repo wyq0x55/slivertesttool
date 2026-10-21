@@ -1,4 +1,4 @@
-# Silver Test Platform
+# Test Platform
 
 A web-based, streaming test-execution platform for Synopsys Silver, built for
 **internal-network / offline** deployment. Select a test-case folder in the

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-shot PostgreSQL initializer for the Silver Test Platform.
+"""One-shot PostgreSQL initializer for the Test Platform.
 
 Application table ownership is shared with normal deployment bootstrap:
 
@@ -150,7 +150,7 @@ def seed_admin(conn, username: str, password: str, license_limit: int) -> None:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="init_db.py",
-        description="One-shot PostgreSQL initializer for the Silver Test Platform.",
+        description="One-shot PostgreSQL initializer for the Test Platform.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument(
