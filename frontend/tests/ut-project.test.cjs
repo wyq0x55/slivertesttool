@@ -468,3 +468,20 @@ test("a stopped job can be resumed, revised or reviewed; a running one can be st
   assert.deepEqual(h.stops.map((s) => s.id), [1]);
 });
 
+test("a gate code names the category and the next step", async () => {
+  const h = harness();
+  await ready(h, { ...job(10, "needs_human"), gate_code: "MODEL_STALLED", reason: "本地模型本轮没有提出任何新增行" });
+  assert.equal(h.get("ut-d-gate-code").hidden, false);
+  assert.equal(h.get("ut-d-gate-code").textContent, "模型无进展");
+  assert.match(h.get("ut-d-gate-hint").textContent, /重复调用不会有不同结果[\s\S]*审核的是当前版本/);
+  // Every server-side code has a hint.
+  const codes = ["MACHINE_PASS", "OPEN_GAPS_EXHAUSTED", "ROUNDS_EXHAUSTED", "NOT_ROW_FIXABLE",
+    "HUMAN_REVISION_FAILED", "CANDIDATE_REJECTED", "MODEL_STALLED", "CHECK_BLOCKED", "UNKNOWN_VERDICT",
+    "NO_TESTCSV", "PROMPT_PREFIX_CHANGED", "PROMPT_BUDGET_EXCEEDED", "ENV_BLOCKED", "GENERATION_FAILED",
+    "TOOL_ERROR", "MODEL_UNAVAILABLE", "INTERNAL_ERROR", "INTERRUPTED", "STOPPED"];
+  const source = fs.readFileSync(path.resolve(__dirname, "../../app/models/ut_pipeline.py"), "utf8");
+  const declared = [...source.matchAll(/^    ([A-Z_]+) = "\1"/gm)].map((m) => m[1]);
+  assert.deepEqual(declared.sort(), [...codes].sort());
+  for (const code of codes) assert.ok(h.common.GATE[code], code);
+});
+

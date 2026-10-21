@@ -86,7 +86,7 @@
           esc(t.function || "") + "</code></a>" +
           '<div class="ut-src submuted" title="' + esc(t.source_rel || "") + '">' +
           esc(t.source_name || "") + " · 批次 #" + j.batch_id + "</div></td>" +
-        "<td>" + U.statePill(U.jobState(j)) +
+        "<td>" + U.statePill(U.jobState(j), rowTip(j)) +
           (j.superseded_by ? '<div class="submuted">已被 #' + j.superseded_by + " 取代</div>" : "") + "</td>" +
         "<td>" + U.verdictPill(j.last_verdict) + "</td>" +
         '<td class="ut-num">' + j.repair_rounds + " / " + j.max_repair_rounds + "</td>" +
@@ -108,6 +108,12 @@
       say(e.message, true);
     }
     await refresh();
+  }
+
+  // Hovering a gate state says why the job stopped there.
+  function rowTip(j) {
+    var info = U.gateInfo(j);
+    return info ? info[0] + (j.reason ? "：" + j.reason : "") : j.reason || undefined;
   }
 
   function stopNote(job) {
@@ -264,6 +270,9 @@
         (job.review_note ? " · " + job.review_note : "") : "—";
     $("ut-d-updated").textContent = U.time(job.updated_at);
     $("ut-d-reason").textContent = job.reason || "—";
+    var info = U.gateInfo(job);
+    $("ut-d-gate-code").hidden = !info;
+    $("ut-d-gate-code").textContent = info ? info[0] : "";
     var resumable = job.state === "blocked" || job.state === "error" || job.state === "stopped";
     $("ut-d-retry").hidden = !U.can("edit") || !resumable || !!job.superseded_by;
     $("ut-d-retry-label").textContent = job.state === "stopped" ? "继续" : "重试";
@@ -271,7 +280,7 @@
 
     var decided = job.state === "approved" || job.state === "rejected";
     $("ut-d-gate-hint").textContent = gate
-      ? (job.state === "stopped" ? "作业已停止，当前版本和机器证据都已保留：可以继续运行、人工修订，或直接审核。" : "") +
+      ? (info ? info[1] + " " : job.state === "stopped" ? U.GATE.STOPPED[1] + " " : "") +
         "审核的是当前版本。机器判定未通过时，通过必须填写意见。"
       : job.superseded_by ? "已被更新的作业取代，只读。"
       : job.stop_requested ? "已请求停止：当前调用结束后停止，已得到的结果会保留。"

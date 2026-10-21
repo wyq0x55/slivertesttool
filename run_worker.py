@@ -100,6 +100,10 @@ def main() -> None:
         recovery = tasks.recover_run_attempts(startup=True)
         if recovery["errors"]:
             logger.warning("Startup run recovery failed: %s", recovery["errors"])
+    from app.jobqueue import ut_tasks
+    ut_recovery = ut_tasks.recover_interrupted_jobs()
+    if ut_recovery["interrupted"] or ut_recovery["stopped"]:
+        logger.warning("Unit-test jobs interrupted by the previous worker: %s", ut_recovery)
 
     # Pool infrastructure is started whenever the runner backend supports it, so
     # the reconcile loop is always present to honour a *live* enable/disable of
