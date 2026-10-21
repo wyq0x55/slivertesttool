@@ -184,7 +184,14 @@
         exempt_approved: states.approved || 0,
         executed_pct: percent(total - unrun), passed_pct: percent(passed),
       },
-      review: { pending: pending, approved: states.approved || 0, rejected: states.rejected || 0 },
+      // `pending` is every gate; the parts say whose turn it is: a reviewer's
+      // (awaiting), an editor's (needs_human) or the environment's (trouble).
+      review: {
+        pending: pending, awaiting: states.awaiting_review || 0,
+        needs_human: states.needs_human || 0,
+        trouble: (states.blocked || 0) + (states.error || 0),
+        approved: states.approved || 0, rejected: states.rejected || 0,
+      },
     };
   }
 

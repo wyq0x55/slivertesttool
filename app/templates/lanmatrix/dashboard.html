@@ -79,7 +79,7 @@
     <div class="lm-chart-card">
       <div class="lm-chart-head">
         <h3>审核漏斗</h3>
-        <span class="muted">需审核 → 已决定</span>
+        <span class="muted">{{ "等人处理（审核 / 修订 / 环境）→ 已决定" if is_ut else "需审核 → 已决定" }}</span>
       </div>
       <div class="lm-chart-box" id="lm-chart-review"></div>
     </div>

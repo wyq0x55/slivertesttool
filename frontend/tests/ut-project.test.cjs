@@ -322,6 +322,16 @@ test("dashboard keeps machine PASS separate from human approval and excludes rem
   assert.equal(snapshot.summary.not_run, 1);
 });
 
+test("dashboard splits the gates by whose turn it is", () => {
+  const h = harness();
+  const job = (state) => ({ in_index: true, latest_job: { state } });
+  const { review } = h.common.dashboardSnapshot([
+    job("awaiting_review"), job("awaiting_review"), job("needs_human"), job("blocked"), job("error"),
+  ]);
+  assert.deepEqual({ ...review }, {
+    pending: 5, awaiting: 2, needs_human: 1, trouble: 2, approved: 0, rejected: 0 });
+});
+
 test("repeated enqueue clicks submit one batch and keep the selected function ids", async () => {
   const h = harness({ edit: true }, "ut_pipeline.js");
   await settle();
