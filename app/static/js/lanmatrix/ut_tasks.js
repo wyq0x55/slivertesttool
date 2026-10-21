@@ -35,6 +35,8 @@
   var batchId = (window.LMUrl && LMUrl.get("batch")) || "";
   var showOld = false;
   var batches = [];
+  // Expanded runs of fruitless model rounds, keyed "<job>:<first seq>".
+  var expandedRuns = {};
   var job = null;
   var openJobId = null;
   var shownAttempt = null;
@@ -69,6 +71,13 @@
   function renderRows() {
     var rows = jobs.filter(visible);
     var old = jobs.filter(function (j) { return j.superseded_by; }).length;
+    // Export follows the batch filter; one function counts once.
+    var approved = {};
+    jobs.forEach(function (j) { if (j.state === "approved") approved[(j.target || {}).id || j.id] = 1; });
+    var approvedCount = Object.keys(approved).length;
+    $("ut-export").hidden = !approvedCount;
+    $("ut-export").href = LMApi.utExportUrl(pid, batchId);
+    $("ut-export-label").textContent = "导出已通过版本（" + approvedCount + "）";
     $("ut-old-wrap").hidden = !old;
     $("ut-old-n").textContent = old;
     $("ut-rows").innerHTML = rows.length ? rows.map(function (j) {
@@ -151,6 +160,24 @@
     }).join("");
     sel.value = batchId;
     $("ut-batch-stop").hidden = !U.can("edit") || !selectedBatchActive();
+    renderBatchInfo();
+  }
+
+  // The selected batch at a glance: where its jobs are and what produced them.
+  function renderBatchInfo() {
+    var box = $("ut-batch-info");
+    var b = batches.find(function (item) { return String(item.id) === String(batchId); });
+    box.hidden = !b;
+    if (!b) { box.innerHTML = ""; return; }
+    var prov = b.provenance || {};
+    var states = Object.keys(b.states).sort(function (x, y) { return b.states[y] - b.states[x]; })
+      .map(function (s) { return U.statePill(s) + " " + b.states[s]; }).join(" ");
+    var facts = ["批次 #" + b.id + (b.label ? "「" + b.label + "」" : ""), BATCH_ZH[b.status] || b.status,
+      prov.baseline_ref, prov.generator_commit ? "生成器 " + String(prov.generator_commit).slice(0, 8) : "",
+      "创建 " + U.time(b.created_at), b.finished_at ? "结束 " + U.time(b.finished_at) : ""]
+      .filter(Boolean).map(esc).join(" · ");
+    box.innerHTML = '<span class="ut-batch-facts">' + facts + '</span><span class="ut-batch-states">' +
+      states + "</span>" + (b.error ? '<span class="ut-batch-err">' + esc(b.error) + "</span>" : "");
   }
 
   async function loadJobs() {
@@ -302,7 +329,11 @@
     if (!dl.hidden) dl.href = LMApi.utAttemptUrl(pid, job.id, job.current_attempt_id);
 
     var revisable = canRevise();
+    var runs = fruitlessRuns(job.attempts || []);
     $("ut-d-attempts").innerHTML = (job.attempts || []).map(function (a) {
+      var run = runs[a.id];
+      var head = run && run.first === a.id ? runRow(run) : "";
+      var folded = run && !expandedRuns[run.key] && a.id !== shownAttempt;
       var note = roundNote(a);
       var isCurrent = a.id === job.current_attempt_id;
       var acts = a.has_csv
@@ -311,7 +342,8 @@
             ? iconButton("在表格中修订", ICO_EDIT, 'data-attempt="' + a.id + '" data-act="edit"') : "") +
           iconLink("下载 CSV", ICO.download, LMApi.utAttemptUrl(pid, job.id, a.id))
         : "";
-      return '<tr data-attempt="' + a.id + '"' + (isCurrent ? ' class="is-current" title="当前版本"' : "") + ">" +
+      return head + '<tr data-attempt="' + a.id + '"' + (isCurrent ? ' class="is-current" title="当前版本"' : "") +
+        (run ? ' data-run-member="' + run.key + '"' + (folded ? " hidden" : "") : "") + ">" +
         '<td class="ut-num">' + a.seq + "</td><td>" + originOf(a) + "</td>" +
         "<td>" + (a.verdict ? U.verdictPill(a.verdict) :
           (U.ACTIVE[job.state] ? U.statePill("executing") : "—")) + "</td>" +
@@ -328,6 +360,46 @@
       $("ut-d-issues-sum").textContent = "";
       $("ut-d-issues").innerHTML = '<p class="muted">尚无版本，尚未校验</p>';
     }
+  }
+
+  // What a model round that left no candidate did; mirrors the server's
+  // repair-stats classification.
+  function fruitless(a) {
+    var r = a.reviser || {};
+    if (a.origin !== "LLM" || a.has_csv) return null;
+    if (r.model_contacted === false) return "guarded";
+    if (!("rationale" in r)) return "unusable";
+    return (r.rejected || []).length ? "rejected" : "stalled";
+  }
+  var FRUITLESS_ZH = { stalled: "无进展", rejected: "行被拒", unusable: "回复不可用", guarded: "未调用模型" };
+
+  // Two or more consecutive fruitless rounds fold into one summary row: on
+  // real data they were most of the history and pushed the useful versions
+  // out of view.
+  function fruitlessRuns(attempts) {
+    var runs = {}, current = [];
+    function close() {
+      if (current.length >= 2) {
+        var run = { key: job.id + ":" + current[0].seq, first: current[0].id, items: current };
+        current.forEach(function (a) { runs[a.id] = run; });
+      }
+      current = [];
+    }
+    attempts.forEach(function (a) { if (fruitless(a)) current.push(a); else close(); });
+    close();
+    return runs;
+  }
+
+  function runRow(run) {
+    var counts = {};
+    run.items.forEach(function (a) { var k = fruitless(a); counts[k] = (counts[k] || 0) + 1; });
+    var parts = Object.keys(counts).map(function (k) { return FRUITLESS_ZH[k] + " " + counts[k]; });
+    var open = !!expandedRuns[run.key];
+    return '<tr class="ut-att-run"><td class="ut-num">' + run.items[0].seq + "–" +
+      run.items[run.items.length - 1].seq + '</td><td colspan="6">本地模型 ' + run.items.length +
+      " 轮未产出候选 <span class=\"submuted\">· " + esc(parts.join(" · ")) + "</span> " +
+      '<button class="btn small ghost" type="button" data-run-toggle="' + run.key + '">' +
+      (open ? "收起" : "展开") + "</button></td><td></td></tr>";
   }
 
   // Choose the attempt whose check result is shown below the history. A
@@ -713,6 +785,13 @@
 
   $("ut-d-close").addEventListener("click", function () { closeJob(); });
   $("ut-d-attempts").addEventListener("click", function (e) {
+    var toggle = e.target.closest("[data-run-toggle]");
+    if (toggle && toggle.dataset.runToggle) {
+      var key = toggle.dataset.runToggle;
+      expandedRuns[key] = !expandedRuns[key];
+      if (job) renderJob();
+      return;
+    }
     var b = e.target.closest("[data-attempt]");
     if (!b) return;
     var attempt = Number(b.dataset.attempt);

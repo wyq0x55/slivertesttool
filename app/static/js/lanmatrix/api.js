@@ -426,6 +426,12 @@
     utRetry(pid, jobId) {
       return request("POST", `/projects/${pid}/ut/jobs/${jobId}/retry`, { body: {} });
     },
+    utExportUrl(pid, batchId) {
+      return `/api/v1/projects/${pid}/ut/approved/export` + (batchId ? `?batch_id=${batchId}` : "");
+    },
+    utRepairStats(pid) {
+      return request("GET", `/projects/${pid}/ut/repair-stats`);
+    },
     utStop(pid, jobId) {
       return request("POST", `/projects/${pid}/ut/jobs/${jobId}/stop`, { body: {} });
     },

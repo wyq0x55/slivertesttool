@@ -1,7 +1,7 @@
 {% extends "lanmatrix/base_lm.html" %}
 {% from "lanmatrix/_crumb.html" import project_crumb %}
 {% from "lanmatrix/_ut_filters.html" import ut_filters %}
-{% block styles %}<link rel="stylesheet" href="{{ url_for('static', filename='css/lanmatrix-ut.css') }}">{% endblock %}
+{% block styles %}<link rel="stylesheet" href="{{ static_asset_url('css/lanmatrix-ut.css') }}">{% endblock %}
 {% block title %}任务/运行{% endblock %}
 {% block crumb %}{{ project_crumb(project_id, "任务 / 运行") }}{% endblock %}
 {% block content %}
@@ -16,6 +16,12 @@
       <p>单元测试作业：生成、WinAMS 执行、校验、本地模型修正，最终停在人工审核</p>
     </div>
     <div class="head-actions">
+      {# The hand-off after approval: each function's approved CSV plus a
+         manifest of who approved what, from which generator. #}
+      <a class="btn" id="ut-export" hidden title="每个函数最近一次审核通过的 CSV，附生成器版本、修订记录与审核人清单">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+        <span id="ut-export-label">导出已通过版本</span>
+      </a>
       <button class="btn" id="ut-refresh" type="button">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/></svg>
         刷新
@@ -45,6 +51,7 @@
       <input type="checkbox" id="ut-show-old"> 显示已被取代的 <span id="ut-old-n"></span> 个
     </label>
   </div>
+  <div class="ut-batch-info" id="ut-batch-info" hidden></div>
 
   <div class="tablecard">
     <div style="overflow-x:auto">
@@ -175,10 +182,10 @@
       href="{{ static_asset_url('vendor/univer/univer.full.umd.js') }}"
       data-css="{{ static_asset_url('vendor/univer/univer.full.umd.css') }}">
 {% endif %}
-<script src="{{ url_for('static', filename='js/lanmatrix/steps_ref_panel.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/json_editor.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/steps_editor.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/ut_common.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/ut_testcsv.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/ut_tasks.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/steps_ref_panel.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/json_editor.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/steps_editor.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/ut_common.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/ut_testcsv.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/ut_tasks.js') }}"></script>
 {% endblock %}

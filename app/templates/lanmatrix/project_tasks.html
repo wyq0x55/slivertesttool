@@ -219,9 +219,9 @@
       href="{{ static_asset_url('vendor/univer/univer.full.umd.js') }}"
       data-css="{{ static_asset_url('vendor/univer/univer.full.umd.css') }}">
 {% endif %}
-<script src="{{ url_for('static', filename='js/lanmatrix/steps_ref_panel.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/json_editor.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/steps_editor.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/preflight.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/project_tasks.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/steps_ref_panel.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/json_editor.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/steps_editor.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/preflight.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/project_tasks.js') }}"></script>
 {% endblock %}

@@ -21,15 +21,15 @@
   {# Inline SVG favicon — avoids the 404 that a missing /favicon.ico produces on
      every navigation, with no extra request. #}
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%235b63d3'/%3E%3Cpath d='M11 21.5c1.4 1.1 3 1.7 4.9 1.7 3.1 0 5.1-1.5 5.1-4 0-2.2-1.4-3.3-4.3-4-2-.5-2.7-.9-2.7-1.8 0-.8.8-1.4 2.1-1.4 1.3 0 2.5.4 3.6 1.2l1.7-2.5c-1.4-1.1-3.1-1.6-5.2-1.6-3 0-5 1.6-5 3.9 0 2.4 1.6 3.3 4.4 4 1.9.4 2.6.8 2.6 1.7 0 .9-.9 1.5-2.3 1.5-1.6 0-3-.6-4.2-1.5z' fill='%23fff'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/lanmatrix.css') }}">
+  <link rel="stylesheet" href="{{ static_asset_url('css/app.css') }}">
+  <link rel="stylesheet" href="{{ static_asset_url('css/lanmatrix.css') }}">
   <!-- Design System (modern SaaS). Loaded last so it overrides legacy styles.
        Remove this single line to fully roll back. -->
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/design-system.css') }}">
+  <link rel="stylesheet" href="{{ static_asset_url('css/design-system.css') }}">
   <!-- Notification bell / review queue / dashboard. After design-system.css
        because it is built from its tokens; contains no literal colours, so it
        follows dark mode automatically. -->
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/lanmatrix-review.css') }}">
+  <link rel="stylesheet" href="{{ static_asset_url('css/lanmatrix-review.css') }}">
   {% block styles %}{% endblock %}
 </head>
 <body class="lm-body{% if user %} lm-has-side{% endif %}">
@@ -289,36 +289,36 @@
       }catch(e){}
     })();
   </script>
-  <script src="{{ url_for('static', filename='js/lanmatrix/api.js') }}"></script>
+  <script src="{{ static_asset_url('js/lanmatrix/api.js') }}"></script>
   {# ui.js defines window.LMUI (confirm/prompt/alert). Loaded on every page,
      before {% block scripts %}, because page scripts call it at click time. #}
-  <script src="{{ url_for('static', filename='js/lanmatrix/ui.js') }}"></script>
+  <script src="{{ static_asset_url('js/lanmatrix/ui.js') }}"></script>
   {# urlstate.js defines window.LMUrl (deep-linking / Back-button support).
      Must load before page scripts: they read the URL during init to restore
      the tab / open task / filters. #}
-  <script src="{{ url_for('static', filename='js/lanmatrix/urlstate.js') }}"></script>
+  <script src="{{ static_asset_url('js/lanmatrix/urlstate.js') }}"></script>
   {# crumb.js upgrades the breadcrumb's `项目 #<id>` to the real project name.
      After api.js (it calls LMApi.getProject) and it no-ops on pages without a
      #lm-crumb-project element, so it is safe to load everywhere. #}
-  <script src="{{ url_for('static', filename='js/lanmatrix/crumb.js') }}"></script>
+  <script src="{{ static_asset_url('js/lanmatrix/crumb.js') }}"></script>
   {# pill.js defines window.LMPill: the single status-badge vocabulary and its
      zh labels. Must load before page scripts, which render pills during their
      first paint, and before steps_editor.js, which drives a pill in place. #}
-  <script src="{{ url_for('static', filename='js/lanmatrix/pill.js') }}"></script>
+  <script src="{{ static_asset_url('js/lanmatrix/pill.js') }}"></script>
   {# task_actions.js defines window.LMTaskActions: the shared task/review verbs
      used by both the workspace and the project task list, so the two pages
      cannot drift into different behaviour for the same button. Pure functions,
      no DOM -- safe to load everywhere. #}
-  <script src="{{ url_for('static', filename='js/lanmatrix/task_actions.js') }}"></script>
+  <script src="{{ static_asset_url('js/lanmatrix/task_actions.js') }}"></script>
   {# task_row.js defines window.LMTaskRow: the shared task-row markup, status
      vocabulary and sort/compare helpers. Loaded after pill.js (it reads
      LMPill.TASK_ZH at definition time) and before the page scripts that render
      rows, so the workspace list and the project task list cannot show the same
      task differently. #}
-  <script src="{{ url_for('static', filename='js/lanmatrix/task_row.js') }}"></script>
+  <script src="{{ static_asset_url('js/lanmatrix/task_row.js') }}"></script>
   {# notifications.js drives the topbar bell. No-ops when the bell is absent
      (login / register), so it is safe to load on every page. #}
-  <script src="{{ url_for('static', filename='js/lanmatrix/notifications.js') }}"></script>
+  <script src="{{ static_asset_url('js/lanmatrix/notifications.js') }}"></script>
   {% if project_capabilities is not defined or project_capabilities.view %}
   {% block scripts %}{% endblock %}
   {% endif %}

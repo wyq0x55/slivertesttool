@@ -77,6 +77,7 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
         const d = deferred(); previews.push({ ...d, job, attempt }); return d.promise;
       },
       utAttemptUrl: (pid, job, attempt) => `/csv/${job}/${attempt}`,
+      utExportUrl: (pid, batch) => `/export/${batch || "all"}`,
       utReview(...args) { const d = deferred(); reviews.push({ ...d, args }); return d.promise; },
       utRevise(...args) { const d = deferred(); revisions.push({ ...d, args }); return d.promise; },
       utStop(pid, id) { const d = deferred(); stops.push({ ...d, id }); return d.promise; },
@@ -483,5 +484,29 @@ test("a gate code names the category and the next step", async () => {
   const declared = [...source.matchAll(/^    ([A-Z_]+) = "\1"/gm)].map((m) => m[1]);
   assert.deepEqual(declared.sort(), [...codes].sort());
   for (const code of codes) assert.ok(h.common.GATE[code], code);
+});
+
+test("consecutive model rounds without a candidate fold into one row", async () => {
+  const h = harness();
+  const round = (id, seq, reviser) => ({ id, seq, origin: "LLM", has_csv: false, verdict: "INVALID",
+    check: null, reviser, created_at: "2026-10-20T10:00:00Z" });
+  const value = { ...job(10, "needs_human"), attempts: [
+    candidate(10, 1),
+    round(11, 2, { rationale: "", rows: [], rejected: [] }),
+    round(12, 3, { rationale: "", rows: [], rejected: [{ error: "x" }] }),
+    round(13, 4, { rationale: "", rows: [], rejected: [] }),
+  ] };
+  await ready(h, value);
+  let html = h.get("ut-d-attempts").innerHTML;
+  assert.match(html, /本地模型 3 轮未产出候选[\s\S]*无进展 2 · 行被拒 1/);
+  assert.match(html, /data-attempt="11" data-run-member="1:2" hidden/);
+  assert.match(html, /<tr data-attempt="10" class="is-current"/);
+
+  h.get("ut-d-attempts").listeners.click({
+    target: { closest: (sel) => sel === "[data-run-toggle]" ? { dataset: { runToggle: "1:2" } } : null },
+  });
+  html = h.get("ut-d-attempts").innerHTML;
+  assert.doesNotMatch(html, /data-run-member="1:2" hidden/);
+  assert.match(html, />收起</);
 });
 

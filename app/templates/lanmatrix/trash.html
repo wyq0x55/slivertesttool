@@ -52,7 +52,7 @@
 </div>
 {% endblock %}
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/lanmatrix/trash.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/trash.js') }}"></script>
 <script>
 (function () {
   var root = document.querySelector(".lm-trash");

@@ -159,6 +159,13 @@ def app_ctx(monkeypatch):
             _reset_database()
         bootstrap_app(application)
         yield application
+        # Every test builds a fresh app and engine. Without disposing it the
+        # idle pooled connections outlive the test, so each xdist worker holds
+        # an ever-growing set and parallel runs brush max_connections (peak 81
+        # of 100 at -n 8), failing an unlucky fixture with "too many clients".
+        with application.app_context():
+            from app.extensions import db
+            db.engine.dispose()
     finally:
         # Each test gets its own instance/uploads/reports/workspace tree under
         # this directory. Without this the tree survives the run, so a suite

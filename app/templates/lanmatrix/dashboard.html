@@ -84,6 +84,25 @@
       <div class="lm-chart-box" id="lm-chart-review"></div>
     </div>
 
+    {% if is_ut %}
+    {# Whether the model rounds are worth their time: a round that reaches
+       WinAMS is useful; one that proposes nothing only costs the wait. #}
+    <div class="lm-chart-card wide" id="ut-repair-card">
+      <div class="lm-chart-head">
+        <h3>模型修订效果</h3>
+        <span class="muted">每轮调用模型的结果；"有效"指产出了进入 WinAMS 执行的候选</span>
+      </div>
+      <div class="ut-repair-sum" id="ut-repair-sum"></div>
+      <div style="overflow-x:auto">
+        <table class="dt ut-table ut-repair-table">
+          <thead><tr><th>模型</th><th>作业</th><th>轮次</th><th>有效</th><th>无进展</th>
+            <th>其他未产出</th><th>输入 token/轮</th><th>缓存命中</th><th>平均耗时</th></tr></thead>
+          <tbody id="ut-repair-rows"><tr><td colspan="9" class="muted">加载中…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
     {% if not is_ut %}
     <div class="lm-chart-card wide">
       <div class="lm-chart-head">
@@ -166,8 +185,9 @@
 {% block scripts %}
 {% if charts_available %}
 <script src="{{ static_asset_url('vendor/charts/echarts.min.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/charts_theme.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/charts_theme.js') }}"></script>
 {% endif %}
-{% if is_ut %}<script src="{{ url_for('static', filename='js/lanmatrix/ut_common.js') }}"></script>{% endif %}
-<script src="{{ url_for('static', filename='js/lanmatrix/dashboard.js') }}"></script>
+{% if is_ut %}<link rel="stylesheet" href="{{ static_asset_url('css/lanmatrix-ut.css') }}">
+<script src="{{ static_asset_url('js/lanmatrix/ut_common.js') }}"></script>{% endif %}
+<script src="{{ static_asset_url('js/lanmatrix/dashboard.js') }}"></script>
 {% endblock %}

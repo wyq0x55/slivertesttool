@@ -7,6 +7,8 @@
     POST /batches                        {target_ids, label} → queue (item.edit)
     GET  /batches                        batches with per-state counts
     GET  /jobs                           ?state&batch_id
+    GET  /repair-stats                   model-round outcomes per model
+    GET  /approved/export                ?batch_id; zip of approved CSVs + manifest
     GET  /jobs/<id>                      job + every attempt (origin, verdict, evidence)
     GET  /jobs/<id>/attempts/<aid>/csv   CP932 download; ?format=text for preview
     POST /jobs/<id>/revision             human revision: {csv, note} or multipart file
@@ -22,6 +24,7 @@ from flask import Blueprint, Response, g, request
 
 from ...jobqueue import ut_tasks
 from ...services.lanmatrix.errors import ServiceError
+from ...services.ut_pipeline import export as ut_export
 from ...services.ut_pipeline import pipeline
 from ...services.ut_pipeline.repair import normalize_csv
 from ._base import _project_and_role, arg_int, arg_str, err, login_required, ok, register_common
@@ -173,3 +176,19 @@ def stop_job(project_id: int, job_id: int):
 def stop_batch(project_id: int, batch_id: int):
     _project_and_role(project_id, "item.edit")
     return ok(pipeline.stop_batch(project_id, batch_id, g.user.id), status=202)
+
+
+@bp.get("/repair-stats")
+@login_required
+def repair_stats(project_id: int):
+    _project_and_role(project_id, "project.view")
+    return ok(pipeline.repair_stats(project_id))
+
+
+@bp.get("/approved/export")
+@login_required
+def export_approved(project_id: int):
+    _project_and_role(project_id, "project.view")
+    data, name = ut_export.build_archive(project_id, g.user.id, arg_int("batch_id", None))
+    return Response(data, mimetype="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})

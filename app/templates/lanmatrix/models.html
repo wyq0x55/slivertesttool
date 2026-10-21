@@ -121,6 +121,6 @@
   };
 </script>
 <link rel="prefetch" as="script" href="{{ static_asset_url('vendor/sbs/sbs-editor.umd.js') }}">
-<script src="{{ url_for('static', filename='js/lanmatrix/sbs_editor.js') }}"></script>
-<script src="{{ url_for('static', filename='js/lanmatrix/project_models.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/sbs_editor.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/project_models.js') }}"></script>
 {% endblock %}
