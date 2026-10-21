@@ -180,7 +180,7 @@ def main() -> None:
     # Give the worker a moment to attach to the queue before serving.
     time.sleep(0.5)
 
-    print(f"Silver Test Platform v{__version__} -> http://{Config.HOST}:{Config.PORT}")
+    print(f"Test Platform v{__version__} -> http://{Config.HOST}:{Config.PORT}")
     try:
         from waitress import serve
 

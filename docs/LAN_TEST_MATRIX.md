@@ -1,7 +1,7 @@
 # LAN Test Matrix — Online Editing Platform
 
 A fully **offline, LAN-deployable** online editor for test matrices, added on top
-of the Silver Test Platform. It keeps the original upload-and-execute flow intact
+of the Test Platform. It keeps the original upload-and-execute flow intact
 and adds a spreadsheet-style editor with dynamic columns, cell restrictions,
 batch search/replace with preview & undo, RBAC, audit, optimistic locking,
 Excel import/export and backup/restore.

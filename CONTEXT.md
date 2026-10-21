@@ -1,4 +1,4 @@
-# Silver Test Platform
+# Test Platform
 
 A web platform that runs Synopsys Silver test cases on an internal network: a
 tester picks test ids from a project's Test Matrix, a worker executes them on

@@ -57,7 +57,9 @@
     setKpi("executed", s.executed);
     setKpi("passed", s.passed);
     setKpi("failed_errored", s.failed + s.errored);
-    setKpi("review_pending", review.pending);
+    // A unit-test 待审核 tile counts the reviewer's queue only; 需人工 and
+    // 异常 already have their own tile, and summing them here counted twice.
+    setKpi("review_pending", isUt ? review.awaiting : review.pending);
     // Approved 不要 cases have left the denominator; pending ones have not, and
     // saying so is the point of the tile. Silence about a pending claim is how
     // a case ends up excluded without anyone having agreed to it.
@@ -88,15 +90,40 @@
     }
   }
 
+  // Halfway between two "#rrggbb" colours; anything else keeps `b`.
+  function mix(a, b) {
+    const hex = /^#([0-9a-f]{6})$/i;
+    const x = hex.exec(a || ""), y = hex.exec(b || "");
+    if (!x || !y) return b;
+    const n = (m, i) => parseInt(m[1].slice(i, i + 2), 16);
+    return "#" + [0, 2, 4].map((i) => Math.round((n(x, i) + n(y, i)) / 2)
+      .toString(16).padStart(2, "0")).join("");
+  }
+
+  // Unit-test states grouped by whose turn it is, worst first so the ring's
+  // eye-catching end is the work waiting on people. Each group has its own
+  // hue: 需人工 (an editor) and 待审核 (a reviewer) used to share amber.
+  function utSlices(p) {
+    const st = snapshot.ut_states;
+    const sum = (...keys) => keys.reduce((n, k) => n + (st[k] || 0), 0);
+    const closed = mix(p.muted, p.text);
+    return [
+      { name: "异常", value: sum("blocked", "error"), itemStyle: { color: p.danger } },
+      { name: "需人工", value: sum("needs_human"), itemStyle: { color: mix(p.warn, p.danger) } },
+      { name: "待审核", value: sum("awaiting_review"), itemStyle: { color: p.warn } },
+      { name: "运行中", value: sum("queued", "generating", "executing", "repairing"),
+        itemStyle: { color: p.brand } },
+      { name: "已停止", value: sum("stopped"), itemStyle: { color: closed } },
+      { name: "审核驳回", value: sum("rejected"), itemStyle: { color: closed } },
+      { name: "审核通过", value: sum("approved"), itemStyle: { color: p.ok } },
+      { name: "未入队", value: sum("none"), itemStyle: { color: p.muted } },
+    ].filter((d) => d.value > 0);
+  }
+
   function progressOption(p) {
     const s = snapshot.summary;
     // Ordered worst-to-best around the ring so the eye lands on the gap first.
-    const data = isUt ? Object.entries(snapshot.ut_states).map(([state, value]) => ({
-      name: state === "none" ? "未入队" : (LMUt.STATE[state] || [0, state])[1],
-      value: value,
-      itemStyle: { color: state === "approved" ? p.ok : LMUt.GATES[state] ? p.warn
-        : LMUt.ACTIVE[state] ? p.brand : p.muted },
-    })) : [
+    const data = isUt ? utSlices(p) : [
       { name: "通过", value: s.passed, itemStyle: { color: p.ok } },
       { name: "失败", value: s.failed, itemStyle: { color: p.danger } },
       { name: "错误", value: s.errored, itemStyle: { color: p.warn } },
@@ -145,6 +172,12 @@
 
   function reviewOption(p) {
     const r = snapshot.review;
+    // Unit-test gates split by whose turn it is, in the ring's colours.
+    const rows = isUt ? [
+      ["已驳回", r.rejected, p.danger], ["已通过", r.approved, p.ok],
+      ["异常", r.trouble, p.danger], ["需人工", r.needs_human, mix(p.warn, p.danger)],
+      ["待审核", r.awaiting, p.warn],
+    ] : [["已驳回", r.rejected, p.danger], ["已通过", r.approved, p.ok], ["待审核", r.pending, p.warn]];
     return {
       tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
       grid: { left: 70, right: 24, top: 20, bottom: 30 },
@@ -152,18 +185,14 @@
       yAxis: {
         type: "category",
         // Reversed so the funnel reads top-down: needs review -> decided.
-        data: ["已驳回", "已通过", "待审核"],
+        data: rows.map((row) => row[0]),
       },
       series: [{
         type: "bar",
         barWidth: "52%",
         itemStyle: { borderRadius: [0, 4, 4, 0] },
         label: { show: true, position: "right", color: p.text },
-        data: [
-          { value: r.rejected, itemStyle: { color: p.danger } },
-          { value: r.approved, itemStyle: { color: p.ok } },
-          { value: r.pending, itemStyle: { color: p.warn } },
-        ],
+        data: rows.map((row) => ({ value: row[1], itemStyle: { color: row[2] } })),
       }],
     };
   }

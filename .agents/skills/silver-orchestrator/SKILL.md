@@ -1,9 +1,9 @@
 ---
 name: silver-orchestrator
-description: Orchestrate non-trivial Silver Test Platform coding work with a high-quality root, DeepSeek execution subagents, and an independent Astra reviewer. Use for cross-component work, repository exploration, debugging, parallel workstreams, or changes where independent verification materially helps. Do not use for trivial localized edits.
+description: Orchestrate non-trivial Test Platform coding work with a high-quality root, DeepSeek execution subagents, and an independent Astra reviewer. Use for cross-component work, repository exploration, debugging, parallel workstreams, or changes where independent verification materially helps. Do not use for trivial localized edits.
 ---
 
-# Silver Test Platform Orchestrator
+# Test Platform Orchestrator
 
 `AGENTS.md` is authoritative. This skill schedules work; it does not weaken any
 repository contract.
