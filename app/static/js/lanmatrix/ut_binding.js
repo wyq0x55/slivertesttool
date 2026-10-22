@@ -49,6 +49,27 @@
     if (focus !== false) (node || box).focus();
   }
   function error(message, node) { var e = new Error(message); e.node = node; return e; }
+  function parseDocument(raw) {
+    var text = raw.replace(/^\uFEFF/, ""), parsed = JSON.parse(text);
+    function decimal(token) {
+      var parts = token.toLowerCase().split("e"), negative = parts[0][0] === "-";
+      var mantissa = negative ? parts[0].slice(1) : parts[0], digits = mantissa.replace(".", "").replace(/^0+/, "");
+      if (!digits) return negative ? "-0" : "0";
+      var fraction = mantissa.indexOf(".") < 0 ? 0 : mantissa.length - mantissa.indexOf(".") - 1;
+      var trailing = digits.length - digits.replace(/0+$/, "").length;
+      return (negative ? "-" : "") + digits.slice(0, digits.length - trailing) + "e" + (Number(parts[1] || 0) - fraction + trailing);
+    }
+    // The JSON parser validates syntax; this scanner only checks numeric
+    // tokens outside quoted strings before replacing the current draft.
+    var tokens = /"(?:\\.|[^"\\])*"|(-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)/g, match;
+    while ((match = tokens.exec(text))) {
+      if (!match[1]) continue;
+      var value = Number(match[1]);
+      if (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value)) || decimal(match[1]) !== decimal(String(value)))
+        throw new Error("清单包含无法在浏览器中精确保留的数值，请保留原文件并通过原路径绑定。");
+    }
+    return parsed;
+  }
   function renderFields() {
     FIELDS.forEach(function (p) {
       var value = get(p);
@@ -76,7 +97,7 @@
     var raw = $("ut-manifest-json").value;
     if (raw === rawSnapshot) return;
     var parsed;
-    try { parsed = JSON.parse(raw.replace(/^\uFEFF/, "")); }
+    try { parsed = parseDocument(raw); }
     catch (e) { throw error("清单 JSON 格式无效：" + e.message, $("ut-manifest-json")); }
     if (!object(parsed)) throw error("清单 JSON 必须是对象。", $("ut-manifest-json"));
     draft = parsed;
@@ -209,7 +230,7 @@
       try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
       catch (e) { throw error("清单文件必须使用 UTF-8 编码。", $("ut-manifest-import")); }
       var imported;
-      try { imported = JSON.parse(text.replace(/^\uFEFF/, "")); }
+      try { imported = parseDocument(text); }
       catch (e) { throw error("清单 JSON 格式无效：" + e.message, $("ut-manifest-import")); }
       if (!object(imported)) throw error("清单 JSON 必须是对象。", $("ut-manifest-import"));
       draft = imported; renderFields(); renderRaw();

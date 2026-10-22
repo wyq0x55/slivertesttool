@@ -5,12 +5,14 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from test_ut_pipeline import _as, _configure, _enqueue, _member
 from test_ut_pipeline import env as _shared_env
 
 from app.services.ut_pipeline import pipeline
+from app.services.ut_pipeline.binding import read_manifest
 from app.services.ut_pipeline.bridge import BridgeError, BridgeSettings, UtAgentBridge
 
 env = _shared_env
@@ -18,6 +20,30 @@ env = _shared_env
 DOCUMENT = {"project": {"id": "manifest-ui-fixture"}, "baseline": {"id": "psd-rebuild", "version": "1.1"},
             "build": {"profile": "rh850-ghs", "exclude_directories": []},
             "winams": {"profile": "standard"}, "profile": {"mcdc_enabled": True}}
+
+
+def test_read_validation_and_exposed_document_use_the_same_snapshot(tmp_path):
+    source = tmp_path / "mutable.json"
+    original = json.dumps(DOCUMENT).encode("utf-8")
+    source.write_bytes(original)
+
+    def validate(path):
+        assert Path(path) != source
+        assert Path(path).read_bytes() == original
+        source.write_text('{"unrelated_private_data": "must not be exposed"}', encoding="utf-8")
+        return {"test_policy_sha256": "validated-original"}
+
+    result = read_manifest(str(source), bridge=SimpleNamespace(constraints=validate))
+    assert result["manifest_document"] == DOCUMENT
+    assert result["manifest_sha256"] == hashlib.sha256(original).hexdigest()
+    assert result["test_policy_sha256"] == "validated-original"
+
+
+def test_read_refuses_values_the_editor_would_round(tmp_path):
+    source = tmp_path / "large-number.json"
+    source.write_text(json.dumps({**DOCUMENT, "targets": {"value": 9007199254740993}}), encoding="utf-8")
+    with pytest.raises(ValueError, match="精确保留"):
+        read_manifest(str(source), bridge=SimpleNamespace(constraints=lambda path: {}))
 
 
 def _save(case, document):

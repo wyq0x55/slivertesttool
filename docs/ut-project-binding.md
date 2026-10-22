@@ -62,22 +62,26 @@ Browser component verification uses the actual template, script and design
 system with synthetic configuration. It does not mutate production projects or
 invoke an AI provider.
 
-The 2026-10-22 implementation passed 98 targeted PostgreSQL/backend tests, all
-152 frontend Node tests and the production frontend build. Browser component
-checks exercised real file selection/import, field edits, validation and save,
-preservation of nested imported keys, backend/stub controls, read-only users,
-light/dark themes and a 390px viewport without horizontal overflow. The browser
-preview used synthetic API responses; actual manifest/schema validation was
-covered separately through the subprocess bridge tests. Local results remain on
-`feature/ut-manifest-binding`; this change has not been pushed, merged or deployed.
+The final 2026-10-22 policy integration passed 129 targeted PostgreSQL/backend
+tests and all 156 frontend Node tests. The production frontend build passed.
+The backend run included the real external bridge, extractor, formal generation,
+Clang and LLVM tools for both legacy and explicit policies, followed by human
+review and approved export through the platform API. Its model transport was
+faked; it does not claim model quality or WinAMS/RH850 execution.
+
+Browser component checks used the actual template, script and design system
+with synthetic API responses. They verified explicit conversion, unselected
+choices, editing and saving; earlier Manifest component checks also covered
+import, nested fields, backend/stub controls, read-only users, light/dark themes
+and a 390px viewport. No production projects were modified.
 
 
 ## Explicit test policy
 
 A new ProjectManifest uses `test_policy` instead of a Baseline ID and version.
 The form starts with all five choices unselected. `combination_group` remains an
-independent choice and is valid only when `mcdc` is true. Fixed minimum, median,
-maximum and boundary values are always included and are not selectable.
+independent choice and is valid only when `mcdc` is true. Fixed minimum,
+maximum and boundary values are always required and are not selectable.
 
 Imported documents that contain `baseline` stay on that legacy path, including
 `profile.mcdc_enabled`. Conversion is explicit: it removes `baseline` and the
@@ -89,3 +93,11 @@ The platform stores the bridge response fields `test_policy`,
 with the validated manifest response. Batch generation continues to freeze the
 complete constraints response, so those fields are retained in the batch snapshot
 when the bridge supplies them. The platform does not derive a policy locally.
+
+The read API validates an exact bounded snapshot before exposing a bound
+document, so concurrent changes to a legacy file cannot mix one revision's
+content with another revision's constraints. The browser refuses imported or
+raw JSON numeric values it cannot preserve exactly; unsafe large numbers in a
+bound document also block the editor's read response. The original file remains
+available through the established server-path binding instead of being silently
+rounded by the editor.

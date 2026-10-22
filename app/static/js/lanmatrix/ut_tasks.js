@@ -229,14 +229,14 @@
     var required = constraints && constraints.coverage_policy;
     if (!policy && !required) return "";
     var items = [];
-    if (policy) items.push("测试要求 v" + (policy.version || "1"));
+    if (policy) items.push("测试要求 v" + (policy.version || "1"), "最小值／最大值／边界值");
     [["c0", "C0"], ["c1", "C1"], ["mcdc", "MC/DC"]].forEach(function (item) {
       var enabled = policy ? item[0] === "c0" ? required && required.c0 : policy[item[0]] : required[item[0]];
       if (enabled) items.push(item[1]);
     });
-    if (policy && policy.boundary_adjacent) items.push("边界相邻值");
-    if (policy && policy.arithmetic) items.push("算术运算");
-    if (policy && policy.combination_group) items.push("MC/DC 组合分组");
+    if (policy && policy.boundary_adjacent) items.push("边界值 ±1");
+    if (policy && policy.arithmetic) items.push("演算式（含按位运算）");
+    if (policy && policy.combination_group) items.push("MC/DC「組合せ」分组");
     var identity = constraints.test_rules_ref || (constraints.test_policy_sha256 ? String(constraints.test_policy_sha256).slice(0, 12) : "");
     return items.join(" · ") + (identity ? " · " + identity : "");
   }

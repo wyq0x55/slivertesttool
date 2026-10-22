@@ -60,6 +60,29 @@ function harness(configure = true, config = { manifest_document: manifest() }) {
     } };
 }
 
+test("import rejects lossy numbers before replacing the draft", async () => {
+  const h = harness(); await settle();
+  for (const literal of ["9007199254740993", "0.100000000000000000001", "1e400", "1e-400", "-0"]) {
+    await h.import('{"project":{"id":"replacement"},"targets":{"value":' + literal + '}}');
+    assert.match(h.get("ut-binding-error").textContent, /精确保留/);
+    assert.equal(h.get("ut-m-project-id").value, "demo");
+  }
+  await h.save();
+  assert.deepEqual(h.writes[0].manifest_document, manifest());
+});
+
+test("raw JSON refuses rounding and accepts equivalent numeric notation", async () => {
+  const h = harness(); await settle();
+  const raw = JSON.stringify(manifest()).replace(/}$/, ',"targets":{"n":9007199254740993}}');
+  h.input("ut-manifest-json", raw);
+  await h.save();
+  assert.equal(h.writes.length, 0);
+  assert.match(h.get("ut-binding-error").textContent, /精确保留/);
+  await h.import(JSON.stringify(manifest()).replace(/}$/, ',"targets":{"n":1e0,"f":0.10,"text":"9007199254740993"}}'));
+  await h.save();
+  assert.deepEqual(h.writes[0].manifest_document.targets, { n: 1, f: 0.1, text: "9007199254740993" });
+});
+
 test("executor and stub controls preserve WinAMS paths and mode-specific toggles", async () => {
   const h = harness(true, { manifest_document: manifest(), work_root: "W", stub_builds: "S" });
   await settle();

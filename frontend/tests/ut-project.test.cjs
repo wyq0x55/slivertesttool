@@ -567,6 +567,6 @@ test("job detail displays explicit policy requirements without replacing legacy 
   } } });
   assert.match(h.get("ut-d-batch").textContent, /psd-rebuild@1\.1/);
   assert.match(h.get("ut-d-requirements").textContent, /测试要求 v1/);
-  assert.match(h.get("ut-d-requirements").textContent, /C0 · C1 · MC\/DC · 边界相邻值 · MC\/DC 组合分组/);
+  assert.match(h.get("ut-d-requirements").textContent, /C0 · C1 · MC\/DC · 边界值 ±1 · MC\/DC「組合せ」分组/);
   assert.match(h.get("ut-d-requirements").textContent, /universal-test-rules@1/);
 });

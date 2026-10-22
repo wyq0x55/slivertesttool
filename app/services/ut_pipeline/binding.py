@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import tempfile
 from pathlib import Path
@@ -69,16 +70,31 @@ def read_manifest(path: str, *, bridge) -> dict:
     file = Path(path)
     if file.stat().st_size > MAX_MANIFEST_BYTES:
         raise ValueError("ProjectManifest 不能超过 256 KiB")
-    # Legacy path bindings are user-selected server paths. Validate before
-    # exposing their JSON so this endpoint cannot become a generic file reader.
-    constraints = bridge.constraints(str(file))
     with file.open("rb") as stream:
         data = stream.read(MAX_MANIFEST_BYTES + 1)
     if len(data) > MAX_MANIFEST_BYTES:
         raise ValueError("ProjectManifest 不能超过 256 KiB")
+    # Validate the exact bounded snapshot, including mutable legacy bindings.
+    # Nothing is exposed until authoritative validation accepts these bytes.
+    with tempfile.TemporaryDirectory(prefix="ut-manifest-read-") as staging:
+        snapshot = Path(staging) / "manifest.json"
+        snapshot.write_bytes(data)
+        constraints = bridge.constraints(str(snapshot))
     document = json.loads(data.decode("utf-8-sig"))
     if not isinstance(document, dict):
         raise TypeError("ProjectManifest 必须是 JSON 对象")
+    def check_numbers(value):
+        if isinstance(value, dict):
+            for child in value.values():
+                check_numbers(child)
+        elif isinstance(value, list):
+            for child in value:
+                check_numbers(child)
+        elif ((type(value) is int and abs(value) > 2**53 - 1)
+              or (type(value) is float and (not math.isfinite(value)
+                  or (value.is_integer() and abs(value) > 2**53 - 1)))):
+            raise ValueError("ProjectManifest 包含无法在浏览器中精确保留的数值")
+    check_numbers(document)
     return {"manifest_document": document, "manifest_sha256": hashlib.sha256(data).hexdigest(),
             "test_policy": constraints.get("test_policy"),
             "effective_test_policy": constraints.get("effective_test_policy"),
