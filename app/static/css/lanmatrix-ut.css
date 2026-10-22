@@ -7,11 +7,51 @@
 #ut-status.is-error, #ut-detail-status.is-error{ color:var(--danger-text); }
 
 /* 设置 · 项目绑定 */
-.ut-form-grid{ display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap:16px; }
+.ut-form-grid{ display:grid; grid-template-columns:minmax(0, 1fr); gap:24px; }
 .ut-form-grid .panel{ margin:0; }
 .ut-form-grid .field:last-child{ margin-bottom:0; }
 .ut-hint{ margin:6px 0 0; font-size:12px; color:var(--text-3); }
 .ut-form-grid .field textarea{ width:100%; padding:10px 12px; resize:vertical; font-family:var(--mono); font-size:12px; line-height:1.6; }
+.lm-ut-binding .head-actions{ flex-wrap:wrap; }
+.lm-ut-binding .ut-settings-section{ padding:28px; min-width:0; }
+.ut-section-head{ display:flex; align-items:flex-start; gap:14px; margin-bottom:24px; }
+.ut-section-number{ flex:0 0 auto; display:grid; place-items:center; width:36px; height:36px;
+  border-radius:var(--radius-sm); background:var(--brand-soft); color:var(--brand-text); font-size:13px; font-weight:650; }
+.ut-section-head h2{ margin:0 0 5px; font-size:17px; font-weight:650; color:var(--text); }
+.ut-section-head p{ margin:0; color:var(--text-3); font-size:13px; }
+.ut-fields{ display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:20px 24px; }
+.ut-fields .field{ margin:0; min-width:0; }
+.ut-field-wide{ grid-column:1 / -1; }
+.lm-ut-binding .field input,.lm-ut-binding .field select,.lm-ut-binding .field textarea{
+  width:100%; min-width:0; box-sizing:border-box; background:var(--surface); color:var(--text);
+  border:1px solid var(--border-strong); border-radius:var(--radius-sm); }
+.lm-ut-binding .field select{ padding:10px 12px; }
+.lm-ut-binding .field :is(input,select,textarea):focus-visible,.ut-advanced summary:focus-visible{
+  outline:2px solid var(--brand); outline-offset:2px; }
+.lm-ut-binding .field [aria-invalid="true"]{ border-color:var(--danger); }
+.lm-ut-binding .field :disabled{ opacity:.65; }
+.lm-ut-binding .field [readonly]{ background:var(--surface-2); }
+.ut-manifest-actions{ display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:24px; }
+.ut-manifest-actions .ut-hint{ margin:0; }
+.ut-advanced{ margin-top:24px; padding-top:18px; border-top:1px solid var(--border); }
+.ut-advanced summary{ cursor:pointer; color:var(--brand-text); font-size:13px; font-weight:600; }
+.ut-advanced[open] summary{ margin-bottom:20px; }
+.ut-manifest-hash{ display:block; overflow-wrap:anywhere; font:12px/1.6 var(--mono); color:var(--text-2); }
+.ut-subsection{ margin-top:24px; padding-top:24px; border-top:1px solid var(--border); }
+.ut-subsection h3{ margin:0 0 18px; font-size:14px; font-weight:600; color:var(--text); }
+.ut-subsection > .ut-hint{ margin:0 0 20px; }
+.ut-draft-state{ font-size:12px; color:var(--text-3); }
+.ut-draft-state.is-dirty{ color:var(--warn-text); }
+.ut-binding-error{ padding:12px 16px; background:var(--danger-soft); border:1px solid var(--danger);
+  border-radius:var(--radius-sm); color:var(--danger-text); overflow-wrap:anywhere; white-space:pre-wrap; }
+.ut-validation{ margin:16px 0 0; font-size:12px; color:var(--text-2); overflow-wrap:anywhere; }
+.ut-validation:empty{ display:none; }
+.lm-ut-binding :is(#ut-c-index_csv,#ut-c-product_root,#ut-c-work_root,#ut-c-host_profile_runtime){ font-family:var(--mono); }
+@media (max-width:720px){
+  .ut-fields{ grid-template-columns:minmax(0, 1fr); gap:18px; }
+  .lm-ut-binding .ut-settings-section{ padding:20px 16px; }
+  .lm-ut-binding .page-head{ flex-wrap:wrap; gap:16px; }
+}
 
 /* Shared by 实施一览 and 任务与运行 */
 .ut-table td code{ font-size:12px; }
