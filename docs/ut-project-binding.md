@@ -70,3 +70,22 @@ light/dark themes and a 390px viewport without horizontal overflow. The browser
 preview used synthetic API responses; actual manifest/schema validation was
 covered separately through the subprocess bridge tests. Local results remain on
 `feature/ut-manifest-binding`; this change has not been pushed, merged or deployed.
+
+
+## Explicit test policy
+
+A new ProjectManifest uses `test_policy` instead of a Baseline ID and version.
+The form starts with all five choices unselected. `combination_group` remains an
+independent choice and is valid only when `mcdc` is true. Fixed minimum, median,
+maximum and boundary values are always included and are not selectable.
+
+Imported documents that contain `baseline` stay on that legacy path, including
+`profile.mcdc_enabled`. Conversion is explicit: it removes `baseline` and the
+legacy MC/DC field, then requires all five choices before validation or saving.
+Unknown imported fields and the JSON editor round trip are preserved.
+
+The platform stores the bridge response fields `test_policy`,
+`effective_test_policy`, `test_policy_sha256`, `test_rules_ref` and `test_rules`
+with the validated manifest response. Batch generation continues to freeze the
+complete constraints response, so those fields are retained in the batch snapshot
+when the bridge supplies them. The platform does not derive a policy locally.

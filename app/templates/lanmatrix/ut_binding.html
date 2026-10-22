@@ -30,14 +30,33 @@
       <div class="ut-fields">
         <div class="field"><label for="ut-m-project-id">项目标识 *</label><input id="ut-m-project-id" required autocomplete="off" placeholder="项目编号或唯一标识"></div>
         <div class="field"><label for="ut-m-build-profile">构建 Profile</label><input id="ut-m-build-profile" autocomplete="off" placeholder="例如 rh850-ghs"></div>
-        <div class="field"><label for="ut-m-baseline-id">测试基准 ID *</label><input id="ut-m-baseline-id" required autocomplete="off" placeholder="例如 psd-rebuild"></div>
-        <div class="field"><label for="ut-m-baseline-version">基准版本 *</label><input id="ut-m-baseline-version" required autocomplete="off" placeholder="填写已发布的版本号"></div>
+      </div>
+      <div id="ut-policy-section" class="ut-subsection" aria-labelledby="ut-policy-heading">
+        <h3 id="ut-policy-heading">测试要求</h3>
+        <p class="ut-policy-fixed">固定包含：最小值、最大值与边界值本身。</p>
+        <p class="ut-hint">请逐项明确选择是或否，五项均为必填。也可以导入已有的 Baseline 清单，沿用其原有配置。</p>
+        <div class="ut-policy-list">
+          <div class="field ut-policy-row"><div><label for="ut-m-test_policy-boundary_adjacent">边界相邻值 *</label><p class="ut-hint" id="ut-policy-boundary-hint">是否包含边界值紧邻的两侧取值。</p></div><select id="ut-m-test_policy-boundary_adjacent" required aria-describedby="ut-policy-boundary-hint"><option value="">请选择</option><option value="true">是</option><option value="false">否</option></select></div>
+          <div class="field ut-policy-row"><div><label for="ut-m-test_policy-c1">C1 分支覆盖 *</label><p class="ut-hint" id="ut-policy-c1-hint">是否要求分支覆盖。</p></div><select id="ut-m-test_policy-c1" required aria-describedby="ut-policy-c1-hint"><option value="">请选择</option><option value="true">是</option><option value="false">否</option></select></div>
+          <div class="field ut-policy-row"><div><label for="ut-m-test_policy-mcdc">MC/DC *</label><p class="ut-hint" id="ut-policy-mcdc-hint">是否要求修正条件／判定覆盖。</p></div><select id="ut-m-test_policy-mcdc" required aria-describedby="ut-policy-mcdc-hint"><option value="">请选择</option><option value="true">是</option><option value="false">否</option></select></div>
+          <div class="field ut-policy-row"><div><label for="ut-m-test_policy-arithmetic">算术运算用例 *</label><p class="ut-hint" id="ut-policy-arithmetic-hint">是否包含算术运算测试要求。</p></div><select id="ut-m-test_policy-arithmetic" required aria-describedby="ut-policy-arithmetic-hint"><option value="">请选择</option><option value="true">是</option><option value="false">否</option></select></div>
+          <div class="field ut-policy-row"><div><label for="ut-m-test_policy-combination_group">MC/DC 组合分组 *</label><p class="ut-hint" id="ut-policy-combination-hint">仅影响 MC/DC 用例的分组展示；选择是时，MC/DC 也必须选择是。</p></div><select id="ut-m-test_policy-combination_group" required aria-describedby="ut-policy-combination-hint"><option value="">请选择</option><option value="true">是</option><option value="false">否</option></select></div>
+        </div>
+      </div>
+      <div id="ut-legacy-baseline" class="ut-subsection" hidden>
+        <h3>原有测试基准 <span class="ut-section-code">Baseline</span></h3>
+        <p class="ut-hint">此清单沿用原有 Baseline 与 MC/DC 配置，保存或导出不会自动转换。转换后须重新明确选择全部测试要求；保存前可放弃更改。</p>
+        <div class="ut-fields">
+          <div class="field"><label for="ut-m-baseline-id">测试基准 ID *</label><input id="ut-m-baseline-id" autocomplete="off" placeholder="例如 psd-rebuild"></div>
+          <div class="field"><label for="ut-m-baseline-version">基准版本 *</label><input id="ut-m-baseline-version" autocomplete="off" placeholder="填写已发布的版本号"></div>
+          <div class="field"><label for="ut-m-profile-mcdc_enabled">原有 MC/DC 配置</label><select id="ut-m-profile-mcdc_enabled"><option value="">保持未指定</option><option value="true">启用</option><option value="false">关闭</option></select></div>
+        </div>
+        <button class="btn" id="ut-policy-convert" type="button" disabled{% if not project_capabilities.configure %} hidden{% endif %}>转换为显式测试要求</button>
       </div>
       <details class="ut-advanced">
         <summary>更多清单设置</summary>
         <div class="ut-fields">
           <div class="field"><label for="ut-m-winams-profile">WinAMS Profile</label><input id="ut-m-winams-profile" autocomplete="off" placeholder="例如 standard"></div>
-          <div class="field"><label for="ut-m-profile-mcdc_enabled">MC/DC 要求</label><select id="ut-m-profile-mcdc_enabled"><option value="">沿用基准要求</option><option value="true">启用</option><option value="false">关闭</option></select></div>
           <div class="field"><label for="ut-m-interfaces-contract">接口契约</label><input id="ut-m-interfaces-contract" autocomplete="off" placeholder="契约 ID@版本，可留空"></div>
           <div class="field"><label for="ut-m-rules-project_pack">项目规则包</label><input id="ut-m-rules-project_pack" autocomplete="off" placeholder="规则包 ID@版本，可留空"></div>
           <div class="field ut-field-wide"><label for="ut-m-build-exclude_directories">排除目录</label><textarea id="ut-m-build-exclude_directories" rows="3" wrap="off" autocomplete="off" spellcheck="false" placeholder="每行一个源码根目录下的相对目录"></textarea></div>

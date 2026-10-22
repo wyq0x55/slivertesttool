@@ -150,3 +150,29 @@ def test_legacy_nonmanifest_json_is_not_exposed_as_a_generic_file_reader(env, re
     assert body["data"]["manifest_document"] is None
     assert body["data"]["manifest_error"]
     assert "must-not-be-returned" not in json.dumps(body)
+
+
+def test_validated_policy_fields_follow_the_bridge_response(env, app_ctx):
+    policy = {"version": "1", "boundary_adjacent": False, "c1": True, "mcdc": True,
+              "arithmetic": False, "combination_group": True}
+    env.bridge.constraints = lambda manifest: {
+        "baseline": {"id": "universal-test-rules", "version": "1"},
+        "effective_test_policy": policy, "test_policy_sha256": "c" * 64,
+        "test_rules_ref": "universal-test-rules@1", "test_rules": {"version": "1"},
+    }
+    saved = _save(env, {"project": {"id": "policy-project"}, "test_policy": policy})
+    assert saved["effective_test_policy"] == policy
+    assert saved["test_policy_sha256"] == "c" * 64
+    assert saved["test_rules_ref"] == "universal-test-rules@1"
+    loaded = env.call("get", "/config")[1]["data"]
+    assert loaded["effective_test_policy"] == policy
+    assert loaded["test_rules"] == {"version": "1"}
+    targets = _configure(env)
+    [job_id] = _enqueue(env, targets["f"])
+    with app_ctx.app_context():
+        from app.extensions import db
+        from app.models import UtBatch, UtJob
+
+        batch = db.session.get(UtBatch, db.session.get(UtJob, job_id).batch_id)
+        assert batch.constraints["test_policy_sha256"] == "c" * 64
+        assert batch.constraints["test_rules"] == {"version": "1"}

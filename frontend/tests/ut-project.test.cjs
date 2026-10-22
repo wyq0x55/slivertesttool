@@ -557,3 +557,16 @@ test("实施一览 opens a job from the shared hover strip", async () => {
   assert.doesNotMatch(html, /btn small ghost/);
 });
 
+
+
+test("job detail displays explicit policy requirements without replacing legacy baseline text", async () => {
+  const h = harness();
+  await ready(h, { ...job(), batch: { provenance: { baseline_ref: "psd-rebuild@1.1" }, constraints: {
+    effective_test_policy: { version: "1", boundary_adjacent: true, c1: true, mcdc: true, arithmetic: false, combination_group: true },
+    coverage_policy: { c0: true }, test_rules_ref: "universal-test-rules@1", test_policy_sha256: "d".repeat(64),
+  } } });
+  assert.match(h.get("ut-d-batch").textContent, /psd-rebuild@1\.1/);
+  assert.match(h.get("ut-d-requirements").textContent, /测试要求 v1/);
+  assert.match(h.get("ut-d-requirements").textContent, /C0 · C1 · MC\/DC · 边界相邻值 · MC\/DC 组合分组/);
+  assert.match(h.get("ut-d-requirements").textContent, /universal-test-rules@1/);
+});

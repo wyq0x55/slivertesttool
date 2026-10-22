@@ -41,6 +41,13 @@
 .ut-subsection{ margin-top:24px; padding-top:24px; border-top:1px solid var(--border); }
 .ut-subsection h3{ margin:0 0 18px; font-size:14px; font-weight:600; color:var(--text); }
 .ut-subsection > .ut-hint{ margin:0 0 20px; }
+.ut-policy-fixed{ margin:0 0 8px; padding:12px 16px; border-left:3px solid var(--brand);
+  background:var(--brand-soft); color:var(--brand-text); font-size:13px; }
+.ut-policy-list{ display:flex; flex-direction:column; }
+.ut-policy-list .ut-policy-row{ display:grid; grid-template-columns:minmax(0, 1fr) 180px;
+  align-items:center; gap:16px 24px; padding:18px 0; border-bottom:1px solid var(--border); margin:0; }
+.ut-policy-row label{ margin:0; }
+#ut-policy-convert{ margin-top:20px; }
 .ut-draft-state{ font-size:12px; color:var(--text-3); }
 .ut-draft-state.is-dirty{ color:var(--warn-text); }
 .ut-binding-error{ padding:12px 16px; background:var(--danger-soft); border:1px solid var(--danger);
@@ -50,6 +57,7 @@
 .lm-ut-binding :is(#ut-c-index_csv,#ut-c-product_root,#ut-c-work_root,#ut-c-host_profile_runtime){ font-family:var(--mono); }
 @media (max-width:720px){
   .ut-fields{ grid-template-columns:minmax(0, 1fr); gap:18px; }
+  .ut-policy-list .ut-policy-row{ grid-template-columns:minmax(0, 1fr); gap:10px; }
   .lm-ut-binding .ut-settings-section{ padding:20px 16px; }
   .lm-ut-binding .page-head{ flex-wrap:wrap; gap:16px; }
 }

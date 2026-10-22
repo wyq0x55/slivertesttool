@@ -46,7 +46,12 @@ def prepare_manifest(project_id: int, document: object, *, bridge, workspace: Pa
         except BridgeError as exc:
             raise ServiceError(f"项目清单校验失败：{exc}", code="UT_MANIFEST_INVALID") from exc
         result = {"sha256": digest, "baseline": constraints.get("baseline"),
-                  "provenance": constraints.get("provenance")}
+                  "provenance": constraints.get("provenance"),
+                  "test_policy": constraints.get("test_policy"),
+                  "effective_test_policy": constraints.get("effective_test_policy"),
+                  "test_policy_sha256": constraints.get("test_policy_sha256"),
+                  "test_rules_ref": constraints.get("test_rules_ref"),
+                  "test_rules": constraints.get("test_rules")}
         if persist:
             destination = directory / f"{digest}.json"
             try:
@@ -66,7 +71,7 @@ def read_manifest(path: str, *, bridge) -> dict:
         raise ValueError("ProjectManifest 不能超过 256 KiB")
     # Legacy path bindings are user-selected server paths. Validate before
     # exposing their JSON so this endpoint cannot become a generic file reader.
-    bridge.constraints(str(file))
+    constraints = bridge.constraints(str(file))
     with file.open("rb") as stream:
         data = stream.read(MAX_MANIFEST_BYTES + 1)
     if len(data) > MAX_MANIFEST_BYTES:
@@ -74,4 +79,9 @@ def read_manifest(path: str, *, bridge) -> dict:
     document = json.loads(data.decode("utf-8-sig"))
     if not isinstance(document, dict):
         raise TypeError("ProjectManifest 必须是 JSON 对象")
-    return {"manifest_document": document, "manifest_sha256": hashlib.sha256(data).hexdigest()}
+    return {"manifest_document": document, "manifest_sha256": hashlib.sha256(data).hexdigest(),
+            "test_policy": constraints.get("test_policy"),
+            "effective_test_policy": constraints.get("effective_test_policy"),
+            "test_policy_sha256": constraints.get("test_policy_sha256"),
+            "test_rules_ref": constraints.get("test_rules_ref"),
+            "test_rules": constraints.get("test_rules")}

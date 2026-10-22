@@ -28,7 +28,7 @@ from ..ai import config as ai_config
 from ..ai import provider
 from . import increment
 
-PROMPT_VERSION = "ut-repair/7.2"
+PROMPT_VERSION = "ut-repair/7.3"
 # Bound the prompt: issue details are already truncated by ut-agent.
 _MAX_DETAIL_CHARS = 6000
 _MAX_DECISION_CHARS = 200
@@ -58,13 +58,26 @@ def _system_prompt(constraints: dict[str, Any]) -> str:
     )
     revision_rules = "\n".join(f"- {rule}" for rule in constraints.get("revision_rules", ()))
     policies = json.dumps(constraints.get("policies", {}), ensure_ascii=False, sort_keys=True)
+    policy = constraints.get("effective_test_policy") or constraints.get("test_policy")
+    if policy:
+        identity = (
+            f"## 显式测试要求 {constraints.get('test_rules_ref') or ''}\n"
+            f"版本: {policy.get('version')} / SHA-256: {constraints.get('test_policy_sha256')}\n"
+            f"边界相邻值: {policy.get('boundary_adjacent')} / C1: {policy.get('c1')} / "
+            f"MC/DC: {policy.get('mcdc')} / 算术运算: {policy.get('arithmetic')} / "
+            f"MC/DC 组合分组: {policy.get('combination_group')}\n"
+        )
+    else:
+        identity = (
+            f"## 项目绑定的测试基准 {baseline.get('id')}@{baseline.get('version')}"
+            f"（{source.get('document', '')} / {source.get('sheet', '')}）\n"
+        )
     return (
         "你是 WinAMS 单元测试用例（TestCsv）的输入手順助手。你只提出新增的输入行，"
         "平台按你的提议追加行并交给 ut-agent 校验器重新执行与判定，最终由人工审核。\n\n"
         "## 硬性约束（校验器逐条检查，违反即判失败）\n"
         f"{revision_rules}\n\n"
-        f"## 项目绑定的测试基准 {baseline.get('id')}@{baseline.get('version')}"
-        f"（{source.get('document', '')} / {source.get('sheet', '')}）\n"
+        f"{identity}"
         f"{rules}\n\n策略参数：{policies}\n\n"
         f"## 覆盖要求\nC0: {coverage.get('c0')} / C1: {coverage.get('c1')} / "
         f"MC/DC: {coverage.get('mcdc')}（true 表示必须 100%）\n\n"

@@ -115,16 +115,55 @@ test("BOM UTF-8 import populates fields without persisting and roundtrips advanc
   assert.equal(Object.hasOwn(h.writes[0].manifest_document.profile, "mcdc_enabled"), false);
 });
 
-test("minimal form entry omits untouched optional fields; MCDC is tri-state", async () => {
+test("a new document keeps every policy choice unselected and omits optional fields", async () => {
   const h = harness(true, null); await settle();
-  for (const [key, value] of [["project-id", "demo"], ["baseline-id", "baseline"], ["baseline-version", "1"]]) h.input("ut-m-" + key, value);
-  await h.save(); assert.deepEqual(h.writes[0].manifest_document, manifest());
-  for (const value of ["false", "true", ""]) {
-    h.input("ut-m-profile-mcdc_enabled", value, "change"); await h.save();
-    const doc = h.writes.at(-1).manifest_document;
-    if (!value) assert.equal(Object.hasOwn(doc, "profile"), false);
-    else assert.equal(doc.profile.mcdc_enabled, value === "true");
+  assert.equal(h.get("ut-policy-section").hidden, false);
+  assert.equal(h.get("ut-legacy-baseline").hidden, true);
+  for (const key of ["boundary_adjacent", "c1", "mcdc", "arithmetic", "combination_group"]) {
+    assert.equal(h.get("ut-m-test_policy-" + key).value, "");
   }
+  h.input("ut-m-project-id", "demo");
+  await h.save();
+  assert.equal(h.writes.length, 0);
+  assert.equal(h.focused(), "ut-m-test_policy-boundary_adjacent");
+  for (const [key, value] of [["boundary_adjacent", "false"], ["c1", "true"], ["mcdc", "false"], ["arithmetic", "false"], ["combination_group", "false"]]) {
+    h.input("ut-m-test_policy-" + key, value, "change");
+  }
+  await h.save();
+  assert.deepEqual(h.writes[0].manifest_document, {
+    project: { id: "demo" },
+    test_policy: { version: "1", boundary_adjacent: false, c1: true, mcdc: false, arithmetic: false, combination_group: false },
+  });
+});
+
+test("legacy import stays unchanged until conversion, which clears every policy choice", async () => {
+  const h = harness(true, null); await settle();
+  const imported = { ...manifest(), profile: { mcdc_enabled: true, approved_exceptions: ["keep"] }, custom: { retained: true } };
+  await h.import(JSON.stringify(imported));
+  assert.equal(h.get("ut-legacy-baseline").hidden, false);
+  assert.equal(h.get("ut-policy-section").hidden, true);
+  assert.equal(h.get("ut-m-profile-mcdc_enabled").value, "true");
+  await h.save();
+  assert.deepEqual(h.writes[0].manifest_document, imported);
+  await h.emit("ut-policy-convert", "click");
+  for (const key of ["boundary_adjacent", "c1", "mcdc", "arithmetic", "combination_group"]) {
+    assert.equal(h.get("ut-m-test_policy-" + key).value, "");
+  }
+  await h.save();
+  assert.equal(h.writes.length, 1);
+  for (const [key, value] of [["boundary_adjacent", "true"], ["c1", "true"], ["mcdc", "true"], ["arithmetic", "false"], ["combination_group", "true"]]) {
+    h.input("ut-m-test_policy-" + key, value, "change");
+  }
+  await h.save();
+  assert.deepEqual(h.writes[1].manifest_document, {
+    project: imported.project, custom: imported.custom, profile: { approved_exceptions: ["keep"] },
+    test_policy: { version: "1", boundary_adjacent: true, c1: true, mcdc: true, arithmetic: false, combination_group: true },
+  });
+  assert.equal(Object.hasOwn(h.writes[1].manifest_document, "baseline"), false);
+  h.input("ut-m-test_policy-mcdc", "false", "change");
+  await h.save();
+  assert.equal(h.writes.length, 2);
+  assert.equal(h.focused(), "ut-m-test_policy-combination_group");
 });
 
 test("last raw JSON edits win without blur; form changes retain new advanced keys", async () => {
