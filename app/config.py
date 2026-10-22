@@ -154,16 +154,16 @@ class Config:
     SILVER_GUI = _as_bool(os.environ.get("SILVER_GUI"), False)
 
     # --- Pre-warmed Silver instance pool ---
-    # When enabled, the worker launches ``license_limit`` empty Silver instances
-    # at start-up and reuses them for every test (see app.runners.silver_pool),
-    # removing the per-test Silver launch cost and pre-empting the licenses. Set
+    # When enabled, the worker creates Silver instances on demand and reuses
+    # them for every test (see app.runners.silver_pool), removing repeated
+    # per-test Silver launch costs. Set
     # SILVER_POOL_ENABLED=0 to fall back to launching a dedicated instance per
     # test (the classic behaviour).
     SILVER_POOL_ENABLED = _as_bool(os.environ.get("SILVER_POOL_ENABLED"), True)
     # Whether the worker eagerly warms the pool on start-up (vs. lazily on first
-    # demand). Eager warming front-loads the launch cost and grabs the licenses
-    # immediately.
-    SILVER_POOL_PREWARM = _as_bool(os.environ.get("SILVER_POOL_PREWARM"), True)
+    # demand). Disabled by default so an idle platform does not reserve licenses
+    # at start-up. Set to 1 to opt into eager warming and license reservation.
+    SILVER_POOL_PREWARM = _as_bool(os.environ.get("SILVER_POOL_PREWARM"), False)
     # How often (seconds) the worker reconciles the pool size with the runtime
     # license limit (which an admin may change live).
     SILVER_POOL_RECONCILE_SECONDS = float(
