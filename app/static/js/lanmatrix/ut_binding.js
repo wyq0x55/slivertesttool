@@ -26,7 +26,7 @@
   function state() { return JSON.stringify([$("ut-manifest-json").value, KEYS.map(function (k) { return $("ut-c-" + k).value; })]); }
   function changed() {
     var dirty = loaded && state() !== savedState;
-    $("ut-draft-state").textContent = !loaded ? "Loading…" : !LMUt.can("configure") ? "Read only" : dirty ? "Unsaved changes" : "All changes saved";
+    $("ut-draft-state").textContent = !loaded ? "正在加载…" : !LMUt.can("configure") ? "只读" : dirty ? "有未保存的更改" : "已保存";
     $("ut-draft-state").classList.toggle("is-dirty", dirty);
     $("ut-config-reset").disabled = busy || !LMUt.can("configure") || !dirty;
     $("ut-manifest-validation").textContent = "";
@@ -66,8 +66,8 @@
     if (raw === rawSnapshot) return;
     var parsed;
     try { parsed = JSON.parse(raw.replace(/^\uFEFF/, "")); }
-    catch (e) { throw error("Manifest JSON is invalid: " + e.message, $("ut-manifest-json")); }
-    if (!object(parsed)) throw error("Manifest JSON must be an object.", $("ut-manifest-json"));
+    catch (e) { throw error("清单 JSON 格式无效：" + e.message, $("ut-manifest-json")); }
+    if (!object(parsed)) throw error("清单 JSON 必须是对象。", $("ut-manifest-json"));
     draft = parsed;
     rawSnapshot = raw;
   }
@@ -79,7 +79,7 @@
     edits.forEach(function (edit) {
       var p = edit[0], value = edit[1].trim(), parts = p.split("."), group = parts[0], key = parts[1];
       if (own(draft, group) && !object(draft[group])) {
-        throw error(group + " must be an object; correct it in advanced JSON.", $("ut-manifest-json"));
+        throw error(group + " 必须是对象，请在完整 JSON 中修正。", $("ut-manifest-json"));
       }
       if (!value) {
         if (own(draft, group)) {
@@ -97,8 +97,9 @@
     renderRaw();
   }
   function required() {
+    var labels = { "project.id": "项目标识", "baseline.id": "测试基准 ID", "baseline.version": "基准版本" };
     ["project.id", "baseline.id", "baseline.version"].forEach(function (p) {
-      if (typeof get(p) !== "string" || !get(p).trim()) throw error(p + " is required.", field(p));
+      if (typeof get(p) !== "string" || !get(p).trim()) throw error("请填写" + labels[p] + "。", field(p));
     });
   }
   function lock(locked) {
@@ -160,25 +161,25 @@
     if (!file) return;
     clearError();
     try {
-      if (!/\.json$/i.test(file.name)) throw error("Select a .json file.", $("ut-manifest-import"));
-      if (file.size > LIMIT) throw error("Manifest exceeds the 256 KiB limit.", $("ut-manifest-import"));
+      if (!/\.json$/i.test(file.name)) throw error("请选择 .json 清单文件。", $("ut-manifest-import"));
+      if (file.size > LIMIT) throw error("清单不能超过 256 KiB。", $("ut-manifest-import"));
       lock(true);
       var bytes = await file.arrayBuffer(), text;
-      if (bytes.byteLength > LIMIT) throw error("Manifest exceeds the 256 KiB limit.", $("ut-manifest-import"));
+      if (bytes.byteLength > LIMIT) throw error("清单不能超过 256 KiB。", $("ut-manifest-import"));
       try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
-      catch (e) { throw error("Manifest must use UTF-8 encoding.", $("ut-manifest-import")); }
+      catch (e) { throw error("清单文件必须使用 UTF-8 编码。", $("ut-manifest-import")); }
       var imported;
       try { imported = JSON.parse(text.replace(/^\uFEFF/, "")); }
-      catch (e) { throw error("Manifest JSON is invalid: " + e.message, $("ut-manifest-import")); }
-      if (!object(imported)) throw error("Manifest JSON must be an object.", $("ut-manifest-import"));
+      catch (e) { throw error("清单 JSON 格式无效：" + e.message, $("ut-manifest-import")); }
+      if (!object(imported)) throw error("清单 JSON 必须是对象。", $("ut-manifest-import"));
       draft = imported; renderFields(); renderRaw();
-      LMUt.say("JSON imported into the unsaved draft.");
+      LMUt.say("已导入清单，检查后保存即可生效。");
     } catch (e) { lock(false); fail(e.message, e.node); }
     finally { this.value = ""; lock(false); }
   });
   $("ut-config-reset").addEventListener("click", function () {
     if (!editable()) return;
-    populate(savedConfig); lock(false); LMUt.say("Unsaved changes discarded.");
+    populate(savedConfig); lock(false); LMUt.say("已放弃未保存的更改。");
   });
   $("ut-manifest-export").addEventListener("click", function () {
     if (!loaded || busy) return;
@@ -199,7 +200,7 @@
     try { syncForm(); required(); lock(true); result = await LMApi.utValidateManifest(pid, draft); }
     catch (e) { fail(e.message, e.node); }
     finally { lock(false); }
-    if (result) $("ut-manifest-validation").textContent = "Draft validated · SHA256 " + result.sha256 + ". Save binding to persist these changes.";
+    if (result) $("ut-manifest-validation").textContent = "清单校验通过，请保存绑定以应用更改。SHA-256：" + result.sha256;
   });
   $("ut-config-save").addEventListener("click", async function () {
     if (!editable()) return;
@@ -212,13 +213,13 @@
       values.stub_max_rounds = Number(values.stub_max_rounds);
       if (values.execution_backend !== "clang") values.stub_mode = "deterministic";
       if (!Number.isInteger(values.stub_max_rounds) || values.stub_max_rounds < 1 || values.stub_max_rounds > 5)
-        throw error("Stub candidate rounds must be an integer from 1 to 5.", $("ut-c-stub_max_rounds"));
+        throw error("Stub 候选轮数必须是 1 至 5 之间的整数。", $("ut-c-stub_max_rounds"));
       if (!Number.isInteger(values.max_repair_rounds) || values.max_repair_rounds < 0 || values.max_repair_rounds > 20)
-        throw error("Maximum repair rounds must be an integer from 0 to 20.", $("ut-c-max_repair_rounds"));
+        throw error("修正上限必须是 0 至 20 之间的整数。", $("ut-c-max_repair_rounds"));
       lock(true);
       var c = await LMApi.utPutConfig(pid, values);
       savedConfig = c || await LMApi.utGetConfig(pid);
-      populate(savedConfig); LMUt.say("Binding saved.");
+      populate(savedConfig); LMUt.say("绑定已保存。");
     } catch (e) { fail(e.message, e.node); }
     finally { lock(false); }
   });

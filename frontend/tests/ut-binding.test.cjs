@@ -91,7 +91,7 @@ test("saving uses numeric limits, CSRF and document contract; WinAMS normalizes 
   h.change("execution_backend", "winams"); await h.save();
   assert.equal(h.writes[1].stub_mode, "deterministic");
   assert.equal(h.get("ut-manifest-sha256").textContent, "saved-sha");
-  assert.equal(h.get("ut-draft-state").textContent, "All changes saved");
+  assert.equal(h.get("ut-draft-state").textContent, "已保存");
 });
 
 test("BOM UTF-8 import populates fields without persisting and roundtrips advanced keys", async () => {
@@ -104,7 +104,7 @@ test("BOM UTF-8 import populates fields without persisting and roundtrips advanc
   assert.equal(h.writes.length, 0); assert.equal(h.validations.length, 0);
   assert.equal(h.get("ut-m-build-profile").value, "build-id");
   assert.equal(h.get("ut-m-profile-mcdc_enabled").value, "");
-  assert.equal(h.get("ut-draft-state").textContent, "Unsaved changes");
+  assert.equal(h.get("ut-draft-state").textContent, "有未保存的更改");
   h.input("ut-m-project-id", "renamed");
   h.input("ut-m-build-exclude_directories", "first\n");
   assert.equal(h.get("ut-m-build-exclude_directories").value, "first\n", "typing a new line must remain possible");
@@ -158,7 +158,7 @@ test("validation posts only the current document without config persistence", as
   assert.equal(h.writes.length, 0);
   assert.deepEqual(h.validations, [{ manifest_document: { ...manifest(), baseline: { id: "baseline", version: "2" } } }]);
   assert.match(h.get("ut-manifest-validation").textContent, /validated-sha/);
-  assert.equal(h.get("ut-draft-state").textContent, "Unsaved changes");
+  assert.equal(h.get("ut-draft-state").textContent, "有未保存的更改");
   h.reject("Baseline resource is missing"); await h.emit("ut-manifest-validate", "click");
   assert.match(h.get("ut-binding-error").textContent, /Baseline resource is missing/);
   assert.equal(h.focused(), "ut-binding-error");
@@ -169,8 +169,8 @@ test("import rejects extension, oversize, invalid UTF-8 and non-object JSON with
   const h = harness(); await settle(); const original = h.get("ut-manifest-json").value;
   for (const [contents, name, size, message] of [
     ["{}", "bad.txt", undefined, /\.json/], ["{}", "big.json", 256 * 1024 + 1, /256 KiB/],
-    [Buffer.from([0xff]), "bad.json", undefined, /UTF-8/], ["[1]", "array.json", undefined, /object/],
-    ["{broken", "invalid.json", undefined, /invalid/]]) {
+    [Buffer.from([0xff]), "bad.json", undefined, /UTF-8/], ["[1]", "array.json", undefined, /对象/],
+    ["{broken", "invalid.json", undefined, /无效/]]) {
     await h.import(contents, name, size);
     assert.match(h.get("ut-binding-error").textContent, message);
     assert.equal(h.get("ut-manifest-json").value, original);
@@ -202,7 +202,7 @@ test("export, unsaved navigation guard and discard restore the saved draft and c
   let prevented = false; h.events.beforeunload({ preventDefault() { prevented = true; } }); assert.equal(prevented, true);
   h.emit("ut-config-reset", "click");
   assert.equal(h.get("ut-m-project-id").value, "demo"); assert.equal(h.get("ut-c-index_csv").value, "");
-  assert.equal(h.get("ut-draft-state").textContent, "All changes saved");
+  assert.equal(h.get("ut-draft-state").textContent, "已保存");
   prevented = false; h.events.beforeunload({ preventDefault() { prevented = true; } }); assert.equal(prevented, false);
 });
 

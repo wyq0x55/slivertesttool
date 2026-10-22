@@ -8,76 +8,81 @@
 <div class="content lm-ut-binding" data-project="{{ project_id }}">
   {{ settings_tabs(project_id, "binding") }}
   <div class="page-head">
-    <div class="ttl"><h1>项目绑定</h1><p>Bind a ProjectManifest, source paths and executor. Changes apply to new batches.</p></div>
+    <div class="ttl"><h1>项目绑定</h1><p>集中管理项目清单、源码路径与执行方式，保存后的更改仅影响新批次。</p></div>
     <div class="head-actions">
-      <span id="ut-draft-state" class="ut-draft-state" role="status" aria-live="polite">Loading…</span>
-      <button class="btn" id="ut-config-reset" type="button" disabled{% if not project_capabilities.configure %} hidden{% endif %}>Discard changes</button>
-      <button class="btn primary" id="ut-config-save" type="button" disabled{% if not project_capabilities.configure %} hidden{% endif %}>Save binding</button>
+      <span id="ut-draft-state" class="ut-draft-state" role="status" aria-live="polite">正在加载…</span>
+      <button class="btn" id="ut-config-reset" type="button" disabled{% if not project_capabilities.configure %} hidden{% endif %}>放弃更改</button>
+      <button class="btn primary" id="ut-config-save" type="button" disabled{% if not project_capabilities.configure %} hidden{% endif %}>保存绑定</button>
     </div>
   </div>
   <p id="ut-status" class="muted" role="status" aria-live="polite"></p>
   <p id="ut-binding-error" class="ut-binding-error" role="alert" tabindex="-1" hidden></p>
   <div class="ut-form-grid">
     <section class="panel ut-settings-section" aria-labelledby="ut-manifest-heading">
-      <div class="ut-section-head"><span class="ut-section-number" aria-hidden="true">01</span><div><h2 id="ut-manifest-heading">ProjectManifest</h2><p>Fill in the fields or import JSON. Required fields are marked *.</p></div></div>
+      <div class="ut-section-head"><span class="ut-section-number" aria-hidden="true">01</span><div><h2 id="ut-manifest-heading">项目清单 <span class="ut-section-code">ProjectManifest</span></h2><p>导入已有清单，或直接填写下方表单。标有 * 的字段为必填。</p></div></div>
       <div class="ut-manifest-actions">
-        <button class="btn" id="ut-manifest-import" type="button" disabled{% if not project_capabilities.configure %} hidden{% endif %}>Import JSON</button>
+        <button class="btn" id="ut-manifest-import" type="button" disabled{% if not project_capabilities.configure %} hidden{% endif %}>导入 JSON</button>
         <input id="ut-manifest-file" type="file" accept=".json,application/json" hidden disabled>
-        <button class="btn" id="ut-manifest-export" type="button" disabled>Export draft</button>
-        <button class="btn" id="ut-manifest-validate" type="button" disabled{% if not project_capabilities.configure %} hidden{% endif %}>Validate draft</button>
-        <span class="ut-hint">UTF-8 .json · up to 256 KiB · import stays unsaved</span>
+        <button class="btn" id="ut-manifest-export" type="button" disabled>导出草稿</button>
+        <button class="btn" id="ut-manifest-validate" type="button" disabled{% if not project_capabilities.configure %} hidden{% endif %}>检查清单</button>
+        <span class="ut-hint">UTF-8 · .json · 最大 256 KiB，导入后仍需保存。</span>
       </div>
       <div class="ut-fields">
-        <div class="field"><label for="ut-m-project-id">Project ID *</label><input id="ut-m-project-id" required autocomplete="off"></div>
-        <div class="field"><label for="ut-m-baseline-id">Baseline ID *</label><input id="ut-m-baseline-id" required autocomplete="off"></div>
-        <div class="field"><label for="ut-m-baseline-version">Baseline version *</label><input id="ut-m-baseline-version" required autocomplete="off"></div>
-        <div class="field"><label for="ut-m-build-profile">Build profile</label><input id="ut-m-build-profile" autocomplete="off"></div>
-        <div class="field"><label for="ut-m-winams-profile">WinAMS profile</label><input id="ut-m-winams-profile" autocomplete="off"></div>
-        <div class="field"><label for="ut-m-interfaces-contract">Interface contract</label><input id="ut-m-interfaces-contract" autocomplete="off"></div>
-        <div class="field"><label for="ut-m-rules-project_pack">Project rule pack</label><input id="ut-m-rules-project_pack" autocomplete="off"></div>
-        <div class="field"><label for="ut-m-profile-mcdc_enabled">MCDC</label><select id="ut-m-profile-mcdc_enabled"><option value="">Unspecified (omit field)</option><option value="true">Enabled</option><option value="false">Disabled</option></select></div>
-        <div class="field ut-field-wide"><label for="ut-m-build-exclude_directories">Excluded build directories</label><textarea id="ut-m-build-exclude_directories" rows="3" wrap="off" autocomplete="off" spellcheck="false" placeholder="One directory per line"></textarea></div>
+        <div class="field"><label for="ut-m-project-id">项目标识 *</label><input id="ut-m-project-id" required autocomplete="off" placeholder="项目编号或唯一标识"></div>
+        <div class="field"><label for="ut-m-build-profile">构建 Profile</label><input id="ut-m-build-profile" autocomplete="off" placeholder="例如 rh850-ghs"></div>
+        <div class="field"><label for="ut-m-baseline-id">测试基准 ID *</label><input id="ut-m-baseline-id" required autocomplete="off" placeholder="例如 psd-rebuild"></div>
+        <div class="field"><label for="ut-m-baseline-version">基准版本 *</label><input id="ut-m-baseline-version" required autocomplete="off" placeholder="填写已发布的版本号"></div>
       </div>
-      <p class="ut-hint">Optional fields remain absent until edited. Clear a field to omit it; explicit null values and advanced settings can be edited in JSON.</p>
+      <details class="ut-advanced">
+        <summary>更多清单设置</summary>
+        <div class="ut-fields">
+          <div class="field"><label for="ut-m-winams-profile">WinAMS Profile</label><input id="ut-m-winams-profile" autocomplete="off" placeholder="例如 standard"></div>
+          <div class="field"><label for="ut-m-profile-mcdc_enabled">MC/DC 要求</label><select id="ut-m-profile-mcdc_enabled"><option value="">沿用基准要求</option><option value="true">启用</option><option value="false">关闭</option></select></div>
+          <div class="field"><label for="ut-m-interfaces-contract">接口契约</label><input id="ut-m-interfaces-contract" autocomplete="off" placeholder="契约 ID@版本，可留空"></div>
+          <div class="field"><label for="ut-m-rules-project_pack">项目规则包</label><input id="ut-m-rules-project_pack" autocomplete="off" placeholder="规则包 ID@版本，可留空"></div>
+          <div class="field ut-field-wide"><label for="ut-m-build-exclude_directories">排除目录</label><textarea id="ut-m-build-exclude_directories" rows="3" wrap="off" autocomplete="off" spellcheck="false" placeholder="每行一个源码根目录下的相对目录"></textarea></div>
+        </div>
+        <p class="ut-hint">未填写的选项沿用清单默认规则。导入的其他字段会保留，可在完整 JSON 中继续编辑。</p>
+      </details>
       <details id="ut-manifest-advanced" class="ut-advanced">
-        <summary>Advanced JSON &amp; server details</summary>
-        <div class="field"><label for="ut-manifest-json">Manifest JSON</label><textarea id="ut-manifest-json" rows="16" wrap="off" spellcheck="false" aria-describedby="ut-manifest-json-hint"></textarea><p class="ut-hint" id="ut-manifest-json-hint">Edit targets, custom build / WinAMS fields and other keys here. Valid JSON updates the form; the latest edits are used on save.</p></div>
-        <div class="field"><label for="ut-c-manifest_path">Server-managed manifest location</label><textarea id="ut-c-manifest_path" rows="2" readonly wrap="soft" spellcheck="false"></textarea></div>
-        <div class="field"><label for="ut-manifest-sha256">Saved SHA256</label><output id="ut-manifest-sha256" class="ut-manifest-hash">—</output></div>
+        <summary>完整 JSON 与保存信息</summary>
+        <div class="field"><label for="ut-manifest-json">清单 JSON</label><textarea id="ut-manifest-json" rows="16" wrap="off" spellcheck="false" aria-describedby="ut-manifest-json-hint"></textarea><p class="ut-hint" id="ut-manifest-json-hint">可编辑 targets、自定义构建参数等完整配置。有效 JSON 会同步到表单，保存时采用最新编辑内容。</p></div>
+        <div class="field"><label for="ut-c-manifest_path">服务器保存位置</label><textarea id="ut-c-manifest_path" rows="2" readonly wrap="soft" spellcheck="false"></textarea></div>
+        <div class="field"><label for="ut-manifest-sha256">已保存版本 · SHA-256</label><output id="ut-manifest-sha256" class="ut-manifest-hash">—</output></div>
       </details>
       <p id="ut-manifest-validation" class="ut-validation" role="status" aria-live="polite"></p>
     </section>
     <section class="panel ut-settings-section" aria-labelledby="ut-source-heading">
-      <div class="ut-section-head"><span class="ut-section-number" aria-hidden="true">02</span><div><h2 id="ut-source-heading">Source paths</h2><p>Paths are resolved on the execution server.</p></div></div>
+      <div class="ut-section-head"><span class="ut-section-number" aria-hidden="true">02</span><div><h2 id="ut-source-heading">源码与索引</h2><p>填写执行服务器上的文件位置。</p></div></div>
       <div class="ut-fields">
-        <div class="field ut-field-wide"><label for="ut-c-index_csv">Function index CSV</label><input id="ut-c-index_csv" autocomplete="off"><p class="ut-hint">The implementation list reads its test functions from this index.</p></div>
-        <div class="field ut-field-wide"><label for="ut-c-product_root">Product / Soft root directory</label><input id="ut-c-product_root" autocomplete="off"></div>
+        <div class="field ut-field-wide"><label for="ut-c-index_csv">函数索引 CSV</label><input id="ut-c-index_csv" autocomplete="off"><p class="ut-hint">实施一览从此索引读取待测函数。</p></div>
+        <div class="field ut-field-wide"><label for="ut-c-product_root">Product / Soft 根目录</label><input id="ut-c-product_root" autocomplete="off"></div>
       </div>
     </section>
     <section class="panel ut-settings-section" aria-labelledby="ut-executor-heading">
-      <div class="ut-section-head"><span class="ut-section-number" aria-hidden="true">03</span><div><h2 id="ut-executor-heading">Executor &amp; stubs</h2><p>Choose an executor and configure its tools and repair limits.</p></div></div>
-      <div class="ut-fields"><div class="field"><label for="ut-c-execution_backend">Execution backend</label><select id="ut-c-execution_backend"><option value="winams">WinAMS</option><option value="clang">Clang host (experimental)</option></select></div></div>
+      <div class="ut-section-head"><span class="ut-section-number" aria-hidden="true">03</span><div><h2 id="ut-executor-heading">执行与 Stub</h2><p>按所选执行方式显示工具、Stub 与修正设置。</p></div></div>
+      <div class="ut-fields"><div class="field"><label for="ut-c-execution_backend">执行后端</label><select id="ut-c-execution_backend"><option value="winams">WinAMS</option><option value="clang">Clang 主机（实验）</option></select></div></div>
       <div id="ut-winams-controls" class="ut-fields ut-subsection">
-        <div class="field ut-field-wide"><label for="ut-c-work_root">WinAMS work root</label><input id="ut-c-work_root" autocomplete="off"><p class="ut-hint">Contains the WinAMS unit trees referenced by column 5 of the index.</p></div>
-        <div class="field ut-field-wide"><label for="ut-c-stub_builds">Stub build directories</label><textarea id="ut-c-stub_builds" rows="4" wrap="off" autocomplete="off" spellcheck="false" placeholder="One linked build directory per line"></textarea><p class="ut-hint">List linked builds, including MCDC subdirectories, in priority order. The first build defining all stubs and instrumenting the tested source is selected. Leave blank to use the unit project's build.</p></div>
+        <div class="field ut-field-wide"><label for="ut-c-work_root">WinAMS 工作根目录</label><input id="ut-c-work_root" autocomplete="off"><p class="ut-hint">包含索引第 5 列所指 WinAMS 单元树的目录。</p></div>
+        <div class="field ut-field-wide"><label for="ut-c-stub_builds">Stub 构建目录</label><textarea id="ut-c-stub_builds" rows="4" wrap="off" autocomplete="off" spellcheck="false" placeholder="每行一个已链接构建目录，按优先级排列"></textarea><p class="ut-hint">构建应包含 MCDC 子目录。优先使用定义了全部 Stub 且已对被测源码插桩的构建，留空使用单元工程自带构建。</p></div>
       </div>
       <div id="ut-host-controls" class="ut-subsection" hidden>
-        <p class="ut-hint">Clang only executes CSV bound to generator intent; unmapped rows or changed expected values block execution. Host evidence does not establish target execution or delivery acceptance.</p>
+        <p class="ut-hint">仅执行与生成意图绑定的 CSV；未映射的行或期望值改动会阻塞。主机证据不代表目标机执行或正式交付验收。</p>
         <div class="ut-fields">
           <div class="field"><label for="ut-c-host_clang">Clang</label><input id="ut-c-host_clang" value="clang" autocomplete="off"></div>
           <div class="field"><label for="ut-c-host_llvm_cov">llvm-cov</label><input id="ut-c-host_llvm_cov" value="llvm-cov" autocomplete="off"></div>
           <div class="field"><label for="ut-c-host_llvm_profdata">llvm-profdata</label><input id="ut-c-host_llvm_profdata" value="llvm-profdata" autocomplete="off"></div>
-          <div class="field"><label for="ut-c-host_profile_runtime">Profile runtime (optional path)</label><input id="ut-c-host_profile_runtime" autocomplete="off"></div>
-          <div class="field"><label for="ut-c-stub_mode">Stub mode</label><select id="ut-c-stub_mode"><option value="deterministic">Deterministic template</option><option value="llm">Local model candidate (experimental)</option></select></div>
+          <div class="field"><label for="ut-c-host_profile_runtime">Profile runtime（可选路径）</label><input id="ut-c-host_profile_runtime" autocomplete="off"></div>
+          <div class="field"><label for="ut-c-stub_mode">Stub 模式</label><select id="ut-c-stub_mode"><option value="deterministic">确定性模板</option><option value="llm">本地模型候选（实验）</option></select></div>
         </div>
         <div id="ut-stub-llm-controls" hidden>
-          <div class="ut-fields"><div class="field"><label for="ut-c-stub_model">Stub model</label><input id="ut-c-stub_model" autocomplete="off" placeholder="Leave blank to use the global AI model"></div><div class="field"><label for="ut-c-stub_max_rounds">Stub candidate rounds</label><input id="ut-c-stub_max_rounds" type="number" min="1" max="5" step="1" value="2"></div></div>
-          <p class="ut-hint">Uses the global AI gateway. The model proposes stub function bodies; tools control the host template. Each round retains compilation and execution evidence for human review. No stubs means no model call.</p>
+          <div class="ut-fields"><div class="field"><label for="ut-c-stub_model">Stub 模型</label><input id="ut-c-stub_model" autocomplete="off" placeholder="留空使用全局 AI 模型"></div><div class="field"><label for="ut-c-stub_max_rounds">Stub 候选轮数</label><input id="ut-c-stub_max_rounds" type="number" min="1" max="5" step="1" value="2"></div></div>
+          <p class="ut-hint">复用全局 AI 网关。模型仅提议 Stub 函数体，每轮保留编译与执行证据并交人工审核；无 Stub 时不调用模型。</p>
         </div>
       </div>
       <div class="ut-subsection">
-        <h3 id="ut-csv-repair-heading">WinAMS CSV local model repair</h3>
-        <div class="ut-fields"><div class="field"><label for="ut-c-max_repair_rounds">Maximum repair rounds</label><input id="ut-c-max_repair_rounds" type="number" min="0" max="20" step="1"><p class="ut-hint">Unresolved results go to manual review after this limit.</p></div><div class="field"><label for="ut-c-repair_model">Repair model</label><input id="ut-c-repair_model" autocomplete="off" placeholder="Leave blank to use the AI settings model"></div></div>
+        <h3 id="ut-csv-repair-heading">WinAMS CSV 本地模型修正</h3>
+        <div class="ut-fields"><div class="field"><label for="ut-c-max_repair_rounds">修正上限（次）</label><input id="ut-c-max_repair_rounds" type="number" min="0" max="20" step="1"><p class="ut-hint">达到上限仍未通过时转入人工处理。</p></div><div class="field"><label for="ut-c-repair_model">修正模型</label><input id="ut-c-repair_model" autocomplete="off" placeholder="留空使用全局 AI 模型"></div></div>
       </div>
     </section>
   </div>

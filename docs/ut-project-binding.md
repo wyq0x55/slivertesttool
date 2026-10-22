@@ -1,0 +1,72 @@
+# Project binding and authored ProjectManifest documents
+
+The binding page accepts an existing JSON ProjectManifest or a form-authored
+document. Import is a local draft operation; only saving updates the binding.
+The page preserves additional imported fields and exposes the full JSON for
+advanced editing. Server filesystem paths remain appropriate for the source
+tree, function index and execution tools, but are no longer the primary way to
+author a ProjectManifest.
+
+## API and ownership
+
+- `GET /api/v1/projects/<id>/ut/config` returns the existing settings plus
+  `manifest_document`, `manifest_sha256` and `manifest_error`. Unreadable or
+  invalid legacy bindings retain their path and return a generic error without
+  exposing file contents or validation excerpts.
+- `PUT .../config` accepts a JSON object in `manifest_document` alongside the
+  existing settings. A nonempty `manifest_path` and document cannot be supplied
+  together. Existing path-only callers remain supported.
+- `POST .../manifest/validate` accepts `{manifest_document: {...}}`, validates
+  without updating project configuration, and returns its canonical SHA-256 and
+  available baseline/provenance information.
+
+Viewing uses the existing `project.view` permission. Validation and saving use
+`project.edit` and the existing CSRF protection. Read-only users can inspect the
+binding but cannot validate, import or save changes.
+
+The platform owns transport and storage. It passes a temporary JSON file to the
+external `ut-agent bridge constraints` command, which owns schema validation,
+versioned baseline references, approved interface contracts and rule packs. The
+platform does not copy those semantic rules or import ut-agent Python modules.
+Successful validation does not itself establish execution support, Baseline
+acceptance or delivery validation.
+
+## Revision storage
+
+Validated authored documents are serialized as UTF-8 JSON with sorted keys and
+stored at `WORKSPACE_DIR/ut/p<project_id>/manifests/<sha256>.json`. A complete
+validated temporary file is published atomically without replacing an existing
+revision. Repeated identical saves reuse the same revision. A hash collision or
+changed file at an existing address fails rather than overwriting it.
+
+The existing config model continues to store `manifest_path`, so no new database
+migration or web-process initialization is needed. A batch snapshots the path to
+that immutable revision; later saves produce a different file and leave the old
+batch's manifest bytes available. Legacy external path bindings keep their
+existing behavior until the user saves document content through the editor.
+
+JSON documents are limited to 256 KiB after canonical serialization. The browser
+also checks imported file size. Repository resource references remain IDs and
+versions resolved by ut-agent, independent of the managed document location.
+
+## Verification
+
+`tests/test_ut_manifest.py` covers content round trips, nested imported fields,
+content-addressed paths, queued batch revisions, validation without saving,
+failed validation, malformed/oversized payloads, permissions and CSRF. Its opt-in
+external bridge cases use `UT_HOST_TEST_AGENT_ROOT` and `UT_HOST_TEST_PYTHON` to
+verify the actual schema and reject unrelated server JSON as a file reader.
+
+Frontend tests cover local import, draft preservation and edit/save interactions.
+Browser component verification uses the actual template, script and design
+system with synthetic configuration. It does not mutate production projects or
+invoke an AI provider.
+
+The 2026-10-22 implementation passed 98 targeted PostgreSQL/backend tests, all
+152 frontend Node tests and the production frontend build. Browser component
+checks exercised real file selection/import, field edits, validation and save,
+preservation of nested imported keys, backend/stub controls, read-only users,
+light/dark themes and a 390px viewport without horizontal overflow. The browser
+preview used synthetic API responses; actual manifest/schema validation was
+covered separately through the subprocess bridge tests. Local results remain on
+`feature/ut-manifest-binding`; this change has not been pushed, merged or deployed.
