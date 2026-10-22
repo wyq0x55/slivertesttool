@@ -95,7 +95,7 @@ def test_system_prompt_asks_for_rows_not_a_csv():
     system = repair._system_prompt(CONSTRAINTS)
     assert '"rows"' in system and '"declined"' in system and "不要输出 CSV" in system
     assert "不能仅凭冲突认定缺少输入" in system
-    assert repair.PROMPT_VERSION == "ut-repair/7.2"
+    assert repair.PROMPT_VERSION == "ut-repair/7.3"
 
 
 def _revise(monkeypatch, reply, allowed=frozenset({"b6:boundary:1:above:2"})):
@@ -115,7 +115,7 @@ def test_reply_rows_are_appended_and_claims_recorded(monkeypatch):
     assert revision.csv_bytes.decode("cp932") == CSV + ";$L$,LLM add b6:boundary:1:above:2\r\n,0,2,\r\n"
     assert revision.meta["claimed"] == ["b6:boundary:1:above:2"]
     assert [item["index"] for item in revision.meta["rejected"]] == [1]
-    assert revision.meta["prompt_version"] == "ut-repair/7.2"
+    assert revision.meta["prompt_version"] == "ut-repair/7.3"
 
 
 def test_a_declining_reply_adds_nothing(monkeypatch):
@@ -305,3 +305,14 @@ def test_a_coverage_error_clearing_between_rounds_is_not_prefix_drift(monkeypatc
     # The prompt shows the scope the validator enforces this round.
     assert "I1 =" not in sent[0][1]["content"] and "I2 =" in sent[0][1]["content"]
 
+
+
+def test_explicit_policy_prompt_names_ruleset_hash_and_choices():
+    explicit = dict(CONSTRAINTS, baseline={"id": "universal-test-rules", "version": "1", "source": {}},
+                    effective_test_policy={"version": "1", "boundary_adjacent": False, "c1": True,
+                                           "mcdc": True, "arithmetic": False, "combination_group": True},
+                    test_policy_sha256="a" * 64, test_rules_ref="universal-test-rules@1")
+    system = repair._system_prompt(explicit)
+    assert "显式测试要求 universal-test-rules@1" in system
+    assert "a" * 64 in system and "MC/DC 组合分组: True" in system
+    assert "项目绑定的测试基准" not in system

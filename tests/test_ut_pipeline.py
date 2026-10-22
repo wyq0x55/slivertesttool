@@ -80,7 +80,7 @@ class FakeBridge:
     def constraints(self, manifest):
         return {"baseline": {"id": "psd-rebuild", "version": "1.1"},
                 "rules": [{"rule_id": "psd.4.compare", "meaning": "境界值"}],
-                "revision_rules": ["列不得改动"], "coverage_policy": {"c1": True}}
+                "revision_rules": ["列不得改动"], "coverage_policy": {"c1": True}, "effective_test_policy": {"version": "1", "c1": True, "mcdc": False}, "test_policy_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "test_rules_ref": "universal-test-rules@1", "test_rules": {"version": "1"}}
 
     def generate(self, manifest, index_csv, product_root, out, functions):
         if self.generate_error:

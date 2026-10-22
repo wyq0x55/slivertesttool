@@ -388,6 +388,10 @@
     utPutConfig(pid, values) {
       return request("PUT", `/projects/${pid}/ut/config`, { body: values });
     },
+    utValidateManifest(pid, manifestDocument) {
+      return request("POST", `/projects/${pid}/ut/manifest/validate`,
+        { body: { manifest_document: manifestDocument } });
+    },
     utImportTargets(pid) {
       return request("POST", `/projects/${pid}/ut/targets/import`, { body: {} });
     },

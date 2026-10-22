@@ -48,14 +48,22 @@ def _body() -> dict:
 def get_config(project_id: int):
     _project_and_role(project_id, "project.view")
     config = pipeline.get_config(project_id)
-    return ok(config.to_dict() if config else None)
+    return ok(pipeline.config_document(config))
 
 
 @bp.put("/config")
 @login_required
 def put_config(project_id: int):
     _project_and_role(project_id, "project.edit")
-    return ok(pipeline.save_config(project_id, _body(), g.user.id).to_dict())
+    config = pipeline.save_config(project_id, _body(), g.user.id)
+    return ok(pipeline.config_document(config))
+
+
+@bp.post("/manifest/validate")
+@login_required
+def validate_manifest(project_id: int):
+    _project_and_role(project_id, "project.edit")
+    return ok(pipeline.validate_manifest(project_id, _body().get("manifest_document")))
 
 
 @bp.post("/targets/import")

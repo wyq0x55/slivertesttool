@@ -8,68 +8,100 @@
 <div class="content lm-ut-binding" data-project="{{ project_id }}">
   {{ settings_tabs(project_id, "binding") }}
   <div class="page-head">
-    <div class="ttl">
-      <h1>项目绑定</h1>
-      <p>入队时冻结项目绑定、执行器与 Stub 设置，之后修改只影响新批次。</p>
-    </div>
+    <div class="ttl"><h1>项目绑定</h1><p>集中管理项目清单、源码路径与执行方式，保存后的更改仅影响新批次。</p></div>
     <div class="head-actions">
-      <button class="btn primary" id="ut-config-save" type="button"{% if not project_capabilities.configure %} hidden{% endif %}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
-        保存绑定
-      </button>
+      <span id="ut-draft-state" class="ut-draft-state" role="status" aria-live="polite">正在加载…</span>
+      <button class="btn" id="ut-config-reset" type="button" disabled{% if not project_capabilities.configure %} hidden{% endif %}>放弃更改</button>
+      <button class="btn primary" id="ut-config-save" type="button" disabled{% if not project_capabilities.configure %} hidden{% endif %}>保存绑定</button>
     </div>
   </div>
   <p id="ut-status" class="muted" role="status" aria-live="polite"></p>
-
+  <p id="ut-binding-error" class="ut-binding-error" role="alert" tabindex="-1" hidden></p>
   <div class="ut-form-grid">
-    <section class="panel">
-      <h4>ut-agent</h4>
-      <div class="field"><label for="ut-c-manifest_path">ProjectManifest</label>
-        <input id="ut-c-manifest_path" autocomplete="off" placeholder="…\ut-agent\config\projects\&lt;项目&gt;.json">
-        <p class="ut-hint">ut-agent 的项目清单，决定基准、规则包与 WinAMS Profile。</p></div>
-      <div class="field"><label for="ut-c-index_csv">函数索引 CSV</label>
-        <input id="ut-c-index_csv" autocomplete="off" placeholder="…\HOYU\&lt;项目&gt;.csv">
-        <p class="ut-hint">实施一览从这里读取待测函数。</p></div>
+    <section class="panel ut-settings-section" aria-labelledby="ut-manifest-heading">
+      <div class="ut-section-head"><span class="ut-section-number" aria-hidden="true">01</span><div><h2 id="ut-manifest-heading">项目清单 <span class="ut-section-code">ProjectManifest</span></h2><p>导入已有清单，或直接填写下方表单。标有 * 的字段为必填。</p></div></div>
+      <div class="ut-manifest-actions">
+        <button class="btn" id="ut-manifest-import" type="button" disabled{% if not project_capabilities.configure %} hidden{% endif %}>导入 JSON</button>
+        <input id="ut-manifest-file" type="file" accept=".json,application/json" hidden disabled>
+        <button class="btn" id="ut-manifest-export" type="button" disabled>导出草稿</button>
+        <button class="btn" id="ut-manifest-validate" type="button" disabled{% if not project_capabilities.configure %} hidden{% endif %}>检查清单</button>
+        <span class="ut-hint">UTF-8 · .json · 最大 256 KiB，导入后仍需保存。</span>
+      </div>
+      <div class="ut-fields">
+        <div class="field"><label for="ut-m-project-id">项目标识 *</label><input id="ut-m-project-id" required autocomplete="off" placeholder="项目编号或唯一标识"></div>
+        <div class="field"><label for="ut-m-build-profile">构建 Profile</label><input id="ut-m-build-profile" autocomplete="off" placeholder="例如 rh850-ghs"></div>
+      </div>
+      <div id="ut-policy-section" class="ut-subsection" aria-labelledby="ut-policy-heading">
+        <h3 id="ut-policy-heading">测试要求</h3>
+        <p class="ut-policy-fixed">固定包含：最小值、最大值与边界值本身。</p>
+        <p class="ut-hint">请逐项明确选择是或否，五项均为必填。也可以导入已有的 Baseline 清单，沿用其原有配置。</p>
+        <div class="ut-policy-list">
+          <div class="field ut-policy-row"><div><label for="ut-m-test_policy-boundary_adjacent">边界值 ±1 *</label><p class="ut-hint" id="ut-policy-boundary-hint">是否包含边界值 −1 和 +1 的测试观点。</p></div><select id="ut-m-test_policy-boundary_adjacent" required aria-describedby="ut-policy-boundary-hint"><option value="">请选择</option><option value="true">是</option><option value="false">否</option></select></div>
+          <div class="field ut-policy-row"><div><label for="ut-m-test_policy-c1">C1 分支覆盖 *</label><p class="ut-hint" id="ut-policy-c1-hint">是否要求分支覆盖。</p></div><select id="ut-m-test_policy-c1" required aria-describedby="ut-policy-c1-hint"><option value="">请选择</option><option value="true">是</option><option value="false">否</option></select></div>
+          <div class="field ut-policy-row"><div><label for="ut-m-test_policy-mcdc">MC/DC *</label><p class="ut-hint" id="ut-policy-mcdc-hint">是否要求修正条件／判定覆盖。</p></div><select id="ut-m-test_policy-mcdc" required aria-describedby="ut-policy-mcdc-hint"><option value="">请选择</option><option value="true">是</option><option value="false">否</option></select></div>
+          <div class="field ut-policy-row"><div><label for="ut-m-test_policy-arithmetic">演算式专项 *</label><p class="ut-hint" id="ut-policy-arithmetic-hint">是否包含 +、−、×、÷ 和按位运算的专项用例。</p></div><select id="ut-m-test_policy-arithmetic" required aria-describedby="ut-policy-arithmetic-hint"><option value="">请选择</option><option value="true">是</option><option value="false">否</option></select></div>
+          <div class="field ut-policy-row"><div><label for="ut-m-test_policy-combination_group">MC/DC「組合せ」分组 *</label><p class="ut-hint" id="ut-policy-combination-hint">为同一组 MC/DC 用例写出「組合せ」注释；关闭时归入对应分支。选择是时须启用 MC/DC。</p></div><select id="ut-m-test_policy-combination_group" required aria-describedby="ut-policy-combination-hint"><option value="">请选择</option><option value="true">是</option><option value="false">否</option></select></div>
+        </div>
+      </div>
+      <div id="ut-legacy-baseline" class="ut-subsection" hidden>
+        <h3>原有测试基准 <span class="ut-section-code">Baseline</span></h3>
+        <p class="ut-hint">此清单沿用原有 Baseline 与 MC/DC 配置，保存或导出不会自动转换。转换后须重新明确选择全部测试要求；保存前可放弃更改。</p>
+        <div class="ut-fields">
+          <div class="field"><label for="ut-m-baseline-id">测试基准 ID *</label><input id="ut-m-baseline-id" autocomplete="off" placeholder="例如 psd-rebuild"></div>
+          <div class="field"><label for="ut-m-baseline-version">基准版本 *</label><input id="ut-m-baseline-version" autocomplete="off" placeholder="填写已发布的版本号"></div>
+          <div class="field"><label for="ut-m-profile-mcdc_enabled">原有 MC/DC 配置</label><select id="ut-m-profile-mcdc_enabled"><option value="">保持未指定</option><option value="true">启用</option><option value="false">关闭</option></select></div>
+        </div>
+        <button class="btn" id="ut-policy-convert" type="button" disabled{% if not project_capabilities.configure %} hidden{% endif %}>转换为显式测试要求</button>
+      </div>
+      <details class="ut-advanced">
+        <summary>更多清单设置</summary>
+        <div class="ut-fields">
+          <div class="field"><label for="ut-m-winams-profile">WinAMS Profile</label><input id="ut-m-winams-profile" autocomplete="off" placeholder="例如 standard"></div>
+          <div class="field"><label for="ut-m-interfaces-contract">接口契约</label><input id="ut-m-interfaces-contract" autocomplete="off" placeholder="契约 ID@版本，可留空"></div>
+          <div class="field"><label for="ut-m-rules-project_pack">项目规则包</label><input id="ut-m-rules-project_pack" autocomplete="off" placeholder="规则包 ID@版本，可留空"></div>
+          <div class="field ut-field-wide"><label for="ut-m-build-exclude_directories">排除目录</label><textarea id="ut-m-build-exclude_directories" rows="3" wrap="off" autocomplete="off" spellcheck="false" placeholder="每行一个源码根目录下的相对目录"></textarea></div>
+        </div>
+        <p class="ut-hint">未填写的选项沿用清单默认规则。导入的其他字段会保留，可在完整 JSON 中继续编辑。</p>
+      </details>
+      <details id="ut-manifest-advanced" class="ut-advanced">
+        <summary>完整 JSON 与保存信息</summary>
+        <div class="field"><label for="ut-manifest-json">清单 JSON</label><textarea id="ut-manifest-json" rows="16" wrap="off" spellcheck="false" aria-describedby="ut-manifest-json-hint"></textarea><p class="ut-hint" id="ut-manifest-json-hint">可编辑 targets、自定义构建参数等完整配置。有效 JSON 会同步到表单，保存时采用最新编辑内容。</p></div>
+        <div class="field"><label for="ut-c-manifest_path">服务器保存位置</label><textarea id="ut-c-manifest_path" rows="2" readonly wrap="soft" spellcheck="false"></textarea></div>
+        <div class="field"><label for="ut-manifest-sha256">已保存版本 · SHA-256</label><output id="ut-manifest-sha256" class="ut-manifest-hash">—</output></div>
+      </details>
+      <p id="ut-manifest-validation" class="ut-validation" role="status" aria-live="polite"></p>
     </section>
-    <section class="panel">
-      <h4>执行器</h4>
-      <div class="field"><label for="ut-c-execution_backend">执行后端</label>
-        <select id="ut-c-execution_backend"><option value="winams">WinAMS</option><option value="clang">Clang 主机（实验）</option></select></div>
-      <div class="field"><label for="ut-c-product_root">Product / Soft 根目录</label>
-        <input id="ut-c-product_root" autocomplete="off"></div>
-      <p class="ut-hint">Clang 只执行与生成器意图绑定的 CSV；未映射的行或期望值改动会阻塞。主机证据不代表目标执行或正式交付验收。</p>
-    </section>
-    <section class="panel" id="ut-winams-controls">
-      <h4>WinAMS</h4>
-      <div class="field"><label for="ut-c-work_root">WinAMS 工作根</label>
-        <input id="ut-c-work_root" autocomplete="off">
-        <p class="ut-hint">包含索引第 5 列所指 WinAMS 单元树的目录。</p></div>
-      <div class="field"><label for="ut-c-stub_builds">Stub 构建目录</label>
-        <textarea id="ut-c-stub_builds" rows="3" wrap="off" autocomplete="off" spellcheck="false"
-          placeholder="…\STUB\stub1&#10;…\STUB\stub2"></textarea>
-        <p class="ut-hint">每行一个已链接构建（含 MCDC 子目录），按优先级排列；执行时选用第一个定义了全部 stub、且 MCDC 构建对被测源文件插桩的构建。留空则使用单元工程自带的构建。</p></div>
-    </section>
-    <section class="panel" id="ut-host-controls" hidden>
-      <h4>Clang 主机工具</h4>
-      <div class="field"><label for="ut-c-host_clang">Clang</label><input id="ut-c-host_clang" value="clang" autocomplete="off"></div>
-      <div class="field"><label for="ut-c-host_llvm_cov">llvm-cov</label><input id="ut-c-host_llvm_cov" value="llvm-cov" autocomplete="off"></div>
-      <div class="field"><label for="ut-c-host_llvm_profdata">llvm-profdata</label><input id="ut-c-host_llvm_profdata" value="llvm-profdata" autocomplete="off"></div>
-      <div class="field"><label for="ut-c-host_profile_runtime">Profile runtime（可选路径）</label><input id="ut-c-host_profile_runtime" autocomplete="off"></div>
-      <div class="field"><label for="ut-c-stub_mode">Stub 模式</label>
-        <select id="ut-c-stub_mode"><option value="deterministic">确定性模板</option><option value="llm">本地模型候选（实验）</option></select></div>
-      <div id="ut-stub-llm-controls" hidden>
-        <div class="field"><label for="ut-c-stub_model">Stub 模型</label><input id="ut-c-stub_model" autocomplete="off" placeholder="留空使用全局 AI 模型"></div>
-        <div class="field"><label for="ut-c-stub_max_rounds">Stub 候选轮数</label><input id="ut-c-stub_max_rounds" type="number" min="1" max="5" step="1" value="2"></div>
-        <p class="ut-hint">复用全局 AI 网关设置。模型只提议 Stub 函数体，宿主模板由工具控制；每轮编译与运行证据保留并交人工审核。无 Stub 时不调用模型。</p>
+    <section class="panel ut-settings-section" aria-labelledby="ut-source-heading">
+      <div class="ut-section-head"><span class="ut-section-number" aria-hidden="true">02</span><div><h2 id="ut-source-heading">源码与索引</h2><p>填写执行服务器上的文件位置。</p></div></div>
+      <div class="ut-fields">
+        <div class="field ut-field-wide"><label for="ut-c-index_csv">函数索引 CSV</label><input id="ut-c-index_csv" autocomplete="off"><p class="ut-hint">实施一览从此索引读取待测函数。</p></div>
+        <div class="field ut-field-wide"><label for="ut-c-product_root">Product / Soft 根目录</label><input id="ut-c-product_root" autocomplete="off"></div>
       </div>
     </section>
-    <section class="panel">
-      <h4 id="ut-csv-repair-heading">WinAMS CSV 本地模型修正</h4>
-      <div class="field"><label for="ut-c-max_repair_rounds">修正上限（次）</label>
-        <input id="ut-c-max_repair_rounds" type="number" min="0" max="20" step="1">
-        <p class="ut-hint">达到上限仍未通过时转人工处理。</p></div>
-      <div class="field"><label for="ut-c-repair_model">修正模型</label>
-        <input id="ut-c-repair_model" autocomplete="off" placeholder="留空使用 AI 设置中的模型">
+    <section class="panel ut-settings-section" aria-labelledby="ut-executor-heading">
+      <div class="ut-section-head"><span class="ut-section-number" aria-hidden="true">03</span><div><h2 id="ut-executor-heading">执行与 Stub</h2><p>按所选执行方式显示工具、Stub 与修正设置。</p></div></div>
+      <div class="ut-fields"><div class="field"><label for="ut-c-execution_backend">执行后端</label><select id="ut-c-execution_backend"><option value="winams">WinAMS</option><option value="clang">Clang 主机（实验）</option></select></div></div>
+      <div id="ut-winams-controls" class="ut-fields ut-subsection">
+        <div class="field ut-field-wide"><label for="ut-c-work_root">WinAMS 工作根目录</label><input id="ut-c-work_root" autocomplete="off"><p class="ut-hint">包含索引第 5 列所指 WinAMS 单元树的目录。</p></div>
+        <div class="field ut-field-wide"><label for="ut-c-stub_builds">Stub 构建目录</label><textarea id="ut-c-stub_builds" rows="4" wrap="off" autocomplete="off" spellcheck="false" placeholder="每行一个已链接构建目录，按优先级排列"></textarea><p class="ut-hint">构建应包含 MCDC 子目录。优先使用定义了全部 Stub 且已对被测源码插桩的构建，留空使用单元工程自带构建。</p></div>
+      </div>
+      <div id="ut-host-controls" class="ut-subsection" hidden>
+        <p class="ut-hint">仅执行与生成意图绑定的 CSV；未映射的行或期望值改动会阻塞。主机证据不代表目标机执行或正式交付验收。</p>
+        <div class="ut-fields">
+          <div class="field"><label for="ut-c-host_clang">Clang</label><input id="ut-c-host_clang" value="clang" autocomplete="off"></div>
+          <div class="field"><label for="ut-c-host_llvm_cov">llvm-cov</label><input id="ut-c-host_llvm_cov" value="llvm-cov" autocomplete="off"></div>
+          <div class="field"><label for="ut-c-host_llvm_profdata">llvm-profdata</label><input id="ut-c-host_llvm_profdata" value="llvm-profdata" autocomplete="off"></div>
+          <div class="field"><label for="ut-c-host_profile_runtime">Profile runtime（可选路径）</label><input id="ut-c-host_profile_runtime" autocomplete="off"></div>
+          <div class="field"><label for="ut-c-stub_mode">Stub 模式</label><select id="ut-c-stub_mode"><option value="deterministic">确定性模板</option><option value="llm">本地模型候选（实验）</option></select></div>
+        </div>
+        <div id="ut-stub-llm-controls" hidden>
+          <div class="ut-fields"><div class="field"><label for="ut-c-stub_model">Stub 模型</label><input id="ut-c-stub_model" autocomplete="off" placeholder="留空使用全局 AI 模型"></div><div class="field"><label for="ut-c-stub_max_rounds">Stub 候选轮数</label><input id="ut-c-stub_max_rounds" type="number" min="1" max="5" step="1" value="2"></div></div>
+          <p class="ut-hint">复用全局 AI 网关。模型仅提议 Stub 函数体，每轮保留编译与执行证据并交人工审核；无 Stub 时不调用模型。</p>
+        </div>
+      </div>
+      <div class="ut-subsection">
+        <h3 id="ut-csv-repair-heading">WinAMS CSV 本地模型修正</h3>
+        <div class="ut-fields"><div class="field"><label for="ut-c-max_repair_rounds">修正上限（次）</label><input id="ut-c-max_repair_rounds" type="number" min="0" max="20" step="1"><p class="ut-hint">达到上限仍未通过时转入人工处理。</p></div><div class="field"><label for="ut-c-repair_model">修正模型</label><input id="ut-c-repair_model" autocomplete="off" placeholder="留空使用全局 AI 模型"></div></div>
       </div>
     </section>
   </div>

@@ -51,6 +51,13 @@ def real_workflow(request, app_ctx, monkeypatch, tmp_path):
     manifest_data["project"]["id"] = "llvm-workflow-fixture"
     manifest_data["build"]["exclude_directories"] = []
     manifest_data["interfaces"]["contract"] = None
+    if getattr(request, "param", "legacy") == "explicit":
+        manifest_data.pop("baseline")
+        manifest_data.get("profile", {}).pop("mcdc_enabled", None)
+        manifest_data["test_policy"] = {
+            "version": "1", "boundary_adjacent": True, "c1": True,
+            "mcdc": True, "arithmetic": False, "combination_group": True,
+        }
     manifest.write_text(json.dumps(manifest_data), encoding="utf-8")
     settings = BridgeSettings(str(root), python, extractor, "", 120, 180, 120)
     bridge = UtAgentBridge(settings)
@@ -74,7 +81,8 @@ def real_workflow(request, app_ctx, monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("stub_mode", ["deterministic", "llm"])
-def test_real_index_generation_execution_review_and_export(real_workflow, monkeypatch, stub_mode):
+@pytest.mark.parametrize("real_workflow", ["legacy", "explicit"], indirect=True)
+def test_real_index_generation_execution_review_and_export(real_workflow, monkeypatch, stub_mode, app_ctx):
     env, _bridge, calls, _config = real_workflow
     prompts = []
     if stub_mode == "llm":
@@ -94,6 +102,18 @@ def test_real_index_generation_execution_review_and_export(real_workflow, monkey
     status, batch = env.call("post", "/batches", json={"target_ids": ids, "label": "real LLVM workflow"})
     assert status == 202, batch
     batch_id = batch["data"]["id"]
+    with app_ctx.app_context():
+        from app.extensions import db
+        from app.models import UtBatch
+
+        frozen = db.session.get(UtBatch, batch_id)
+        document = json.loads(Path(frozen.config_snapshot["manifest_path"]).read_text(encoding="utf-8"))
+        if "test_policy" in document:
+            constraints = frozen.constraints
+            assert constraints["baseline"] is None
+            assert constraints["test_policy"] == document["test_policy"]
+            assert len(constraints["test_policy_sha256"]) == 64
+            assert constraints["test_rules_ref"] == "universal-test-rules@1"
     _, jobs = env.call("get", "/jobs", query_string={"batch_id": batch_id})
     assert len(jobs["data"]) == 3, jobs
     for entry in jobs["data"]:

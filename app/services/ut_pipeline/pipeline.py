@@ -49,7 +49,7 @@ from ..ai.provider import ProviderError
 from ..lanmatrix import audit
 from ..lanmatrix import notification_service as notify_svc
 from ..lanmatrix.errors import ServiceError, VersionConflict
-from . import host, repair
+from . import binding, host, repair
 from .bridge import BridgeError, BridgeSettings, UtAgentBridge
 
 # The worker is one process with a thread pool.  WinAMS runs and project-wide
@@ -79,6 +79,22 @@ def _lines(text: str) -> list[str]:
 # --------------------------------------------------------------------------- #
 def get_config(project_id: int) -> Optional[UtPipelineConfig]:
     return UtPipelineConfig.query.filter_by(project_id=project_id).first()
+
+
+def config_document(config: Optional[UtPipelineConfig]) -> Optional[dict]:
+    if config is None:
+        return None
+    result = dict(config.to_dict(), manifest_document=None, manifest_sha256=None, manifest_error=None)
+    if config.manifest_path:
+        try:
+            result.update(binding.read_manifest(config.manifest_path, bridge=get_bridge()))
+        except (OSError, ValueError, TypeError, BridgeError):
+            result["manifest_error"] = "现有项目清单无法读取或未通过校验，请重新导入或填写清单。"
+    return result
+
+
+def validate_manifest(project_id: int, document: object) -> dict:
+    return binding.prepare_manifest(project_id, document, bridge=get_bridge(), workspace=_workspace(), persist=False)
 
 
 def require_config(project_id: int) -> UtPipelineConfig:
@@ -121,6 +137,12 @@ def save_config(project_id: int, values: dict[str, Any], user_id: int) -> UtPipe
             if type(value) is not int or not low <= value <= high:
                 raise ServiceError(f"{key} must be an integer from {low} to {high}", code="VALIDATION_ERROR")
             normalized[key] = value
+    if "manifest_document" in values:
+        if normalized.get("manifest_path"):
+            raise ServiceError("请提交清单内容，不要同时提交服务器清单路径", code="VALIDATION_ERROR")
+        prepared = binding.prepare_manifest(project_id, values["manifest_document"], bridge=get_bridge(),
+                                            workspace=_workspace(), persist=True)
+        normalized["manifest_path"] = prepared["path"]
     config = existing or UtPipelineConfig(
         project_id=project_id,
         max_repair_rounds=current_app.config["UT_REPAIR_MAX_ROUNDS"],

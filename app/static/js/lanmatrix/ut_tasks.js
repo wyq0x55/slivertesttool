@@ -224,6 +224,22 @@
   }
   // One metric per line, each kept whole: joined into a sentence the column
   // squeezed "C0 100% / C1 100% / MCDC 100%" into a seven-line sliver.
+  function coverageRequirements(constraints) {
+    var policy = constraints && (constraints.effective_test_policy || constraints.test_policy);
+    var required = constraints && constraints.coverage_policy;
+    if (!policy && !required) return "";
+    var items = [];
+    if (policy) items.push("测试要求 v" + (policy.version || "1"), "最小值／最大值／边界值");
+    [["c0", "C0"], ["c1", "C1"], ["mcdc", "MC/DC"]].forEach(function (item) {
+      var enabled = policy ? item[0] === "c0" ? required && required.c0 : policy[item[0]] : required[item[0]];
+      if (enabled) items.push(item[1]);
+    });
+    if (policy && policy.boundary_adjacent) items.push("边界值 ±1");
+    if (policy && policy.arithmetic) items.push("演算式（含按位运算）");
+    if (policy && policy.combination_group) items.push("MC/DC「組合せ」分组");
+    var identity = constraints.test_rules_ref || (constraints.test_policy_sha256 ? String(constraints.test_policy_sha256).slice(0, 12) : "");
+    return items.join(" · ") + (identity ? " · " + identity : "");
+  }
   function coverage(execution) {
     var c = execution && execution.coverage;
     if (!c) return "—";
@@ -322,9 +338,11 @@
     $("ut-d-source").textContent = t.source_rel || "";
     var b = job.batch || {};
     var prov = b.provenance || {};
+    var requirements = coverageRequirements(b.constraints || {});
     $("ut-d-batch").textContent = "#" + job.batch_id +
-      (prov.baseline_ref ? " · " + prov.baseline_ref : "") +
+      (prov.baseline_ref ? " · " + prov.baseline_ref : requirements ? " · " + requirements : "") +
       (prov.generator_commit ? " · " + String(prov.generator_commit).slice(0, 8) : "");
+    $("ut-d-requirements").textContent = requirements || "—";
     $("ut-d-gen").textContent = job.generation_status || "—";
     $("ut-d-rounds").textContent = job.repair_rounds + " / " + job.max_repair_rounds;
     $("ut-d-review").textContent = job.reviewed_at
