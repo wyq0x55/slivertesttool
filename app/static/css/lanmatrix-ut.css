@@ -99,6 +99,31 @@
 .ut-banner .spacer{ flex:1; }
 
 /* 任务与运行 · detail */
+.ut-progress-summary{ margin:0 0 18px; color:var(--text-2); font-size:13px; line-height:1.7; overflow-wrap:anywhere; }
+.ut-progress-steps{ list-style:none; padding:0; margin:0; }
+.ut-progress-step{ position:relative; padding:0 0 20px 38px; min-height:28px; }
+.ut-progress-step:not(:last-child)::before{ content:""; position:absolute; left:12px; top:28px;
+  bottom:4px; width:1px; background:var(--border-strong); }
+.ut-progress-step:last-child{ padding-bottom:0; }
+.ut-progress-marker{ position:absolute; left:0; top:0; display:grid; place-items:center;
+  width:26px; height:26px; border-radius:50%; border:1px solid var(--border-strong);
+  background:var(--surface-2); color:var(--text-3); font-size:12px; font-weight:600; }
+.ut-progress-step.is-current .ut-progress-marker{ border-color:var(--run); background:var(--run-soft); color:var(--run-text); }
+.ut-progress-step.is-done .ut-progress-marker{ border-color:var(--ok); background:var(--ok-soft); color:var(--ok-text); }
+.ut-progress-step.is-attention .ut-progress-marker{ border-color:var(--warn); background:var(--warn-soft); color:var(--warn-text); }
+.ut-progress-step-head{ display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; padding-top:3px; font-size:13px; }
+.ut-progress-step-head strong{ font-weight:600; color:var(--text); }
+.ut-progress-step-head span{ color:var(--text-3); font-size:12px; }
+.ut-progress-step.is-current .ut-progress-step-head span{ color:var(--run-text); }
+.ut-progress-loop{ margin:10px 0 0; padding:10px 12px; border-left:2px solid var(--border-strong);
+  background:var(--surface-2); border-radius:0 var(--radius-sm) var(--radius-sm) 0;
+  color:var(--text-2); font-size:12px; line-height:1.7; overflow-wrap:anywhere; }
+.ut-progress-sync{ margin:18px 0 0; padding-top:12px; border-top:1px solid var(--border);
+  color:var(--text-3); font-size:12px; line-height:1.7; overflow-wrap:anywhere; }
+.ut-progress.is-stale .ut-progress-marker{ border-color:var(--border-strong); background:var(--surface-2); color:var(--text-3); }
+.ut-progress.is-stale .ut-progress-step-head span{ color:var(--text-3); }
+.ut-progress.is-stale .ut-progress-sync{ color:var(--warn-text); }
+#ut-d-review-section:not([hidden]){ margin-top:20px; padding-top:18px; border-top:1px solid var(--border); }
 .ut-reason{ margin:0; white-space:pre-wrap; }
 .ut-review textarea{ width:100%; min-height:72px; resize:vertical; }
 .ut-review .row{ display:flex; gap:8px; justify-content:flex-end; margin-top:8px; flex-wrap:wrap; }

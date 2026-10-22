@@ -46,6 +46,8 @@
   var listEpoch = 0;
   var detailRequest = 0;
   var detailFresh = false;
+  var detailSyncedAt = null;
+  var detailSyncFailed = false;
   var actionPending = false;
 
   function $(id) { return document.getElementById(id); }
@@ -196,19 +198,24 @@
   // refreshes once, which resumes polling while work is still active.
   var pausedWhileHidden = false;
   function poll() {
-    if (document.hidden) { pausedWhileHidden = true; return; }
+    if (document.hidden) { pausedWhileHidden = true; renderSync(); return; }
     refresh();
   }
   document.addEventListener("visibilitychange", function () {
+    renderSync();
     if (!document.hidden && pausedWhileHidden) { pausedWhileHidden = false; refresh(); }
   });
 
   async function refresh() {
     clearTimeout(timer);
+    var id = openJobId, epoch = detailEpoch, request = detailRequest;
     try {
       await Promise.all([loadJobs(), loadBatches()]);
       if (openJobId) await loadJob(openJobId, detailEpoch);
-    } catch (e) { say(e.message, true); }
+    } catch (e) {
+      if (id === openJobId && epoch === detailEpoch && request === detailRequest) staleDetail();
+      say(e.message, true);
+    }
     if (busy()) timer = setTimeout(poll, POLL_MS);
   }
 
@@ -319,7 +326,73 @@
     return parts.join("；");
   }
 
+  function renderSync() {
+    var last = detailSyncedAt ? "最近成功同步：" + U.time(detailSyncedAt) : "尚未成功同步";
+    var mode = detailSyncFailed ? "刷新失败，当前为上次状态；请重试刷新。"
+      : !job ? "正在加载作业状态。"
+      : !detailFresh ? "状态待同步。"
+      : U.ACTIVE[job.state] ? (document.hidden ? "页面隐藏，自动刷新已暂停。" : "每 3 秒自动刷新。")
+      : "当前无需自动刷新，可手动刷新。";
+    $("ut-d-sync").textContent = mode + " " + last;
+    $("ut-d-progress").classList.toggle("is-stale", !detailFresh);
+  }
+
+  function staleDetail() {
+    detailFresh = false;
+    detailSyncFailed = true;
+    setActionBusy(true);
+    renderSync();
+  }
+
+  function renderProgress() {
+    var state = job.state, attempts = job.attempts || [];
+    var active = !!U.ACTIVE[state];
+    var decided = state === "approved" || state === "rejected";
+    var generated = job.has_reference || attempts.some(function (a) { return a.origin === "GENERATOR" && a.has_csv; });
+    var checked = attempts.some(function (a) { return !!a.verdict; });
+    var current = state === "queued" ? 0 : state === "generating" ? 1
+      : state === "executing" || state === "repairing" ? 2 : 3;
+    var summary = state === "queued" ? "作业已入队，等待后台调度。"
+      : state === "generating" ? "本批次处于用例生成阶段，当前函数的生成结果尚未返回；可能包含资源等待。"
+      : state === "executing" ? "处于执行与校验阶段，可能包含调度或执行资源等待。"
+      : state === "repairing" ? "处于模型修正阶段；候选通过检查后会返回执行与校验。"
+      : job.reason || (decided ? U.STATE[state][1] : (U.STATE[state] || [null, state])[1]);
+    if (job.stop_requested && active) summary = "已请求停止，等待后台在步骤边界处理；已得到的结果会保留。";
+    if (job.superseded_by) summary = "历史作业，已被 #" + job.superseded_by + " 取代。" + summary;
+    $("ut-d-progress").hidden = false;
+    $("ut-d-progress-summary").textContent = summary;
+    var stages = [
+      ["排队调度", state === "queued" ? "等待调度" : "已入队"],
+      ["用例生成", state === "generating" ? "当前阶段" : generated ? "已产出基准版本"
+        : job.gate_code === "GENERATION_FAILED" ? "生成失败"
+        : job.gate_code === "NO_TESTCSV" ? "未产出 CSV" : active && current < 1 ? "等待前序阶段" : "无产出记录"],
+      ["执行与校验", current === 2 ? (state === "repairing" ? "模型修正中" : "当前阶段")
+        : checked ? "已有校验记录" : active ? "等待前序阶段" : "无校验记录"],
+      ["人工审核", active ? "等待流程交接" : (U.STATE[state] || [null, state])[1]]
+    ];
+    var rounds = "已完成修正 " + job.repair_rounds + " / " + job.max_repair_rounds + " 轮";
+    var repairNote = state === "repairing" ? "正在修正 → 候选检查 → 再次执行与校验"
+      : job.gate_code === "MODEL_UNAVAILABLE" ? "模型调用异常"
+      : job.repair_rounds ? "修正后返回执行与校验，按结果决定是否继续"
+      : "未触发模型修正";
+    $("ut-d-progress-steps").innerHTML = stages.map(function (stage, index) {
+      // Inactive jobs expose evidence only: an error does not prove which step ran.
+      var kind = active && !job.superseded_by && !job.stop_requested && index === current ? "current"
+        : (index === 0 && active && current > 0) || (index === 1 && generated) ? "done"
+        : index === 3 && state === "approved" ? "done"
+        : index === 3 && !active ? "attention" : "pending";
+      return '<li class="ut-progress-step is-' + kind + '"' +
+        (kind === "current" ? ' aria-current="step"' : "") + '><span class="ut-progress-marker" aria-hidden="true">' +
+        (kind === "done" ? "&#10003;" : index + 1) + '</span><div class="ut-progress-step-head"><strong>' +
+        esc(stage[0]) + "</strong><span>" + esc(stage[1]) + "</span></div>" +
+        (index === 2 ? '<p class="ut-progress-loop">模型修正 ↔ 执行与校验<br>' + esc(rounds) + " · " + esc(repairNote) + "</p>" : "") + "</li>";
+    }).join("");
+    $("ut-d-review-section").hidden = active;
+    renderSync();
+  }
+
   function renderJob() {
+    renderProgress();
     var t = job.target || {};
     var gate = U.actionable(job);
     var shown = U.jobState(job);
@@ -702,13 +775,15 @@
       response = await LMApi.utJob(pid, id);
     } catch (error) {
       if (request !== detailRequest || epoch !== detailEpoch || id !== openJobId) return;
-      detailFresh = false;
-      setActionBusy(true);
+      staleDetail();
       throw error;
     }
     if (request !== detailRequest || epoch !== detailEpoch || id !== openJobId) return;
     job = response;
+    if (detailSyncFailed) say("");
     detailFresh = true;
+    detailSyncFailed = false;
+    detailSyncedAt = new Date().toISOString();
     renderJob();
   }
 
@@ -726,6 +801,10 @@
     openJobId = id;
     job = null;
     detailFresh = false;
+    detailSyncedAt = null;
+    detailSyncFailed = false;
+    $("ut-d-progress").hidden = true;
+    $("ut-d-review-section").hidden = true;
     setActionBusy(true);
     shownAttempt = null;
     $("ut-d-note").value = "";

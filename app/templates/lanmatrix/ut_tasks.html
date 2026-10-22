@@ -123,10 +123,16 @@
       </dl>
     </div>
     <div class="panel ut-review">
+      <section id="ut-d-progress" class="ut-progress" aria-labelledby="ut-d-progress-title" hidden>
+        <div class="panel-bar"><h4 id="ut-d-progress-title">运行进度</h4></div>
+        <p id="ut-d-progress-summary" class="ut-progress-summary" role="status" aria-live="polite"></p>
+        <ol id="ut-d-progress-steps" class="ut-progress-steps" aria-label="作业流程"></ol>
+        <p id="ut-d-sync" class="ut-progress-sync"></p>
+      </section>
+      <div id="ut-d-review-section" hidden>
       <h4>审核</h4>
       <p class="muted" id="ut-d-gate-hint"></p>
-      {# Only shown while the job waits at a human gate; a decided or still
-         running job has nothing to submit, so it gets the hint line only. #}
+      {# Review controls remain at the human gate beneath the workflow. #}
       <div id="ut-d-gate-forms">
       <div id="ut-d-review-forms">
       <textarea id="ut-d-note" aria-label="审核意见" placeholder="审核意见（驳回必填；机器判定未通过时通过也必填）"></textarea>
@@ -150,6 +156,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h18v18H3zM3 9h18M3 15h18M9 3v18"/></svg>
           在表格中修订
         </button>
+      </div>
       </div>
       </div>
       </div>

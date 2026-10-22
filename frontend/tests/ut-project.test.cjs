@@ -129,6 +129,96 @@ async function ready(h, value = job()) {
   await settle();
 }
 
+test("running progress shows batch generation honestly and hands off to review", async () => {
+  const h = harness();
+  await ready(h, { ...job(null, "generating"), attempts: [], last_verdict: null });
+  assert.equal(h.get("ut-d-progress").hidden, false);
+  assert.equal(h.get("ut-d-review-section").hidden, true);
+  assert.match(h.get("ut-d-progress-summary").textContent, /本批次.*尚未返回.*资源等待/);
+  assert.match(h.get("ut-d-progress-steps").innerHTML, /aria-current="step"[^]*用例生成/);
+  assert.match(h.get("ut-d-sync").textContent, /每 3 秒自动刷新.*最近成功同步/);
+  h.click("ut-d-refresh");
+  await settle();
+  h.details.at(-1).resolve(job());
+  await settle();
+  assert.equal(h.get("ut-d-review-section").hidden, false);
+  assert.equal(h.get("ut-d-gate-forms").hidden, false);
+  assert.doesNotMatch(h.get("ut-d-progress-steps").innerHTML, /aria-current/);
+  assert.match(h.get("ut-d-progress-steps").innerHTML, /未触发模型修正/);
+});
+
+test("repair rounds remain a loop and return to execution without claiming a pass", async () => {
+  const h = harness();
+  await ready(h, { ...job(10, "repairing"), repair_rounds: 2, last_verdict: "FAIL" });
+  assert.match(h.get("ut-d-progress-steps").innerHTML, /已完成修正 2 \/ 5 轮.*正在修正/);
+  assert.match(h.get("ut-d-progress-summary").textContent, /返回执行与校验/);
+  h.click("ut-d-refresh");
+  await settle();
+  h.details.at(-1).resolve({ ...job(20, "executing"), repair_rounds: 3, last_verdict: "FAIL" });
+  await settle();
+  assert.match(h.get("ut-d-progress-steps").innerHTML, /已完成修正 3 \/ 5 轮/);
+  assert.match(h.get("ut-d-progress-summary").textContent, /资源等待/);
+  assert.equal(h.get("ut-d-review-section").hidden, true);
+});
+
+test("failure before generation does not fabricate completed generation or execution", async () => {
+  const h = harness();
+  await ready(h, { ...job(null, "error"), attempts: [], last_verdict: null,
+    gate_code: "GENERATION_FAILED", reason: "生成失败：工具异常 <script>" });
+  const steps = h.get("ut-d-progress-steps").innerHTML;
+  assert.match(steps, /生成失败/);
+  assert.match(steps, /无校验记录/);
+  assert.doesNotMatch(steps, /is-done|aria-current/);
+  assert.equal(h.get("ut-d-progress-summary").textContent, "生成失败：工具异常 <script>");
+  assert.equal(h.get("ut-d-review-section").hidden, false);
+  assert.equal(h.get("ut-d-approve").disabled, true);
+});
+
+test("failed detail sync preserves the snapshot and recovers on the next poll", async () => {
+  const h = harness();
+  await ready(h, job(10, "executing"));
+  const snapshot = h.get("ut-d-progress-steps").innerHTML;
+  h.click("ut-d-refresh");
+  await settle();
+  h.details.at(-1).reject(new Error("detail offline"));
+  await settle();
+  assert.equal(h.get("ut-d-progress-steps").innerHTML, snapshot);
+  assert.match(h.get("ut-d-sync").textContent, /刷新失败，当前为上次状态.*最近成功同步/);
+  assert.equal(h.get("ut-d-approve").disabled, true);
+  h.timers.at(-1)();
+  await settle();
+  h.details.at(-1).resolve(job(20));
+  await settle();
+  assert.doesNotMatch(h.get("ut-d-sync").textContent, /刷新失败/);
+  assert.equal(h.get("ut-detail-status").textContent, "");
+  assert.equal(h.get("ut-d-approve").disabled, false);
+});
+
+test("a list refresh failure marks displayed detail stale without losing its evidence", async () => {
+  const h = harness();
+  await ready(h);
+  h.failList();
+  await h.click("ut-d-refresh");
+  assert.match(h.get("ut-d-sync").textContent, /刷新失败，当前为上次状态/);
+  assert.equal(h.get("ut-d-download").href, "/csv/1/10");
+  assert.equal(h.get("ut-d-approve").disabled, true);
+});
+
+test("old detail errors cannot mark another job's progress stale", async () => {
+  const h = harness();
+  await ready(h, job(10, "executing"));
+  h.click("ut-d-refresh");
+  await settle();
+  const old = h.details.at(-1);
+  h.open(2);
+  h.details.at(-1).resolve({ ...job(20, "executing"), id: 2 });
+  await settle();
+  old.reject(new Error("old job offline"));
+  await settle();
+  assert.doesNotMatch(h.get("ut-d-sync").textContent, /刷新失败/);
+  assert.equal(h.get("ut-d-download").href, "/csv/2/20");
+});
+
 test("Back during the initial detail request invalidates the late response", async () => {
   const h = harness();
   await settle();
@@ -479,6 +569,8 @@ test("a superseded job opens read-only with a link to its replacement", async ()
   assert.match(h.get("ut-d-superseded").innerHTML, /data-open-job="7"/);
   assert.equal(h.get("ut-d-gate-forms").hidden, true);
   assert.equal(h.get("ut-d-retry").hidden, true);
+  assert.match(h.get("ut-d-progress-summary").textContent, /历史作业，已被 #7 取代/);
+  assert.doesNotMatch(h.get("ut-d-progress-steps").innerHTML, /aria-current/);
 });
 
 test("a stopped job can be resumed, revised or reviewed; a running one can be stopped", async () => {
@@ -489,6 +581,8 @@ test("a stopped job can be resumed, revised or reviewed; a running one can be st
   assert.equal(h.get("ut-d-retry-label").textContent, "继续");
   assert.equal(h.get("ut-d-stop").hidden, true);
   assert.match(h.get("ut-d-gate-hint").textContent, /已停止/);
+  assert.doesNotMatch(h.get("ut-d-progress-steps").innerHTML, /aria-current/);
+  assert.equal(h.get("ut-d-review-section").hidden, false);
 
   h.click("ut-d-refresh");
   await settle();
