@@ -147,6 +147,50 @@ test("running progress shows batch generation honestly and hands off to review",
   assert.match(h.get("ut-d-progress-steps").innerHTML, /未触发模型修正/);
 });
 
+test("generation shows the live ut-agent snapshot and calls the step ratio a budget", async () => {
+  const h = harness();
+  const generating = { ...job(null, "generating"), attempts: [], last_verdict: null };
+  await ready(h, { ...generating, generation_progress: {
+    observed_at: "2026-10-23T04:00:30Z",
+    project: { phase: "extracting", target_count: 3 }, function: null } });
+  assert.match(h.get("ut-d-progress-steps").innerHTML, /正在抽取源码结构（整批 3 个函数/);
+  assert.match(h.get("ut-d-progress-summary").textContent, /正在抽取源码结构/);
+
+  h.click("ut-d-refresh");
+  await settle();
+  h.details.at(-1).resolve({ ...generating, generation_progress: {
+    observed_at: "2026-10-23T04:00:30Z", project: { phase: "generating" },
+    function: { phase: "solving", obligations_done: 3, obligations_total: 8,
+      steps_used: 62500000, step_limit: 250000000, updated_at: "2026-10-23T04:00:29Z" } } });
+  await settle();
+  const steps = h.get("ut-d-progress-steps").innerHTML;
+  assert.match(h.get("ut-d-progress-summary").textContent, /正在生成：求解测试义务 · 测试义务 3 \/ 8/);
+  assert.match(steps, /<progress class="ut-gen-meter" max="250000000" value="62500000">/);
+  assert.match(steps, /语义步数 63M \/ 250M（预算占比 25%）/);
+  assert.match(steps, /不代表剩余时间/);
+  assert.doesNotMatch(steps, /未更新/);
+
+  h.click("ut-d-refresh");
+  await settle();
+  h.details.at(-1).resolve({ ...generating, generation_progress: {
+    observed_at: "2026-10-23T04:05:00Z", project: { phase: "generating" },
+    function: { phase: "solving", obligations_done: 3, obligations_total: 8,
+      steps_used: 62500000, step_limit: 250000000, updated_at: "2026-10-23T04:00:29Z" } } });
+  await settle();
+  assert.match(h.get("ut-d-progress-steps").innerHTML, /进度已 271 秒未更新/);
+});
+
+test("finished generation keeps its step count and names budget exhaustion", async () => {
+  const h = harness();
+  await ready(h, { ...job(null, "needs_human"), attempts: [], last_verdict: null,
+    gate_code: "NO_TESTCSV", reason: "生成器未产出 TestCsv（FAILED）",
+    generation: { semantic_steps: 250000001, step_limit: 250000000,
+      error: "GenerationBudgetExceeded: GENERATION_BUDGET_EXHAUSTED: f" } });
+  const steps = h.get("ut-d-progress-steps").innerHTML;
+  assert.match(steps, /语义步数 250M \/ 250M（预算占比 100%）/);
+  assert.match(steps, /超出语义步数预算，生成已安全停止/);
+});
+
 test("repair rounds remain a loop and return to execution without claiming a pass", async () => {
   const h = harness();
   await ready(h, { ...job(10, "repairing"), repair_rounds: 2, last_verdict: "FAIL" });

@@ -118,6 +118,8 @@
 .ut-progress-loop{ margin:10px 0 0; padding:10px 12px; border-left:2px solid var(--border-strong);
   background:var(--surface-2); border-radius:0 var(--radius-sm) var(--radius-sm) 0;
   color:var(--text-2); font-size:12px; line-height:1.7; overflow-wrap:anywhere; }
+.ut-gen-meter{ display:block; width:100%; max-width:320px; height:6px; margin:6px 0 2px; accent-color:var(--run); }
+.ut-gen-stale{ color:var(--warn-text); }
 .ut-progress-sync{ margin:18px 0 0; padding-top:12px; border-top:1px solid var(--border);
   color:var(--text-3); font-size:12px; line-height:1.7; overflow-wrap:anywhere; }
 .ut-progress.is-stale .ut-progress-marker{ border-color:var(--border-strong); background:var(--surface-2); color:var(--text-3); }

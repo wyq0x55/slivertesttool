@@ -82,7 +82,8 @@ class FakeBridge:
                 "rules": [{"rule_id": "psd.4.compare", "meaning": "境界值"}],
                 "revision_rules": ["列不得改动"], "coverage_policy": {"c1": True}, "effective_test_policy": {"version": "1", "c1": True, "mcdc": False}, "test_policy_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "test_rules_ref": "universal-test-rules@1", "test_rules": {"version": "1"}}
 
-    def generate(self, manifest, index_csv, product_root, out, functions):
+    def generate(self, manifest, index_csv, product_root, out, functions, *, progress_dir):
+        self.progress_dir = progress_dir
         if self.generate_error:
             raise BridgeError(self.generate_error)
         out.mkdir(parents=True, exist_ok=True)
@@ -394,6 +395,36 @@ def test_passing_generation_waits_for_review_then_approves(env):
     status, body = env.call("post", f"/jobs/{job_id}/review", json={"decision": "reject",
                                                                      "note": "late"})
     assert status == 400 and body["error"]["code"] == "INVALID_STATE"
+
+
+def test_generating_job_exposes_ut_agent_live_progress(env, app_ctx):
+    targets = _configure(env)
+    [job_id] = _enqueue(env, targets["f"])
+    assert "generation_progress" not in _job(env, job_id)
+    with app_ctx.app_context():
+        from app.extensions import db
+        from app.models import UtJob
+
+        job = db.session.get(UtJob, job_id)
+        root = pipeline._generation_progress_dir(job.project_id, job.batch_id)
+        job.state = UtJob.GENERATING
+        db.session.commit()
+    assert env.bridge.progress_dir == root
+
+    progress = _job(env, job_id)["generation_progress"]
+    assert progress["project"] is None and progress["function"] is None
+
+    snapshot = {"schema": "ut-agent.generation-progress/1", "target": "f",
+                "phase": "solving", "obligations_done": 3, "obligations_total": 8,
+                "steps_used": 2_000_000, "step_limit": 250_000_000,
+                "updated_at": "2026-10-23T04:00:00+00:00"}
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "f.json").write_text(json.dumps(snapshot), encoding="utf-8")
+    (root / "__project__.json").write_text("{\"schema\": \"other/1\"}", encoding="utf-8")
+    progress = _job(env, job_id)["generation_progress"]
+    assert progress["function"] == snapshot
+    assert progress["project"] is None
+    assert progress["observed_at"].endswith("Z")
 
 
 def test_llm_rows_close_a_coverage_gap_and_the_capture_fills_them(env, monkeypatch):

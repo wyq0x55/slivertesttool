@@ -344,6 +344,60 @@
     renderSync();
   }
 
+  // ut-agent live generation phases (ut-agent.generation-progress/1).
+  var GEN_PHASE = {
+    queued: "等待生成进程", generating: "开始生成", deriving_obligations: "推导测试义务",
+    solving: "求解测试义务", validating: "校验用例集", writing_artifacts: "写出 TestCsv 等产物",
+    finished: "本函数已完成，等待批次内其他函数"
+  };
+  var GEN_STALE_SECONDS = 60;
+
+  function megaSteps(n) {
+    return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M";
+  }
+
+  function stepsLine(used, limit) {
+    return "语义步数 " + megaSteps(used) + " / " + megaSteps(limit) +
+      "（预算占比 " + Math.min(100, Math.floor(used * 100 / limit)) + "%）";
+  }
+
+  // Generation detail under the "用例生成" step: live snapshot while the job
+  // generates, the final step count afterwards. Steps are an upper-bound
+  // budget, never a time estimate, so the copy says so.
+  function generationDetail() {
+    var gen = job.generation || {};
+    if (job.state !== "generating") {
+      if (gen.semantic_steps == null || !gen.step_limit) return null;
+      var exhausted = /GENERATION_BUDGET_EXHAUSTED/.test(gen.error || "");
+      return { summary: null, html: esc(stepsLine(gen.semantic_steps, gen.step_limit)) +
+        (exhausted ? "<br>超出语义步数预算，生成已安全停止，未产出部分结果" : "") };
+    }
+    var live = job.generation_progress;
+    if (!live) return null;
+    var fn = live.function, project = live.project;
+    if (!fn || fn.phase === "queued") {
+      var waiting = project && project.phase === "extracting"
+        ? "正在抽取源码结构（整批 " + project.target_count + " 个函数共用一次 Clang 抽取）"
+        : fn ? "源码结构已抽取，等待空闲的生成进程"
+        : "尚未开始：等待生成资源，同一时间只运行一个生成批次";
+      return { summary: waiting + "。", html: esc(waiting) };
+    }
+    var label = GEN_PHASE[fn.phase] || fn.phase;
+    if (fn.obligations_total) label += " · 测试义务 " + fn.obligations_done + " / " + fn.obligations_total;
+    var html = esc(label);
+    if (fn.steps_used != null && fn.step_limit) {
+      html += '<br><progress class="ut-gen-meter" max="' + fn.step_limit + '" value="' +
+        Math.min(fn.steps_used, fn.step_limit) + '"></progress>' + esc(stepsLine(fn.steps_used, fn.step_limit)) +
+        "<br>步数是生成上限的消耗比例，不代表剩余时间；多数函数远未用完预算即结束";
+    }
+    var age = (Date.parse(live.observed_at) - Date.parse(fn.updated_at)) / 1000;
+    html += "<br>进度更新于 " + esc(U.time(fn.updated_at));
+    if (age > GEN_STALE_SECONDS) {
+      html += '<br><span class="ut-gen-stale">进度已 ' + Math.round(age) + " 秒未更新，生成进程可能卡住</span>";
+    }
+    return { summary: "正在生成：" + label + "。", html: html };
+  }
+
   function renderProgress() {
     var state = job.state, attempts = job.attempts || [];
     var active = !!U.ACTIVE[state];
@@ -357,6 +411,8 @@
       : state === "executing" ? "处于执行与校验阶段，可能包含调度或执行资源等待。"
       : state === "repairing" ? "处于模型修正阶段；候选通过检查后会返回执行与校验。"
       : job.reason || (decided ? U.STATE[state][1] : (U.STATE[state] || [null, state])[1]);
+    var generation = generationDetail();
+    if (generation && generation.summary) summary = generation.summary;
     if (job.stop_requested && active) summary = "已请求停止，等待后台在步骤边界处理；已得到的结果会保留。";
     if (job.superseded_by) summary = "历史作业，已被 #" + job.superseded_by + " 取代。" + summary;
     $("ut-d-progress").hidden = false;
@@ -385,6 +441,7 @@
         (kind === "current" ? ' aria-current="step"' : "") + '><span class="ut-progress-marker" aria-hidden="true">' +
         (kind === "done" ? "&#10003;" : index + 1) + '</span><div class="ut-progress-step-head"><strong>' +
         esc(stage[0]) + "</strong><span>" + esc(stage[1]) + "</span></div>" +
+        (index === 1 && generation ? '<p class="ut-progress-loop">' + generation.html + "</p>" : "") +
         (index === 2 ? '<p class="ut-progress-loop">模型修正 ↔ 执行与校验<br>' + esc(rounds) + " · " + esc(repairNote) + "</p>" : "") + "</li>";
     }).join("");
     $("ut-d-review-section").hidden = active;

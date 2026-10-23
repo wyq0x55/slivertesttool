@@ -34,6 +34,8 @@ is the generator's own evidence and does not change with appended rows.
 from __future__ import annotations
 
 import hashlib
+import json
+import re
 import threading
 from pathlib import Path
 from typing import Any, Optional
@@ -44,7 +46,7 @@ from sqlalchemy import func
 from ...extensions import db
 from ...models import UtAttempt, UtBatch, UtJob, UtPipelineConfig, UtTarget
 from ...models.ut_pipeline import GateCode
-from ...models.lanmatrix import _utcnow
+from ...models.lanmatrix import _iso, _utcnow
 from ..ai.provider import ProviderError
 from ..lanmatrix import audit
 from ..lanmatrix import notification_service as notify_svc
@@ -281,6 +283,10 @@ def _batch_dir(project_id: int, batch_id: int) -> Path:
     return _workspace() / f"p{project_id}" / f"b{batch_id}"
 
 
+def _generation_progress_dir(project_id: int, batch_id: int) -> Path:
+    return _batch_dir(project_id, batch_id) / "generation-progress"
+
+
 def _job_dir(job: UtJob) -> Path:
     return _batch_dir(job.project_id, job.batch_id) / f"j{job.id}"
 
@@ -383,6 +389,7 @@ def run_generation(batch_id: int) -> list[int]:
                 config["manifest_path"], config["index_csv"], config["product_root"],
                 _batch_dir(batch.project_id, batch.id) / "generation",
                 [job.target.function for job in jobs],
+                progress_dir=_generation_progress_dir(batch.project_id, batch.id),
             )
     except BridgeError as exc:
         batch.status = UtBatch.STATUS_FAILED
@@ -1142,6 +1149,36 @@ def repair_stats(project_id: int) -> dict[str, Any]:
     return {"models": rows}
 
 
+_PROGRESS_SCHEMA = "ut-agent.generation-progress/1"
+_C_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _read_progress(path: Path) -> Optional[dict[str, Any]]:
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(document, dict) or document.get("schema") != _PROGRESS_SCHEMA:
+        return None
+    return document
+
+
+def _generation_progress(job: UtJob) -> dict[str, Any]:
+    """Live snapshots ut-agent writes while it generates (observation only).
+
+    Missing snapshots mean generation has not reached that point yet, e.g. the
+    batch still waits for the process-wide generation gate.
+    """
+    root = _generation_progress_dir(job.project_id, job.batch_id)
+    function = job.target.function if job.target else ""
+    return {
+        "observed_at": _iso(_utcnow()),
+        "project": _read_progress(root / "__project__.json"),
+        "function": (_read_progress(root / f"{function}.json")
+                     if _C_IDENTIFIER.fullmatch(function) else None),
+    }
+
+
 def job_detail(project_id: int, job_id: int) -> dict[str, Any]:
     job = UtJob.query.filter_by(id=job_id, project_id=project_id).first()
     if job is None:
@@ -1149,6 +1186,8 @@ def job_detail(project_id: int, job_id: int) -> dict[str, Any]:
     attempts = UtAttempt.query.filter_by(job_id=job.id).order_by(UtAttempt.seq).all()
     entry = job.to_dict(attempts=attempts)
     entry["batch"] = db.session.get(UtBatch, job.batch_id).to_dict()
+    if job.state == UtJob.GENERATING:
+        entry["generation_progress"] = _generation_progress(job)
     return entry
 
 
