@@ -7,6 +7,35 @@ as measured; it does not assert Baseline coverage acceptance, target execution,
 or formal delivery validation. Human approval never changes the machine verdict
 or those evidence qualifications.
 
+## Diagnostic guidance
+
+Task details render checker guidance as a processing entry point, ordered next
+steps and a verification condition. Each unresolved obligation shows its target,
+solver state, original reason, constraints and individual guidance. Host coverage
+issues show the available decision locations and associated cases. Full received
+issue JSON remains expandable, including evidence longer than the compact view.
+Historical reports without guidance explicitly say that guidance is unavailable.
+
+The diagnostic download button creates a local `ut-platform.diagnostic-packet/1`
+JSON file for the displayed attempt, including its CSV hash, target, check,
+execution summary and an investigation instruction for a local model. Downloading
+does not call an AI provider or submit a revision. The packet preserves upstream
+detail limits and does not contain every source artifact. Local-model repair
+prompts also include the checker's guidance for open missing-case obligations
+(`ut-repair/7.5`); evidence gaps and unconfirmed infeasibility are not row work.
+
+The batch API includes selected frozen constraint fields so the details page
+can show the test requirements selected for that batch. Checker reports also
+carry the generation-bound policy and map each gap to its requirement and exact
+target. Disabled selections remain visible as not required; MC/DC grouping is
+marked as presentation only. Missing reference annotations name the label and
+count to restore and are distinct from missing cases. Group labels are not
+assigned to a single input row. Legacy batches publish their Baseline and
+coverage selection without presenting derived policy switches as user choices.
+Configuration-conflict gaps are excluded from the machine row-work allowlist.
+The local diagnostic
+packet includes the frozen batch selection alongside the displayed check.
+
 ## Project settings
 
 `GET/PUT /api/v1/projects/<project_id>/ut/config` uses the existing project view /

@@ -134,12 +134,19 @@ class UtBatch(db.Model):
     finished_at = db.Column(db.DateTime, nullable=True)
 
     def to_dict(self) -> dict:
+        snapshot = self.constraints or {}
+        explicit = ((self.provenance or {}).get("policy_origin") == "explicit"
+                    or ("baseline" in snapshot and snapshot["baseline"] is None))
+        keys = {"baseline", "coverage_policy", "test_rules_ref"}
+        if explicit:
+            keys.update({"effective_test_policy", "test_policy", "test_policy_sha256"})
         return {
             "id": self.id,
             "project_id": self.project_id,
             "label": self.label,
             "status": self.status,
             "provenance": self.provenance,
+            "constraints": {key: value for key, value in snapshot.items() if key in keys},
             "error": self.error or None,
             "created_by": self.created_by,
             "created_at": _iso(self.created_at),

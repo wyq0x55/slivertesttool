@@ -622,6 +622,12 @@
                       solve: "求解", reason: "原因", gap: "缺口",
                       min: "下限", max: "上限", source: "证据来源", pending: "待捕获输出",
                       verification: "输入复核" };
+  Object.assign(DETAIL_KEYS, { branch_id: "判定 ID", line: "源码行", outcome: "目标结果",
+    claimed_by: "关联用例", state: "测量状态", metric: "指标", points: "覆盖点统计",
+    evidence_source: "证据来源", case_id: "用例 ID", status: "状态",
+    reference: "参考桩观测", candidate: "候选桩观测", reference_case_id: "参考用例 ID" });
+  Object.assign(DETAIL_KEYS, { annotation: "需恢复的注释／标签", annotations: "参考注释／标签",
+    inputs: "对应输入", reference_row: "参考用例（从 0 起）", missing_count: "缺失数量", missing_kind: "缺失内容" });
   // Stored check JSON comes back with sorted keys; show evidence in reading order.
   var KEY_ORDER = ["row", "column", "before", "after", "expected", "actual", "code", "path",
                    "message", "detail", "gap", "obligation", "kind", "decision", "solve", "reason"];
@@ -636,11 +642,10 @@
     INFEASIBILITY_UNCONFIRMED: ["不可达待确认", "is-infeasible"],
     OUTPUT_ORACLE_PENDING: ["仅缺期望值", "is-evidence"],
   };
-  var GAP_ORDER = ["MISSING_CASE", "SEMANTIC_EVIDENCE", "INFEASIBILITY_UNCONFIRMED"];
   var CAUSE_TEXT = {
     VOLATILE_READ_UNPROVEN: function (g) {
-      return "单值输入已穷尽：只有单次调用内 " + (g.unstable_reads || []).join("、") +
-        " 前后读到不同值才可达；执行契约未证明读取稳定，WinAMS 每行只写一次，补输入行无法表达";
+      return "单次调用内的读取关系尚未证明：" + (g.unstable_reads || []).join("、") +
+        "；需核对类型化读取证据与执行契约";
     },
     SEARCH_INCOMPLETE: function () { return "求解搜索未穷尽，可能存在可达输入"; },
   };
@@ -648,27 +653,110 @@
   // An unresolved obligation carries every generator field; keep what a
   // reviewer needs to decide whether an input step is missing.
   function gapRow(g) {
-    var facts = [g.kind];
-    if (g.outcome != null) facts.push(g.outcome ? "真" : "假");
+    var kinds = { boundary: "边界值", "input-boundary": "输入最小／最大值", branch: "分支结果", condition: "条件",
+      mcdc: "MC/DC 独立影响", case: "分支标签", loop: "循环边界状态", arithmetic: "演算式专项", execution: "函数入口" };
+    var boundaries = { above: "边界上方", below: "边界下方", exact: "边界本身", min: "最小值", max: "最大值",
+      "loop-entry": "循环进入", "variable-pair": "双操作数取值", "operand-pair": "双操作数取值", "required-point": "必需测试点" };
+    var facts = [kinds[g.kind] || g.kind || "测试要求"];
+    if (g.outcome != null) facts.push(typeof g.outcome === "boolean" ? (g.outcome ? "真" : "假") : String(g.outcome));
     if (g.condition_index != null) facts.push("条件 " + g.condition_index);
     if (g.boundary_class) {
-      facts.push(g.boundary_class + " " + g.boundary_value +
+      facts.push((boundaries[g.boundary_class] || g.boundary_class) +
+        (g.boundary_value != null ? " " + g.boundary_value : "") +
         (g.boundary_right_value != null ? ".." + g.boundary_right_value : ""));
     }
     if (g.case_label) facts.push("case " + g.case_label);
     var explain = CAUSE_TEXT[g.solve_cause];
     return { gap: g.gap_class || "", obligation: g.obligation_id, kind: facts.join(" · "),
              decision: String(g.decision || g.description || "").replace(/\s+/g, " "),
-             solve: g.solve_status, reason: explain ? explain(g) : g.reason || "—" };
+             solve: g.solve_status, reason: (explain ? explain(g) + "；" : "") + (g.reason || "未提供原始原因") };
   }
-  function gapRows(list) {
-    function rank(g) { var i = GAP_ORDER.indexOf(g.gap_class); return i < 0 ? GAP_ORDER.length : i; }
-    return list.map(function (g, i) { return [rank(g), i, g]; })
-      .sort(function (x, y) { return x[0] - y[0] || x[1] - y[1]; })
-      .map(function (item) { return gapRow(item[2]); });
+  var ACTION_SCOPE = {
+    INPUT_CANDIDATE: "输入用例", SEMANTIC_EVIDENCE: "语义／环境证据", HUMAN_REVIEW: "人工确认",
+    MEASUREMENT: "覆盖测量", BUILD_ENVIRONMENT: "构建与执行环境", CANDIDATE_FILE: "候选文件",
+    EVIDENCE_INVESTIGATION: "证据排查", EXECUTION_CAPTURE: "执行捕获", ARTIFACT_BINDING: "版本绑定",
+    STUB_CANDIDATE: "桩候选", PER_OBLIGATION: "逐项处理", ANNOTATION: "注释／标签",
+  };
+  function requirementsHtml(context) {
+    if (!context) return "";
+    var identity = context.rules_ref || "未提供规则版本";
+    if (context.status !== "BOUND") {
+      return '<div class="ut-guidance"><p><b>本次生成绑定的测试要求：</b>' + esc(identity) +
+        '</p><p>' + esc(context.reason || "测试配置快照不足，需核对生成版本。") + '</p></div>';
+    }
+    return '<div class="ut-guidance"><p><b>本次生成绑定的测试要求：</b>' + esc(identity) + '</p><ul>' +
+      (context.requirements || []).map(function (r) {
+        var state = r.role === "PRESENTATION" ? (r.required ? "启用，仅影响注释呈现" : "关闭，不要求此类注释") :
+          (r.required ? "要求" : "未要求");
+        return '<li>' + esc(r.label) + '：<b>' + esc(state) + '</b></li>';
+      }).join("") + '</ul></div>';
+  }
+  function requirementHtml(r) {
+    if (!r) return "";
+    var config = (r.requirements || []).map(function (item) {
+      return item.label + "=" + (item.required ? "要求" : "未要求");
+    }).join("；");
+    var conflict = r.configuration_status === "NEEDS_REVIEW" ?
+      '<p class="ut-issue-text">配置与义务记录需复核，请先核对生成版本及绑定，不能直接要求新增用例。</p>' : '';
+    return '<div class="ut-guidance"><p><b>配置依据：</b>' + esc(config || r.rules_ref || "未提供可核对的配置快照") +
+      '</p><p><b>具体缺口：</b>' + esc(r.target || "需查看原始义务记录") + '</p><p><b>缺失内容：</b>' +
+      (r.missing_kind === "TEST_CASE" ? "输入用例尚未完成证明" : "证据或审核结论，不能靠补注释消除") + '</p>' + conflict + '</div>';
+  }
+  function guidanceHtml(g) {
+    if (!g) return '<p class="ut-issue-text">本报告未提供处理指引，请结合完整诊断和版本文件排查。</p>';
+    return '<div class="ut-guidance"><p><b>处理入口：</b>' +
+      esc(ACTION_SCOPE[g.action_scope] || g.action_scope || "证据排查") + '</p><ol>' +
+      (g.steps || []).map(function (step) { return '<li>' + esc(step) + '</li>'; }).join("") +
+      '</ol><p><b>如何确认完成：</b>' + esc(g.verification || "重新校验并核对证据。") + '</p></div>';
+  }
+  function gapDetailsHtml(list) {
+    if (!Array.isArray(list)) return detailHtml(list);
+    return list.map(function (g) {
+      var row = gapRow(g), label = GAP_CLASS[g.gap_class];
+      var constraints = (g.constraints || []).map(function (c) {
+        return [c.variable, c.operator, c.value].map(plain).join(" ");
+      }).join("；");
+      var solve = { SAT: "已找到约束解", UNSAT: "当前约束无解，待确认", UNKNOWN: "证据不足或搜索未完成", NOT_SOLVED: "尚未求解" };
+      return '<section class="ut-gap-card"><p><b>' +
+        esc((g.guidance && g.guidance.title) || (label && label[0]) || "待确认的测试要求") +
+        '</b> <code>' + esc(g.obligation_id || "") + '</code></p><dl class="ut-issue-kv">' +
+        '<dt>测试目标</dt><dd>' + esc(row.kind) + '</dd><dt>判定／要求</dt><dd>' + esc(row.decision) +
+        '</dd><dt>程序检查结果</dt><dd>' + esc((solve[g.solve_status] || "未识别的求解状态") +
+          "（" + (g.solve_status || "UNKNOWN") + "） · " + row.reason) + '</dd>' +
+        (g.branch_id != null ? '<dt>关联判定</dt><dd>' + esc(String(g.branch_id)) + '</dd>' : '') +
+        (g.rule_id ? '<dt>规则依据</dt><dd>' + esc(g.rule_id) + '</dd>' : '') +
+        (constraints ? '<dt>已知约束</dt><dd>' + esc(constraints) + '</dd>' : '') +
+        '</dl>' + requirementHtml(g.requirement) + guidanceHtml(g.guidance) + '</section>';
+    }).join("");
+  }
+  function rawDiagnosticHtml(issue) {
+    return '<details class="ut-diagnostic-raw"><summary>完整原始诊断（含证据）</summary><pre>' +
+      esc(JSON.stringify(issue, null, 2)) + '</pre></details>';
+  }
+  function downloadDiagnostic(attemptId) {
+    var a = job && (job.attempts || []).find(function (item) { return item.id === attemptId; });
+    if (!a || !a.check) return;
+    var packet = {
+      contract: "ut-platform.diagnostic-packet/1", job_id: job.id, attempt_id: a.id,
+      candidate_sha256: a.csv_sha256 || null,
+      target: job.target, check: a.check, execution: a.execution || null,
+      test_configuration: (job.batch && job.batch.constraints) || null,
+      instruction: "依据本版本校验事实逐项解释问题，并列出处理位置、依据、待补证据和复验方法。" +
+        "仅在类型化输入映射与路径证据足够时建议输入修改；证据不足明确说明。" +
+        "候选责任层不等于已证实根因，不得猜测期望值、弱化测试策略或把 HOST_EXECUTION 当作目标执行验收。",
+      completeness_note: "此包保留平台收到的完整校验报告；上游明细可能有数量上限，" +
+        "请核对 unresolved_count、issues 和版本文件，缺失证据不能推测补全。",
+    };
+    var url = window.URL.createObjectURL(new window.Blob([JSON.stringify(packet, null, 2)], { type: "application/json" }));
+    var link = document.createElement("a");
+    link.href = url;
+    link.download = "ut-diagnostic-" + job.id + "-" + a.id + ".json";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(function () { window.URL.revokeObjectURL(url); }, 1000);
   }
   var DETAIL_VIEW = {
-    INPUT_OBLIGATION_UNRESOLVED: [function (d) { return Array.isArray(d) ? gapRows(d) : d; }, "ut-gap-table"],
     OUTPUT_ORACLE_PENDING: [function (d) {
       return Array.isArray(d) ? d.map(function (g) {
         return { gap: g.gap_class, obligation: g.obligation_id,
@@ -703,6 +791,12 @@
 
   function cellHtml(key, value) {
     if (key === "row" && typeof value === "number") return "#" + (value + 1);
+    if (key === "missing_kind") return value === "ANNOTATION" ? "注释／标签" : value === "TEST_CASE" ? "输入用例" : esc(plain(value));
+    if (key === "outcome" && typeof value === "boolean") return value ? "真" : "假";
+    if (key === "state") {
+      var states = { COVERED: "已覆盖", NOT_COVERED: "未覆盖", UNKNOWN: "无法判定" };
+      return esc(states[value] || plain(value));
+    }
     if (key === "gap") {
       var gap = GAP_CLASS[value];
       return gap ? '<span class="ut-gap ' + gap[1] + '">' + esc(gap[0]) + "</span>" : "—";
@@ -744,6 +838,26 @@
     if (d == null || d === "" || (Array.isArray(d) && !d.length)) return "";
     if (typeof d !== "object") return '<p class="ut-issue-text">' + esc(clip(String(d), 600)) + "</p>";
     if (!Array.isArray(d)) {
+      if (Array.isArray(d.locations)) {
+        return '<p class="ut-issue-text">' + esc((d.metric || "") + " · " + (d.reason || "查看以下覆盖位置")) +
+          '</p>' + (d.locations.length ? tableHtml(d.locations, "ut-location-table") :
+            '<p class="ut-issue-text">当前报告没有可唯一定位的覆盖点，请先补测量或位置证据。</p>');
+      }
+      if ("build" in d && Array.isArray(d.cases)) {
+        var cells = [];
+        d.cases.forEach(function (c) {
+          (c.cells || []).forEach(function (cell) {
+            if (cell.status === "MATCH") return;
+            cells.push({ case_id: c.case_id, column: cell.key, expected: cell.expected,
+              actual: cell.observed, status: cell.status, reason: cell.detail });
+          });
+        });
+        return ((d.build && d.build.diagnostics) ? '<pre class="ut-issue-text">' + esc(d.build.diagnostics) + '</pre>' : '') +
+          (Array.isArray(d.observation_differences) && d.observation_differences.length ?
+            '<p class="ut-issue-text">候选桩与确定性参考适配器的观测差异（不等同期望值差异）：</p>' +
+            tableHtml(d.observation_differences, "ut-location-table") : '') +
+          (cells.length ? tableHtml(cells, "ut-location-table") : '');
+      }
       if ("c0" in d && "c1" in d) return coverageHtml(d);
       return '<dl class="ut-issue-kv">' + Object.keys(d).map(function (k) {
         return "<dt>" + esc(DETAIL_KEYS[k] || k) + "</dt><dd>" + cellHtml(k, d[k]) + "</dd>";
@@ -759,6 +873,7 @@
 
   function renderIssues(a) {
     var issues = (a.check && a.check.issues) || [];
+    var requirements = requirementsHtml(a.check && a.check.test_requirements);
     var counts = {};
     issues.forEach(function (i) { counts[i.severity] = (counts[i.severity] || 0) + 1; });
     var sum = ["error", "warning", "info"].filter(function (k) {
@@ -766,19 +881,28 @@
     }).map(function (k) { return counts[k] + " 个" + SEVERITY[k][1]; }).join(" · ");
     $("ut-d-issues-sum").textContent = sum ? "· " + sum : "";
     if (!issues.length) {
-      $("ut-d-issues").innerHTML = '<p class="muted">' + (a.check ? "未报告校验问题" : "尚无校验报告") + "</p>";
+      $("ut-d-issues").innerHTML = requirements + '<p class="muted">' + (a.check ? "未报告校验问题" : "尚无校验报告") + "</p>";
       return;
     }
-    $("ut-d-issues").innerHTML = '<ul class="ut-issue-list">' + issues.map(function (i) {
+    var completeness = (a.check && a.check.completeness) || {};
+    var shownGaps = Array.isArray(completeness.unresolved) ? completeness.unresolved.length : 0;
+    var omittedGaps = (completeness.unresolved_count || 0) - shownGaps;
+    $("ut-d-issues").innerHTML = requirements + '<p class="ut-diagnostic-tools"><button class="btn small ghost" type="button" data-diagnostic="' +
+      a.id + '">下载本地 AI 排查包</button><span class="muted">包含本版本问题、证据与处理指引</span></p>' +
+      (omittedGaps > 0 ? '<p class="ut-issue-text">共 ' + completeness.unresolved_count + ' 项未解决测试要求，本报告只提供前 ' +
+        shownGaps + ' 项明细；另有 ' + omittedGaps + ' 项需查看原始 Suite 文件，不能视为已解决。</p>' : '') +
+      '<ul class="ut-issue-list">' + issues.map(function (i) {
       var sev = SEVERITY[i.severity] || ["notask", i.severity || "—"];
       var locate = i.code === "ORACLE_MISMATCH" && a.has_csv
         ? '<button class="btn small ghost" type="button" data-sheet="' + a.id + '">在表格中定位</button>' : "";
       return '<li class="ut-issue sev-' + esc(i.severity || "") + '"><div class="ut-issue-head">' +
         LMPill.html(sev[0], sev[1]) + '<code class="ut-issue-code">' + esc(i.code) + "</code>" +
-        '<span class="ut-issue-msg">' + esc(i.message || "") + "</span>" + locate + "</div>" +
-        (DETAIL_VIEW[i.code]
+        '<span class="ut-issue-msg">' + esc((i.guidance && i.guidance.title) || i.message || "") + "</span>" + locate + "</div>" +
+        (i.guidance && i.message ? '<p class="ut-issue-text">' + esc(i.message) + '</p>' : '') +
+        guidanceHtml(i.guidance) +
+        (i.code === "INPUT_OBLIGATION_UNRESOLVED" ? gapDetailsHtml(i.detail) : DETAIL_VIEW[i.code]
           ? detailHtml(DETAIL_VIEW[i.code][0](i.detail), DETAIL_VIEW[i.code][1])
-          : detailHtml(i.detail)) + "</li>";
+          : detailHtml(i.detail)) + rawDiagnosticHtml(i) + "</li>";
     }).join("") + "</ul>";
   }
 
@@ -995,6 +1119,8 @@
     else select(attempt, true);
   });
   $("ut-d-issues").addEventListener("click", function (e) {
+    var diagnostic = e.target.closest("[data-diagnostic]");
+    if (diagnostic) { downloadDiagnostic(Number(diagnostic.dataset.diagnostic)); return; }
     var b = e.target.closest("[data-sheet]");
     if (b) openSheet(Number(b.dataset.sheet), false);
   });
