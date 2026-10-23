@@ -97,9 +97,10 @@ class UtAgentBridge:
         return {key: value for key, value in document.items() if key not in ("contract", "ok")}
 
     def generate(self, manifest: str, index_csv: str, product_root: str, out: Path,
-                 functions: list[str]) -> dict[str, Any]:
+                 functions: list[str], *, progress_dir: Path) -> dict[str, Any]:
         args = ["generate", *self._manifest(manifest), "--index-csv", index_csv,
-                "--product-root", product_root, "--out", str(out)]
+                "--product-root", product_root, "--out", str(out),
+                "--progress-dir", str(progress_dir)]
         for name in functions:
             args += ["--function", name]
         if self.settings.extractor:
