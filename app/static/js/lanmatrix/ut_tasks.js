@@ -733,7 +733,13 @@
   function typedAtomSummary(atom) {
     var facts = ["变量 " + typedFact(atom.variable), "关系 " + typedFact(atom.operator),
       "边界 " + typedFact(atom.boundary)];
-    if (atom.right_operand != null) facts.push("右操作数 " + typedFact(atom.right_operand));
+    if (atom.right_operand != null) {
+      facts.push("右侧操作数 " + typedFact(atom.right_operand) +
+        (atom.right_binding && atom.right_binding !== "NOT_APPLICABLE" ? "（" + atom.right_binding + "）" : ""));
+    }
+    if (atom.mask_variable) facts.push("掩码变量 " + atom.mask_variable);
+    if (atom.mask != null) facts.push("常量掩码 " + typedFact(atom.mask));
+    if (atom.mask_binding && atom.mask_binding !== "NOT_APPLICABLE") facts.push("掩码绑定 " + atom.mask_binding);
     if (atom.required_outcome != null) facts.push("目标结果 " + plain(atom.required_outcome));
     if (atom.binding) facts.push("绑定 " + plain(atom.binding));
     return facts.join(" · ");

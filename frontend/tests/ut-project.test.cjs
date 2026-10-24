@@ -536,6 +536,23 @@ function packetFor(a, extra = {}) {
     inputs: { rows_complete: true, rows: [{ base_row: 1, inputs: { I1: "1", I2: "2" } }] }, ...extra };
 }
 
+function producerTypedCheck() {
+  const check = typedCheck(1);
+  check.candidate_witnesses.repair_context[0].path[0].atoms = [
+    { variable: "x", operator: ">", boundary: null, right_operand: "y",
+      right_binding: "DIRECT_INPUT", right_control_sources: ["param"],
+      input_tokens: ["I1"], binding: "DIRECT_INPUT", control_sources: ["param"],
+      right_input_tokens: ["I2"], mask_variable: null, mask: null,
+      mask_binding: "NOT_APPLICABLE", mask_control_sources: [], mask_input_tokens: [] },
+    { variable: "x", operator: "!=", boundary: 0, right_operand: null,
+      right_binding: "NOT_APPLICABLE", right_control_sources: [],
+      input_tokens: ["I1"], binding: "DIRECT_INPUT", control_sources: ["param"],
+      right_input_tokens: [], mask_variable: "y", mask: null,
+      mask_binding: "DIRECT_INPUT", mask_control_sources: ["param"], mask_input_tokens: ["I2"] },
+  ];
+  return check;
+}
+
 test("full machine gap and output lists paginate beyond the 50-item issue preview", async () => {
   const h = harness(), value = job();
   value.attempts[0].csv_sha256 = "sha10";
@@ -579,10 +596,24 @@ test("typed path shows escaped locations, ancestor decisions, exact operands and
   assert.match(html, /NO_DIRECT_INPUT/);
   assert.match(html, /缺用例没有可定位的数据行/);
   assert.match(html, /类型化约束[\s\S]*变量 x · 关系 &lt; · 边界 3 · 绑定 DIRECT_INPUT/);
-  assert.match(html, /类型化约束[\s\S]*变量 rom · 关系 UNKNOWN · 边界 UNKNOWN · 右操作数 y · 绑定 NO_DIRECT_INPUT/);
+  assert.match(html, /类型化约束[\s\S]*变量 rom · 关系 UNKNOWN · 边界 UNKNOWN · 右侧操作数 y · 绑定 NO_DIRECT_INPUT/);
   assert.match(html, /<summary>原始类型化原子<\/summary>[\s\S]*&quot;variable&quot;: &quot;x&quot;/);
   assert.doesNotMatch(html, /<b>类型化约束：<\/b>[\s\S]*\{[\s\S]*"variable"/);
   assert.doesNotMatch(html, /<unsafe>/);
+});
+
+test("producer RHS and dynamic mask tokens render as readable typed constraints", async () => {
+  const h = harness(), value = job();
+  value.attempts[0].csv_sha256 = "sha10";
+  value.attempts[0].check = producerTypedCheck();
+  await ready(h, value);
+  const html = h.get("ut-d-issues").innerHTML;
+  assert.match(html, /右侧操作数 y（DIRECT_INPUT）/);
+  assert.match(html, /掩码变量 y/);
+  assert.match(html, /掩码绑定 DIRECT_INPUT/);
+  assert.match(html, /I2 → a\.c\/y/);
+  assert.doesNotMatch(html, /右侧操作数 UNKNOWN（NOT_APPLICABLE）/);
+  assert.match(html, /原始类型化原子[\s\S]*right_input_tokens[\s\S]*mask_input_tokens/);
 });
 
 for (const missing of ["evidence", "mapping", "column", "hash", "witness_hash", "witness_contract", "location", "token"]) {
@@ -912,7 +943,8 @@ test("a gate code names the category and the next step", async () => {
   assert.match(h.get("ut-d-gate-hint").textContent, /重复调用不会有不同结果[\s\S]*审核的是当前版本/);
   // Every server-side code has a hint.
   const codes = ["MACHINE_PASS", "OPEN_GAPS_EXHAUSTED", "ROUNDS_EXHAUSTED", "NOT_ROW_FIXABLE",
-    "HUMAN_REVISION_FAILED", "CANDIDATE_REJECTED", "MODEL_STALLED", "CHECK_BLOCKED", "UNKNOWN_VERDICT",
+    "HUMAN_REVISION_FAILED", "CANDIDATE_REJECTED", "MODEL_STALLED", "CHECK_BLOCKED",
+    "CONFIGURATION_CONFLICT", "REPORT_INCOMPLETE", "INTEGRITY_ERROR", "UNKNOWN_VERDICT",
     "NO_TESTCSV", "PROMPT_PREFIX_CHANGED", "PROMPT_BUDGET_EXCEEDED", "ENV_BLOCKED", "GENERATION_FAILED",
     "TOOL_ERROR", "MODEL_UNAVAILABLE", "INTERNAL_ERROR", "INTERRUPTED", "STOPPED"];
   const source = fs.readFileSync(path.resolve(__dirname, "../../app/models/ut_pipeline.py"), "utf8");
