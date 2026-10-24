@@ -161,6 +161,14 @@
 .ut-issue-head .pill{ white-space:nowrap; }
 .ut-issue-code{ font-family:var(--mono); font-size:12px; color:var(--text-2); }
 .ut-issue-msg{ flex:1; min-width:200px; font-size:13px; }
+.ut-guidance{ font-size:13px; line-height:1.6; overflow-wrap:anywhere; }
+.ut-guidance p{ margin:8px 0; }
+.ut-guidance ol{ margin:8px 0; padding-left:22px; }
+.ut-gap-card{ margin-top:12px; padding:10px 14px; border:1px solid var(--border); border-radius:var(--radius-sm); }
+.ut-gap-card > p{ margin:0; }
+.ut-gap-card code{ overflow-wrap:anywhere; }
+.ut-diagnostic-raw pre{ white-space:pre-wrap; overflow-wrap:anywhere; max-height:480px; overflow:auto; font-size:12px; }
+.ut-diagnostic-tools{ display:flex; align-items:center; flex-wrap:wrap; gap:10px; }
 .ut-issue-text{ margin:8px 0 0; font-size:12.5px; color:var(--text-2); white-space:pre-wrap; overflow-wrap:anywhere; }
 .ut-issue-items{ margin:8px 0 0; padding-left:18px; font-size:12.5px; color:var(--text-2); }
 .ut-issue-kv{ display:grid; grid-template-columns:max-content minmax(0, 1fr); gap:4px 14px; margin:8px 0 0; font-size:12.5px; }
@@ -185,6 +193,7 @@
 /* Every field here is part of the decision (which obligation, what kind, why
    the solver gave up), so cells wrap instead of being cut to "b6:bou…". */
 .ut-gap-table td{ white-space:normal; overflow-wrap:anywhere; vertical-align:top; }
+.ut-location-table td{ white-space:normal; overflow-wrap:anywhere; vertical-align:top; }
 .ut-gap-table td:nth-child(5){ overflow-wrap:normal; }  /* UNKNOWN / UNSAT stay whole */
 .ut-gap{ display:inline-block; padding:1px 8px; border-radius:999px; font-size:11.5px; white-space:nowrap; }
 .ut-gap.is-case{ background:var(--danger-soft); color:var(--danger-text); }

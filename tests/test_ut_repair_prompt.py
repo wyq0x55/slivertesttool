@@ -33,6 +33,28 @@ def _user(csv_text, check, history, open_gaps=()):
                                history, list(open_gaps))
 
 
+def test_open_gap_carries_checker_guidance_into_local_model_prompt():
+    guidance = {"action_scope": "INPUT_CANDIDATE", "steps": ["check typed parent path"],
+                "verification": "verify witness before execution"}
+    gap = dict(GAP, guidance=guidance)
+    check = {"verdict": "PASS", "completeness": COMPLETENESS, "issues": []}
+    prompt = _user(CSV, check, [], [gap])
+    assert "check typed parent path" in prompt
+    assert "verify witness before execution" in prompt
+    assert "INPUT_CANDIDATE" in prompt
+
+
+def test_gap_prompt_explains_the_frozen_requirement_and_exact_missing_target():
+    gap = dict(GAP, requirement={"configuration_status": "BOUND", "target": "判定 B；目标结果为假",
+                                "requirements": [{"label": "C1 分支结果覆盖", "required": True}]})
+    check = dict(CHECK, completeness=COMPLETENESS)
+    prompt = _user(CSV, check, [], [gap])
+    assert "C1 分支结果覆盖=True" in prompt
+    assert "具体缺口：判定 B；目标结果为假" in prompt
+    gap["requirement"]["configuration_status"] = "NEEDS_REVIEW"
+    assert "此项必须 declined" in _user(CSV, check, [], [gap])
+
+
 def test_system_prompt_is_shared_by_every_function_of_a_batch():
     reordered = dict(CONSTRAINTS, policies={"a": 1, "b": 2})
     assert repair._system_prompt(CONSTRAINTS) == repair._system_prompt(reordered)
@@ -95,7 +117,7 @@ def test_system_prompt_asks_for_rows_not_a_csv():
     system = repair._system_prompt(CONSTRAINTS)
     assert '"rows"' in system and '"declined"' in system and "不要输出 CSV" in system
     assert "不能仅凭冲突认定缺少输入" in system
-    assert repair.PROMPT_VERSION == "ut-repair/7.3"
+    assert repair.PROMPT_VERSION == "ut-repair/7.5"
 
 
 def _revise(monkeypatch, reply, allowed=frozenset({"b6:boundary:1:above:2"})):
@@ -115,7 +137,7 @@ def test_reply_rows_are_appended_and_claims_recorded(monkeypatch):
     assert revision.csv_bytes.decode("cp932") == CSV + ";$L$,LLM add b6:boundary:1:above:2\r\n,0,2,\r\n"
     assert revision.meta["claimed"] == ["b6:boundary:1:above:2"]
     assert [item["index"] for item in revision.meta["rejected"]] == [1]
-    assert revision.meta["prompt_version"] == "ut-repair/7.3"
+    assert revision.meta["prompt_version"] == "ut-repair/7.5"
 
 
 def test_a_declining_reply_adds_nothing(monkeypatch):

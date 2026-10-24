@@ -499,7 +499,8 @@ def gap_status(check: dict[str, Any], revisers: list[dict[str, Any]],
     """
     unresolved = (check.get("completeness") or {}).get("unresolved") or ()
     missing = [item for item in unresolved
-               if item.get("gap_class") == _MISSING_CASE and item.get("obligation_id")]
+               if item.get("gap_class") == _MISSING_CASE and item.get("obligation_id")
+               and (item.get("requirement") or {}).get("configuration_status") != "NEEDS_REVIEW"]
     claimed: set[str] = set()
     declined: set[str] = set()
     for meta in revisers:

@@ -28,7 +28,7 @@ from ..ai import config as ai_config
 from ..ai import provider
 from . import increment
 
-PROMPT_VERSION = "ut-repair/7.3"
+PROMPT_VERSION = "ut-repair/7.5"
 # Bound the prompt: issue details are already truncated by ut-agent.
 _MAX_DETAIL_CHARS = 6000
 _MAX_DECISION_CHARS = 200
@@ -132,6 +132,19 @@ def _gap_line(item: dict[str, Any]) -> str:
     reason = _gap_reason(str(item.get("reason") or ""))
     if reason:
         line += f"：{reason}"
+    requirement = item.get("requirement") or {}
+    if requirement:
+        configured = "; ".join(f"{r['label']}={r['required']}" for r in requirement.get("requirements") or ())
+        line += (f" / 本次配置：{configured or requirement.get('rules_ref')}"
+                 f" / 具体缺口：{requirement.get('target')}"
+                 f" / 配置证据：{requirement.get('configuration_status')}")
+        if requirement.get("configuration_status") == "NEEDS_REVIEW":
+            line += " / 配置证据冲突：此项必须 declined，先核对版本，不得为已关闭的专项补行。"
+    guidance = item.get("guidance") or {}
+    if guidance:
+        line += (f" / 处理入口：{guidance.get('action_scope')} / 下一步：" +
+                 "；".join(guidance.get("steps") or ()) +
+                 f" / 复验：{guidance.get('verification')}")
     return line
 
 

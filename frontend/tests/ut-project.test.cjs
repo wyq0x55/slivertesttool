@@ -31,7 +31,7 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
   const root = get("root");
   root.dataset.project = "4";
   get("ut-detail").hidden = true;
-  const details = [], previews = [], reviews = [], revisions = [], batches = [], sheets = [];
+  const details = [], previews = [], reviews = [], revisions = [], batches = [], sheets = [], downloads = [];
   const stops = [];
   let failList = false, onPop;
   // Browsers always provide visibility events; timers are recorded so a test
@@ -44,13 +44,17 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
       return selector === (page === "ut_pipeline.js" ? ".lm-ut" : ".lm-ut-tasks") ? root : null;
     },
     getElementById: get,
-    createElement: () => ({ className: "" }),
+    createElement: () => ({ className: "", click() { downloads.push({ href: this.href, download: this.download }); }, remove() {} }),
+    body: { appendChild() {} },
     createTextNode: (value) => ({ textContent: value }),
   };
   const window = {
     LM: { projectCapabilities: capabilities },
     LMReady: Promise.resolve(),
     scrollTo() {},
+    Blob,
+    URL: { createObjectURL(blob) { downloads.push(blob); return "blob:diagnostic"; }, revokeObjectURL() {} },
+    setTimeout: (callback) => timers.push(callback),
     LMStepsEditor: { open(item, opts) { sheets.push({ item, opts }); }, close() {} },
   };
   const context = vm.createContext({
@@ -109,7 +113,7 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
   }
   return { get, root, details, previews, reviews, revisions, batches, sheets, stops, open, pin, click,
     pop: (q) => onPop(q), failList: () => { failList = true; }, common: window.LMUt,
-    document, docListeners, timers, calls };
+    document, docListeners, timers, calls, downloads };
 }
 
 function candidate(id, seq) {
@@ -410,7 +414,7 @@ test("host evidence keeps line/branch metrics, unknown MC/DC and stub artifacts 
   assert.match(h.get("ut-d-host-artifacts").innerHTML, /href="\/artifact\/1\/10\/abc"/);
 });
 
-test("input-completeness gaps show the obligation, decision and solver status only", async () => {
+test("input-completeness gaps expose readable goals and full original evidence", async () => {
   const h = harness();
   const value = job();
   value.attempts[0].verdict = "PASS";
@@ -424,10 +428,98 @@ test("input-completeness gaps show the obligation, decision and solver status on
   ] };
   await ready(h, value);
   const html = h.get("ut-d-issues").innerHTML;
-  assert.match(html, /ut-gap-table">[\s\S]*<th class="k-obligation">义务<\/th><th class="k-kind">类型<\/th><th class="k-decision">判定式<\/th><th class="k-solve">求解<\/th><th class="k-reason">原因<\/th><\/tr>/);
-  assert.match(html, /b6:boundary:1:above:2<\/td><td[^>]*>boundary · 条件 1 · above 2<\/td><td title="\( A == b \)">\( A == b \)<\/td><td[^>]*>UNKNOWN<\/td><td[^>]*>volatile read/);
-  assert.doesNotMatch(html, /psd\.4\.compare|intent_status/);
+  assert.match(html, /ut-gap-card[\s\S]*b6:boundary:1:above:2/);
+  assert.match(html, /边界值 · 条件 1 · 边界上方 2/);
+  assert.match(html, /判定／要求<\/dt><dd>\( A == b \)/);
+  assert.match(html, /UNKNOWN[\s\S]*volatile read/);
+  assert.match(html, /完整原始诊断[\s\S]*psd\.4\.compare[\s\S]*intent_status/);
+  assert.match(html, /本报告未提供处理指引/);
   assert.equal(h.get("ut-d-issues-sum").textContent, "· 1 个警告");
+});
+
+test("diagnostic guidance keeps actionable steps uncut, escapes evidence and downloads the selected version", async () => {
+  const h = harness();
+  const value = job(20);
+  const longReason = "读取证据".repeat(70) + "结尾证据";
+  const guidance = { title: "缺少输入证明", action_scope: "SEMANTIC_EVIDENCE",
+    steps: ["补齐类型化读取契约", "<script>unsafe</script>"], verification: "重新提取与校验" };
+  const oldCheck = { verdict: "PASS", delivery_validated: false, diagnostic_contract: "ut-agent.check-guidance/1", issues: [
+    { code: "INPUT_OBLIGATION_UNRESOLVED", severity: "warning", message: "75 个测试要求未解决", guidance,
+      detail: [{ obligation_id: "B1", kind: "boundary", solve_status: "UNKNOWN", reason: longReason,
+        gap_class: "SEMANTIC_EVIDENCE", constraints: [{ variable: "x", operator: "<", value: 3 }], guidance }] },
+    { code: "HOST_COVERAGE_REQUIRED_UNKNOWN", severity: "warning", guidance,
+      detail: { metric: "c1", locations: [{ branch_id: "B2", line: 42, outcome: false, state: "UNKNOWN", reason: "宏映射未知" }] } },
+    { code: "HOST_STUB_OBSERVATION_MISMATCH", severity: "error", guidance,
+      detail: { build: null, cases: [], observation_differences: [{ case_id: "A", column: "extra",
+        reference: { kind: "i", value: 1 }, candidate: { kind: "i", value: 2 } }] } },
+  ] };
+  oldCheck.completeness = { unresolved_count: 75, unresolved: oldCheck.issues[0].detail };
+  value.attempts[0].check = oldCheck;
+  value.attempts[0].csv_sha256 = "old-hash";
+  value.attempts[0].execution = { evidence_source: "HOST_EXECUTION", counts_as_target_evidence: false };
+  await ready(h, value);
+  h.pin(10);
+  const html = h.get("ut-d-issues").innerHTML;
+  assert.match(html, /处理入口[\s\S]*语义／环境证据[\s\S]*补齐类型化读取契约/);
+  assert.match(html, /如何确认完成[\s\S]*重新提取与校验/);
+  assert.ok(html.includes(longReason));
+  assert.match(html, /x &lt; 3/);
+  assert.match(html, /&lt;script&gt;unsafe&lt;\/script&gt;/);
+  assert.doesNotMatch(html, /<script>/);
+  assert.match(html, /源码行[\s\S]*42[\s\S]*假[\s\S]*无法判定/);
+  assert.match(html, /75 个测试要求未解决/);
+  assert.match(html, /共 75 项未解决测试要求，本报告只提供前 1 项明细；另有 74 项/);
+  assert.match(html, /参考桩观测[\s\S]*候选桩观测/);
+  h.get("ut-d-issues").listeners.click({ target: { closest(selector) {
+    return selector === "[data-diagnostic]" ? { dataset: { diagnostic: "10" } } : null;
+  } } });
+  const packet = JSON.parse(await h.downloads[0].text());
+  assert.equal(packet.attempt_id, 10);
+  assert.equal(packet.candidate_sha256, "old-hash");
+  assert.deepEqual(packet.check, oldCheck);
+  assert.equal(packet.execution.counts_as_target_evidence, false);
+  assert.match(packet.instruction, /证据不足/);
+  assert.match(h.downloads[1].download, /1-10\.json$/);
+  assert.equal(h.revisions.length, 0);
+  assert.equal(h.reviews.length, 0);
+});
+
+test("check requirements show enabled, disabled and presentation selections even without errors", async () => {
+  const h = harness();
+  const value = job();
+  value.attempts[0].check.test_requirements = { status: "BOUND", rules_ref: "universal-test-rules@1", requirements: [
+    { key: "fixed_boundary", label: "最大值、最小值与境界值本身", required: true, role: "TEST_CASE" },
+    { key: "c1", label: "C1 分支结果覆盖", required: true, role: "TEST_CASE" },
+    { key: "mcdc", label: "MC/DC 独立影响用例", required: false, role: "TEST_CASE" },
+    { key: "combination_group", label: "MC/DC 組合せ注释呈现", required: false, role: "PRESENTATION" },
+  ] };
+  await ready(h, value);
+  const html = h.get("ut-d-issues").innerHTML;
+  assert.match(html, /本次生成绑定的测试要求[\s\S]*universal-test-rules@1/);
+  assert.match(html, /C1 分支结果覆盖：<b>要求/);
+  assert.match(html, /MC\/DC 独立影响用例：<b>未要求/);
+  assert.match(html, /MC\/DC 組合せ注释呈现：<b>关闭，不要求此类注释/);
+  assert.match(html, /未报告校验问题/);
+});
+
+test("a missing case names its configured requirement while missing annotations stay presentation work", async () => {
+  const h = harness();
+  const value = job();
+  value.attempts[0].check.issues = [
+    { code: "INPUT_OBLIGATION_UNRESOLVED", severity: "warning", detail: [{ obligation_id: "B:F", kind: "branch",
+      gap_class: "MISSING_CASE", requirement: { configuration_status: "BOUND", missing_kind: "TEST_CASE",
+        target: "判定 B；目标结果为假", requirements: [{ label: "C1 分支结果覆盖", required: true }] } }] },
+    { code: "REFERENCE_ANNOTATION_MISSING", severity: "warning", message: "输入行仍存在，补注释即可",
+      guidance: { title: "只缺参考注释", action_scope: "ANNOTATION", steps: ["恢复所列标签"], verification: "复查参考标签" },
+      detail: [{ inputs: { x: "3" }, missing_kind: "ANNOTATION", annotation: "境界値 3" }] },
+  ];
+  await ready(h, value);
+  const html = h.get("ut-d-issues").innerHTML;
+  assert.match(html, /配置依据[\s\S]*C1 分支结果覆盖=要求/);
+  assert.match(html, /具体缺口[\s\S]*判定 B；目标结果为假/);
+  assert.match(html, /需恢复的注释／标签[\s\S]*境界値 3/);
+  assert.match(html, /处理入口[\s\S]*注释／标签/);
+  assert.match(html, /输入行仍存在，补注释即可/);
 });
 
 test("a page without a candidate never offers approval", async () => {
