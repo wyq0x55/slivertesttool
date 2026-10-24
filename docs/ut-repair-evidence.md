@@ -121,6 +121,9 @@ supported. If either `output_pending` or `output_pending_count` appears, both
 are required and obey the same list, count and record rules. A flag alone,
 a count alone, malformed records or partially supplied pending-output fields
 cannot authorize machine PASS, another repair round or offline repair scope.
+Host preparation failures can legitimately precede a completeness report. The
+Host workflow preserves their execution reason while still enforcing supplied
+identity conflicts; missing worklists cannot hide why preparation was blocked.
 
 Before repair, result persistence, Host PASS handling and final approval, the
 platform re-reads the selected attempt CSV and compares its digest with the

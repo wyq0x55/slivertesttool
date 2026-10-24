@@ -1,6 +1,8 @@
 """Malformed completeness reports cannot authorize repair or machine PASS."""
 
 from copy import deepcopy
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -111,3 +113,36 @@ def test_host_bridge_fixture_supplies_a_complete_report(tmp_path):
     assert diagnostic.gap_report(check)["details_complete"] is True
     assert pipeline._report_gate(check, execution=result["execution"]) is None
     assert check["counts_as_target_evidence"] is False and check["delivery_validated"] is False
+
+
+@pytest.mark.parametrize("preparation", ["missing-generator-files", "unsupported-preparation"])
+def test_real_host_preparation_failure_preserves_its_actionable_reason(tmp_path, monkeypatch, preparation):
+    from test_ut_evidence_gates import CSV, _attempt, _job
+
+    candidate = tmp_path / "candidate.csv"
+    candidate.write_bytes(CSV)
+    job, attempt = _job(), _attempt(candidate)
+    job.state, job.stop_requested_at = UtJob.EXECUTING, None
+    job.reference_csv = str(candidate)
+    if preparation == "unsupported-preparation":
+        ir, intents = tmp_path / "ir.json", tmp_path / "intents.json"
+        ir.write_text("{}", encoding="utf-8")
+        intents.write_text("{}", encoding="utf-8")
+        job.generation = {"ir_json": str(ir), "intent_manifest": str(intents)}
+    bridge = Mock()
+    bridge.host_prepare.return_value = {"status": "UNSUPPORTED", "reason": "Typed preparation evidence is missing"}
+    gate = Mock()
+    monkeypatch.setattr(pipeline, "_gate", gate)
+    monkeypatch.setattr(pipeline, "get_bridge", lambda: bridge)
+    monkeypatch.setattr(pipeline, "_fresh_exec_dir", lambda *args: tmp_path / "out")
+    monkeypatch.setattr(pipeline, "db", SimpleNamespace(session=SimpleNamespace(commit=Mock(), refresh=Mock())))
+    monkeypatch.setattr(pipeline, "current_app", SimpleNamespace(config={"UT_REPAIR_TIMEOUT": 1}))
+    pipeline._execute_host_step(job, attempt, {"execution_backend": "clang", "stub_mode": "llm"})
+    assert gate.call_args.args[1] == UtJob.NEEDS_HUMAN
+    assert gate.call_args.args[3] == GateCode.CHECK_BLOCKED
+    assert attempt.execution["reason"] in gate.call_args.args[2]
+    assert "completeness" not in attempt.check
+    assert attempt.verdict == "BLOCKED" and job.repair_rounds == 0
+    assert attempt.check["counts_as_target_evidence"] is False
+    assert attempt.check["delivery_validated"] is False
+    assert not bridge.host_execute.called

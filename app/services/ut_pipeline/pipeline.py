@@ -758,7 +758,8 @@ def _execute_host_step(job: UtJob, attempt: UtAttempt, config: dict) -> None:
         evidence_gate = _report_gate(check, attempt.csv_sha256, execution)
         if not continuing():
             _halt(job)
-        elif evidence_gate:
+        elif evidence_gate and (evidence_gate[2] != GateCode.REPORT_INCOMPLETE
+                                or check["verdict"] in {"PASS", "FAIL"}):
             _gate(job, *evidence_gate)
         elif check["verdict"] == "PASS":
             _gate(job, UtJob.AWAITING_REVIEW,
