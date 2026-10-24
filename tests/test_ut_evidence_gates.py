@@ -73,6 +73,32 @@ def test_report_without_completeness_is_unknown_not_implicitly_complete():
     assert (state, code) == (UtJob.NEEDS_HUMAN, GateCode.REPORT_INCOMPLETE)
 
 
+@pytest.mark.parametrize("completeness", [None, False, [], 0, {}])
+@pytest.mark.parametrize("verdict", ["PASS", "FAIL"])
+def test_empty_or_invalid_report_neither_passes_nor_schedules_repair(completeness, verdict):
+    check = {"verdict": verdict, "issues": [
+        {"code": "COVERAGE_C1_GAP", "severity": "error", "repairable": True}],
+        "completeness": completeness}
+    assert diagnostic.gap_report(check)["details_complete"] is False
+    state, _, code = pipeline.next_state(check, "GENERATOR", 0, 5, pipeline.gap_status(check, [], SHA))
+    assert (state, code) == (UtJob.NEEDS_HUMAN, GateCode.REPORT_INCOMPLETE)
+
+
+@pytest.mark.parametrize("completeness", [None, {}])
+@pytest.mark.parametrize("verdict,expected_gate", [
+    ("BLOCKED", GateCode.ENV_BLOCKED), ("INVALID", GateCode.UNKNOWN_VERDICT),
+])
+def test_missing_report_does_not_hide_a_prior_execution_failure(completeness, verdict, expected_gate):
+    check = {"verdict": verdict, "completeness": completeness, "issues": [
+        {"code": "EXECUTION_BLOCKED", "severity": "error", "repairable": False,
+         "detail": [{"code": "ASSET_MISSING", "path": "AMS_Setting"}]}]}
+    state, reason, code = pipeline.next_state(check, "GENERATOR", 0, 5, pipeline.gap_status(check, [], SHA))
+    assert code == expected_gate
+    assert state == (UtJob.BLOCKED if verdict == "BLOCKED" else UtJob.NEEDS_HUMAN)
+    if verdict == "BLOCKED":
+        assert "ASSET_MISSING" in reason and "AMS_Setting" in reason
+
+
 @pytest.mark.parametrize("where", ["check", "witness", "host_binding"])
 def test_existing_digest_conflicts_block_and_remove_proof(where):
     check = _check()

@@ -537,9 +537,9 @@ def next_state(check: dict[str, Any], origin: str, rounds: int, max_rounds: int,
     verdict = check.get("verdict")
     codes = ", ".join(_error_codes(check))
     evidence_gate = _report_gate(check)
-    if evidence_gate:
+    if evidence_gate and (evidence_gate[2] != GateCode.REPORT_INCOMPLETE or verdict in {"PASS", "FAIL"}):
         return evidence_gate
-    if gaps and gaps.get("report_complete") is False:
+    if gaps and gaps.get("report_complete") is False and verdict in {"PASS", "FAIL"}:
         return (UtJob.NEEDS_HUMAN,
                 "测试义务明细不完整；请重新生成或重新校验以取得完整缺口清单，再核对输入证明。不能将预览视为全部完成。",
                 GateCode.REPORT_INCOMPLETE)

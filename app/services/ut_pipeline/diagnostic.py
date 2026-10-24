@@ -13,7 +13,7 @@ from . import increment
 def gap_report(check: dict[str, Any]) -> dict[str, Any]:
     """Check both machine worklists, including reports from older checkers."""
     completeness = check.get("completeness")
-    if not isinstance(completeness, dict):
+    if not isinstance(completeness, dict) or not completeness:
         return {"details_complete": False, "supplied_unresolved": 0,
                 "reported_unresolved": None, "supplied_output_pending": 0,
                 "reported_output_pending": None, "output_pending_complete": False}

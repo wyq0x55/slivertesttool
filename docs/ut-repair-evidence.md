@@ -104,8 +104,9 @@ refreshes and version mismatches invalidate pending browser downloads.
 Configuration conflicts are not input-row work. A requirement whose
 `configuration_status` is `NEEDS_REVIEW`, including one outside the bounded
 issue preview, routes the job to `CONFIGURATION_CONFLICT` / `needs_human`.
-An absent, truncated or count-inconsistent completeness report routes to
-`REPORT_INCOMPLETE`. Neither gate calls the repair model or consumes a repair
+An absent, empty, truncated or count-inconsistent completeness report routes a
+potential PASS or repairable FAIL to `REPORT_INCOMPLETE`. A prior execution
+environment failure retains its actionable blocking reason. Neither gate calls the repair model or consumes a repair
 round. Existing locked Baseline and explicit-policy records remain supported;
 a missing completeness report is not treated as an empty complete report.
 
