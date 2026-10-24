@@ -51,7 +51,7 @@ from ..ai.provider import ProviderError
 from ..lanmatrix import audit
 from ..lanmatrix import notification_service as notify_svc
 from ..lanmatrix.errors import ServiceError, VersionConflict
-from . import binding, host, repair
+from . import binding, diagnostic, host, repair
 from .bridge import BridgeError, BridgeSettings, UtAgentBridge
 
 # The worker is one process with a thread pool.  WinAMS runs and project-wide
@@ -498,6 +498,7 @@ def gap_status(check: dict[str, Any], revisers: list[dict[str, Any]],
     unconfirmed infeasibility and reports without gap classes are not.
     """
     unresolved = (check.get("completeness") or {}).get("unresolved") or ()
+    report_complete = diagnostic.gap_report(check)["details_complete"]
     missing = [item for item in unresolved
                if item.get("gap_class") == _MISSING_CASE and item.get("obligation_id")
                and (item.get("requirement") or {}).get("configuration_status") != "NEEDS_REVIEW"]
@@ -509,6 +510,7 @@ def gap_status(check: dict[str, Any], revisers: list[dict[str, Any]],
     ids = {item["obligation_id"] for item in missing}
     proven = _verified_obligation_ids(check, expected_sha)
     return {
+        "report_complete": report_complete,
         "missing": len(ids),
         "claimed": len(ids & claimed),
         "witnessed": len(ids & proven),
@@ -531,6 +533,10 @@ def next_state(check: dict[str, Any], origin: str, rounds: int, max_rounds: int,
     """Pure transition after one checked attempt: (state, reason, gate code)."""
     verdict = check.get("verdict")
     codes = ", ".join(_error_codes(check))
+    if gaps and gaps.get("report_complete") is False:
+        return (UtJob.NEEDS_HUMAN,
+                "测试义务明细不完整；请重新生成或重新校验以取得完整缺口清单，再核对输入证明。不能将预览视为全部完成。",
+                GateCode.NOT_ROW_FIXABLE)
     if verdict == "PASS":
         if gaps and gaps["open"] and origin != UtAttempt.ORIGIN_HUMAN:
             if rounds >= max_rounds:
@@ -674,14 +680,15 @@ def _execute_host_step(job: UtJob, attempt: UtAttempt, config: dict) -> None:
     db.session.commit()
 
 
-def _job_gaps(job: UtJob, attempt: UtAttempt) -> dict[str, Any]:
+def _job_gaps(job: UtJob, attempt: UtAttempt, *, through_seq: int | None = None) -> dict[str, Any]:
     """Gaps of `attempt` against the model rounds that shaped it.
 
     A staged proposal rejected before execution never became part of the
     lineage, so its claims and declines do not count; a round that added no
     rows (declines only) answered a lineage attempt and does.
     """
-    attempts = {item.id: item for item in UtAttempt.query.filter_by(job_id=job.id)}
+    attempts = {item.id: item for item in UtAttempt.query.filter_by(job_id=job.id)
+                if through_seq is None or item.seq <= through_seq}
     lineage, cursor = set(), attempt.id
     while cursor in attempts and cursor not in lineage:
         lineage.add(cursor)
@@ -727,6 +734,11 @@ def _repair_step(job: UtJob) -> None:
     history = [_history_item(item) for item in
                UtAttempt.query.filter_by(job_id=job.id).order_by(UtAttempt.seq)]
     gaps = _job_gaps(job, attempt)
+    if not gaps["report_complete"]:
+        state, reason, code = next_state(check, attempt.origin, job.repair_rounds, job.max_repair_rounds, gaps)
+        _gate(job, state, reason, code)
+        db.session.commit()
+        return
     generation = dict(job.generation or {})
     csv_bytes = Path(attempt.csv_path).read_bytes()
     # Freeze the cacheable prefix in durable job metadata, including restarts.
@@ -1193,12 +1205,47 @@ def job_detail(project_id: int, job_id: int) -> dict[str, Any]:
 
 
 def attempt_csv(project_id: int, job_id: int, attempt_id: int) -> tuple[bytes, str]:
+    attempt = _csv_attempt(project_id, job_id, attempt_id)
+    return _read_attempt_csv(attempt), Path(attempt.csv_path).name
+
+
+def _csv_attempt(project_id: int, job_id: int, attempt_id: int) -> UtAttempt:
     attempt = (UtAttempt.query.join(UtJob, UtJob.id == UtAttempt.job_id)
                .filter(UtAttempt.id == attempt_id, UtJob.id == job_id,
                        UtJob.project_id == project_id).first())
     if attempt is None or not attempt.csv_path:
         raise ServiceError("该版本没有 CSV", code="NOT_FOUND")
-    return Path(attempt.csv_path).read_bytes(), Path(attempt.csv_path).name
+    return attempt
+
+
+def _read_attempt_csv(attempt: UtAttempt) -> bytes:
+    try:
+        data = Path(attempt.csv_path).read_bytes()
+    except OSError as exc:
+        raise ServiceError("Candidate CSV is missing", code="NOT_FOUND") from exc
+    if not attempt.csv_sha256 or hashlib.sha256(data).hexdigest() != attempt.csv_sha256:
+        raise ServiceError("Candidate CSV changed after capture", code="INTEGRITY_ERROR")
+    return data
+
+
+def attempt_diagnostic(project_id: int, job_id: int, attempt_id: int) -> dict[str, Any]:
+    attempt = _csv_attempt(project_id, job_id, attempt_id)
+    data = _read_attempt_csv(attempt)
+    job = db.session.get(UtJob, job_id)
+    batch = db.session.get(UtBatch, job.batch_id)
+    check = attempt.check or {}
+    # Historical exports use only that candidate's lineage, as of its version.
+    gaps = _job_gaps(job, attempt, through_seq=attempt.seq)
+    allowed = {g["obligation_id"] for g in gaps["open"]} | _row_tags(check)
+    try:
+        table = repair.increment.parse(data.decode("cp932"))
+        return diagnostic.build_packet(
+            project_id=project_id, job_id=job_id, attempt=attempt.to_dict(),
+            target=job.target.to_dict(), csv_bytes=data, constraints=batch.constraints or {},
+            provenance=batch.provenance or {}, allowed=allowed,
+            editable_columns=repair._editable_columns(table, check))
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise ServiceError(str(exc), code="INTEGRITY_ERROR") from exc
 
 
 def attempt_artifact(project_id: int, job_id: int, attempt_id: int, artifact_id: str) -> tuple[bytes, str]:

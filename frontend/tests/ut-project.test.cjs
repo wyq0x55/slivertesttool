@@ -32,7 +32,7 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
   root.dataset.project = "4";
   get("ut-detail").hidden = true;
   const details = [], previews = [], reviews = [], revisions = [], batches = [], sheets = [], downloads = [];
-  const stops = [];
+  const stops = [], diagnostics = [];
   let failList = false, onPop;
   // Browsers always provide visibility events; timers are recorded so a test
   // can fire the next poll itself.
@@ -80,6 +80,9 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
       utAttemptText(pid, job, attempt) {
         const d = deferred(); previews.push({ ...d, job, attempt }); return d.promise;
       },
+      utAttemptDiagnostic(pid, job, attempt) {
+        const d = deferred(); diagnostics.push({ ...d, job, attempt }); return d.promise;
+      },
       utAttemptUrl: (pid, job, attempt) => `/csv/${job}/${attempt}`,
       utArtifactUrl: (pid, job, attempt, artifact) => `/artifact/${job}/${attempt}/${artifact}`,
       utExportUrl: (pid, batch) => `/export/${batch || "all"}`,
@@ -113,7 +116,7 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
   }
   return { get, root, details, previews, reviews, revisions, batches, sheets, stops, open, pin, click,
     pop: (q) => onPop(q), failList: () => { failList = true; }, common: window.LMUt,
-    document, docListeners, timers, calls, downloads };
+    document, docListeners, timers, calls, downloads, diagnostics };
 }
 
 function candidate(id, seq) {
@@ -432,7 +435,7 @@ test("input-completeness gaps expose readable goals and full original evidence",
   assert.match(html, /边界值 · 条件 1 · 边界上方 2/);
   assert.match(html, /判定／要求<\/dt><dd>\( A == b \)/);
   assert.match(html, /UNKNOWN[\s\S]*volatile read/);
-  assert.match(html, /完整原始诊断[\s\S]*psd\.4\.compare[\s\S]*intent_status/);
+  assert.match(html, /本页原始诊断[\s\S]*psd\.4\.compare[\s\S]*intent_status/);
   assert.match(html, /本报告未提供处理指引/);
   assert.equal(h.get("ut-d-issues-sum").textContent, "· 1 个警告");
 });
@@ -473,6 +476,11 @@ test("diagnostic guidance keeps actionable steps uncut, escapes evidence and dow
   h.get("ut-d-issues").listeners.click({ target: { closest(selector) {
     return selector === "[data-diagnostic]" ? { dataset: { diagnostic: "10" } } : null;
   } } });
+  assert.equal(h.diagnostics[0].attempt, 10);
+  h.diagnostics[0].resolve({ contract: "ut-platform.diagnostic-packet/2", job_id: 1, attempt_id: 10,
+    version: { seq: 1 }, candidate_sha256: "old-hash", check: oldCheck,
+    execution: value.attempts[0].execution, instruction: "证据不足" });
+  await settle();
   const packet = JSON.parse(await h.downloads[0].text());
   assert.equal(packet.attempt_id, 10);
   assert.equal(packet.candidate_sha256, "old-hash");
@@ -501,6 +509,172 @@ test("check requirements show enabled, disabled and presentation selections even
   assert.match(html, /MC\/DC 組合せ注释呈现：<b>关闭，不要求此类注释/);
   assert.match(html, /未报告校验问题/);
 });
+
+function issueAction(h, selector, dataset) {
+  h.get("ut-d-issues").listeners.click({ target: { closest(s) { return s === selector ? { dataset } : null; } } });
+}
+function typedCheck(count = 65) {
+  const gaps = Array.from({ length: count }, (_, i) => ({ obligation_id: `B${i}`, gap_class: "MISSING_CASE", kind: "branch" }));
+  return { candidate_sha256: "sha10", completeness: { unresolved: gaps, unresolved_count: count, details_complete: true,
+      output_pending: Array.from({ length: 61 }, (_, i) => ({ obligation_id: `O${i}`, pending_outputs: ["f@@"] })) },
+    issues: [{ code: "INPUT_OBLIGATION_UNRESOLVED", severity: "warning", detail: gaps.slice(0, 50) },
+      { code: "OUTPUT_ORACLE_PENDING", severity: "warning", detail: [] }],
+    input_ranges: { contract: { contract: "ut-agent.input-domains/1", columns: [
+      { index: 1, column: "a.c/x", status: "PROVEN", min: 0, max: 255 }, { index: 2, column: "a.c/y", status: "UNKNOWN" }] } },
+    candidate_witnesses: { contract: "ut-agent.candidate-witness/1", evidence: { identified: true }, input_mapping_identified: true, candidate_sha256: "sha10",
+      repair_context: [{ obligation_id: "B0", path: [
+        { branch_id: "ancestor", decision: "x < 3", required_outcome: false,
+          location: { file: "src/<unsafe>.c", line: 12, column: 4 },
+          atoms: [{ variable: "x", operator: "<", boundary: 3, input_tokens: ["I1"], binding: "DIRECT_INPUT" }] },
+        { branch_id: "child", decision: "rom > y", required_outcome: true, location: { file: "src/a.c", line: 24 },
+          atoms: [{ variable: "rom", right_operand: "y", binding: "NO_DIRECT_INPUT", input_tokens: [], right_input_tokens: ["I2"] }] },
+      ] }] } };
+}
+function packetFor(a, extra = {}) {
+  return { contract: "ut-platform.diagnostic-packet/2", job_id: 1, attempt_id: a.id,
+    version: { seq: a.seq }, candidate_sha256: a.csv_sha256, check: a.check,
+    inputs: { rows_complete: true, rows: [{ base_row: 1, inputs: { I1: "1", I2: "2" } }] }, ...extra };
+}
+
+test("full machine gap and output lists paginate beyond the 50-item issue preview", async () => {
+  const h = harness(), value = job();
+  value.attempts[0].csv_sha256 = "sha10";
+  value.attempts[0].check = typedCheck();
+  await ready(h, value);
+  let html = h.get("ut-d-issues").innerHTML;
+  assert.equal((html.match(/class="ut-gap-card"/g) || []).length, 8);
+  assert.match(html, /显示 1–8 \/ 65 项/);
+  assert.match(html, /显示 1–8 \/ 61 项/);
+  assert.doesNotMatch(html, /B64|O60/);
+  issueAction(h, "[data-gap-page]", { gapVersion: "10", gapKind: "unresolved", gapPage: "8" });
+  html = h.get("ut-d-issues").innerHTML;
+  assert.equal((html.match(/class="ut-gap-card"/g) || []).length, 1);
+  assert.match(html, /显示 65–65 \/ 65 项/);
+  assert.match(html, /B64/);
+  assert.doesNotMatch(html, /<code>B0<\/code>/);
+  issueAction(h, "[data-gap-page]", { gapVersion: "10", gapKind: "output_pending", gapPage: "7" });
+  assert.match(h.get("ut-d-issues").innerHTML, /O60/);
+});
+
+test("historical pending-output truncation requests a full recheck", async () => {
+  const h = harness(), value = job();
+  value.attempts[0].check = typedCheck();
+  value.attempts[0].check.completeness.output_pending_count = 71;
+  await ready(h, value);
+  const html = h.get("ut-d-issues").innerHTML;
+  assert.match(html, /共 71 项期望值待回填.*只提供 61 项明细.*另有 10 项未提供/);
+  assert.match(html, /重新校验取得完整清单，不能交给模型猜测期望值/);
+});
+
+test("typed path shows escaped locations, ancestor decisions, exact operands and explicit unmapped variables", async () => {
+  const h = harness(), value = job();
+  value.attempts[0].csv_sha256 = "sha10";
+  value.attempts[0].check = typedCheck();
+  await ready(h, value);
+  const html = h.get("ut-d-issues").innerHTML;
+  assert.match(html, /src\/&lt;unsafe&gt;\.c:12:4/);
+  assert.match(html, /ancestor · 判定：x &lt; 3 · 路径要求：false/);
+  assert.match(html, /I1 → a\.c\/x/);
+  assert.match(html, /I2 → a\.c\/y/);
+  assert.match(html, /NO_DIRECT_INPUT/);
+  assert.match(html, /缺用例没有可定位的数据行/);
+  assert.match(html, /类型化约束[\s\S]*变量 x · 关系 &lt; · 边界 3 · 绑定 DIRECT_INPUT/);
+  assert.match(html, /类型化约束[\s\S]*变量 rom · 关系 UNKNOWN · 边界 UNKNOWN · 右操作数 y · 绑定 NO_DIRECT_INPUT/);
+  assert.match(html, /<summary>原始类型化原子<\/summary>[\s\S]*&quot;variable&quot;: &quot;x&quot;/);
+  assert.doesNotMatch(html, /<b>类型化约束：<\/b>[\s\S]*\{[\s\S]*"variable"/);
+  assert.doesNotMatch(html, /<unsafe>/);
+});
+
+for (const missing of ["evidence", "mapping", "column", "hash", "witness_hash", "witness_contract", "location", "token"]) {
+  test(`typed mapping remains explicit when ${missing} evidence is unavailable`, async () => {
+    const h = harness(), value = job(), check = typedCheck();
+    value.attempts[0].csv_sha256 = "sha10";
+    value.attempts[0].check = check;
+    if (missing === "evidence") check.candidate_witnesses.evidence.identified = false;
+    if (missing === "mapping") check.candidate_witnesses.input_mapping_identified = false;
+    if (missing === "column") check.input_ranges.contract.columns[0].index = 9;
+    if (missing === "hash") check.candidate_sha256 = "other";
+    if (missing === "witness_hash") delete check.candidate_witnesses.candidate_sha256;
+    if (missing === "witness_contract") check.candidate_witnesses.contract = "unsupported/2";
+    if (missing === "location") delete check.candidate_witnesses.repair_context[0].path[0].location;
+    if (missing === "token") check.candidate_witnesses.repair_context[0].path[0].atoms[0].input_tokens = ["I99"];
+    await ready(h, value);
+    const html = h.get("ut-d-issues").innerHTML;
+    assert.match(html, /UNKNOWN/);
+    if (!["location", "token"].includes(missing)) {
+      assert.doesNotMatch(html, /src\/&lt;unsafe&gt;\.c:12|I1 → a\.c\/x|data-gap-inputs/);
+    }
+    if (missing === "token") assert.match(html, /I99 → UNKNOWN（无精确列映射）/);
+  });
+}
+
+test("gap input action marks all existing rows by exact column without fabricated missing-case row", async () => {
+  const h = harness(), value = job();
+  value.attempts[0].csv_sha256 = "sha10";
+  value.attempts[0].check = typedCheck();
+  await ready(h, value);
+  issueAction(h, "[data-gap-inputs]", { gapAttempt: "10", gapInputs: "0" });
+  h.previews[0].resolve({ text: "mod,a.c/f,f,2,1\r\n#COMMENT,a.c/x,a.c/y,a.c/f@@\r\n,1,2,\r\n,3,4,\r\n" });
+  await settle();
+  const opts = h.sheets[0].opts;
+  assert.match(opts.heading, /所有现有行.*缺用例无行位置/);
+  assert.deepEqual(Array.from(opts.marks, m => [m.step, m.index, m.kind]),
+    [[0, 0, "input"], [0, 1, "input"], [1, 0, "input"], [1, 1, "input"]]);
+  assert.equal(opts.readOnly, true);
+});
+
+test("gap input drawer refuses different CSV headers instead of name matching", async () => {
+  const h = harness(), value = job();
+  value.attempts[0].csv_sha256 = "sha10";
+  value.attempts[0].check = typedCheck();
+  await ready(h, value);
+  issueAction(h, "[data-gap-inputs]", { gapAttempt: "10", gapInputs: "0" });
+  h.previews[0].resolve({ text: "mod,a.c/f,f,2,1\r\n#COMMENT,other.c/x,a.c/y,a.c/f@@\r\n,1,2,\r\n" });
+  await settle();
+  assert.equal(h.sheets.length, 0);
+});
+
+test("delayed diagnostic download stays tied to selected historical version and includes rows", async () => {
+  const h = harness(), value = job(20);
+  value.attempts[0].csv_sha256 = "historical";
+  await ready(h, value);
+  h.pin(10);
+  issueAction(h, "[data-diagnostic]", { diagnostic: "10" });
+  assert.equal(h.downloads.length, 0);
+  assert.equal(h.diagnostics[0].attempt, 10);
+  h.diagnostics[0].resolve(packetFor(value.attempts[0]));
+  await settle();
+  const packet = JSON.parse(await h.downloads[0].text());
+  assert.equal(packet.candidate_sha256, "historical");
+  assert.equal(packet.attempt_id, 10);
+  assert.equal(packet.inputs.rows[0].inputs.I1, "1");
+  assert.match(h.downloads[1].download, /1-10\.json$/);
+  assert.equal(h.revisions.length, 0);
+});
+
+for (const change of ["selection", "close", "refresh", "wrong_hash", "wrong_check", "wrong_version"]) {
+  test(`pending diagnostic cannot export after ${change}`, async () => {
+    const h = harness(), value = job(20);
+    value.attempts[0].csv_sha256 = "sha10";
+    await ready(h, value);
+    h.pin(10);
+    issueAction(h, "[data-diagnostic]", { diagnostic: "10" });
+    const packet = packetFor(value.attempts[0]);
+    if (change === "selection") h.pin(20);
+    if (change === "close") h.click("ut-d-close");
+    if (change === "refresh") {
+      h.click("ut-d-refresh"); await settle();
+      h.details.at(-1).resolve(value); await settle();
+    }
+    if (change === "wrong_hash") packet.candidate_sha256 = "different";
+    if (change === "wrong_check") packet.check = { issues: [{ code: "changed" }] };
+    if (change === "wrong_version") packet.version.seq = 99;
+    h.diagnostics[0].resolve(packet);
+    await settle();
+    assert.equal(h.downloads.length, 0);
+    assert.equal(h.revisions.length, 0);
+  });
+}
 
 test("a missing case names its configured requirement while missing annotations stay presentation work", async () => {
   const h = harness();

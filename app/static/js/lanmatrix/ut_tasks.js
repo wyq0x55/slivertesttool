@@ -43,6 +43,8 @@
   var timer = null;
   var detailEpoch = 0;
   var previewEpoch = 0;
+  var diagnosticEpoch = 0;
+  var gapPages = {};
   var listEpoch = 0;
   var detailRequest = 0;
   var detailFresh = false;
@@ -593,6 +595,8 @@
   function select(attemptId, pin) {
     var a = (job.attempts || []).find(function (x) { return x.id === attemptId; });
     if (!a) return;
+    ++diagnosticEpoch;
+    ++previewEpoch;
     if (pin) shownAttempt = attemptId;
     $("ut-d-issues-title").textContent = "校验问题 · " + versionLabel(a) +
       (a.id === job.current_attempt_id ? " · 当前版本" : " · 历史版本，审核前请选择当前版本");
@@ -709,9 +713,75 @@
       (g.steps || []).map(function (step) { return '<li>' + esc(step) + '</li>'; }).join("") +
       '</ol><p><b>如何确认完成：</b>' + esc(g.verification || "重新校验并核对证据。") + '</p></div>';
   }
-  function gapDetailsHtml(list) {
+  function typedColumns(a) {
+    var check = a.check || {}, w = check.candidate_witnesses || {};
+    var domain = (check.input_ranges || {}).contract || {}, columns = domain.columns || [];
+    if (w.contract !== "ut-agent.candidate-witness/1" ||
+        (w.evidence || {}).identified !== true || w.input_mapping_identified !== true ||
+        !a.csv_sha256 || check.candidate_sha256 !== a.csv_sha256 ||
+        w.candidate_sha256 !== a.csv_sha256 ||
+        domain.contract !== "ut-agent.input-domains/1" ||
+        !columns.every(function (c, i) { return c.index === i + 1 && typeof c.column === "string"; })) return null;
+    return columns;
+  }
+  function gapPath(a, g) {
+    var w = (a.check || {}).candidate_witnesses || {};
+    if (!typedColumns(a)) return null;
+    return (w.repair_context || []).find(function (r) { return r.obligation_id === g.obligation_id; }) || null;
+  }
+  function typedFact(value) { return value == null || value === "" ? "UNKNOWN" : plain(value); }
+  function typedAtomSummary(atom) {
+    var facts = ["变量 " + typedFact(atom.variable), "关系 " + typedFact(atom.operator),
+      "边界 " + typedFact(atom.boundary)];
+    if (atom.right_operand != null) facts.push("右操作数 " + typedFact(atom.right_operand));
+    if (atom.required_outcome != null) facts.push("目标结果 " + plain(atom.required_outcome));
+    if (atom.binding) facts.push("绑定 " + plain(atom.binding));
+    return facts.join(" · ");
+  }
+  function pathTokens(path, columns) {
+    var found = [], exact = true;
+    (path.path || []).forEach(function (node) {
+      (node.atoms || []).forEach(function (atom) {
+        ["input_tokens", "right_input_tokens", "mask_input_tokens"].forEach(function (key) {
+          (atom[key] || []).forEach(function (token) {
+            if (!/^I[1-9][0-9]*$/.test(token) || !columns[Number(token.slice(1)) - 1]) exact = false;
+            else if (found.indexOf(token) < 0) found.push(token);
+          });
+        });
+      });
+    });
+    return exact ? found : [];
+  }
+  function typedPathHtml(a, g, index) {
+    var columns = typedColumns(a), path = gapPath(a, g);
+    if (!path) return '<p class="ut-issue-text">类型化位置／输入映射未确认（UNKNOWN）；不能从源码、标签或名称推断绑定。</p>';
+    var tokens = pathTokens(path, columns);
+    return '<div class="ut-guidance"><b>类型化路径与祖先约束</b><ol>' + (path.path || []).map(function (node) {
+      var loc = node.location || {};
+      var location = typeof loc.file === "string" && Number.isInteger(loc.line) && loc.line > 0
+        ? loc.file + ":" + loc.line + (Number.isInteger(loc.column) && loc.column > 0 ? ":" + loc.column : "")
+        : "UNKNOWN（未提供类型化源码位置）";
+      return '<li><p><b>源码位置：</b><code>' + esc(location) + '</code></p><p>' +
+        esc(node.branch_id || "") + ' · 判定：' + esc(node.decision || "UNKNOWN") + ' · 路径要求：' +
+        esc(plain(node.required_outcome)) + '</p>' + (node.atoms || []).map(function (atom) {
+          var mapping = [];
+          ["input_tokens", "right_input_tokens", "mask_input_tokens"].forEach(function (key) {
+            (atom[key] || []).forEach(function (token) {
+              var c = /^I[1-9][0-9]*$/.test(token) && columns[Number(token.slice(1)) - 1];
+              mapping.push(token + " → " + (c ? c.column : "UNKNOWN（无精确列映射）"));
+            });
+          });
+          return '<p><b>类型化约束：</b>' + esc(typedAtomSummary(atom)) + '</p><p><b>精确输入列：</b>' +
+            esc(mapping.join("；") || "NO_DIRECT_INPUT／未提供映射，不能按名称替代") +
+            '</p><details><summary>原始类型化原子</summary><pre>' + esc(JSON.stringify(atom, null, 2)) + '</pre></details>';
+        }).join("") + '</li>';
+    }).join("") + '</ol>' + (tokens.length && a.has_csv ?
+      '<button class="btn small ghost" type="button" data-gap-inputs="' + index + '" data-gap-attempt="' + a.id +
+      '">查看相关 CSV 输入列</button><p>显示现有用例的输入列；缺用例没有可定位的数据行。</p>' : '') + '</div>';
+  }
+  function gapDetailsHtml(list, a, offset) {
     if (!Array.isArray(list)) return detailHtml(list);
-    return list.map(function (g) {
+    return list.map(function (g, index) {
       var row = gapRow(g), label = GAP_CLASS[g.gap_class];
       var constraints = (g.constraints || []).map(function (c) {
         return [c.variable, c.operator, c.value].map(plain).join(" ");
@@ -726,31 +796,34 @@
         (g.branch_id != null ? '<dt>关联判定</dt><dd>' + esc(String(g.branch_id)) + '</dd>' : '') +
         (g.rule_id ? '<dt>规则依据</dt><dd>' + esc(g.rule_id) + '</dd>' : '') +
         (constraints ? '<dt>已知约束</dt><dd>' + esc(constraints) + '</dd>' : '') +
-        '</dl>' + requirementHtml(g.requirement) + guidanceHtml(g.guidance) + '</section>';
+        '</dl>' + typedPathHtml(a, g, offset + index) + requirementHtml(g.requirement) + guidanceHtml(g.guidance) + '</section>';
     }).join("");
   }
-  function rawDiagnosticHtml(issue) {
-    return '<details class="ut-diagnostic-raw"><summary>完整原始诊断（含证据）</summary><pre>' +
+  function rawDiagnosticHtml(issue, paged) {
+    return '<details class="ut-diagnostic-raw"><summary>' + (paged ? "本页原始诊断（含证据）" : "完整原始诊断（含证据）") + '</summary><pre>' +
       esc(JSON.stringify(issue, null, 2)) + '</pre></details>';
   }
-  function downloadDiagnostic(attemptId) {
+  async function downloadDiagnostic(attemptId) {
     var a = job && (job.attempts || []).find(function (item) { return item.id === attemptId; });
-    if (!a || !a.check) return;
-    var packet = {
-      contract: "ut-platform.diagnostic-packet/1", job_id: job.id, attempt_id: a.id,
-      candidate_sha256: a.csv_sha256 || null,
-      target: job.target, check: a.check, execution: a.execution || null,
-      test_configuration: (job.batch && job.batch.constraints) || null,
-      instruction: "依据本版本校验事实逐项解释问题，并列出处理位置、依据、待补证据和复验方法。" +
-        "仅在类型化输入映射与路径证据足够时建议输入修改；证据不足明确说明。" +
-        "候选责任层不等于已证实根因，不得猜测期望值、弱化测试策略或把 HOST_EXECUTION 当作目标执行验收。",
-      completeness_note: "此包保留平台收到的完整校验报告；上游明细可能有数量上限，" +
-        "请核对 unresolved_count、issues 和版本文件，缺失证据不能推测补全。",
-    };
+    if (!a || !a.check || !a.has_csv || !detailFresh || attemptId !== (shownAttempt || job.current_attempt_id)) return;
+    var id = job.id, epoch = ++diagnosticEpoch, detail = detailEpoch;
+    var sha = a.csv_sha256, seq = a.seq, checkSnapshot = JSON.stringify(a.check), packet;
+    try {
+      packet = await LMApi.utAttemptDiagnostic(pid, id, attemptId);
+      if (epoch !== diagnosticEpoch || detail !== detailEpoch || openJobId !== id || !detailFresh) return;
+      if (packet.contract !== "ut-platform.diagnostic-packet/2" || packet.job_id !== id ||
+          packet.attempt_id !== attemptId || !sha || packet.candidate_sha256 !== sha ||
+          !packet.version || packet.version.seq !== seq || JSON.stringify(packet.check) !== checkSnapshot) {
+        throw new Error("诊断包与显示版本不一致，请刷新后重新下载");
+      }
+    } catch (e) {
+      if (epoch === diagnosticEpoch && detail === detailEpoch && openJobId === id) say(e.message, true);
+      return;
+    }
     var url = window.URL.createObjectURL(new window.Blob([JSON.stringify(packet, null, 2)], { type: "application/json" }));
     var link = document.createElement("a");
     link.href = url;
-    link.download = "ut-diagnostic-" + job.id + "-" + a.id + ".json";
+    link.download = "ut-diagnostic-" + id + "-" + attemptId + ".json";
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -880,36 +953,59 @@
       return counts[k];
     }).map(function (k) { return counts[k] + " 个" + SEVERITY[k][1]; }).join(" · ");
     $("ut-d-issues-sum").textContent = sum ? "· " + sum : "";
-    if (!issues.length) {
-      $("ut-d-issues").innerHTML = requirements + '<p class="muted">' + (a.check ? "未报告校验问题" : "尚无校验报告") + "</p>";
-      return;
-    }
     var completeness = (a.check && a.check.completeness) || {};
     var shownGaps = Array.isArray(completeness.unresolved) ? completeness.unresolved.length : 0;
     var omittedGaps = (completeness.unresolved_count || 0) - shownGaps;
-    $("ut-d-issues").innerHTML = requirements + '<p class="ut-diagnostic-tools"><button class="btn small ghost" type="button" data-diagnostic="' +
-      a.id + '">下载本地 AI 排查包</button><span class="muted">包含本版本问题、证据与处理指引</span></p>' +
+    var shownPending = Array.isArray(completeness.output_pending) ? completeness.output_pending.length : 0;
+    var omittedPending = (completeness.output_pending_count || 0) - shownPending;
+    // Lists in completeness are authoritative; issue.detail is only a preview.
+    issues = issues.slice();
+    [["INPUT_OBLIGATION_UNRESOLVED", "unresolved"], ["OUTPUT_ORACLE_PENDING", "output_pending"]].forEach(function (pair) {
+      if ((completeness[pair[1]] || []).length && !issues.some(function (i) { return i.code === pair[0]; })) {
+        issues.push({ code: pair[0], severity: "warning", message: "未解决测试要求" });
+      }
+    });
+    $("ut-d-issues").innerHTML = requirements + (a.check && a.has_csv ?
+      '<p class="ut-diagnostic-tools"><button class="btn small ghost" type="button" data-diagnostic="' +
+      a.id + '">下载本地 AI 排查包</button><span class="muted">包含本版本全部输入行、精确列、诊断与候选回复契约</span></p>' : '') +
       (omittedGaps > 0 ? '<p class="ut-issue-text">共 ' + completeness.unresolved_count + ' 项未解决测试要求，本报告只提供前 ' +
-        shownGaps + ' 项明细；另有 ' + omittedGaps + ' 项需查看原始 Suite 文件，不能视为已解决。</p>' : '') +
+        shownGaps + ' 项明细；另有 ' + omittedGaps + ' 项未提供。请重新生成／校验取得完整清单，不能视为已解决。</p>' : '') +
+      (omittedPending > 0 ? '<p class="ut-issue-text">共 ' + completeness.output_pending_count + ' 项期望值待回填，本报告只提供 ' +
+        shownPending + ' 项明细；另有 ' + omittedPending + ' 项未提供。请重新校验取得完整清单，不能交给模型猜测期望值。</p>' : '') +
+      (completeness.details_complete === false ? '<p class="ut-issue-text">校验器声明明细不完整；请重新校验并核对完整报告。</p>' : '') +
+      (!issues.length ? '<p class="muted">' + (a.check ? "未报告校验问题" : "尚无校验报告") + '</p>' : '') +
       '<ul class="ut-issue-list">' + issues.map(function (i) {
       var sev = SEVERITY[i.severity] || ["notask", i.severity || "—"];
       var locate = i.code === "ORACLE_MISMATCH" && a.has_csv
         ? '<button class="btn small ghost" type="button" data-sheet="' + a.id + '">在表格中定位</button>' : "";
+      var key = i.code === "INPUT_OBLIGATION_UNRESOLVED" ? "unresolved" :
+        i.code === "OUTPUT_ORACLE_PENDING" ? "output_pending" : null;
+      var list = key && Array.isArray(completeness[key]) ? completeness[key] : i.detail;
+      var paged = key && Array.isArray(list), pageKey = a.id + ":" + key;
+      var page = paged ? Math.min(gapPages[pageKey] || 0, Math.max(0, Math.ceil(list.length / PREVIEW_ROWS) - 1)) : 0;
+      var offset = page * PREVIEW_ROWS, preview = paged ? list.slice(offset, offset + PREVIEW_ROWS) : list;
+      function pageButton(to, label) {
+        return '<button class="btn small ghost" type="button" data-gap-page="' + to + '" data-gap-kind="' + key +
+          '" data-gap-version="' + a.id + '">' + label + '</button>';
+      }
+      var paging = paged ? '<p>显示 ' + (list.length ? offset + 1 : 0) + '–' + Math.min(offset + PREVIEW_ROWS, list.length) +
+        ' / ' + list.length + ' 项 ' + (page ? pageButton(page - 1, "上一页") : '') +
+        (offset + PREVIEW_ROWS < list.length ? pageButton(page + 1, "下一页") : '') + '</p>' : '';
       return '<li class="ut-issue sev-' + esc(i.severity || "") + '"><div class="ut-issue-head">' +
         LMPill.html(sev[0], sev[1]) + '<code class="ut-issue-code">' + esc(i.code) + "</code>" +
         '<span class="ut-issue-msg">' + esc((i.guidance && i.guidance.title) || i.message || "") + "</span>" + locate + "</div>" +
         (i.guidance && i.message ? '<p class="ut-issue-text">' + esc(i.message) + '</p>' : '') +
         guidanceHtml(i.guidance) +
-        (i.code === "INPUT_OBLIGATION_UNRESOLVED" ? gapDetailsHtml(i.detail) : DETAIL_VIEW[i.code]
-          ? detailHtml(DETAIL_VIEW[i.code][0](i.detail), DETAIL_VIEW[i.code][1])
-          : detailHtml(i.detail)) + rawDiagnosticHtml(i) + "</li>";
+        paging + (i.code === "INPUT_OBLIGATION_UNRESOLVED" ? gapDetailsHtml(preview, a, offset) : DETAIL_VIEW[i.code]
+          ? detailHtml(DETAIL_VIEW[i.code][0](preview), DETAIL_VIEW[i.code][1])
+          : detailHtml(preview)) + rawDiagnosticHtml(paged ? Object.assign({}, i, { detail: preview }) : i, paged) + "</li>";
     }).join("") + "</ul>";
   }
 
   // ------------------------------------------------------------ CSV drawer
   // Show an attempt's CSV as a table in the step-detail drawer; `edit` opens
   // the current candidate for a human revision that is submitted from there.
-  async function openSheet(attemptId, edit) {
+  async function openSheet(attemptId, edit, relevantTokens) {
     var a = job && (job.attempts || []).find(function (x) { return x.id === attemptId; });
     if (!a || !a.has_csv) return;
     if (edit && (!canRevise() || attemptId !== job.current_attempt_id || actionPending || !detailFresh)) return;
@@ -932,10 +1028,23 @@
     var unchanged = window.LMTestCsv.serialize(model, window.LMTestCsv.toDoc(model));
     // Inputs each branch reads (yellow) and disputed expected values (red)
     // sit in different columns, so the two kinds never overlap.
-    var branch = window.LMTestCsv.branchMarks(model);
+    var branch;
+    if (relevantTokens) {
+      var columns = typedColumns(a);
+      if (!columns || columns.length !== model.ni || columns.some(function (c, i) { return c.column !== model.columns[i]; })) {
+        say("CSV 列与类型化映射不一致，不能定位输入", true); return;
+      }
+      branch = [];
+      model.rows.forEach(function (_row, step) {
+        relevantTokens.forEach(function (token) {
+          branch.push({ step: step, kind: "input", index: Number(token.slice(1)) - 1, color: "#fff0b3" });
+        });
+      });
+    } else branch = window.LMTestCsv.branchMarks(model);
     window.LMStepsEditor.open({ id: a.id, title: t.function || ("作业 #" + id), steps: window.LMTestCsv.toDoc(model) }, {
       heading: "CSV · " + versionLabel(a) + (edit ? " · 人工修订" : "") +
-        (branch.length ? " · 黄色：分支判定读取的输入（点击判定行跳转）" : ""),
+        (relevantTokens ? " · 黄色：类型化路径对应输入列（所有现有行）；缺用例无行位置" :
+          branch.length ? " · 黄色：分支判定读取的输入（点击判定行跳转）" : ""),
       layout: window.LMTestCsv.LAYOUT, readOnly: !edit, references: false,
       marks: window.LMTestCsv.marks(model, a.check).concat(branch),
       saveLabel: "提交修订并执行", closeOnSave: true,
@@ -1121,6 +1230,21 @@
   $("ut-d-issues").addEventListener("click", function (e) {
     var diagnostic = e.target.closest("[data-diagnostic]");
     if (diagnostic) { downloadDiagnostic(Number(diagnostic.dataset.diagnostic)); return; }
+    var page = e.target.closest("[data-gap-page]");
+    if (page) {
+      var version = (job.attempts || []).find(function (a) { return a.id === Number(page.dataset.gapVersion); });
+      if (version) { gapPages[version.id + ":" + page.dataset.gapKind] = Math.max(0, Number(page.dataset.gapPage) || 0); renderIssues(version); }
+      return;
+    }
+    var inputs = e.target.closest("[data-gap-inputs]");
+    if (inputs) {
+      var a = (job.attempts || []).find(function (x) { return x.id === Number(inputs.dataset.gapAttempt); });
+      var g = a && (((a.check || {}).completeness || {}).unresolved || [])[Number(inputs.dataset.gapInputs)];
+      var path = g && gapPath(a, g), columns = a && typedColumns(a);
+      var tokens = path && pathTokens(path, columns);
+      if (tokens && tokens.length) openSheet(a.id, false, tokens);
+      return;
+    }
     var b = e.target.closest("[data-sheet]");
     if (b) openSheet(Number(b.dataset.sheet), false);
   });
