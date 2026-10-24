@@ -136,7 +136,8 @@ def execute(*, bridge, ir_json, intents, reference, candidate, out: Path, config
     if metadata["mode"] != "llm":
         return run(out / "host")
 
-    prepared = bridge.host_prepare(**arguments, out=out / "prepare")
+    prepare_options = {"manifest": Path(config["manifest_path"])} if config.get("manifest_path") else {}
+    prepared = bridge.host_prepare(**arguments, out=out / "prepare", **prepare_options)
     _write_json(out / "prepared.json", prepared)
     metadata["prepared"] = prepared
     save()

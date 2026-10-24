@@ -290,6 +290,62 @@ def test_host_capture_cannot_change_expected_values():
     assert pipeline._capture_backfill(None, None, {"evidence_source": "HOST_EXECUTION"}, {}) is False
 
 
+def test_host_missing_case_creates_derived_version_then_reexecutes_before_review(configured, monkeypatch):
+    from test_ut_pipeline import GAP, _fill_blank, _llm_reply, _row
+
+    env, ids = configured
+    env.bridge.gaps = [GAP]
+    env.call("put", "/config", json={"repair_model": "case-model", "stub_model": "different-stub-model"})
+    model_calls, host_calls = [], []
+
+    def chat(messages, **kwargs):
+        model_calls.append(kwargs["model"])
+        return _llm_reply(_row("b1:T"))
+
+    def host_execute(*, out, candidate, reference, **kwargs):
+        host_calls.append(candidate)
+        out.mkdir(parents=True)
+        data = candidate.read_bytes()
+        digest = hashlib.sha256(data).hexdigest()
+        check = env.bridge.check(candidate, manifest="fixture")
+        check.update(verdict="PASS", executed=True, evidence_source="HOST_EXECUTION",
+                     counts_as_target_evidence=False, delivery_validated=False)
+        check["candidate_witnesses"]["input_mapping_identified"] = True
+        check["input_ranges"] = {"contract": {"contract": "ut-agent.input-domains/1", "columns": [
+            {"index": 1, "column": "x", "status": "PROVEN", "min": 0, "max": 255}]}}
+        execution = {"status": "HOST_PASS", "evidence_source": "HOST_EXECUTION",
+                     "counts_as_target_evidence": False, "delivery_validated": False,
+                     "sandbox": str(out.resolve()), "input_binding": {"candidate": {"sha256": digest}}}
+        if b",5,\r\n" in data:
+            typed = out / "typed.csv"
+            typed.write_bytes(_fill_blank(data))
+            execution["typed_candidate"] = {"contract": "ut-agent.host-typed-candidate/1",
+                "path": str(typed.resolve()), "sha256": hashlib.sha256(typed.read_bytes()).hexdigest(),
+                "source_candidate_sha256": digest, "reference_rows": 1,
+                "expected_value_source": "IMPLEMENTATION_DERIVED"}
+        return {"execution": execution, "check": check}
+
+    monkeypatch.setattr(provider, "invoke_chat", chat)
+    monkeypatch.setattr(env.bridge, "host_execute", host_execute)
+    monkeypatch.setattr(env.bridge, "execute", lambda *a, **k: pytest.fail("WinAMS must not execute"))
+    [job_id] = _enqueue(env, ids["f"])
+    job = _job(env, job_id)
+    assert job["state"] == "awaiting_review" and job["repair_rounds"] == 1
+    assert model_calls == ["case-model"] and len(host_calls) == 3
+    assert [a["origin"] for a in job["attempts"]] == ["GENERATOR", "LLM", "HOST_DERIVED"]
+    parent, child = job["attempts"][-2:]
+    assert child["reviser"]["parent_attempt_id"] == parent["id"]
+    assert child["reviser"]["oracle_source"] == "IMPLEMENTATION_DERIVED"
+    assert parent["csv_sha256"] != child["csv_sha256"]
+    assert child["check"]["candidate_sha256"] == child["csv_sha256"]
+    assert child["check"]["counts_as_target_evidence"] is False
+    assert child["check"]["delivery_validated"] is False
+    assert env.call("post", f"/jobs/{job_id}/review", json={
+        "decision": "approve", "expected_attempt_id": parent["id"]})[0] == 409
+    assert env.call("post", f"/jobs/{job_id}/review", json={
+        "decision": "approve", "expected_attempt_id": child["id"]})[0] == 200
+
+
 @pytest.mark.parametrize("proposal", [{}, {**PROPOSAL, "extra": True}, {**PROPOSAL, "evidence_ids": []},
                                       {**PROPOSAL, "stub_bodies": "source"}])
 def test_proposal_schema_rejects_untrusted_shapes(proposal):

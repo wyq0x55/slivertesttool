@@ -127,7 +127,7 @@ def chat(messages: list[dict[str, str]], *,
     try:
         with open_url(
                 req, timeout=timeout or cfg[config.KEY_TIMEOUT]) as resp:
-            payload = (_stream_payload(resp, usage, started) if stream else
+            payload = (_stream_payload(resp, usage, started, api_key=cfg[config.KEY_API_KEY]) if stream else
                        json.loads(resp.read().decode("utf-8")))
     except urllib.error.HTTPError as exc:
         detail = ""
@@ -157,7 +157,7 @@ def chat(messages: list[dict[str, str]], *,
     return content
 
 
-def _stream_payload(response, usage: Optional[dict[str, int]], started: float) -> dict[str, Any]:
+def _stream_payload(response, usage: Optional[dict[str, int]], started: float, *, api_key: str = "") -> dict[str, Any]:
     """Collect complete SSE events; a dropped connection is never a reply."""
     fragments, reported, event = [], {}, []
     finished = False
@@ -180,7 +180,14 @@ def _stream_payload(response, usage: Optional[dict[str, int]], started: float) -
         if not isinstance(chunk, dict):
             raise ProviderError("AI 流式响应格式异常")
         if chunk.get("error"):
-            raise ProviderError("AI 流式接口返回错误")
+            error = chunk["error"]
+            fields = (error.get("type"), error.get("code"), error.get("message")) if isinstance(error, dict) else (error,)
+            detail = ": ".join(str(value) for value in fields if isinstance(value, (str, int)) and value != "")
+            if api_key:
+                detail = detail.replace(api_key, "***")
+            detail = re.sub(r"(?i)\bBearer\s+\S+", "Bearer ***", detail)
+            detail = " ".join(detail.split())[:600]
+            raise ProviderError("AI 流式接口返回错误" + ("：" + detail if detail else ""))
         if usage is not None and "first_event_ms" not in usage:
             usage["first_event_ms"] = round((time.monotonic() - started) * 1000)
         if isinstance(chunk.get("usage"), dict):

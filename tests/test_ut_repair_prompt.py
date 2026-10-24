@@ -55,6 +55,16 @@ def test_gap_prompt_explains_the_frozen_requirement_and_exact_missing_target():
     assert "此项必须 declined" in _user(CSV, check, [], [gap])
 
 
+def test_exact_boundary_context_is_not_reported_as_a_required_true_predicate():
+    gap = dict(GAP, kind="boundary", outcome=None, boundary_class="exact", boundary_value=10,
+               constraints=[{"variable": "sample", "operator": "==", "value": 10}],
+               predicate_context=[{"kind": "predicate", "variable": "sample", "operator": ">", "value": 10}])
+    prompt = _user(CSV, dict(CHECK, completeness=COMPLETENESS), [], [gap])
+    assert "求解约束（输入要求）：sample == 10" in prompt
+    assert "判定原子上下文（不要求逐项为真）：sample > 10" in prompt
+    assert "此境界值义务未指定判定结果" in prompt
+
+
 def test_system_prompt_is_shared_by_every_function_of_a_batch():
     reordered = dict(CONSTRAINTS, policies={"a": 1, "b": 2})
     assert repair._system_prompt(CONSTRAINTS) == repair._system_prompt(reordered)
@@ -81,8 +91,9 @@ def test_only_open_missing_cases_are_listed_as_work():
         {"code": "INPUT_OBLIGATION_UNRESOLVED", "severity": "warning", "detail": [GAP]}]}
     prompt = _user(CSV, check, [], [GAP])
     assert ("- b6:boundary:1:above:2（boundary, 条件 1, above 2） 判定式："
-            "( ENG_PSD_OTSW_BIPOL == cu1_psd_otsw_pol ) / 求解 SAT：intent failed validation"
+            "( ENG_PSD_OTSW_BIPOL == cu1_psd_otsw_pol ) / 求解 SAT"
             ) in prompt
+    assert "此境界值义务未指定判定结果：intent failed validation" in prompt
     assert "其中 1 个已补行待确认" in prompt
     verdict = prompt[prompt.index("## 当前版本的校验判定"):]
     assert "INPUT_OBLIGATION_UNRESOLVED" not in verdict
@@ -117,7 +128,7 @@ def test_system_prompt_asks_for_rows_not_a_csv():
     system = repair._system_prompt(CONSTRAINTS)
     assert '"rows"' in system and '"declined"' in system and "不要输出 CSV" in system
     assert "不能仅凭冲突认定缺少输入" in system
-    assert repair.PROMPT_VERSION == "ut-repair/7.5"
+    assert repair.PROMPT_VERSION == "ut-repair/7.6"
 
 
 def _revise(monkeypatch, reply, allowed=frozenset({"b6:boundary:1:above:2"})):
@@ -137,7 +148,7 @@ def test_reply_rows_are_appended_and_claims_recorded(monkeypatch):
     assert revision.csv_bytes.decode("cp932") == CSV + ";$L$,LLM add b6:boundary:1:above:2\r\n,0,2,\r\n"
     assert revision.meta["claimed"] == ["b6:boundary:1:above:2"]
     assert [item["index"] for item in revision.meta["rejected"]] == [1]
-    assert revision.meta["prompt_version"] == "ut-repair/7.5"
+    assert revision.meta["prompt_version"] == "ut-repair/7.6"
 
 
 def test_a_declining_reply_adds_nothing(monkeypatch):

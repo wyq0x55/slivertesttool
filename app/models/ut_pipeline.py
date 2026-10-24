@@ -298,6 +298,8 @@ class UtAttempt(db.Model):
     ORIGIN_HUMAN = "HUMAN"
     # Expected values replaced by the outputs WinAMS captured for the same inputs.
     ORIGIN_CAPTURE = "CAPTURE"
+    # Appended outputs proven by the typed implementation oracle, then re-executed.
+    ORIGIN_HOST_DERIVED = "HOST_DERIVED"
 
     id = db.Column(db.Integer, primary_key=True)
     job_id = db.Column(

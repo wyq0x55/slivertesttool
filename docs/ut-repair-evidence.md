@@ -139,6 +139,43 @@ identities are still checked and the report records
 `reason="Checker omitted its candidate digest; available execution digests were compared, not inferred"`.
 Host evidence retains `counts_as_target_evidence=false`.
 
+### Host appended-input repair
+
+The clang backend may enter input-row repair only for open `MISSING_CASE`
+obligations in a complete report with identified, candidate-bound witness and
+input-column evidence. Unsupported coverage, preparation/runtime failures,
+configuration conflicts and unknown bindings remain human work. The frozen
+`repair_model` and `max_repair_rounds` control input proposals; `stub_model` and
+`stub_max_rounds` independently control Host stub proposals. An unavailable
+repair provider consumes no input round; retry resumes that stage without
+renewing the stub evidence. A stub retry still creates a new attempt so old
+review selections remain stale.
+
+Repair prompt version `ut-repair/7.6` distinguishes scalar input constraints
+from `predicate_context`. Raw decision atoms describe the typed decision;
+they are not a conjunction that every proposed input must make true. An exact
+boundary with no required outcome does not acquire one from its decision text.
+Streamed provider failures retain bounded upstream type/code/message details
+with configured keys and Bearer credentials redacted, and remain failures.
+
+Appended rows pass the existing static `check`/witness verifier before LLVM
+execution. This check runs without an execution argument and never launches
+WinAMS. Host prepare/execute receive the configured manifest for typed binding;
+the original Suite and reference CSV remain immutable.
+
+The Host engine may return `execution.typed_candidate` with contract
+`ut-agent.host-typed-candidate/1`, an absolute path, artifact SHA,
+`source_candidate_sha256`, `reference_rows`, and
+`expected_value_source=IMPLEMENTATION_DERIVED`. The platform verifies those
+identities, confines the file to the execution sandbox/root, rejects lossy CSV
+records and checks unchanged columns, input vectors, row counts, reference rows
+and existing expected cells. Only blank output cells after `reference_rows`
+may be filled. Valid bytes become a child `HOST_DERIVED` attempt with the receipt
+and `oracle_source=IMPLEMENTATION_DERIVED`; they never replace their parent.
+The child must execute again with its new SHA before it can be approved, even
+with an explicit note. No Host result enters WinAMS capture, and Host evidence
+retains `counts_as_target_evidence=false` and `delivery_validated=false`.
+
 The integrity failure record contains
 `evidence_integrity: {status: "UNKNOWN", reason: ...}` and an error issue with
 code `INTEGRITY_ERROR`. These fields preserve the received evidence without
