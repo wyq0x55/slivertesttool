@@ -13,6 +13,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from test_ut_host_subprocess import _scalar_stub_bodies
 from test_ut_pipeline import _job
 from test_ut_pipeline import env as workflow_env  # noqa: F401
 
@@ -89,8 +90,7 @@ def test_real_index_generation_execution_review_and_export(real_workflow, monkey
         def local_model(messages, **kwargs):
             prompts.append(messages)
             request = json.loads(messages[1]["content"])
-            return json.dumps({"status": "CANDIDATE", "stub_bodies": {
-                name: value["reference_body"] for name, value in request["stubs"].items()},
+            return json.dumps({"status": "CANDIDATE", "stub_bodies": _scalar_stub_bodies(request),
                 "evidence_ids": ["typed-function-ir-v5", "suite-stub-projection-v1"], "limitations": []})
 
         monkeypatch.setattr(provider, "invoke_chat", local_model)

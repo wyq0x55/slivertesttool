@@ -16,6 +16,26 @@ from app.services.ut_pipeline import host
 from app.services.ut_pipeline.bridge import BridgeSettings, UtAgentBridge
 
 
+def _scalar_stub_bodies(request):
+    """Implement the scalar fixture's typed adapter contract, without an oracle."""
+    bodies = {}
+    for name, stub in request["stubs"].items():
+        assert "reference_body" not in stub
+        contract = stub["control_contract"]
+        assert not contract["fields"]
+        counter, capacity = contract["invocation_counter"], stub["capacity"]
+        lines = [f"unsigned int slot = {counter}++;",
+                 f"if (slot >= {capacity}) slot = {capacity - 1};"]
+        for argument in contract["arguments"]:
+            assert argument["mode"] == "value"
+            lines += [f"{argument['record_into']}[slot] = {argument['parameter']};",
+                      f"{argument['record_flag']}[slot] = 1;"]
+        returned = contract["return_from"]
+        lines.append(f"return {returned}[slot];" if returned else "return;")
+        bodies[name] = " ".join(lines)
+    return bodies
+
+
 @pytest.fixture()
 def artifacts(tmp_path):
     root, python = os.environ.get("UT_HOST_TEST_AGENT_ROOT"), os.environ.get("UT_HOST_TEST_PYTHON")
@@ -90,7 +110,7 @@ def test_real_bridge_validates_fake_model_and_repairs_with_observations(artifact
     def fake_model(messages, **kwargs):
         prompts.append(messages)
         request = json.loads(messages[1]["content"])
-        bodies = {name: value["reference_body"] for name, value in request["stubs"].items()}
+        bodies = _scalar_stub_bodies(request)
         if len(prompts) == 1:
             bodies["read_value"] = "return 0;"
         return json.dumps({"status": "CANDIDATE", "stub_bodies": bodies,
