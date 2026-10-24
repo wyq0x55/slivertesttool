@@ -136,6 +136,15 @@ async function ready(h, value = job()) {
   await settle();
 }
 
+test("typed Host outputs have a distinct origin and remain pending before reexecution", async () => {
+  const h = harness(), value = job(20, "executing");
+  value.last_verdict = null;
+  Object.assign(value.attempts[1], { origin: "HOST_DERIVED", verdict: null, check: null });
+  await ready(h, value);
+  assert.match(h.get("ut-d-attempts").innerHTML, /类型推导/);
+  assert.equal(h.get("ut-d-review-section").hidden, true);
+});
+
 test("running progress shows batch generation honestly and hands off to review", async () => {
   const h = harness();
   await ready(h, { ...job(null, "generating"), attempts: [], last_verdict: null });

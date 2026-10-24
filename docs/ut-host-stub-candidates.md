@@ -22,7 +22,7 @@ execution summary and an investigation instruction for a local model. Downloadin
 does not call an AI provider or submit a revision. The packet preserves upstream
 detail limits and does not contain every source artifact. Local-model repair
 prompts also include the checker's guidance for open missing-case obligations
-(`ut-repair/7.5`); evidence gaps and unconfirmed infeasibility are not row work.
+(`ut-repair/7.6`); evidence gaps and unconfirmed infeasibility are not row work.
 
 The batch API includes selected frozen constraint fields so the details page
 can show the test requirements selected for that batch. Checker reports also

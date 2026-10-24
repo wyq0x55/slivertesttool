@@ -49,6 +49,22 @@ def test_reasoning_events_are_not_mixed_into_the_json_reply():
     assert provider._stream_payload(response, {}, 0)["choices"][0]["message"]["content"] == "{}"
 
 
+def test_stream_error_keeps_actionable_upstream_reason_and_redacts_credentials(monkeypatch):
+    secret = "private-gateway-key"
+    monkeypatch.setattr(config, "get_ai_config", lambda **_: {
+        config.KEY_API_BASE: "https://model.invalid/v1", config.KEY_API_KEY: secret,
+        config.KEY_MODEL: "test", config.KEY_TIMEOUT: 7})
+    response = _sse({"error": {"type": "api_error", "code": 502,
+        "message": f"connect 10.0.0.1:8095 timed out; {secret}; Bearer other-secret " + "x" * 1000}})
+    monkeypatch.setattr(provider.urllib.request, "urlopen", Mock(return_value=response))
+    with pytest.raises(provider.ProviderError) as failed:
+        provider.invoke_chat([{"role": "user", "content": "hi"}], stream=True)
+    message = str(failed.value)
+    assert "api_error: 502: connect 10.0.0.1:8095 timed out" in message
+    assert secret not in message and "other-secret" not in message
+    assert len(message) < 650
+
+
 @pytest.mark.parametrize("suffix", [
     b'event: error\ndata: {"message":"backend failed"}\n\n',
     b'data: {"choices":[{"delta":{},"finish_reason":"error"}]}\n\n',
