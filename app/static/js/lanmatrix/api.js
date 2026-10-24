@@ -409,6 +409,10 @@
       return request("GET", `/projects/${pid}/ut/jobs/${jobId}/attempts/${attemptId}/csv`,
         { query: { format: "text" } });
     },
+    utAttemptDiagnostic(pid, jobId, attemptId) {
+      return request("GET", `/projects/${pid}/ut/jobs/${jobId}/attempts/${attemptId}/csv`,
+        { query: { format: "diagnostic" } });
+    },
     utAttemptUrl(pid, jobId, attemptId) {
       return `${BASE}/projects/${pid}/ut/jobs/${jobId}/attempts/${attemptId}/csv`;
     },

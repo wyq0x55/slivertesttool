@@ -118,6 +118,8 @@ def job_detail(project_id: int, job_id: int):
 @login_required
 def attempt_csv(project_id: int, job_id: int, attempt_id: int):
     _project_and_role(project_id, "project.view")
+    if request.args.get("format") == "diagnostic":
+        return ok(pipeline.attempt_diagnostic(project_id, job_id, attempt_id))
     data, name = pipeline.attempt_csv(project_id, job_id, attempt_id)
     if request.args.get("format") == "text":
         return ok({"name": name, "text": data.decode("cp932", "replace")})

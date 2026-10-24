@@ -66,3 +66,35 @@ WinAMS remains serial and every outcome still requires human review. None of
 these transport or cache changes proves requirement-correct expected values,
 eliminates HTTP 499/502, or establishes real repair effectiveness without a
 corresponding real execution trial.
+
+## Human navigation and offline diagnostic packets
+
+The check panel paginates the full `completeness.unresolved` and
+`completeness.output_pending` worklists. An issue's `detail` is only a bounded
+preview. A reported count that differs from its supplied list, or an explicit
+`details_complete=false`, requires a fresh complete check and routes the job to
+`needs_human` before another repair request. This also protects historical
+reports from checkers that serialized only the first 50 records.
+
+Typed branch locations, ancestor outcomes, operands and exact input-column
+tokens are shown only with the supported witness contract, identified evidence
+and matching candidate/check/witness hashes. Opening the related inputs marks
+the proven columns across existing CSV rows. A missing case has no existing row
+location. Missing bindings remain `UNKNOWN` or `NO_DIRECT_INPUT`.
+
+`GET /api/v1/projects/<project_id>/ut/jobs/<job_id>/attempts/<attempt_id>/csv?format=diagnostic`
+uses the existing authenticated attempt-download permission and returns
+`ut-platform.diagnostic-packet/2`. It contains the selected attempt's version and
+SHA-256, all input vectors with original 1-based reference-row numbers, exact
+headers and reported domains, the complete check, execution evidence, frozen
+configuration/provenance and an append-only JSON reply contract. Historical
+exports use only that attempt's lineage through its sequence number. A changed
+CSV hash or malformed rows that the repair parser would discard prevent export;
+they cannot be advertised as complete inputs.
+
+The packet omits CSV labels and expected-value cells from its input vectors and
+does not bundle source files. Replies can propose appended input rows within
+the existing verifier's obligation and column scope, or decline with missing
+evidence. The packet does not automatically import or apply a local AI reply.
+Execution, recheck and human review still follow. Selection changes, detail
+refreshes and version mismatches invalidate pending browser downloads.
