@@ -110,6 +110,18 @@ environment failure retains its actionable blocking reason. Neither gate calls t
 round. Existing locked Baseline and explicit-policy records remain supported;
 a missing completeness report is not treated as an empty complete report.
 
+Every supported report supplies an `unresolved` array and an explicit
+`unresolved_count`. Counts must be non-negative integers, excluding Booleans,
+and must equal the supplied array length. Each record must be an object with
+a unique, nonblank string `obligation_id`; an optional `requirement` must be an
+object. A supplied `details_complete` must be a Boolean and must be true.
+Field-level validation errors identify what the checker must regenerate.
+Known legacy reports containing only the unresolved list/count pair remain
+supported. If either `output_pending` or `output_pending_count` appears, both
+are required and obey the same list, count and record rules. A flag alone,
+a count alone, malformed records or partially supplied pending-output fields
+cannot authorize machine PASS, another repair round or offline repair scope.
+
 Before repair, result persistence, Host PASS handling and final approval, the
 platform re-reads the selected attempt CSV and compares its digest with the
 attempt SHA and every supplied identity. This includes

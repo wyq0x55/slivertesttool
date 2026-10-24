@@ -62,6 +62,8 @@ class HostBridge(FakeBridge):
         if self.reason_codes:
             execution["reason_code"] = self.reason_codes[min(len(self.host_calls) - 1, len(self.reason_codes) - 1)]
         check = {"verdict": verdict, "repairable": False, "executed": verdict != "BLOCKED",
+                 "completeness": {"unresolved": [], "unresolved_count": 0,
+                                  "output_pending": [], "output_pending_count": 0, "details_complete": True},
                  "evidence_source": "HOST_EXECUTION", "counts_as_target_evidence": False,
                  "delivery_validated": False, "issues": [] if verdict == "PASS" else [
                      {"code": "HOST_CSV_NOT_BOUND" if not bound else status, "severity": "error",

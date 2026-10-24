@@ -18,7 +18,8 @@ def check_document():
     gaps = [{"obligation_id": f"B{i}", "gap_class": "MISSING_CASE"} for i in range(75)]
     return {"candidate_sha256": SHA, "verdict": "PASS",
             "completeness": {"unresolved": gaps, "unresolved_count": 75,
-                             "output_pending": [{"obligation_id": "O"}], "details_complete": True},
+                             "output_pending": [{"obligation_id": "O"}], "output_pending_count": 1,
+                             "details_complete": True},
             "issues": [{"code": "INPUT_OBLIGATION_UNRESOLVED", "detail": gaps[:50]}],
             "input_ranges": {"contract": {"contract": "ut-agent.input-domains/1", "columns": [
                 {"index": 1, "column": "a.c/x", "status": "PROVEN", "min": 0, "max": 100},

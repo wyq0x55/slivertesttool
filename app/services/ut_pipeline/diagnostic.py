@@ -10,33 +10,83 @@ from typing import Any
 from . import increment
 
 
+def report_records(check: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    """Read record objects safely; gap_report still rejects any invalid entry."""
+    completeness = check.get("completeness")
+    records = completeness.get(key) if isinstance(completeness, dict) else None
+    return [record for record in records if isinstance(record, dict)] if isinstance(records, list) else []
+
+
+def _worklist_errors(report: dict[str, Any], key: str) -> list[str]:
+    records, count = report.get(key), report.get(f"{key}_count")
+    errors = []
+    if not isinstance(records, list):
+        errors.append(f"{key} must be a supplied array")
+    if type(count) is not int or count < 0:
+        errors.append(f"{key}_count must be a supplied non-negative integer")
+    if isinstance(records, list):
+        ids = set()
+        for index, record in enumerate(records):
+            if not isinstance(record, dict):
+                errors.append(f"{key}[{index}] must be an object")
+                continue
+            oid = record.get("obligation_id")
+            if not isinstance(oid, str) or not oid.strip():
+                errors.append(f"{key}[{index}].obligation_id must be a non-empty string")
+            elif oid in ids:
+                errors.append(f"{key} contains duplicate obligation_id {oid}")
+            else:
+                ids.add(oid)
+            if "requirement" in record and not isinstance(record["requirement"], dict):
+                errors.append(f"{key}[{index}].requirement must be an object")
+        if type(count) is int and count >= 0 and count != len(records):
+            errors.append(f"{key}_count disagrees with the supplied array length")
+    return errors
+
+
 def gap_report(check: dict[str, Any]) -> dict[str, Any]:
-    """Check both machine worklists, including reports from older checkers."""
+    """Validate current worklists and the known legacy unresolved-only format."""
     completeness = check.get("completeness")
     if not isinstance(completeness, dict) or not completeness:
         return {"details_complete": False, "supplied_unresolved": 0,
                 "reported_unresolved": None, "supplied_output_pending": 0,
-                "reported_output_pending": None, "output_pending_complete": False}
-    unresolved = len(completeness.get("unresolved") or [])
-    pending = len(completeness.get("output_pending") or [])
-    declared_complete = completeness.get("details_complete") is not False
-    unresolved_complete = declared_complete and completeness.get("unresolved_count", unresolved) == unresolved
-    pending_complete = declared_complete and completeness.get("output_pending_count", pending) == pending
+                "reported_output_pending": None, "output_pending_complete": False,
+                "output_pending_reported": False, "errors": ["completeness must be a non-empty object"]}
+    unresolved = completeness.get("unresolved")
+    pending = completeness.get("output_pending")
+    flag = completeness.get("details_complete", True)
+    flag_errors = [] if type(flag) is bool else ["details_complete must be a Boolean when supplied"]
+    unresolved_errors = _worklist_errors(completeness, "unresolved")
+    # Older checker reports supply only the unresolved list/count pair. If
+    # either pending-output field is supplied, the entire pair is required.
+    pending_reported = "output_pending" in completeness or "output_pending_count" in completeness
+    pending_errors = _worklist_errors(completeness, "output_pending") if pending_reported else []
+    declared_complete = flag is True and not flag_errors
+    unresolved_complete = declared_complete and not unresolved_errors
+    pending_complete = declared_complete and not pending_errors
+    errors = flag_errors + unresolved_errors + pending_errors
+    if flag is False:
+        errors.append("checker declared details_complete=false")
     return {"details_complete": unresolved_complete and pending_complete,
-            "supplied_unresolved": unresolved, "reported_unresolved": completeness.get("unresolved_count"),
-            "supplied_output_pending": pending, "reported_output_pending": completeness.get("output_pending_count"),
-            "output_pending_complete": pending_complete}
+            "supplied_unresolved": len(unresolved) if isinstance(unresolved, list) else 0,
+            "reported_unresolved": completeness.get("unresolved_count"),
+            "supplied_output_pending": len(pending) if isinstance(pending, list) else 0,
+            "reported_output_pending": completeness.get("output_pending_count"),
+            "output_pending_complete": pending_complete, "output_pending_reported": pending_reported,
+            "errors": errors}
 
 
 def configuration_conflicts(check: dict[str, Any]) -> list[str]:
     """Keep configuration conflicts separate from work an input row can close."""
-    completeness = check.get("completeness") or {}
+    completeness = check.get("completeness")
+    completeness = completeness if isinstance(completeness, dict) else {}
     conflicts = []
     for context in (check.get("test_requirements"), completeness.get("test_requirements")):
-        if (context or {}).get("status") == "NEEDS_REVIEW":
+        if isinstance(context, dict) and context.get("status") == "NEEDS_REVIEW":
             conflicts.append("test_requirements")
-    for item in [*(completeness.get("unresolved") or []), *(completeness.get("output_pending") or [])]:
-        if (item.get("requirement") or {}).get("configuration_status") == "NEEDS_REVIEW":
+    for item in [*report_records(check, "unresolved"), *report_records(check, "output_pending")]:
+        requirement = item.get("requirement")
+        if isinstance(requirement, dict) and requirement.get("configuration_status") == "NEEDS_REVIEW":
             conflicts.append(str(item.get("obligation_id") or "unidentified obligation"))
     return sorted(set(conflicts))
 
