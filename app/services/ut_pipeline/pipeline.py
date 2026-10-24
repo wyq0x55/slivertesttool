@@ -499,11 +499,13 @@ def gap_status(check: dict[str, Any], revisers: list[dict[str, Any]],
     Only an explicit MISSING_CASE is work for the model; evidence gaps,
     unconfirmed infeasibility and reports without gap classes are not.
     """
-    unresolved = (check.get("completeness") or {}).get("unresolved") or ()
+    unresolved = diagnostic.report_records(check, "unresolved")
     report_complete = diagnostic.gap_report(check)["details_complete"]
     missing = [item for item in unresolved
-               if item.get("gap_class") == _MISSING_CASE and item.get("obligation_id")
-               and (item.get("requirement") or {}).get("configuration_status") != "NEEDS_REVIEW"]
+               if item.get("gap_class") == _MISSING_CASE and isinstance(item.get("obligation_id"), str)
+               and item["obligation_id"].strip()
+               and (not isinstance(item.get("requirement"), dict)
+                    or item["requirement"].get("configuration_status") != "NEEDS_REVIEW")]
     claimed: set[str] = set()
     declined: set[str] = set()
     for meta in revisers:
@@ -578,9 +580,11 @@ def _report_gate(check: dict[str, Any], expected_sha: str = "",
     errors = diagnostic.integrity_errors(check, expected_sha, execution)
     if errors:
         return UtJob.NEEDS_HUMAN, "候选证据完整性异常：" + "; ".join(errors), GateCode.INTEGRITY_ERROR
-    if not diagnostic.gap_report(check)["details_complete"]:
+    report = diagnostic.gap_report(check)
+    if not report["details_complete"]:
         return (UtJob.NEEDS_HUMAN,
-                "测试义务明细不完整；请重新生成或重新校验以取得完整缺口清单，再核对输入证明。不能将预览视为全部完成。",
+                "测试义务报告结构或明细不完整：" + "; ".join(report["errors"]) +
+                "；请重新生成或重新校验以取得完整缺口清单，再核对输入证明。不能将预览视为全部完成。",
                 GateCode.REPORT_INCOMPLETE)
     conflicts = diagnostic.configuration_conflicts(check)
     if conflicts:
@@ -754,7 +758,8 @@ def _execute_host_step(job: UtJob, attempt: UtAttempt, config: dict) -> None:
         evidence_gate = _report_gate(check, attempt.csv_sha256, execution)
         if not continuing():
             _halt(job)
-        elif evidence_gate:
+        elif evidence_gate and (evidence_gate[2] != GateCode.REPORT_INCOMPLETE
+                                or check["verdict"] in {"PASS", "FAIL"}):
             _gate(job, *evidence_gate)
         elif check["verdict"] == "PASS":
             _gate(job, UtJob.AWAITING_REVIEW,

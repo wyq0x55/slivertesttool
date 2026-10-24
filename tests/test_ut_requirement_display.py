@@ -33,7 +33,7 @@ def test_config_conflict_is_excluded_from_machine_row_work_even_if_model_claims_
 
     conflict = {"obligation_id": "M", "gap_class": "MISSING_CASE",
                 "requirement": {"configuration_status": "NEEDS_REVIEW"}}
-    check = {"verdict": "PASS", "completeness": {"unresolved": [conflict]}, "issues": []}
+    check = {"verdict": "PASS", "completeness": {"unresolved": [conflict], "unresolved_count": 1}, "issues": []}
     status = gap_status(check, [{"claimed": ["M"]}])
     assert status["missing"] == 0 and status["open"] == []
     state, reason, code = next_state(check, "GENERATOR", 0, 5, status)

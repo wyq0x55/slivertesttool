@@ -516,7 +516,7 @@ function issueAction(h, selector, dataset) {
 function typedCheck(count = 65) {
   const gaps = Array.from({ length: count }, (_, i) => ({ obligation_id: `B${i}`, gap_class: "MISSING_CASE", kind: "branch" }));
   return { candidate_sha256: "sha10", completeness: { unresolved: gaps, unresolved_count: count, details_complete: true,
-      output_pending: Array.from({ length: 61 }, (_, i) => ({ obligation_id: `O${i}`, pending_outputs: ["f@@"] })) },
+      output_pending: Array.from({ length: 61 }, (_, i) => ({ obligation_id: `O${i}`, pending_outputs: ["f@@"] })), output_pending_count: 61 },
     issues: [{ code: "INPUT_OBLIGATION_UNRESOLVED", severity: "warning", detail: gaps.slice(0, 50) },
       { code: "OUTPUT_ORACLE_PENDING", severity: "warning", detail: [] }],
     input_ranges: { contract: { contract: "ut-agent.input-domains/1", columns: [
