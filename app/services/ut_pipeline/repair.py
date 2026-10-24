@@ -26,7 +26,7 @@ from typing import Any, Optional
 
 from ..ai import config as ai_config
 from ..ai import provider
-from . import increment
+from . import diagnostic, increment
 
 PROMPT_VERSION = "ut-repair/7.5"
 # Bound the prompt: issue details are already truncated by ut-agent.
@@ -376,6 +376,11 @@ def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: by
     accepted, rejected and declined obligations either way.
     """
     meta: dict[str, Any] = {"prompt_version": PROMPT_VERSION}
+    errors = diagnostic.integrity_errors(check, hashlib.sha256(csv_bytes).hexdigest(), execution)
+    if errors:
+        meta.update(code="INTEGRITY_ERROR", error="候选 CSV 与校验／执行证据摘要不一致：" + "; ".join(errors),
+                    model_contacted=False)
+        return Revision(None, meta)
     try:
         table = increment.parse(csv_bytes.decode("cp932"))
     except (UnicodeDecodeError, increment.TableError) as exc:

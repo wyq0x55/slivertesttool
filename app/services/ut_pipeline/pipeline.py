@@ -480,18 +480,20 @@ def _capture_backfill(job: UtJob, attempt: UtAttempt, check: dict[str, Any],
 _MISSING_CASE = "MISSING_CASE"
 
 
-def _verified_obligation_ids(check: dict[str, Any], expected_sha: str = "") -> set[str]:
+def _verified_obligation_ids(check: dict[str, Any], expected_sha: str = "",
+                             execution: dict[str, Any] | None = None) -> set[str]:
     witnesses = check.get("candidate_witnesses") or {}
     identified = (witnesses.get("contract") == "ut-agent.candidate-witness/1"
                   and (witnesses.get("evidence") or {}).get("identified") is True
                   and witnesses.get("candidate_sha256") == check.get("candidate_sha256")
                   and bool(check.get("candidate_sha256"))
                   and (not expected_sha or expected_sha == check["candidate_sha256"]))
-    return set(witnesses.get("witnessed_obligation_ids") or ()) if identified else set()
+    return (set(witnesses.get("witnessed_obligation_ids") or ())
+            if identified and not diagnostic.integrity_errors(check, expected_sha, execution) else set())
 
 
 def gap_status(check: dict[str, Any], revisers: list[dict[str, Any]],
-               expected_sha: str = "") -> dict[str, Any]:
+               expected_sha: str = "", execution: dict[str, Any] | None = None) -> dict[str, Any]:
     """Missing cases of ``check`` against the claims and declines of model rounds.
 
     Only an explicit MISSING_CASE is work for the model; evidence gaps,
@@ -508,9 +510,10 @@ def gap_status(check: dict[str, Any], revisers: list[dict[str, Any]],
         claimed.update((meta or {}).get("claimed") or ())
         declined.update((meta or {}).get("declined") or ())
     ids = {item["obligation_id"] for item in missing}
-    proven = _verified_obligation_ids(check, expected_sha)
+    proven = _verified_obligation_ids(check, expected_sha, execution)
     return {
         "report_complete": report_complete,
+        "configuration_conflicts": diagnostic.configuration_conflicts(check),
         "missing": len(ids),
         "claimed": len(ids & claimed),
         "witnessed": len(ids & proven),
@@ -533,10 +536,13 @@ def next_state(check: dict[str, Any], origin: str, rounds: int, max_rounds: int,
     """Pure transition after one checked attempt: (state, reason, gate code)."""
     verdict = check.get("verdict")
     codes = ", ".join(_error_codes(check))
-    if gaps and gaps.get("report_complete") is False:
+    evidence_gate = _report_gate(check)
+    if evidence_gate and (evidence_gate[2] != GateCode.REPORT_INCOMPLETE or verdict in {"PASS", "FAIL"}):
+        return evidence_gate
+    if gaps and gaps.get("report_complete") is False and verdict in {"PASS", "FAIL"}:
         return (UtJob.NEEDS_HUMAN,
                 "测试义务明细不完整；请重新生成或重新校验以取得完整缺口清单，再核对输入证明。不能将预览视为全部完成。",
-                GateCode.NOT_ROW_FIXABLE)
+                GateCode.REPORT_INCOMPLETE)
     if verdict == "PASS":
         if gaps and gaps["open"] and origin != UtAttempt.ORIGIN_HUMAN:
             if rounds >= max_rounds:
@@ -567,6 +573,64 @@ def next_state(check: dict[str, Any], origin: str, rounds: int, max_rounds: int,
     return UtJob.REPAIRING, "", ""
 
 
+def _report_gate(check: dict[str, Any], expected_sha: str = "",
+                 execution: dict[str, Any] | None = None) -> tuple[str, str, str] | None:
+    errors = diagnostic.integrity_errors(check, expected_sha, execution)
+    if errors:
+        return UtJob.NEEDS_HUMAN, "候选证据完整性异常：" + "; ".join(errors), GateCode.INTEGRITY_ERROR
+    if not diagnostic.gap_report(check)["details_complete"]:
+        return (UtJob.NEEDS_HUMAN,
+                "测试义务明细不完整；请重新生成或重新校验以取得完整缺口清单，再核对输入证明。不能将预览视为全部完成。",
+                GateCode.REPORT_INCOMPLETE)
+    conflicts = diagnostic.configuration_conflicts(check)
+    if conflicts:
+        return (UtJob.NEEDS_HUMAN, "义务与冻结测试配置冲突，需核对版本并重新生成或校验：" + ", ".join(conflicts),
+                GateCode.CONFIGURATION_CONFLICT)
+    return None
+
+
+def _integrity_check(check: dict[str, Any], reason: str) -> dict[str, Any]:
+    """Retain the received report while refusing to grant it proof authority."""
+    result = {**check, "verdict": "BLOCKED", "repairable": False, "delivery_validated": False,
+              "evidence_integrity": {"status": "UNKNOWN", "reason": reason},
+              "issues": [*(check.get("issues") or []),
+                         {"code": "INTEGRITY_ERROR", "severity": "error", "repairable": False,
+                          "message": reason}]}
+    if check.get("candidate_witnesses"):
+        witnesses = check["candidate_witnesses"]
+        result["candidate_witnesses"] = {**witnesses, "input_mapping_identified": False,
+            "evidence": {**(witnesses.get("evidence") or {}), "identified": False, "reason": reason}}
+    return result
+
+
+def _integrity_gate(job: UtJob, attempt: UtAttempt, reason: str,
+                    check: dict[str, Any] | None = None,
+                    execution: dict[str, Any] | None = None) -> None:
+    attempt.check = _integrity_check((attempt.check or {}) if check is None else check, reason)
+    if execution is not None:
+        attempt.execution = execution
+    attempt.verdict = job.last_verdict = "BLOCKED"
+    _gate(job, UtJob.NEEDS_HUMAN, reason, GateCode.INTEGRITY_ERROR)
+
+
+def _result_integrity(job: UtJob, attempt: UtAttempt, check: dict[str, Any],
+                      execution: dict[str, Any] | None) -> bool:
+    try:
+        _read_attempt_csv(attempt)
+        errors = diagnostic.integrity_errors(check, attempt.csv_sha256, execution)
+        if errors:
+            raise ServiceError("; ".join(errors), code="INTEGRITY_ERROR")
+    except ServiceError as exc:
+        _integrity_gate(job, attempt, "候选证据完整性异常：" + str(exc), check, execution)
+        return False
+    if not check.get("candidate_sha256"):
+        check["candidate_identity"] = {
+            "status": "UNKNOWN", "verified_attempt_sha256": attempt.csv_sha256,
+            "reason": "Checker omitted its candidate digest; available execution digests were compared, not inferred",
+        }
+    return True
+
+
 def _previous_executable(job: UtJob, attempt: UtAttempt) -> Optional[UtAttempt]:
     parent_id = (attempt.reviser or {}).get("parent_attempt_id")
     if parent_id is not None:
@@ -591,6 +655,12 @@ def _fresh_exec_dir(job: UtJob, attempt: UtAttempt) -> Path:
 
 def _execute_step(job: UtJob) -> None:
     attempt = db.session.get(UtAttempt, job.current_attempt_id)
+    try:
+        _read_attempt_csv(attempt)
+    except ServiceError as exc:
+        _integrity_gate(job, attempt, "候选 CSV 完整性检查失败：" + str(exc))
+        db.session.commit()
+        return
     config = db.session.get(UtBatch, job.batch_id).config_snapshot or {}
     if config.get("execution_backend", "winams") == "clang":
         _execute_host_step(job, attempt, config)
@@ -612,6 +682,9 @@ def _execute_step(job: UtJob) -> None:
     execution = None
     try:
         check = bridge.check(candidate, **arguments)
+        if not _result_integrity(job, attempt, check, execution):
+            db.session.commit()
+            return
         # A candidate that fails the static check would only waste a WinAMS run.
         if check["verdict"] == "FORMAT_OK":
             out = _fresh_exec_dir(job, attempt)
@@ -626,6 +699,9 @@ def _execute_step(job: UtJob) -> None:
             check = bridge.check(candidate, execution=out / "execution.json", **arguments)
     except BridgeError as exc:
         _gate(job, UtJob.ERROR, f"ut-agent 调用失败：{exc}", GateCode.TOOL_ERROR)
+        db.session.commit()
+        return
+    if not _result_integrity(job, attempt, check, execution):
         db.session.commit()
         return
     attempt.check = check
@@ -643,6 +719,12 @@ def _execute_step(job: UtJob) -> None:
 def _execute_host_step(job: UtJob, attempt: UtAttempt, config: dict) -> None:
     """Host evidence is experimental and never enters the WinAMS checker/repair loop."""
     generation = job.generation or {}
+    try:
+        _read_attempt_csv(attempt)
+    except ServiceError as exc:
+        _integrity_gate(job, attempt, "候选 CSV 完整性检查失败：" + str(exc))
+        db.session.commit()
+        return
 
     def persist(execution):
         attempt.execution = execution
@@ -664,10 +746,16 @@ def _execute_host_step(job: UtJob, attempt: UtAttempt, config: dict) -> None:
     except BridgeError as exc:
         _gate(job, UtJob.ERROR, f"ut-agent 调用失败：{exc}", GateCode.TOOL_ERROR)
     else:
+        if not _result_integrity(job, attempt, check, execution):
+            db.session.commit()
+            return
         attempt.execution, attempt.check, attempt.verdict = execution, check, check["verdict"]
         job.last_verdict = check["verdict"]
+        evidence_gate = _report_gate(check, attempt.csv_sha256, execution)
         if not continuing():
             _halt(job)
+        elif evidence_gate:
+            _gate(job, *evidence_gate)
         elif check["verdict"] == "PASS":
             _gate(job, UtJob.AWAITING_REVIEW,
                   "Clang 主机候选校验通过，等待人工审核；不代表目标执行或正式交付验收", GateCode.MACHINE_PASS)
@@ -697,7 +785,7 @@ def _job_gaps(job: UtJob, attempt: UtAttempt, *, through_seq: int | None = None)
                 if item.origin == UtAttempt.ORIGIN_LLM and (
                     item.id in lineage or (not item.csv_path and
                                            (item.reviser or {}).get("parent_attempt_id") in lineage))]
-    return gap_status(attempt.check or {}, revisers, attempt.csv_sha256)
+    return gap_status(attempt.check or {}, revisers, attempt.csv_sha256, attempt.execution)
 
 
 # Errors that appended input rows can address. Expected values belong to the
@@ -731,6 +819,20 @@ def _repair_step(job: UtJob) -> None:
     attempt = db.session.get(UtAttempt, job.current_attempt_id)
     batch = db.session.get(UtBatch, job.batch_id)
     check = attempt.check or {}
+    try:
+        csv_bytes = _read_attempt_csv(attempt)
+        errors = diagnostic.integrity_errors(check, attempt.csv_sha256, attempt.execution)
+        if errors:
+            raise ServiceError("; ".join(errors), code="INTEGRITY_ERROR")
+    except ServiceError as exc:
+        _integrity_gate(job, attempt, "自动修复前完整性检查失败：" + str(exc))
+        db.session.commit()
+        return
+    evidence_gate = _report_gate(check, attempt.csv_sha256, attempt.execution)
+    if evidence_gate:
+        _gate(job, *evidence_gate)
+        db.session.commit()
+        return
     history = [_history_item(item) for item in
                UtAttempt.query.filter_by(job_id=job.id).order_by(UtAttempt.seq)]
     gaps = _job_gaps(job, attempt)
@@ -740,7 +842,6 @@ def _repair_step(job: UtJob) -> None:
         db.session.commit()
         return
     generation = dict(job.generation or {})
-    csv_bytes = Path(attempt.csv_path).read_bytes()
     # Freeze the cacheable prefix in durable job metadata, including restarts.
     # A changed prompt version starts a new snapshot; same-version drift is
     # rejected by revise rather than silently replacing semantic evidence.
@@ -773,6 +874,14 @@ def _repair_step(job: UtJob) -> None:
         _gate(job, UtJob.ERROR, f"本地模型不可用：{exc}", GateCode.MODEL_UNAVAILABLE)
         db.session.commit()
         return
+    # The candidate may have changed while the model request was in flight.
+    if not _result_integrity(job, attempt, check, attempt.execution):
+        db.session.commit()
+        return
+    if revision.meta.get("code") == "INTEGRITY_ERROR":
+        _integrity_gate(job, attempt, revision.meta["error"])
+        db.session.commit()
+        return
     if revision.meta.get("code") in {"PROMPT_PREFIX_CHANGED", "PROMPT_BUDGET_EXCEEDED"}:
         new = _new_attempt(job, UtAttempt.ORIGIN_LLM, None,
                            reviser={**revision.meta, "model_contacted": False},
@@ -800,6 +909,9 @@ def _repair_step(job: UtJob) -> None:
             new.verdict = "INVALID"
             new.note = f"候选检查失败：{exc}"
             _gate(job, UtJob.ERROR, new.note, GateCode.TOOL_ERROR)
+            db.session.commit()
+            return
+        if not _result_integrity(job, new, verification, None):
             db.session.commit()
             return
         proposed = {row.get("obligation") for row in revision.meta.get("rows") or ()}
@@ -1037,8 +1149,21 @@ def review(project_id: int, job_id: int, decision: str, user_id: int, note: str 
     if decision == "approve":
         if job.current_attempt_id is None:
             raise ServiceError("没有可通过的候选 CSV", code="INVALID_STATE")
-        if job.state != UtJob.AWAITING_REVIEW and not note:
+        attempt = db.session.get(UtAttempt, job.current_attempt_id)
+        if attempt is None or not attempt.csv_path:
+            raise ServiceError("没有可通过的候选 CSV", code="INVALID_STATE")
+        try:
+            _read_attempt_csv(attempt)
+        except ServiceError as exc:
+            raise ServiceError("审核时候选完整性检查失败：" + str(exc) +
+                               "；请恢复原版本文件或提交新的修订后重新校验", code="INTEGRITY_ERROR") from exc
+        evidence_gate = _report_gate(attempt.check or {}, attempt.csv_sha256, attempt.execution)
+        if (job.state != UtJob.AWAITING_REVIEW or evidence_gate or
+                job.gate_code in {GateCode.INTEGRITY_ERROR, GateCode.CONFIGURATION_CONFLICT, GateCode.REPORT_INCOMPLETE}) and not note:
             raise ServiceError("机器校验未通过的候选需要填写审核意见才能通过", code="VALIDATION_ERROR")
+        if evidence_gate and evidence_gate[2] == GateCode.INTEGRITY_ERROR:
+            attempt.check = _integrity_check(attempt.check or {}, evidence_gate[1])
+            attempt.verdict = job.last_verdict = "BLOCKED"
         job.state = UtJob.APPROVED
     else:
         if not note:
@@ -1080,7 +1205,7 @@ def retry(project_id: int, job_id: int, user_id: Optional[int] = None) -> UtJob:
         # A fresh model reply changes the reviewed candidate even when CSV bytes
         # stay identical or preparation failed before evidence was captured.
         # Preserve the previous attempt and stale-review fence in every case.
-        _new_attempt(job, attempt.origin, Path(attempt.csv_path).read_bytes(),
+        _new_attempt(job, attempt.origin, _read_attempt_csv(attempt),
                      note="Host stub retry; CSV unchanged, candidate evidence version renewed",
                      reviser={"host_retry_of": attempt.id}, user_id=user_id)
     _gate(job, UtJob.REPAIRING if wants_rows and config.get("execution_backend", "winams") != "clang"

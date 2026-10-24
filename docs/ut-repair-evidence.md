@@ -98,3 +98,42 @@ the existing verifier's obligation and column scope, or decline with missing
 evidence. The packet does not automatically import or apply a local AI reply.
 Execution, recheck and human review still follow. Selection changes, detail
 refreshes and version mismatches invalidate pending browser downloads.
+
+## Evidence gates for configured checks
+
+Configuration conflicts are not input-row work. A requirement whose
+`configuration_status` is `NEEDS_REVIEW`, including one outside the bounded
+issue preview, routes the job to `CONFIGURATION_CONFLICT` / `needs_human`.
+An absent, empty, truncated or count-inconsistent completeness report routes a
+potential PASS or repairable FAIL to `REPORT_INCOMPLETE`. A prior execution
+environment failure retains its actionable blocking reason. Neither gate calls the repair model or consumes a repair
+round. Existing locked Baseline and explicit-policy records remain supported;
+a missing completeness report is not treated as an empty complete report.
+
+Before repair, result persistence, Host PASS handling and final approval, the
+platform re-reads the selected attempt CSV and compares its digest with the
+attempt SHA and every supplied identity. This includes
+`candidate_sha256`, `candidate_witnesses.candidate_sha256`,
+`execution.candidate_sha256`, and the existing Host
+`execution.input_binding.candidate.sha256`. A disagreement produces
+`INTEGRITY_ERROR`; the candidate is saved as `BLOCKED`, witness authority is
+withdrawn, and no model call or repair round occurs. A checker that omits an
+optional report digest is not rejected solely for that omission: available
+identities are still checked and the report records
+`candidate_identity.status=UNKNOWN` with
+`reason="Checker omitted its candidate digest; available execution digests were compared, not inferred"`.
+Host evidence retains `counts_as_target_evidence=false`.
+
+The integrity failure record contains
+`evidence_integrity: {status: "UNKNOWN", reason: ...}` and an error issue with
+code `INTEGRITY_ERROR`. These fields preserve the received evidence without
+promoting it to validated target evidence. They are not a new database schema
+or HTTP contract.
+
+Historical persisted reports are rechecked when approval is attempted. A missing
+or changed CSV cannot be approved, including with a note: restore the original
+version file or submit a new revision and recheck it. For an intact version file,
+supplied identity conflicts, incomplete reports or frozen configuration conflicts
+require a human note even if the job was already marked `awaiting_review`. The
+note records the human override decision; it does not turn `UNKNOWN` into
+`VALIDATED`, restore witness authority, or make Host evidence target validation.

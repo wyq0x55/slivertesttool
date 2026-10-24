@@ -12,7 +12,11 @@ from . import increment
 
 def gap_report(check: dict[str, Any]) -> dict[str, Any]:
     """Check both machine worklists, including reports from older checkers."""
-    completeness = check.get("completeness") or {}
+    completeness = check.get("completeness")
+    if not isinstance(completeness, dict) or not completeness:
+        return {"details_complete": False, "supplied_unresolved": 0,
+                "reported_unresolved": None, "supplied_output_pending": 0,
+                "reported_output_pending": None, "output_pending_complete": False}
     unresolved = len(completeness.get("unresolved") or [])
     pending = len(completeness.get("output_pending") or [])
     declared_complete = completeness.get("details_complete") is not False
@@ -22,6 +26,40 @@ def gap_report(check: dict[str, Any]) -> dict[str, Any]:
             "supplied_unresolved": unresolved, "reported_unresolved": completeness.get("unresolved_count"),
             "supplied_output_pending": pending, "reported_output_pending": completeness.get("output_pending_count"),
             "output_pending_complete": pending_complete}
+
+
+def configuration_conflicts(check: dict[str, Any]) -> list[str]:
+    """Keep configuration conflicts separate from work an input row can close."""
+    completeness = check.get("completeness") or {}
+    conflicts = []
+    for context in (check.get("test_requirements"), completeness.get("test_requirements")):
+        if (context or {}).get("status") == "NEEDS_REVIEW":
+            conflicts.append("test_requirements")
+    for item in [*(completeness.get("unresolved") or []), *(completeness.get("output_pending") or [])]:
+        if (item.get("requirement") or {}).get("configuration_status") == "NEEDS_REVIEW":
+            conflicts.append(str(item.get("obligation_id") or "unidentified obligation"))
+    return sorted(set(conflicts))
+
+
+def integrity_errors(check: dict[str, Any], expected_sha: str = "",
+                     execution: dict[str, Any] | None = None) -> list[str]:
+    """Compare supplied identities; legacy reports may omit optional digests."""
+    witnesses = check.get("candidate_witnesses") or {}
+    identities = {"check.candidate_sha256": check.get("candidate_sha256"),
+                  "witness.candidate_sha256": witnesses.get("candidate_sha256")}
+    for label, record in (("check", check), ("execution", execution or {})):
+        identities[f"{label}.input_binding.candidate.sha256"] = (
+            ((record.get("input_binding") or {}).get("candidate") or {}).get("sha256"))
+    identities["execution.candidate_sha256"] = (execution or {}).get("candidate_sha256")
+    anchor = expected_sha or next((value for value in identities.values() if value), "")
+    errors = [f"{name} disagrees with candidate SHA" for name, value in identities.items()
+              if value and anchor and value != anchor]
+    for label, record in (("check", check), ("execution", execution or {})):
+        if (record.get("evidence_integrity") or {}).get("status") == "UNKNOWN":
+            errors.append(f"{label} has unresolved integrity evidence")
+        if any(issue.get("code") == "INTEGRITY_ERROR" for issue in record.get("issues") or []):
+            errors.append(f"{label} reports an integrity error")
+    return errors
 
 
 def build_packet(*, project_id: int, job_id: int, attempt: dict[str, Any],
@@ -55,7 +93,8 @@ def build_packet(*, project_id: int, job_id: int, attempt: dict[str, Any],
              and all(c.get("index") == i and c.get("column") == name
                      for i, (c, name) in enumerate(zip(columns, table.inputs), 1)))
     witnesses = check.get("candidate_witnesses") or {}
-    identified = (witnesses.get("contract") == "ut-agent.candidate-witness/1"
+    integrity = integrity_errors(check, digest, attempt.get("execution"))
+    identified = (not integrity and witnesses.get("contract") == "ut-agent.candidate-witness/1"
                   and witnesses.get("candidate_sha256") == digest
                   and check.get("candidate_sha256") == digest
                   and witnesses.get("input_mapping_identified") is True
@@ -84,7 +123,8 @@ def build_packet(*, project_id: int, job_id: int, attempt: dict[str, Any],
         "typed_evidence_status": "IDENTIFIED" if identified else "UNKNOWN",
         "gap_report": report,
         "modification_boundary": {
-            "mode": "APPEND_INPUT_ROWS_ONLY", "allowed_obligations": sorted(allowed) if report["details_complete"] else [],
+            "mode": "APPEND_INPUT_ROWS_ONLY", "allowed_obligations": sorted(allowed)
+            if report["details_complete"] and not configuration_conflicts(check) and not integrity else [],
             "editable_input_tokens": editable, "max_rows": increment.MAX_ROWS_PER_ROUND,
             "base_row": "1-based data row; 0 means all inputs blank; omitted inputs copy base_row",
             "existing_rows": "immutable", "columns": "immutable", "test_policy": "immutable",

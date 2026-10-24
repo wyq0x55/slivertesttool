@@ -754,19 +754,22 @@ def test_generation_outcomes_reach_a_human(env):
 
 
 def test_next_state_is_pure_and_total():
-    fail = {"verdict": "FAIL", "issues": [
+    complete = {"unresolved_count": 0, "unresolved": [], "output_pending_count": 0,
+                "output_pending": [], "details_complete": True}
+    fail = {"verdict": "FAIL", "completeness": complete, "issues": [
         {"code": "COVERAGE_C1_INCOMPLETE", "severity": "error", "repairable": True}]}
     assert pipeline.next_state(fail, "LLM", 0, 5)[0] == "repairing"
     assert pipeline.next_state(fail, "GENERATOR", 0, 0)[0] == "needs_human"
     assert pipeline.next_state(fail, "HUMAN", 0, 5)[0] == "needs_human"
     # Rows cannot fix expected values or the file format.
-    empty = {"verdict": "FAIL", "issues": [
+    empty = {"verdict": "FAIL", "completeness": complete, "issues": [
         {"code": "FORMAT_NO_DATA_ROWS", "severity": "error", "repairable": True}]}
     assert pipeline.next_state(empty, "GENERATOR", 0, 5)[0] == "repairing"
     for code in ("ORACLE_MISMATCH", "FORMAT_ENCODING", "FORMAT_INVALID"):
-        other = {"verdict": "FAIL", "issues": [{"code": code, "severity": "error", "repairable": True}]}
+        other = {"verdict": "FAIL", "completeness": complete,
+                 "issues": [{"code": code, "severity": "error", "repairable": True}]}
         assert pipeline.next_state(other, "LLM", 0, 5)[0] == "needs_human"
-    passed = {"verdict": "PASS", "issues": []}
+    passed = {"verdict": "PASS", "completeness": complete, "issues": []}
     gaps = {"missing": 1, "claimed": 0, "declined": 0, "open": [GAP]}
     assert pipeline.next_state(passed, "GENERATOR", 0, 5, gaps)[0] == "repairing"
     assert pipeline.next_state(passed, "CAPTURE", 5, 5, gaps)[0] == "needs_human"
