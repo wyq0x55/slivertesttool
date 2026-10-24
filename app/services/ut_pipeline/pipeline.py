@@ -51,7 +51,7 @@ from ..ai.provider import ProviderError
 from ..lanmatrix import audit
 from ..lanmatrix import notification_service as notify_svc
 from ..lanmatrix.errors import ServiceError, VersionConflict
-from . import binding, diagnostic, host, repair
+from . import binding, diagnostic, host, host_candidate, repair
 from .bridge import BridgeError, BridgeSettings, UtAgentBridge
 
 # The worker is one process with a thread pool.  WinAMS runs and project-wide
@@ -720,9 +720,61 @@ def _execute_step(job: UtJob) -> None:
     db.session.commit()
 
 
+def _host_case_context(attempt: UtAttempt, gaps: dict[str, Any]) -> bool:
+    """Only identified missing-case work can use the Host input-row model."""
+    check = attempt.check or {}
+    witnesses = check.get("candidate_witnesses") or {}
+    if (not gaps["open"] or not gaps["report_complete"]
+            or check.get("verdict") not in {"PASS", "FAIL"}
+            or (attempt.execution or {}).get("status") != "HOST_PASS"
+            or set(_error_codes(check)) - {"HOST_COVERAGE_REQUIRED_NOT_COVERED"}
+            or any(issue.get("code") in {"HOST_COVERAGE_REQUIRED_UNKNOWN", "HOST_COVERAGE_UNAVAILABLE"}
+                   for issue in check.get("issues") or [])
+            or witnesses.get("contract") != "ut-agent.candidate-witness/1"
+            or witnesses.get("candidate_sha256") != attempt.csv_sha256
+            or check.get("candidate_sha256") != attempt.csv_sha256
+            or witnesses.get("input_mapping_identified") is not True
+            or (witnesses.get("evidence") or {}).get("identified") is not True):
+        return False
+    try:
+        table = repair.increment.parse(_read_attempt_csv(attempt).decode("cp932"))
+        domains = (check.get("input_ranges") or {}).get("contract") or {}
+        columns = domains.get("columns") or []
+        return (domains.get("contract") == "ut-agent.input-domains/1"
+                and len(columns) == len(table.inputs)
+                and all(column.get("index") == index and column.get("column") == name
+                        for index, (column, name) in enumerate(zip(columns, table.inputs), 1)))
+    except (ServiceError, UnicodeDecodeError, ValueError):
+        return False
+
+
+def _host_next_state(job: UtJob, attempt: UtAttempt, gaps: dict[str, Any]) -> tuple[str, str, str]:
+    check = attempt.check or {}
+    if _host_case_context(attempt, gaps) and attempt.origin != UtAttempt.ORIGIN_HUMAN:
+        if job.repair_rounds < job.max_repair_rounds:
+            return UtJob.REPAIRING, "", ""
+        return (UtJob.NEEDS_HUMAN, "Host missing cases remain; input repair budget exhausted" + _gap_note(gaps),
+                GateCode.OPEN_GAPS_EXHAUSTED)
+    if check.get("verdict") == "PASS" and not gaps["open"]:
+        return (UtJob.AWAITING_REVIEW,
+                "Clang 主机候选校验通过，等待人工审核；不代表目标执行或正式交付验收" + _gap_note(gaps),
+                GateCode.MACHINE_PASS)
+    reason = (attempt.execution or {}).get("reason") or "; ".join(
+        str(issue.get("message", issue.get("code", ""))) for issue in check.get("issues", ()))
+    return UtJob.NEEDS_HUMAN, "Clang 主机候选需人工处理：" + reason + _gap_note(gaps), GateCode.CHECK_BLOCKED
+
+
+def _host_gaps(job: UtJob, attempt: UtAttempt) -> dict[str, Any]:
+    if any(item.get("gap_class") == _MISSING_CASE
+           for item in diagnostic.report_records(attempt.check or {}, "unresolved")):
+        return _job_gaps(job, attempt)
+    return gap_status(attempt.check or {}, [], attempt.csv_sha256, attempt.execution)
+
+
 def _execute_host_step(job: UtJob, attempt: UtAttempt, config: dict) -> None:
     """Host evidence is experimental and never enters the WinAMS checker/repair loop."""
     generation = job.generation or {}
+    job.generation = {**generation, "host_step": "execute"}
     try:
         _read_attempt_csv(attempt)
     except ServiceError as exc:
@@ -738,11 +790,12 @@ def _execute_host_step(job: UtJob, attempt: UtAttempt, config: dict) -> None:
         db.session.refresh(job, attribute_names=["stop_requested_at", "stop_requested_by"])
         return job.stop_requested_at is None
 
+    execution_root = _fresh_exec_dir(job, attempt)
     try:
         execution, check = host.execute(
             bridge=get_bridge(), ir_json=generation.get("ir_json"),
             intents=generation.get("intent_manifest"), reference=job.reference_csv,
-            candidate=attempt.csv_path, out=_fresh_exec_dir(job, attempt), config=config,
+            candidate=attempt.csv_path, out=execution_root, config=config,
             model_timeout=current_app.config["UT_REPAIR_TIMEOUT"],
             persist=persist, continuing=continuing)
     except ProviderError as exc:
@@ -761,13 +814,28 @@ def _execute_host_step(job: UtJob, attempt: UtAttempt, config: dict) -> None:
         elif evidence_gate and (evidence_gate[2] != GateCode.REPORT_INCOMPLETE
                                 or check["verdict"] in {"PASS", "FAIL"}):
             _gate(job, *evidence_gate)
-        elif check["verdict"] == "PASS":
-            _gate(job, UtJob.AWAITING_REVIEW,
-                  "Clang 主机候选校验通过，等待人工审核；不代表目标执行或正式交付验收", GateCode.MACHINE_PASS)
+        elif "typed_candidate" in execution:
+            if evidence_gate:
+                _gate(job, *evidence_gate)
+                db.session.commit()
+                return
+            try:
+                source = _read_attempt_csv(attempt)
+                derived, receipt = host_candidate.read_typed_candidate(
+                    execution, source, Path(job.reference_csv).read_bytes(), execution_root)
+                if _read_attempt_csv(attempt) != source or job.current_attempt_id != attempt.id:
+                    raise ValueError("Candidate version changed while reading typed outputs")
+            except (OSError, UnicodeError, ValueError, TypeError, ServiceError) as exc:
+                _integrity_gate(job, attempt, "Host typed candidate rejected: " + str(exc), check, execution)
+            else:
+                _new_attempt(job, UtAttempt.ORIGIN_HOST_DERIVED, derived,
+                             note="Appended outputs proven by the typed implementation oracle; re-execution required",
+                             reviser={"oracle_source": "IMPLEMENTATION_DERIVED", "typed_candidate": receipt,
+                                      "from_attempt": attempt.seq, "from_sha256": attempt.csv_sha256})
+                job.last_verdict = ""
+                _gate(job, UtJob.EXECUTING)
         else:
-            reason = execution.get("reason") or "; ".join(
-                str(issue.get("message", issue.get("code", ""))) for issue in check.get("issues", ()))
-            _gate(job, UtJob.NEEDS_HUMAN, f"Clang 主机候选需人工处理：{reason}", GateCode.CHECK_BLOCKED)
+            _gate(job, *_host_next_state(job, attempt, _host_gaps(job, attempt)))
     if not continuing():
         _halt(job)
     db.session.commit()
@@ -838,6 +906,15 @@ def _repair_step(job: UtJob) -> None:
         _gate(job, *evidence_gate)
         db.session.commit()
         return
+    config = batch.config_snapshot or {}
+    is_host = config.get("execution_backend", "winams") == "clang"
+    if is_host:
+        state = _host_next_state(job, attempt, _job_gaps(job, attempt))
+        if state[0] != UtJob.REPAIRING:
+            _gate(job, *state)
+            db.session.commit()
+            return
+        job.generation = {**(job.generation or {}), "host_step": "repair"}
     history = [_history_item(item) for item in
                UtAttempt.query.filter_by(job_id=job.id).order_by(UtAttempt.seq)]
     gaps = _job_gaps(job, attempt)
@@ -847,13 +924,14 @@ def _repair_step(job: UtJob) -> None:
         db.session.commit()
         return
     generation = dict(job.generation or {})
+    constraints = {**(batch.constraints or {}), "execution_backend": "clang"} if is_host else (batch.constraints or {})
     # Freeze the cacheable prefix in durable job metadata, including restarts.
     # A changed prompt version starts a new snapshot; same-version drift is
     # rejected by revise rather than silently replacing semantic evidence.
     prefix = generation.get("repair_prompt_prefix")
     if not prefix or prefix.get("version") != repair.PROMPT_VERSION:
         try:
-            prefix = repair.prompt_prefix(batch.constraints or {}, job.target.to_dict(), csv_bytes, check)
+            prefix = repair.prompt_prefix(constraints, job.target.to_dict(), csv_bytes, check)
         except (UnicodeDecodeError, repair.increment.TableError):
             prefix = None
         if prefix is not None:
@@ -862,14 +940,14 @@ def _repair_step(job: UtJob) -> None:
             db.session.commit()
     try:
         revision = repair.revise(
-            constraints=batch.constraints or {},
+            constraints=constraints,
             target=job.target.to_dict(),
             csv_bytes=csv_bytes,
             check=check,
             execution=attempt.execution,
             history=history,
             open_gaps=gaps["open"],
-            allowed={item["obligation_id"] for item in gaps["open"]} | _row_tags(check),
+            allowed={item["obligation_id"] for item in gaps["open"]} | (set() if is_host else _row_tags(check)),
             model=(batch.config_snapshot or {}).get("repair_model", ""),
             timeout=current_app.config["UT_REPAIR_TIMEOUT"],
             prefix_snapshot=prefix,
@@ -943,8 +1021,9 @@ def _repair_step(job: UtJob) -> None:
     new.verdict = "INVALID"
     # No row was added: the checked attempt stays current. Declined gaps are
     # closed for the model, so a PASS goes to review once nothing is open.
-    state, reason, code = next_state(check, attempt.origin, job.repair_rounds,
-                                     job.max_repair_rounds, _job_gaps(job, attempt))
+    state, reason, code = (_host_next_state(job, attempt, _job_gaps(job, attempt)) if is_host else
+                           next_state(check, attempt.origin, job.repair_rounds,
+                                      job.max_repair_rounds, _job_gaps(job, attempt)))
     if (state == UtJob.NEEDS_HUMAN and check.get("verdict") == "FAIL"
             and job.repair_rounds >= job.max_repair_rounds):
         reason = (f"本地模型已修正 {job.repair_rounds} 次仍未产出可用候选"
@@ -1162,6 +1241,13 @@ def review(project_id: int, job_id: int, decision: str, user_id: int, note: str 
         except ServiceError as exc:
             raise ServiceError("审核时候选完整性检查失败：" + str(exc) +
                                "；请恢复原版本文件或提交新的修订后重新校验", code="INTEGRITY_ERROR") from exc
+        if attempt.origin == UtAttempt.ORIGIN_HOST_DERIVED:
+            checked, executed = attempt.check or {}, attempt.execution or {}
+            binding_sha = ((executed.get("input_binding") or {}).get("candidate") or {}).get("sha256")
+            if (checked.get("executed") is not True or checked.get("candidate_sha256") != attempt.csv_sha256
+                    or executed.get("evidence_source") != "HOST_EXECUTION" or binding_sha != attempt.csv_sha256):
+                raise ServiceError("Typed Host outputs require execution of this candidate version before approval",
+                                   code="INTEGRITY_ERROR")
         evidence_gate = _report_gate(attempt.check or {}, attempt.csv_sha256, attempt.execution)
         if (job.state != UtJob.AWAITING_REVIEW or evidence_gate or
                 job.gate_code in {GateCode.INTEGRITY_ERROR, GateCode.CONFIGURATION_CONFLICT, GateCode.REPORT_INCOMPLETE}) and not note:
@@ -1206,14 +1292,18 @@ def retry(project_id: int, job_id: int, user_id: Optional[int] = None) -> UtJob:
     wants_rows = attempt.verdict == "FAIL" or (
         attempt.verdict == "PASS" and _job_gaps(job, attempt)["open"])
     config = db.session.get(UtBatch, job.batch_id).config_snapshot or {}
-    if config.get("execution_backend") == "clang" and config.get("stub_mode") == "llm":
+    host_repair = (config.get("execution_backend") == "clang"
+                   and (job.generation or {}).get("host_step") == "repair"
+                   and _report_gate(attempt.check or {}, attempt.csv_sha256, attempt.execution) is None
+                   and _host_case_context(attempt, _job_gaps(job, attempt)))
+    if config.get("execution_backend") == "clang" and config.get("stub_mode") == "llm" and not host_repair:
         # A fresh model reply changes the reviewed candidate even when CSV bytes
         # stay identical or preparation failed before evidence was captured.
         # Preserve the previous attempt and stale-review fence in every case.
         _new_attempt(job, attempt.origin, _read_attempt_csv(attempt),
                      note="Host stub retry; CSV unchanged, candidate evidence version renewed",
                      reviser={"host_retry_of": attempt.id}, user_id=user_id)
-    _gate(job, UtJob.REPAIRING if wants_rows and config.get("execution_backend", "winams") != "clang"
+    _gate(job, UtJob.REPAIRING if host_repair or (wants_rows and config.get("execution_backend", "winams") != "clang")
           else UtJob.EXECUTING)
     db.session.commit()
     return job

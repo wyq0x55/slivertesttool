@@ -6,7 +6,7 @@ of the target, the input columns and the existing rows, and the machine
 verdict.  It returns input rows only: an obligation, a reference row and the
 input cells to change.  The platform appends them with blank expected values
 (see ``increment``), so existing rows, columns and expected values cannot
-change.  Blank expected values are settled by the WinAMS capture, and every
+change. Blank expected values are settled by WinAMS capture or the typed Host oracle, and every
 outcome is executed, checked again and still ends at a human gate.
 
 Prompt layout follows prefix-cache reuse on the local model: the system
@@ -28,7 +28,7 @@ from ..ai import config as ai_config
 from ..ai import provider
 from . import diagnostic, increment
 
-PROMPT_VERSION = "ut-repair/7.5"
+PROMPT_VERSION = "ut-repair/7.6"
 # Bound the prompt: issue details are already truncated by ut-agent.
 _MAX_DETAIL_CHARS = 6000
 _MAX_DECISION_CHARS = 200
@@ -72,8 +72,17 @@ def _system_prompt(constraints: dict[str, Any]) -> str:
             f"## 项目绑定的测试基准 {baseline.get('id')}@{baseline.get('version')}"
             f"（{source.get('document', '')} / {source.get('sheet', '')}）\n"
         )
+    host = constraints.get("execution_backend") == "clang"
+    introduction = ("You propose appended TestCsv inputs for Clang Host replay. " if host else
+                    "你是 WinAMS 单元测试用例（TestCsv）的输入手順助手。")
+    output_rule = ("Output cells stay blank; only the typed implementation oracle may fill appended outputs." if host else
+                   "平台把新增行的期望值全部留空，由 WinAMS 执行捕获回填。")
+    expectation_rule = ("Existing expectations remain immutable; disagreements require human review." if host else
+                        "期望值与实际值不一致由平台用执行捕获值覆盖，不需要你处理。")
+    execution_name = "Host execution" if host else "WinAMS"
+    coverage_name = "Host coverage records" if host else "WinAMS 分支记录"
     return (
-        "你是 WinAMS 单元测试用例（TestCsv）的输入手順助手。你只提出新增的输入行，"
+        f"{introduction}你只提出新增的输入行，"
         "平台按你的提议追加行并交给 ut-agent 校验器重新执行与判定，最终由人工审核。\n\n"
         "## 硬性约束（校验器逐条检查，违反即判失败）\n"
         f"{revision_rules}\n\n"
@@ -89,19 +98,19 @@ def _system_prompt(constraints: dict[str, Any]) -> str:
         "## 方式\n"
         "- 不要输出 CSV。每个新增行 = 复制 base_row 指定的现有数据行，只改 inputs 中列出的输入列；"
         "base_row 0 表示全部输入为空的行。\n"
-        "- 输入列用 I1..In 引用（见「输入列」）；不能改输出列，平台把新增行的期望值全部留空，由 WinAMS 执行捕获回填。\n"
-        "- 已有行、列与期望值由平台保持不变；期望值与实际值不一致由平台用执行捕获值覆盖，不需要你处理。\n"
+        f"- 输入列用 I1..In 引用（见「输入列」）；不能改输出列，{output_rule}\n"
+        f"- 已有行、列与期望值由平台保持不变；{expectation_rule}\n"
         "- obligation 只能是「待补缺口」中的义务 ID，或「校验判定」中的问题代码（例如覆盖率不足）。\n"
         "- 依据判定式与列含义推出取值并写在 reason 中；不要猜测，推不出的义务放进 declined 并说明原因。\n"
         "- 新增行的输入不能与任何已有行完全相同。\n"
         "- 程序会用实际新增行重新检查义务、父分支路径和 MC/DC 配对；认领义务不等于满足义务。"
-        "被拒绝的行不会进入 WinAMS，下一轮请依据程序反馈修正输入，而非重复相同行。\n"
+        f"被拒绝的行不会进入 {execution_name}，下一轮请依据程序反馈修正输入，而非重复相同行。\n"
         "- 一轮候选被拒绝时，当前 CSV 保持不变。该轮中已证实的提议如需保留，须与修正行一起重新提出。\n"
         "- 只能依据给出的精确输入映射或类型化依赖证据推导控制关系；NO_DIRECT_INPUT 表示没有直接列映射，"
         "不能用名称相似的缓冲区字段代替 ROM 配置或内部局部变量。证据不足时写入 declined。\n"
         "- EXECUTION_PATH_DIVERGED 表示桩函数调用次数与预测冲突；可能来自输入手順、构建或运行配置，"
         "不能仅凭冲突认定缺少输入。只在给定语义证据支持时新增行；否则不新增，在 rationale 中说明，交由人工检查。"
-        "\n- WinAMS 分支记录只证明已执行版本的覆盖状态；UNKNOWN 映射、覆盖百分比和汇编地址"
+        f"\n- {coverage_name}只证明已执行版本的覆盖状态；UNKNOWN 映射、覆盖百分比和汇编地址"
         "不能代替类型化输入见证，也不能证明某个新增行已经走通分支。"
         "\n- 简短输出取值依据，每轮最多新增 20 行；不要复述提示词和历史。"
     )
@@ -128,7 +137,13 @@ def _gap_line(item: dict[str, Any]) -> str:
     constraints = [f"{c.get('variable')} {c.get('operator')} {c.get('value')}"
                    for c in item.get("constraints") or ()]
     if constraints:
-        line += f" / 求解约束：{'; '.join(constraints)}"
+        line += f" / 求解约束（输入要求）：{'; '.join(constraints)}"
+    predicates = [f"{c.get('variable')} {c.get('operator')} {c.get('value')}"
+                  for c in item.get("predicate_context") or ()]
+    if predicates:
+        line += f" / 判定原子上下文（不要求逐项为真）：{'; '.join(predicates)}"
+    if item.get("kind") == "boundary" and item.get("outcome") is None:
+        line += " / 此境界值义务未指定判定结果"
     reason = _gap_reason(str(item.get("reason") or ""))
     if reason:
         line += f"：{reason}"

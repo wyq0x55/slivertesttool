@@ -135,9 +135,11 @@ class UtAgentBridge:
                 "--reference", str(reference), "--candidate", str(candidate), "--out", str(out)]
 
     def host_prepare(self, *, ir_json: Path, intents: Path, reference: Path,
-                     candidate: Path, out: Path) -> dict[str, Any]:
-        return self._run(["host-prepare", *self._host_args(
-            ir_json, intents, reference, candidate, out)], timeout=self.settings.timeout)["prepared"]
+                     candidate: Path, out: Path, manifest: Path | None = None) -> dict[str, Any]:
+        args = ["host-prepare", *self._host_args(ir_json, intents, reference, candidate, out)]
+        if manifest is not None:
+            args += ["--manifest", str(manifest)]
+        return self._run(args, timeout=self.settings.timeout)["prepared"]
 
     def host_execute(self, *, ir_json: Path, intents: Path, reference: Path,
                      candidate: Path, out: Path, config: dict,
@@ -145,6 +147,8 @@ class UtAgentBridge:
                      stub_response: Optional[Path] = None) -> dict[str, Any]:
         args = ["host-execute", *self._host_args(ir_json, intents, reference, candidate, out),
                 "--timeout", str(self.settings.execute_timeout)]
+        if config.get("manifest_path"):
+            args += ["--manifest", str(config["manifest_path"])]
         for flag, value in (("--clang", config.get("host_clang", "clang")),
                             ("--llvm-cov", config.get("host_llvm_cov", "llvm-cov")),
                             ("--llvm-profdata", config.get("host_llvm_profdata", "llvm-profdata")),
