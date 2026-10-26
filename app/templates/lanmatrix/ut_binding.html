@@ -32,10 +32,12 @@
       </div>
       <div class="ut-subsection" aria-labelledby="ut-prerequisites-heading">
         <h3 id="ut-prerequisites-heading">执行与接口配置</h3>
-        <p class="ut-hint">直接选择适用于项目的配置，系统会保存对应版本。修改后需创建新批次。</p>
+        <p class="ut-hint">按指针宽度和函数条目声明，不需要填写芯片名或项目契约编号。修改后需创建新批次。</p>
         <div class="ut-fields">
-          <div class="field"><label for="ut-m-build-profile">目标 ABI（类型与指针宽度） *</label><select id="ut-m-build-profile" required aria-describedby="ut-build-profile-hint ut-build-profile-description"><option value="">请选择执行配置</option></select><p class="ut-hint" id="ut-build-profile-hint">涉及指针的函数必须选择已声明目标 ABI 的配置；仅无指针的函数可以明确选择“不声明目标 ABI”。</p><p class="ut-hint ut-choice-detail" id="ut-build-profile-description" aria-live="polite"></p></div>
-          <div class="field"><label for="ut-m-interfaces-contract">外部函数指针接口契约</label><select id="ut-m-interfaces-contract" aria-describedby="ut-interface-contract-hint ut-interface-contract-description"><option value="">不使用接口契约（须已有实现证据）</option></select><p class="ut-hint" id="ut-interface-contract-hint">外部调用的指针读写方向无法从实现证明时，此项必选。下方说明列出契约适用的函数与审批信息。</p><p class="ut-hint ut-choice-detail" id="ut-interface-contract-description" aria-live="polite"></p></div>
+          <div class="field"><label for="ut-m-build-abi">目标 ABI（指针宽度） *</label><select id="ut-m-build-abi" required aria-describedby="ut-build-abi-hint ut-build-abi-description"><option value="">请选择指针宽度</option></select><p class="ut-hint" id="ut-build-abi-hint">32 位或 64 位只声明指针宽度，不证明结构体布局、端序或其他整数宽度。仅无指针函数可以选择不声明。</p><p class="ut-hint ut-choice-detail" id="ut-build-abi-description" aria-live="polite"></p></div>
+          <div class="field"><label for="ut-m-build-profile">编译器兼容（可选）</label><select id="ut-m-build-profile" aria-describedby="ut-build-profile-hint ut-build-profile-description"><option value="">默认编译上下文</option></select><p class="ut-hint" id="ut-build-profile-hint">只有源码依赖特定编译器的宏或语法时才选择。它不是目标 ABI；与指针宽度冲突时不能保存。</p><p class="ut-hint ut-choice-detail" id="ut-build-profile-description" aria-live="polite"></p></div>
+          <div class="field ut-span-2"><span id="ut-interface-label">外部函数指针接口契约</span><p class="ut-hint" id="ut-interface-entry-hint">按外部函数、参数序号（从 0 开始）和读写方向逐条声明。方向不能从函数名推断。inout 必须选择先读后写或先写后读。</p><div id="ut-interface-entries" class="ut-entry-list" role="group" aria-labelledby="ut-interface-label"></div><button class="btn" id="ut-interface-add" type="button">添加接口条目</button><p class="ut-hint ut-choice-detail" id="ut-interface-entry-description" aria-live="polite"></p></div>
+          <div class="field"><label for="ut-m-interfaces-contract">已审批接口契约（可选）</label><select id="ut-m-interfaces-contract" aria-describedby="ut-interface-contract-hint ut-interface-contract-description"><option value="">不引用已审批契约</option></select><p class="ut-hint" id="ut-interface-contract-hint">可额外引用工具自带的已审批契约。与上面的条目冲突时不能保存。没有适用契约时留空，直接填写条目。</p><p class="ut-hint ut-choice-detail" id="ut-interface-contract-description" aria-live="polite"></p></div>
         </div>
       </div>
       <div id="ut-policy-section" class="ut-subsection" aria-labelledby="ut-policy-heading">

@@ -102,9 +102,10 @@ def manifest_options() -> dict:
         raise ServiceError("无法加载项目清单可选配置，请检查 ut-agent 版本与连接后刷新页面。",
                            code="UT_CONFIGURATION_OPTIONS_UNAVAILABLE") from exc
     if (not isinstance(result, dict)
-            or result.get("contract") != "ut-agent.configuration-options/1"
-            or not all(isinstance(result.get(key), list)
-                       for key in ("build_profiles", "interface_contracts"))):
+            or result.get("contract") != "ut-agent.configuration-options/2"
+            or not all(isinstance(result.get(key), list) and result.get(key)
+                       for key in ("pointer_sizes", "interface_directions", "build_profiles"))
+            or not isinstance(result.get("interface_contracts"), list)):
         raise ServiceError("ut-agent 返回了无效的项目清单选项，请升级配套工具后刷新页面。",
                            code="UT_CONFIGURATION_OPTIONS_UNAVAILABLE")
     return result

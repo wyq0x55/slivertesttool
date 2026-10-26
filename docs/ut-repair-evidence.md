@@ -236,34 +236,37 @@ a candidate.
 
 ## Configuration and interface prerequisites
 
-Settings exposes the target ABI selector and approved external-pointer interface
-selector directly in the expanded ProjectManifest form. The installed ut-agent
-supplies these choices through the read-only `configuration-options` bridge
-command; the platform's project-view-authorized `GET /manifest/options` does not
-need or change a saved binding. Users select a named configuration, see its
-pointer width or approved function scope, and the form stores the versioned
-references. No project-name matching or automatic ABI/contract selection occurs.
+Settings exposes a generic target-ABI pointer width and an external pointer
+entry editor in the expanded ProjectManifest form. The installed ut-agent
+supplies the allowed widths and direction pairs through the read-only
+`configuration-options` contract `ut-agent.configuration-options/2`. The
+project-view-authorized `GET /manifest/options` does not need or change a saved
+binding. A 32-bit or 64-bit choice writes `build.abi.pointer_size` and asserts
+only that width. Compiler-compatibility profiles and packaged interface
+contracts remain optional; they are not the only way to declare these facts.
+No project-name matching or automatic selection occurs.
 
-Saving through the form requires an explicit ABI choice. The default option
-explicitly declares no target ABI and cannot execute pointer-bearing functions.
-An interface contract is conditional: when no implementation evidence proves
-external pointer direction, the user must select an applicable approved contract.
-Existing references absent from the installed catalog stay visible and unchanged.
-If discovery fails, the saved document remains inspectable/exportable, while
-save and validation are disabled until the tool connection is restored.
+Saving a new declaration requires an explicit width. Undeclared width cannot
+execute pointer-bearing functions. Existing manifests that only named
+`build.profile` stay unchanged until the width control is edited. Interface
+entries name the function, zero-based parameter index and direction. A packaged
+contract can still be selected. References absent from the installed catalog
+stay visible and unchanged. If discovery fails, the saved document remains
+inspectable and exportable, while save and validation are disabled.
 
 An automation block is not a claim that a function cannot be supported.
-`ABI_POINTER_SIZE_UNDECLARED` requires an applicable, evidence-backed
-`build.profile`, recorded with its matching layout triple in the extracted
-CompileContext. Fix the project manifest and create a new batch; retrying a
-frozen candidate or changing CSV inputs cannot supply an ABI declaration.
-Do not substitute the native host pointer width for the project's ABI.
+`ABI_POINTER_SIZE_UNDECLARED` requires `build.abi.pointer_size` of 4 or 8,
+recorded with its matching layout triple. A matching evidence-backed compiler
+profile keeps its stronger record. Fix the manifest and create a new batch;
+retrying a frozen candidate or changing CSV inputs cannot supply the
+declaration. Do not substitute the native host pointer width, and do not treat
+pointer width as record-layout proof.
 
 A `MISSING_INTERFACE_CONTRACT` projection failure identifies the callee and
 zero-based argument index even when no CSV or attempt exists. The job reason
-explains the corresponding human parameter number and the `interfaces.contract`
-configuration (`ID@version`). Alternatively, extractor support can establish
-direction from a bound implementation. A model proposal alone proves neither
-pointer direction nor pointee extent. Preserve the raw diagnostic and regenerate
-after adding approved evidence; these prerequisites do not consume input repair
-rounds or permit automatic approval.
+tells the user to enter that function, parameter index and direction, or to
+select a packaged contract whose entry matches. Direction is never guessed from
+a name. Extractor support can still establish it from a bound implementation.
+A model proposal alone proves neither pointer direction nor pointee extent.
+Preserve the raw diagnostic and regenerate after adding the declaration; these
+prerequisites do not consume input repair rounds or permit automatic approval.
