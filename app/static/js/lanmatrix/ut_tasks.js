@@ -112,8 +112,8 @@
       (jobs.length ? "没有符合条件的作业" : "还没有作业：在「实施一览」勾选函数后加入队列") + "</td></tr>";
   }
 
-  // The current version's host llvm-cov C0 (line) / C1 / MC/DC on one line;
-  // the per-line report is in the job detail. Development-time evidence only.
+  // The current version's Clang/LLVM C0/C1/MC/DC on one line. The per-line
+  // report stays in the job detail. This is HOST_EXECUTION, not target evidence.
   function coverageDigest(j) {
     var c = j.coverage;
     if (!c) return '<span class="submuted">—</span>';
@@ -124,7 +124,7 @@
       return '<span class="' + (!measured ? "is-missing" : v >= 100 ? "is-full" : "is-gap") +
         '"><b>' + k[1] + "</b> " + (measured ? esc(v + "%") : "—") + "</span>";
     }).join("");
-    return '<div class="ut-cov-mini is-inline" title="主机 llvm-cov 观测，仅开发期证据">' + cells + "</div>";
+    return '<div class="ut-cov-mini is-inline" title="Clang/LLVM 实测覆盖率（HOST_EXECUTION），不计入目标机证据">' + cells + "</div>";
   }
 
   async function retryFromList(id, button) {
@@ -480,7 +480,7 @@
     execution_resource_wait: "等待执行资源", static_check: "执行前静态检查",
     result_check: "执行结果校验",
     typed_candidate_processing: "类型推导候选处理",
-    host_workflow: "主机处理总计（含桩模型）", host_prepare: "主机桩接口准备",
+    host_workflow: "LLVM 处理总计（含桩模型）", host_prepare: "桩接口准备",
     host_execute: "LLVM 编译、执行与校验", stub_model: "桩函数模型请求",
     input_model: "补用例模型请求", candidate_check: "模型候选静态检查",
     extracting: "Clang 抽取（整批共享）", queued: "等待生成进程", generating: "开始生成",
@@ -852,7 +852,7 @@
     var data = coverageCache[key], r = data.report || {}, s = r.summary || {};
     var lines = r.lines || [];
     var c1Label = r.c1_basis === "DECISION" ? "C1（判定）" : "C1（条件）";
-    var head = '<p class="ut-cov-note">主机 llvm-cov 观测（HOST_EXECUTION），仅开发期证据，不作为目标覆盖率。' +
+    var head = '<p class="ut-cov-note">Clang/LLVM 实测覆盖率（HOST_EXECUTION），按项目测试要求展示。' +
       "第 " + esc(data.attempt.seq) + " 版 · 用例 " + esc(r.cases) + " 条" +
       (r.source_sha256 ? ' · 源文件 <code>' + esc(String(r.source_sha256).slice(0, 12)) + "</code>" : "") + "</p>" +
       '<div class="ut-cov">' + covChip("C0（行）", s.c0) +

@@ -63,7 +63,7 @@ Waitress (prod server)  +  Pydantic  +  pytest
 - System-admin console: change the license/runtime settings and manage tasks
   across projects with filter / sort / multi-select controls.
 - **単体テスト pipeline**: import a project test index as a 実施一覧, queue
-  functions for ut-agent generation, WinAMS execution and machine checks,
+  functions for ut-agent generation, Clang/LLVM execution and machine checks,
   bounded local-LLM repair, and human review of every outcome. See
   `docs/UT_PIPELINE.md`.
 

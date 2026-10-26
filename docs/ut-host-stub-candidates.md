@@ -1,11 +1,10 @@
-# Experimental Clang host and stub candidates
+# Primary Clang/LLVM execution and stub candidates
 
-The UT project binding selects `execution_backend=winams` (default) or `clang`.
-The normal batch/job/attempt workflow and human review gate own both paths.
-Host PASS means host observation comparison passed. Raw host coverage is displayed
-as measured; it does not assert Baseline coverage acceptance, target execution,
-or formal delivery validation. Human approval never changes the machine verdict
-or those evidence qualifications.
+The UT project binding uses `execution_backend=clang` exclusively.
+The normal batch/job/attempt workflow and human review gate own this primary path.
+LLVM PASS is the primary workflow machine result. Frozen test requirements
+are enforced by the checker; measured coverage remains actual LLVM evidence.
+Human approval does not rewrite verdicts or create target-hardware evidence.
 
 ## Diagnostic guidance
 
@@ -22,7 +21,7 @@ execution summary and an investigation instruction for a local model. Downloadin
 does not call an AI provider or submit a revision. The packet preserves upstream
 detail limits and does not contain every source artifact. Local-model repair
 prompts also include the checker's guidance for open missing-case obligations
-(`ut-repair/7.6`); evidence gaps and unconfirmed infeasibility are not row work.
+(`ut-repair/8.0`); evidence gaps and unconfirmed infeasibility are not row work.
 
 The batch API includes selected frozen constraint fields so the details page
 can show the test requirements selected for that batch. Checker reports also
@@ -44,8 +43,8 @@ project edit permissions and CSRF contract. All settings are frozen in
 
 | Field | Default | Validation |
 | --- | --- | --- |
-| execution_backend | winams | winams or clang |
-| stub_mode | deterministic | deterministic or llm; llm requires clang |
+| execution_backend | clang | clang only |
+| stub_mode | deterministic | deterministic or llm |
 | stub_model | empty | String override on the existing global AI gateway |
 | stub_max_rounds | 2 | Integer 1..5; independent of CSV repair rounds |
 | host_clang | clang | Nonempty executable name/path |
@@ -53,10 +52,10 @@ project edit permissions and CSRF contract. All settings are frozen in
 | host_llvm_profdata | llvm-profdata | Nonempty executable name/path |
 | host_profile_runtime | empty | Optional runtime library path |
 
-Manifest, index and Product root are required for both backends. WinAMS also
-requires its work root; its stub-build selection and existing CSV repair stay
-unchanged. The UI hides WinAMS-only fields for clang and disables mutation for
-read-only users. AI endpoint and secret remain in the global AI settings.
+Manifest, index and Product root are required. LLVM tools and ABI runtime
+are independent of any original compiler. Stub-model and input-repair model
+settings are both available, with separate budgets. Credentials remain global.
+No WinAMS work root, linked build or OMF tool belongs to a platform job.
 
 ## Ownership and execution
 
@@ -66,14 +65,15 @@ read-only users. AI endpoint and secret remain in the global AI settings.
 - Subprocess transport: `bridge.py`, contract `ut-agent.bridge/1`.
 - Model calls and artifact persistence: `host.py`; it never interprets C semantics.
 - Typed inputs, trusted harness, body validation, CSV binding, compile/run and
-  host checks: external ut-agent `host-prepare` / `host-execute`.
+  host checks: external ut-agent `host-prepare` / `execute`.
 
 The clang path requires generator IR, intents, original reference CSV and the
 current candidate. Only the external bridge may prove that candidate rows still
 map to intents. Unmapped edits block with useful host diagnostics; the platform
 does not replay reference inputs as if they were the edited candidate. The host
-branch consumes the returned check directly, without WinAMS checks, expected
-value capture backfill or generic CSV model repair. The reference itself must
+workflow consumes the returned check directly. Input repair requires identified
+missing obligations and typed witnesses; appended outputs are implementation
+derived and the resulting candidate SHA must execute again. The reference itself must
 match the bridge's deterministic projection of the validated Suite, including
 all declared output expectations; changing both CSV files cannot bypass that
 binding. Raw overrides without typed replay mappings are unsupported. Suite-level
@@ -83,7 +83,7 @@ behavior and raw fields, so reference reprojection uses the same typed evidence
 as formal generation. Missing selected generation units fail with the original
 extractor/generation report diagnostic instead of an empty successful response.
 
-Deterministic mode calls host-execute once. LLM mode prepares once per execution
+Deterministic mode calls execute once. LLM mode prepares once per execution
 attempt, skips the model when no stubs exist, and otherwise calls the existing
 provider with the prepared messages, temperature zero and at most 8192 output
 tokens. The model proposes only per-callee body statements, without outer braces.
