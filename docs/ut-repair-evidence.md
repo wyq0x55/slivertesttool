@@ -212,6 +212,9 @@ Execution overlaps generation when a Huey worker is available (at least two
 worker threads are needed for overlap in normal asynchronous operation).
 The generation slot is acquired without blocking another worker; waiting batch
 tasks reschedule, and startup recovery includes both queued and scheduled tasks.
+Those tasks can resume only still-queued generation. Jobs already claimed by a
+generator that died are marked interrupted; a delayed duplicate cannot certify
+them as finished or hide an execution that is still active.
 The existing WinAMS execution lock and human approval gates still apply. An old
 ut-agent that rejects the new flag fails explicitly instead of silently changing
 the generation/execution protocol. Existing artifact/version locks are preserved.

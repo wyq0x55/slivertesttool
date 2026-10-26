@@ -386,10 +386,23 @@ def _run_generation(batch_id: int, on_ready: Callable[[int], None] | None) -> li
         return []
     jobs = UtJob.query.filter_by(batch_id=batch_id, state=UtJob.QUEUED).all()
     if not jobs:
-        # Every job was stopped before generation started.
-        batch.status = UtBatch.STATUS_DONE
-        batch.finished_at = _utcnow()
+        interrupted = (UtJob.query.filter_by(batch_id=batch_id, state=UtJob.GENERATING)
+                       .with_for_update(of=UtJob).populate_existing().all())
+        if interrupted:
+            # A delayed duplicate cannot resume a generator that died after
+            # claiming its jobs, nor certify the unfinished batch as done.
+            for job in interrupted:
+                if job.stop_requested_at is not None:
+                    _halt(job)
+                else:
+                    _gate(job, UtJob.ERROR, "生成进程中断；请从实施一览重新入队", GateCode.INTERRUPTED)
+            batch.status = UtBatch.STATUS_FAILED
+            batch.error = "生成进程中断，重复任务不能接管未完成的生成"
+            batch.finished_at = _utcnow()
+        else:
+            batch.status = UtBatch.STATUS_RUNNING
         db.session.commit()
+        _refresh_batch(batch_id)
         return []
     for job in jobs:
         job.state = UtJob.GENERATING
@@ -1167,7 +1180,8 @@ def recover_interrupted(pending_jobs: set[int], pending_batches: set[int]) -> di
     failed_batches: set[int] = set()
     for job in jobs:
         before_generation = job.state in (UtJob.QUEUED, UtJob.GENERATING)
-        if job.id in pending_jobs or (before_generation and job.batch_id in pending_batches):
+        if ((job.state in (UtJob.EXECUTING, UtJob.REPAIRING) and job.id in pending_jobs)
+                or (job.state == UtJob.QUEUED and job.batch_id in pending_batches)):
             result["pending"].append(job.id)
             continue
         if job.stop_requested_at is not None:

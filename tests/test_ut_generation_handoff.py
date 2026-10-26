@@ -197,3 +197,63 @@ def test_requeued_completed_function_is_not_overwritten_by_the_old_batch(env, mo
     old, new = _job(env, old_id), _job(env, new_id)
     assert old["state"] == "awaiting_review" and old["superseded_by"] == new_id
     assert len(old["attempts"]) == 1 and new["state"] == "queued" and new["attempts"] == []
+
+
+def test_delayed_duplicate_does_not_hide_interrupted_generation_during_recovery(env, monkeypatch):
+    from app.extensions import db
+    from app.jobqueue import ut_tasks
+    from app.models import UtJob
+
+    targets = _configure(env)
+    monkeypatch.setattr(ut_tasks.ut_generate_batch, "schedule", lambda **_: None)
+    assert pipeline._GENERATION_GATE.acquire(blocking=False)
+    try:
+        [job_id] = _enqueue(env, targets["f"])
+    finally:
+        pipeline._GENERATION_GATE.release()
+    with env.client.application.app_context():
+        job = db.session.get(UtJob, job_id)
+        job.state = UtJob.GENERATING
+        batch_id = job.batch_id
+        db.session.commit()
+    monkeypatch.setattr(ut_tasks.huey, "pending", lambda **_: [])
+    monkeypatch.setattr(ut_tasks.huey, "scheduled", lambda **_: [ut_tasks.ut_generate_batch.s(batch_id)])
+    assert ut_tasks.recover_interrupted_jobs()["interrupted"] == [job_id]
+    ut_tasks.ut_generate_batch(batch_id)
+    job = _job(env, job_id)
+    assert job["state"] == "error" and job["gate_code"] == "INTERRUPTED"
+    assert job["batch"]["status"] == "failed" and env.bridge.executions == 0
+
+
+def test_duplicate_generation_task_cannot_finish_active_execution_or_unfinished_generation(env, monkeypatch):
+    from app.extensions import db
+    from app.jobqueue import ut_tasks
+    from app.models import UtAttempt, UtJob
+
+    targets = _configure(env)
+    monkeypatch.setattr(ut_tasks.ut_generate_batch, "schedule", lambda **_: None)
+    assert pipeline._GENERATION_GATE.acquire(blocking=False)
+    try:
+        [job_id] = _enqueue(env, targets["f"])
+    finally:
+        pipeline._GENERATION_GATE.release()
+    with env.client.application.app_context():
+        job = db.session.get(UtJob, job_id)
+        batch_id = job.batch_id
+        attempt = pipeline._new_attempt(job, UtAttempt.ORIGIN_GENERATOR, env.bridge.generated)
+        job.reference_csv, job.state = attempt.csv_path, UtJob.EXECUTING
+        db.session.commit()
+        assert pipeline.run_generation(batch_id) == []
+    assert _job(env, job_id)["batch"]["status"] == "running"
+
+    # Exercise the defensive path even if startup recovery was not called.
+    from app.models import UtBatch
+
+    with env.client.application.app_context():
+        job = db.session.get(UtJob, job_id, populate_existing=True)
+        job.state = UtJob.GENERATING
+        db.session.get(UtBatch, batch_id).status = UtBatch.STATUS_GENERATING
+        db.session.commit()
+        assert pipeline.run_generation(batch_id) == []
+    job = _job(env, job_id)
+    assert job["state"] == "error" and job["batch"]["status"] == "failed"
