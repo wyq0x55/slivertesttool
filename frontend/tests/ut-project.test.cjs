@@ -531,15 +531,12 @@ test("the selected version's host coverage report shows each line's C0, C1 and M
   assert.match(html, /C1（判定）<\/b> 75%（3 \/ 4）/);
   assert.match(html, /MC\/DC<\/b> 50%（1 \/ 2）/);
   assert.match(html, /未执行的行：10 · 未完全覆盖的判定所在行：4, 7/);
-  // gcov -b layout: count (##### never run, - non-code), line number, source,
-  // then each decision's outcomes on annotation rows beneath it.
-  assert.match(html, /<tr class="ut-gcov-line is-miss"><td class="ut-gcov-count">#####<\/td><td class="ut-gcov-no">10</);
-  assert.match(html, /<td class="ut-gcov-count">-<\/td><td class="ut-gcov-no">2</);
-  assert.match(html, /<td class="ut-gcov-count">2<\/td><td class="ut-gcov-no">4<\/td><td class="ut-gcov-src"><code>\tif/);
-  assert.match(html, /ut-gcov-note is-full"><td><\/td><td><\/td><td><span class="ut-gcov-kind">判定 第 9 列<\/span>/);
-  assert.match(html, /MC\/DC 第 9 列<\/span>1 \/ 2 个条件已证明独立影响 · 未证明条件 2/);
-  assert.match(html, /ut-gcov-line is-gap"><td class="ut-gcov-count">1<\/td><td class="ut-gcov-no">7</);
-  assert.match(html, /真 1 ✓<\/span> · <span class="is-miss">假 0 ✗/);
+  // Columns stay on the source row. The MC/DC tip lists every llvm-cov condition.
+  assert.match(html, /<tr class="is-miss"><td class="ut-num">10<\/td><td><span class="is-miss">\u00d7/);
+  assert.match(html, /1 \/ 2<span class="submuted"> 未证明条件 2/);
+  assert.match(html, /条件 1：已证明独立影响/);
+  assert.match(html, /class="is-miss">条件 2：未证明独立影响/);
+  assert.match(html, /T\u2713<\/span><span class="is-miss">F\u2717/);
   assert.match(html, /x &lt; &lt;y&gt;/);
   assert.match(html, /函数范围外的记录：第 30 行/);
   assert.match(html, /宏展开的判定（行号属于宏定义文件）：第 3 行/);
@@ -548,7 +545,7 @@ test("the selected version's host coverage report shows each line's C0, C1 and M
   h.get("ut-d-coverage").listeners.click({ target: { closest: () => ({ dataset: { covView: "gaps" } }) } });
   const gaps = h.get("ut-d-coverage-body").innerHTML;
   assert.doesNotMatch(gaps, /classify/);
-  assert.match(gaps, /<td class="ut-gcov-no">7<\/td>/);
+  assert.match(gaps, /<td class="ut-num">7<\/td>/);
   h.click("ut-d-refresh");
   await settle();
   h.details.at(-1).resolve(value);

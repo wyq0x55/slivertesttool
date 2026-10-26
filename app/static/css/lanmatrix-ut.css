@@ -230,31 +230,34 @@
 .ut-host-evidence { padding: 16px; }
 .ut-artifact-list { display: flex; flex-wrap: wrap; gap: 8px 24px; padding-left: 20px; }
 .ut-artifact-list li { overflow-wrap: anywhere; }
-/* Host coverage report in `gcov -b` layout: count | line | source, with
-   decision outcomes on annotation rows beneath their line. */
+/* Per-line host coverage. Metrics stay in columns; MC/DC conditions open on hover. */
 .ut-cov-mini.is-inline{ flex-direction:row; flex-wrap:wrap; gap:0 10px; }
 .ut-cov-mini.is-inline b{ min-width:0; margin-right:2px; }
 .ut-coverage{ margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
 .ut-cov-note{ margin:0; font-size:12.5px; color:var(--warn-text); }
 .ut-cov-gaps{ margin:10px 0 0; font-size:12.5px; color:var(--text-2); }
 .ut-cov-views{ margin:10px 0 8px; }
-.ut-gcov-wrap{ max-height:560px; overflow:auto; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface); }
-.ut-gcov{ width:100%; border-collapse:collapse; font-family:var(--mono); font-size:12px; line-height:1.55; }
-.ut-gcov td{ padding:0 10px; vertical-align:top; white-space:nowrap; }
-.ut-gcov-count{ width:1%; text-align:right; color:var(--text-3); font-variant-numeric:tabular-nums; border-right:1px solid var(--border); }
-.ut-gcov-no{ width:1%; text-align:right; color:var(--text-3); user-select:none; border-right:1px solid var(--border); }
-.ut-gcov-src code{ white-space:pre; tab-size:4; background:none; padding:0; font-size:inherit; color:var(--text); }
-.ut-gcov-line.is-miss td{ background:var(--danger-soft); }
-.ut-gcov-line.is-miss .ut-gcov-count{ color:var(--danger-text); font-weight:600; }
-.ut-gcov-line.is-gap td{ background:var(--warn-soft); }
-.ut-gcov-note td{ padding-top:0; padding-bottom:1px; font-size:11.5px; color:var(--text-2); }
-.ut-gcov-note td:last-child{ padding-left:28px; }
-.ut-gcov-kind{ display:inline-block; min-width:9em; color:var(--text-3); }
-.ut-gcov-note.is-full .ut-gcov-kind{ color:var(--ok-text); }
-.ut-gcov-note.is-gap .ut-gcov-kind{ color:var(--warn-text); }
-.ut-gcov-note.is-miss .ut-gcov-kind{ color:var(--danger-text); }
-.ut-gcov .is-full{ color:var(--ok-text); }
-.ut-gcov .is-miss{ color:var(--danger-text); }
+.ut-cov-wrap{ max-height:70vh; overflow:auto; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface); }
+.ut-cov-lines{ width:100%; border-collapse:separate; border-spacing:0; font-size:12.5px; }
+.ut-cov-lines th{ position:sticky; top:0; z-index:1; background:var(--surface-2); text-align:left; font-weight:500; color:var(--text-3); padding:6px 10px; border-bottom:1px solid var(--border); white-space:nowrap; }
+.ut-cov-lines td{ padding:2px 10px; vertical-align:middle; white-space:nowrap; font-variant-numeric:tabular-nums; border-bottom:1px solid var(--border); }
+.ut-cov-lines th:nth-child(1), .ut-cov-lines td:nth-child(1), .ut-cov-lines th:nth-child(3), .ut-cov-lines td:nth-child(3){ text-align:right; }
+.ut-cov-lines th:nth-child(2), .ut-cov-lines td:nth-child(2){ text-align:center; }
+.ut-cov-lines tr.is-miss td{ background:var(--danger-soft); }
+.ut-cov-lines tr.is-gap td{ background:var(--warn-soft); }
+.ut-cov-src code{ white-space:pre; tab-size:4; background:none; }
+.ut-cov-mark{ display:inline-block; margin-right:6px; }
+.ut-cov-lines .is-full{ color:var(--ok-text); }
+.ut-cov-lines .is-miss, .ut-cov-mark.is-miss{ color:var(--danger-text); }
+.ut-cov-mark.is-gap{ color:var(--warn-text); }
+.ut-cov-mark.is-missing{ color:var(--text-3); }
+.ut-mcdc{ cursor:help; }
+.ut-mcdc-tip{ display:none; }
+.ut-mcdc-pop{ position:fixed; z-index:80; min-width:220px; max-width:420px; padding:8px 10px; background:var(--surface); color:var(--text); border:1px solid var(--border-strong); border-radius:var(--radius-sm); white-space:normal; font-size:12px; line-height:1.55; text-align:left; display:flex; flex-direction:column; gap:2px; }
+.ut-mcdc-pop[hidden]{ display:none; }
+.ut-mcdc-pop .is-full{ color:var(--ok-text); }
+.ut-mcdc-pop .is-miss{ color:var(--danger-text); }
+.ut-mcdc-where{ color:var(--text-3); }
 .ut-host-more{ margin-top:14px; }
 .ut-host-more summary{ cursor:pointer; color:var(--brand-text); font-size:12.5px; }
 /* Issues are read one type at a time; each tab shows its severity and count. */

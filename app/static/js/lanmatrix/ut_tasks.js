@@ -760,6 +760,7 @@
   var coverageEpoch = 0;
   var coverageView = "all";
   var coverageShown = null;
+  var mcdcPop = null;
   var COV_CLASS = { COMPLETE: "is-full", PARTIAL: "is-gap", NONE: "is-miss", EXCLUDED: "is-missing" };
 
   function hideCoverage() {
@@ -799,28 +800,44 @@
     var tone = !count || count.percent == null ? "is-missing" : count.percent >= 100 ? "is-full" : "is-gap";
     return '<span class="ut-cov-item ' + tone + '"><b>' + label + "</b> " + (missing || covCount(count)) + "</span>";
   }
-  function timesText(n) { return n > 0 ? "执行 " + esc(n) + " 次" : "未执行"; }
-  // gcov -b style annotation lines under a source line: one per decision,
-  // switch outcome or MC/DC record, in the platform's colours.
-  function gcovNotes(line) {
-    var notes = line.c1.map(function (e) {
+  function covMark(ok, label) {
+    return '<span class="' + (ok ? "is-full" : "is-miss") + '">' + label + (ok ? "\u2713" : "\u2717") + "</span>";
+  }
+  // C1 stays on the source row. True/false counts and the column stay in the
+  // tooltip; an extra row would split the listing.
+  function c1Cell(entries) {
+    return entries.map(function (e) {
       if (e.kind === "SWITCH_OUTCOME") {
-        return [COV_CLASS[e.state], "case 第 " + esc(e.column) + " 列", timesText(e.count)];
+        return '<span class="ut-cov-mark ' + COV_CLASS[e.state] + '" title="\u7b2c ' + esc(e.column) +
+          " \u5217 \u00b7 \u6267\u884c " + esc(e.count) + ' \u6b21">case ' + (e.count > 0 ? "\u2713" : "\u2717") + "</span>";
       }
-      var outcomes = '<span class="' + (e.true > 0 ? "is-full" : "is-miss") + '">真 ' +
-        (e.true > 0 ? esc(e.true) + " ✓" : "0 ✗") + '</span> · <span class="' +
-        (e.false > 0 ? "is-full" : "is-miss") + '">假 ' + (e.false > 0 ? esc(e.false) + " ✓" : "0 ✗") + "</span>";
-      return [COV_CLASS[e.state], (e.kind === "CONDITION" ? "条件" : "判定") + " 第 " + esc(e.column) + " 列", outcomes];
-    }).concat(line.mcdc.map(function (e) {
+      return '<span class="ut-cov-mark ' + COV_CLASS[e.state] + '" title="\u7b2c ' + esc(e.column) + " \u5217 \u00b7 " +
+        (e.kind === "CONDITION" ? "\u6761\u4ef6" : "\u5224\u5b9a") + " \u00b7 \u771f " + esc(e.true) + " / \u5047 " + esc(e.false) + '">' +
+        covMark(e.true > 0, "T") + covMark(e.false > 0, "F") + "</span>";
+    }).join("");
+  }
+  // MC/DC conditions are numbered from 1 in source order. Hover lists every
+  // one; the cell itself stays the ratio plus any still-unproven numbers.
+  function mcdcTip(e) {
+    var missing = {};
+    (e.uncovered || []).forEach(function (n) { missing[Number(n)] = true; });
+    var total = Number(e.conditions) || 0;
+    var rows = ['<span class="ut-mcdc-where">\u7b2c ' + esc(e.column) + " \u5217</span>"];
+    for (var i = 1; i <= total; i++) {
+      rows.push('<span class="' + (missing[i] ? "is-miss" : "is-full") + '">\u6761\u4ef6 ' + i + "\uff1a" +
+        (missing[i] ? "\u672a\u8bc1\u660e\u72ec\u7acb\u5f71\u54cd" : "\u5df2\u8bc1\u660e\u72ec\u7acb\u5f71\u54cd") + "</span>");
+    }
+    return '<span class="ut-mcdc-tip" role="tooltip">' + rows.join("") + "</span>";
+  }
+  function mcdcCell(entries) {
+    return entries.map(function (e) {
       if (e.state === "EXCLUDED") {
-        return ["is-missing", "MC/DC 第 " + esc(e.column) + " 列", "不计入" + (e.reason ? "：" + esc(e.reason) : "")];
+        return '<span class="ut-cov-mark is-missing" title="' + esc(e.reason || "") + '">\u4e0d\u8ba1\u5165</span>';
       }
-      return [COV_CLASS[e.state], "MC/DC 第 " + esc(e.column) + " 列", esc(e.shown) + " / " + esc(e.conditions) +
-        " 个条件已证明独立影响" + ((e.uncovered || []).length ? " · 未证明条件 " + esc(e.uncovered.join(", ")) : "")];
-    }));
-    return notes.map(function (n) {
-      return '<tr class="ut-gcov-note ' + n[0] + '"><td></td><td></td><td><span class="ut-gcov-kind">' + n[1] +
-        "</span>" + n[2] + "</td></tr>";
+      return '<span class="ut-cov-mark ut-mcdc ' + COV_CLASS[e.state] + '" tabindex="0">' +
+        esc(e.shown) + " / " + esc(e.conditions) +
+        ((e.uncovered || []).length ? '<span class="submuted"> \u672a\u8bc1\u660e\u6761\u4ef6 ' + esc(e.uncovered.join(", ")) + "</span>" : "") +
+        mcdcTip(e) + "</span>";
     }).join("");
   }
   function lineGap(line) {
@@ -828,11 +845,11 @@
       line.c1.concat(line.mcdc).some(function (e) { return e.state === "PARTIAL" || e.state === "NONE"; });
   }
 
-  // The report reads like `gcov -b`: execution count (##### when never run,
-  // - for a non-code line), line number and source, with each decision's
-  // outcomes on the lines beneath it.
+  // One row per source line. C0, the execution count, C1 and MC/DC stay in
+  // their own columns beside the source.
   function renderCoverage(key) {
     coverageShown = key;
+    if (mcdcPop) mcdcPop.hidden = true;
     var data = coverageCache[key], r = data.report || {}, s = r.summary || {};
     var lines = r.lines || [];
     var c1Label = r.c1_basis === "DECISION" ? "C1（判定）" : "C1（条件）";
@@ -859,13 +876,16 @@
         : coverageView === "decisions" ? l.c1.length || l.mcdc.length : true;
     });
     var listing = r.reason ? '<p class="ut-batch-err">' + esc(r.reason) + "</p>"
-      : '<div class="ut-gcov-wrap"><table class="ut-gcov" aria-label="逐行覆盖率"><tbody>' + (shown.map(function (l) {
-          var count = l.c0 === "NOT_COVERED" ? "#####" : l.c0 === "COVERED" ? (l.count == null ? "✓" : esc(l.count)) : "-";
-          return '<tr class="ut-gcov-line' + (l.c0 === "NOT_COVERED" ? " is-miss" : lineGap(l) ? " is-gap" : "") + '">' +
-            '<td class="ut-gcov-count">' + count + '</td><td class="ut-gcov-no">' + esc(l.line) +
-            '</td><td class="ut-gcov-src"><code>' + esc(l.text) + "</code></td></tr>" + gcovNotes(l);
-        }).join("") || '<tr><td colspan="3" class="muted">' +
-          (coverageView === "gaps" ? "没有未覆盖的行" : "没有符合条件的行") + "</td></tr>") + "</tbody></table></div>";
+      : '<div class="ut-cov-wrap"><table class="ut-cov-lines" aria-label="\u9010\u884c\u8986\u76d6\u7387"><thead><tr>' +
+        "<th>\u884c</th><th>C0</th><th>\u6b21\u6570</th><th>" + esc(c1Label) + "</th><th>MC/DC</th><th>\u6e90\u4ee3\u7801</th>" +
+        "</tr></thead><tbody>" + (shown.map(function (l) {
+          return '<tr class="' + (l.c0 === "NOT_COVERED" ? "is-miss" : lineGap(l) ? "is-gap" : "") + '">' +
+            '<td class="ut-num">' + esc(l.line) + "</td><td>" +
+            (l.c0 === "COVERED" ? '<span class="is-full">\u25cb</span>' : l.c0 === "NOT_COVERED" ? '<span class="is-miss">\u00d7</span>' : "") +
+            '</td><td class="ut-num">' + (l.count == null ? "" : esc(l.count)) + "</td><td>" + c1Cell(l.c1) +
+            "</td><td>" + mcdcCell(l.mcdc) + '</td><td class="ut-cov-src"><code>' + esc(l.text) + "</code></td></tr>";
+        }).join("") || '<tr><td colspan="6" class="muted">' +
+          (coverageView === "gaps" ? "\u6ca1\u6709\u672a\u8986\u76d6\u7684\u884c" : "\u6ca1\u6709\u7b26\u5408\u6761\u4ef6\u7684\u884c") + "</td></tr>") + "</tbody></table></div>";
     // Macro-expanded records carry a line of the macro's definition file.
     var unplaced = [["MACRO_EXPANSION", "宏展开的判定（行号属于宏定义文件）"],
                     ["OUTSIDE_SHOWN_LINES", "函数范围外的记录"]].map(function (kind) {
@@ -875,8 +895,8 @@
       return at.length ? '<p class="submuted">' + kind[1] + "：第 " +
         esc(at.map(function (u) { return u.line; }).join(", ")) + " 行</p>" : "";
     }).join("");
-    var legend = '<p class="submuted">左列为执行次数：##### 未执行，- 非代码行。判定的真／假次数，' +
-      "多条件判定计的是不同测试向量数；MC/DC 为已证明独立影响的条件数 / 条件总数。</p>";
+    var legend = '<p class="submuted">C0：○ 已执行 × 未执行，空白为非代码行。C1：T/F 为判定取真／取假，' +
+      "多条件判定的次数是不同测试向量数。MC/DC：已证明独立影响的条件数 / 条件总数；悬停可看每个条件，按源码顺序从 1 编号。</p>";
     $("ut-d-coverage-body").innerHTML = head + gaps + views + listing + unplaced + legend;
   }
 
@@ -1588,11 +1608,56 @@
   $("ut-d-refresh").addEventListener("click", refresh);
 
   $("ut-d-close").addEventListener("click", function () { closeJob(); });
+  function mcdcMark(node) {
+    return node && node.closest ? node.closest(".ut-mcdc") : null;
+  }
+  function ensureMcdcPop() {
+    if (mcdcPop) return mcdcPop;
+    mcdcPop = document.createElement("div");
+    mcdcPop.className = "ut-mcdc-pop";
+    mcdcPop.setAttribute("role", "tooltip");
+    mcdcPop.hidden = true;
+    if (document.body) document.body.appendChild(mcdcPop);
+    return mcdcPop;
+  }
+  function showMcdc(mark) {
+    var tip = mark.querySelector && mark.querySelector(".ut-mcdc-tip");
+    var pop = ensureMcdcPop();
+    if (!tip || !pop || !pop.style || !mark.getBoundingClientRect) return;
+    pop.innerHTML = tip.innerHTML;
+    pop.hidden = false;
+    var rect = mark.getBoundingClientRect();
+    var height = pop.offsetHeight || 72;
+    var top = rect.bottom + 6;
+    if (window.innerHeight && top + height > window.innerHeight) top = Math.max(8, rect.top - height - 6);
+    var left = rect.left;
+    if (window.innerWidth) left = Math.max(8, Math.min(left, window.innerWidth - 240));
+    pop.style.left = left + "px";
+    pop.style.top = top + "px";
+  }
+  function hideMcdc(mark, related) {
+    if (mark && related && mark.contains && mark.contains(related)) return;
+    if (mcdcPop) mcdcPop.hidden = true;
+  }
   $("ut-d-coverage").addEventListener("click", function (e) {
     var b = e.target.closest("[data-cov-view]");
     if (!b || !coverageShown) return;
     coverageView = b.dataset.covView;
     renderCoverage(coverageShown);
+  });
+  $("ut-d-coverage").addEventListener("mouseover", function (e) {
+    var mark = mcdcMark(e.target);
+    if (mark) showMcdc(mark);
+  });
+  $("ut-d-coverage").addEventListener("mouseout", function (e) {
+    hideMcdc(mcdcMark(e.target), e.relatedTarget);
+  });
+  $("ut-d-coverage").addEventListener("focusin", function (e) {
+    var mark = mcdcMark(e.target);
+    if (mark) showMcdc(mark);
+  });
+  $("ut-d-coverage").addEventListener("focusout", function (e) {
+    hideMcdc(mcdcMark(e.target), e.relatedTarget);
   });
   $("ut-d-attempts").addEventListener("click", function (e) {
     var toggle = e.target.closest("[data-run-toggle]");
