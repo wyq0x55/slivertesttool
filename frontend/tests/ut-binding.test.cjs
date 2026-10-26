@@ -9,9 +9,20 @@ const base = path.resolve(__dirname, "../..");
 const clone = value => JSON.parse(JSON.stringify(value));
 const manifest = () => ({ project: { id: "demo" }, baseline: { id: "baseline", version: "1" }, build: { profile: "default" } });
 const catalog = () => ({
-  contract: "ut-agent.configuration-options/1",
+  contract: "ut-agent.configuration-options/2",
+  pointer_sizes: [
+    { id: "undeclared", pointer_size: null, label: "不声明指针宽度", description: "涉及指针的函数仍会被阻断" },
+    { id: "32", pointer_size: 4, label: "32 位指针", description: "只声明 4 字节指针宽度" },
+    { id: "64", pointer_size: 8, label: "64 位指针", description: "只声明 8 字节指针宽度" },
+  ],
+  interface_directions: [
+    { id: "in", direction: "in", pointee_access_order: "read_only", label: "输入，只读" },
+    { id: "out", direction: "out", pointee_access_order: "write_only", label: "输出，只写" },
+    { id: "inout-read", direction: "inout", pointee_access_order: "read_before_write", label: "先读后写" },
+    { id: "inout-write", direction: "inout", pointee_access_order: "write_before_read", label: "先写后读" },
+  ],
   build_profiles: [
-    { id: "default", label: "不声明目标 ABI（仅无指针函数）", pointer_size: null },
+    { id: "default", label: "Default", pointer_size: null, description: "Compiler compatibility only" },
     { id: "typed32", label: "已验证的 32 位配置", pointer_size: 4, description: "Typed ABI evidence" },
   ],
   interface_contracts: [
@@ -41,7 +52,17 @@ function harness(configure = true, config = { manifest_document: manifest() }, s
   const context = vm.createContext({ window, TextDecoder, Blob, FormData, URLSearchParams,
     URL: { createObjectURL(blob) { downloads.push(blob); return "blob:draft"; }, revokeObjectURL() {} },
     document: { querySelector: () => get("root"), getElementById: id => id.startsWith("lm-") ? null : get(id), addEventListener() {},
-      createElement(tag) { if (tag === "option") return node("option"); assert.equal(tag, "a"); return { click() {} }; } },
+      createElement(tag) {
+        if (tag === "a") return { click() {} };
+        const el = node(tag === "option" ? "option" : "el");
+        el.tagName = tag;
+        el.remove = function () {
+          if (this.parentElement && Array.isArray(this.parentElement.children))
+            this.parentElement.children = this.parentElement.children.filter(child => child !== this);
+        };
+        return el;
+      },
+      createTextNode(text) { return { textContent: String(text) }; } },
     LMUt: { say() {}, time: value => value, can: () => configure },
     fetch: async (url, opts) => {
       const body = opts.body ? JSON.parse(opts.body) : null;
@@ -112,40 +133,52 @@ test("llvm execution controls stay visible and stub options follow the selected 
   assert.equal(h.get("ut-c-stub_model").disabled, false);
 });
 
-test("ABI and interface selectors are always in the expanded manifest form", () => {
+test("ABI width and interface entries are always in the expanded manifest form", () => {
   const html = fs.readFileSync(path.join(base, "app/templates/lanmatrix/ut_binding.html"), "utf8");
-  for (const id of ["ut-m-build-profile", "ut-m-interfaces-contract"]) {
-    assert.match(html, new RegExp('<select id="' + id + '"'));
+  for (const id of ["ut-m-build-abi", "ut-interface-entries"]) {
+    assert.ok(html.includes('id="' + id + '"'));
     assert.ok(html.indexOf('id="' + id + '"') < html.indexOf("<details"),
       id + " must appear before collapsed advanced settings");
   }
+  assert.match(html, /指针宽度/);
+  assert.doesNotMatch(html, /rh850|psd049|phd038/);
 });
 
-test("installed choices show evidence and save manifest references without manual entry", async () => {
+test("pointer width and interface entries save without a chip or project contract", async () => {
   const h = harness(); await settle();
-  assert.deepEqual(h.get("ut-m-build-profile").children.map(o => o.value), ["", "default", "typed32"]);
-  h.input("ut-m-build-profile", "typed32", "change");
+  assert.deepEqual(h.get("ut-m-build-abi").children.map(o => o.value), ["", "legacy", "undeclared", "32", "64"]);
+  h.input("ut-m-build-abi", "32", "change");
+  assert.match(h.get("ut-build-abi-description").textContent, /32 位/);
+  assert.match(h.get("ut-build-abi-description").textContent, /不证明结构体布局/);
+  await h.emit("ut-interface-add", "click");
+  const row = h.get("ut-interface-entries").children[0];
+  row._name.value = "external_read";
+  row._index.value = "0";
+  row._direction.value = "out";
+  row._direction.listeners.change.call(row._direction);
   h.input("ut-m-interfaces-contract", "approved@2", "change");
-  assert.match(h.get("ut-build-profile-description").textContent, /32 位/);
   assert.match(h.get("ut-interface-contract-description").textContent, /external_read/);
-  assert.match(h.get("ut-interface-contract-description").textContent, /reviewer/);
   await h.save();
-  assert.deepEqual(h.writes[0].manifest_document.build, { profile: "typed32" });
-  assert.deepEqual(h.writes[0].manifest_document.interfaces, { contract: "approved@2" });
+  assert.equal(h.writes[0].manifest_document.build.profile, "default");
+  assert.deepEqual(h.writes[0].manifest_document.build.abi, { pointer_size: 4 });
+  assert.deepEqual(h.writes[0].manifest_document.interfaces.entries, [{
+    function: "external_read", parameter_index: 0, direction: "out", pointee_access_order: "write_only",
+  }]);
+  assert.equal(h.writes[0].manifest_document.interfaces.contract, "approved@2");
 });
 
 test("missing ABI choice blocks save instead of silently relying on an undeclared default", async () => {
   const existing = manifest(); delete existing.build;
   const h = harness(true, { manifest_document: existing }); await settle();
-  assert.equal(h.get("ut-m-build-profile").value, "");
+  assert.equal(h.get("ut-m-build-abi").value, "");
   await h.save();
   assert.equal(h.writes.length, 0);
-  assert.equal(h.focused(), "ut-m-build-profile");
+  assert.equal(h.focused(), "ut-m-build-abi");
   assert.match(h.get("ut-binding-error").textContent, /请选择目标 ABI/);
-  h.input("ut-m-build-profile", "default", "change");
+  h.input("ut-m-build-abi", "undeclared", "change");
   await h.save();
-  assert.equal(h.writes[0].manifest_document.build.profile, "default");
-  assert.match(h.get("ut-build-profile-description").textContent, /涉及指针的函数仍会被阻断/);
+  assert.deepEqual(h.writes[0].manifest_document.build.abi, { pointer_size: null });
+  assert.match(h.get("ut-build-abi-description").textContent, /涉及指针的函数仍会被阻断/);
 });
 
 test("unavailable pinned choices remain visible and roundtrip without substitution", async () => {
@@ -176,7 +209,7 @@ test("malformed or duplicate catalogs are rejected without guessed choices", asy
     const h = harness(true, { manifest_document: manifest() }, { catalog: options });
     await settle();
     assert.equal(h.get("ut-config-save").disabled, true);
-    assert.equal(h.get("ut-m-build-profile").disabled, true);
+    assert.equal(h.get("ut-m-build-abi").disabled, true);
     assert.equal(h.get("ut-m-build-profile").value, "default");
   }
 });
@@ -240,6 +273,7 @@ test("a new document keeps every policy choice unselected and omits optional fie
     assert.equal(h.get("ut-m-test_policy-" + key).value, "");
   }
   h.input("ut-m-project-id", "demo");
+  h.input("ut-m-build-abi", "32", "change");
   h.input("ut-m-build-profile", "default", "change");
   await h.save();
   assert.equal(h.writes.length, 0);
@@ -250,7 +284,7 @@ test("a new document keeps every policy choice unselected and omits optional fie
   await h.save();
   assert.deepEqual(h.writes[0].manifest_document, {
     project: { id: "demo" },
-    build: { profile: "default" },
+    build: { profile: "default", abi: { pointer_size: 4 } },
     test_policy: { version: "1", boundary_adjacent: false, c1: true, mcdc: false, arithmetic: false, combination_group: false },
   });
 });

@@ -192,7 +192,9 @@ def test_real_installed_options_are_available_without_a_manifest(env, real_bridg
     status, body = env.call("get", "/manifest/options")
     assert status == 200, body
     options = body["data"]
-    assert options["contract"] == "ut-agent.configuration-options/1"
+    assert options["contract"] == "ut-agent.configuration-options/2"
+    assert any(item["id"] == "32" and item["pointer_size"] == 4 for item in options["pointer_sizes"])
+    assert any(item["direction"] == "inout" for item in options["interface_directions"])
     assert any(item["id"] == "rh850-ghs" and item["pointer_size"] == 4
                for item in options["build_profiles"])
     assert any(item["id"] == "psd049-pal@1.1" for item in options["interface_contracts"])

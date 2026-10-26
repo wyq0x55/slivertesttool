@@ -10,7 +10,12 @@ from app.services.ut_pipeline.bridge import BridgeError, BridgeSettings, UtAgent
 
 
 def options():
-    return {"contract": "ut-agent.configuration-options/1",
+    return {"contract": "ut-agent.configuration-options/2",
+            "pointer_sizes": [{"id": "32", "pointer_size": 4, "label": "32-bit pointer"}],
+            "interface_directions": [{
+                "id": "out", "direction": "out", "pointee_access_order": "write_only",
+                "label": "Output",
+            }],
             "build_profiles": [{"id": "typed32", "label": "Typed 32-bit", "pointer_size": 4}],
             "interface_contracts": []}
 
