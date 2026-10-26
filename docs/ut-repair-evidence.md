@@ -189,3 +189,32 @@ supplied identity conflicts, incomplete reports or frozen configuration conflict
 require a human note even if the job was already marked `awaiting_review`. The
 note records the human override decision; it does not turn `UNKNOWN` into
 `VALIDATED`, restore witness authority, or make Host evidence target validation.
+
+## Per-function generation handoff
+
+A batch keeps one shared Clang extraction. With a matching ut-agent version,
+`bridge generate --unit-ready-dir` publishes authoritative
+`ut-agent.generated-unit/1` receipts as each function finishes, separate from
+best-effort progress snapshots. The platform checks artifact paths, required
+CSV/IR/Suite/identity-summary files and their hashes, then checks the exact CSV
+bytes again when saving the immutable initial attempt. Batch constraints and
+provenance are committed before that function is dispatched for execution.
+
+The batch remains `generating` while undispatched functions are being produced;
+individual jobs can already be executing, repairing or awaiting review. The
+final response reconciles existing receipts without creating another attempt,
+re-enqueueing a completed job or overwriting a stop/review/supersede decision.
+A later generation failure marks the batch failed and only still-generating
+jobs as failed; already dispatched jobs retain their candidates and continue.
+The failed batch status describes generation, not every individual job result.
+
+Execution overlaps generation when a Huey worker is available (at least two
+worker threads are needed for overlap in normal asynchronous operation).
+The generation slot is acquired without blocking another worker; waiting batch
+tasks reschedule, and startup recovery includes both queued and scheduled tasks.
+Those tasks can resume only still-queued generation. Jobs already claimed by a
+generator that died are marked interrupted; a delayed duplicate cannot certify
+them as finished or hide an execution that is still active.
+The existing WinAMS execution lock and human approval gates still apply. An old
+ut-agent that rejects the new flag fails explicitly instead of silently changing
+the generation/execution protocol. Existing artifact/version locks are preserved.

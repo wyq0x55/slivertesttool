@@ -37,6 +37,7 @@ import hashlib
 import json
 import re
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Optional
 
@@ -365,66 +366,150 @@ def _refresh_batch(batch_id: int) -> None:
 # --------------------------------------------------------------------------- #
 # Generation
 # --------------------------------------------------------------------------- #
-def run_generation(batch_id: int) -> list[int]:
-    """Generate every queued job of ``batch_id``; return the jobs ready to execute."""
+class GenerationBusy(RuntimeError):
+    """Another batch owns shared extraction; reschedule without tying up a worker."""
+
+
+def run_generation(batch_id: int, *, on_ready: Callable[[int], None] | None = None) -> list[int]:
+    """Dispatch finalized functions while the single shared generation continues."""
+    if not _GENERATION_GATE.acquire(blocking=False):
+        raise GenerationBusy("Another batch is generating")
+    try:
+        return _run_generation(batch_id, on_ready)
+    finally:
+        _GENERATION_GATE.release()
+
+
+def _run_generation(batch_id: int, on_ready: Callable[[int], None] | None) -> list[int]:
     batch = db.session.get(UtBatch, batch_id)
     if batch is None or batch.status != UtBatch.STATUS_GENERATING:
         return []
     jobs = UtJob.query.filter_by(batch_id=batch_id, state=UtJob.QUEUED).all()
     if not jobs:
-        # Every job was stopped before generation started.
-        batch.status = UtBatch.STATUS_DONE
-        batch.finished_at = _utcnow()
+        interrupted = (UtJob.query.filter_by(batch_id=batch_id, state=UtJob.GENERATING)
+                       .with_for_update(of=UtJob).populate_existing().all())
+        if interrupted:
+            # A delayed duplicate cannot resume a generator that died after
+            # claiming its jobs, nor certify the unfinished batch as done.
+            for job in interrupted:
+                if job.stop_requested_at is not None:
+                    _halt(job)
+                else:
+                    _gate(job, UtJob.ERROR, "生成进程中断；请从实施一览重新入队", GateCode.INTERRUPTED)
+            batch.status = UtBatch.STATUS_FAILED
+            batch.error = "生成进程中断，重复任务不能接管未完成的生成"
+            batch.finished_at = _utcnow()
+        else:
+            batch.status = UtBatch.STATUS_RUNNING
         db.session.commit()
+        _refresh_batch(batch_id)
         return []
     for job in jobs:
         job.state = UtJob.GENERATING
     db.session.commit()
     config = batch.config_snapshot or {}
     bridge = get_bridge()
-    try:
-        constraints = bridge.constraints(config["manifest_path"])
-        with _GENERATION_GATE:
-            document = bridge.generate(
-                config["manifest_path"], config["index_csv"], config["product_root"],
-                _batch_dir(batch.project_id, batch.id) / "generation",
-                [job.target.function for job in jobs],
-                progress_dir=_generation_progress_dir(batch.project_id, batch.id),
-            )
-    except BridgeError as exc:
-        batch.status = UtBatch.STATUS_FAILED
-        batch.error = str(exc)
-        batch.finished_at = _utcnow()
-        for job in jobs:
-            _gate(job, UtJob.ERROR, f"生成失败：{exc}", GateCode.GENERATION_FAILED)
-        db.session.commit()
-        return []
-    batch.constraints = constraints
-    batch.provenance = document.get("provenance")
-    units = {unit["function"]: unit for unit in document.get("units", ())}
+    by_function = {job.target.function: job.id for job in jobs}
+    handed: dict[str, dict] = {}
     ready = []
-    for job in jobs:
-        unit = units.get(job.target.function)
-        if unit is None:
-            _gate(job, UtJob.ERROR, "生成结果中缺少该函数", GateCode.GENERATION_FAILED)
-            continue
+
+    def accept(unit: dict, provenance: dict | None, expected_sha: str | None = None) -> None:
+        name = unit.get("function")
+        if name not in by_function:
+            raise BridgeError("Completed unit is outside the requested batch")
+        active_batch = db.session.get(UtBatch, batch_id, populate_existing=True)
+        if active_batch.provenance is not None and active_batch.provenance != provenance:
+            raise BridgeError("Completed units disagree on generation provenance")
+        if name in handed:
+            if handed[name] != unit:
+                raise BridgeError("Final generation document conflicts with a completed unit")
+            db.session.commit()
+            return
+        active_batch.provenance = provenance
+        job = (UtJob.query.filter_by(id=by_function[name], batch_id=batch_id)
+               .with_for_update(of=UtJob).populate_existing().one())
+        if job.state != UtJob.GENERATING:
+            handed[name] = dict(unit)
+            db.session.commit()
+            return
         job.generation_status = str(unit.get("status") or "")
         job.generation = {**unit, "execution_backend": config.get("execution_backend", "winams")}
         if not unit.get("testcsv"):
             detail = unit.get("error") or unit.get("projection_failure") or ""
-            _gate(job, UtJob.NEEDS_HUMAN,
-                  f"生成器未产出 TestCsv（{job.generation_status}）：{detail}", GateCode.NO_TESTCSV)
-            continue
-        attempt = _new_attempt(job, UtAttempt.ORIGIN_GENERATOR,
-                               Path(unit["testcsv"]).read_bytes(),
-                               note=f"generation status {job.generation_status}")
-        # The generator CSV is the baseline reference every revision must keep.
-        job.reference_csv = attempt.csv_path
-        if job.stop_requested_at is not None:
-            _halt(job)
-            continue
-        job.state = UtJob.EXECUTING
-        ready.append(job.id)
+            if job.stop_requested_at is not None:
+                _halt(job)
+            else:
+                _gate(job, UtJob.NEEDS_HUMAN,
+                      f"生成器未产出 TestCsv（{job.generation_status}）：{detail}", GateCode.NO_TESTCSV)
+        else:
+            try:
+                data = Path(unit["testcsv"]).read_bytes()
+            except OSError as exc:
+                raise BridgeError("Completed TestCsv could not be read: " + str(exc)) from exc
+            if expected_sha is not None and hashlib.sha256(data).hexdigest() != expected_sha:
+                raise BridgeError("Completed TestCsv changed after receipt verification")
+            attempt = _new_attempt(job, UtAttempt.ORIGIN_GENERATOR, data,
+                                   note=f"generation status {job.generation_status}")
+            job.reference_csv = attempt.csv_path
+            if job.stop_requested_at is not None:
+                _halt(job)
+            else:
+                job.state = UtJob.EXECUTING
+        handed[name] = dict(unit)
+        execute = job.state == UtJob.EXECUTING
+        db.session.commit()
+        if execute:
+            ready.append(job.id)
+            if on_ready is not None:
+                try:
+                    on_ready(job.id)
+                except Exception as exc:
+                    db.session.rollback()
+                    job = db.session.get(UtJob, by_function[name], populate_existing=True)
+                    if job.state == UtJob.EXECUTING:
+                        _gate(job, UtJob.ERROR, "完成生成后投递执行失败：" + str(exc), GateCode.INTERNAL_ERROR)
+                        db.session.commit()
+                    raise BridgeError("Could not dispatch a completed function") from exc
+
+    def completed(receipt: dict) -> None:
+        if receipt.get("contract") != "ut-agent.generated-unit/1":
+            raise BridgeError("Unknown completed-unit receipt contract")
+        unit = receipt["unit"]
+        digest = ((receipt.get("artifacts") or {}).get("testcsv") or {}).get("sha256")
+        if unit.get("testcsv") and not digest:
+            raise BridgeError("Completed TestCsv receipt has no digest")
+        accept(unit, receipt["provenance"], digest)
+
+    try:
+        batch.constraints = bridge.constraints(config["manifest_path"])
+        db.session.commit()
+        document = bridge.generate(
+            config["manifest_path"], config["index_csv"], config["product_root"],
+            _batch_dir(batch.project_id, batch.id) / "generation",
+            list(by_function),
+            progress_dir=_generation_progress_dir(batch.project_id, batch.id),
+            on_unit=completed,
+        )
+        for unit in document.get("units", ()):
+            accept(unit, document.get("provenance"))
+        if set(by_function) - handed.keys():
+            raise BridgeError("生成结果中缺少该函数")
+    except BridgeError as exc:
+        db.session.rollback()
+        batch = db.session.get(UtBatch, batch_id, populate_existing=True)
+        batch.status = UtBatch.STATUS_FAILED
+        batch.error = str(exc)
+        batch.finished_at = _utcnow()
+        unfinished = (UtJob.query.filter_by(batch_id=batch_id, state=UtJob.GENERATING)
+                      .with_for_update(of=UtJob).populate_existing().all())
+        for job in unfinished:
+            if job.stop_requested_at is not None:
+                _halt(job)
+            else:
+                _gate(job, UtJob.ERROR, f"生成失败：{exc}", GateCode.GENERATION_FAILED)
+        db.session.commit()
+        return ready
+    batch = db.session.get(UtBatch, batch_id, populate_existing=True)
     batch.status = UtBatch.STATUS_RUNNING
     db.session.commit()
     _refresh_batch(batch.id)
@@ -1095,7 +1180,8 @@ def recover_interrupted(pending_jobs: set[int], pending_batches: set[int]) -> di
     failed_batches: set[int] = set()
     for job in jobs:
         before_generation = job.state in (UtJob.QUEUED, UtJob.GENERATING)
-        if job.id in pending_jobs or (before_generation and job.batch_id in pending_batches):
+        if ((job.state in (UtJob.EXECUTING, UtJob.REPAIRING) and job.id in pending_jobs)
+                or (job.state == UtJob.QUEUED and job.batch_id in pending_batches)):
             result["pending"].append(job.id)
             continue
         if job.stop_requested_at is not None:

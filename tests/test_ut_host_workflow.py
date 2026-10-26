@@ -65,9 +65,9 @@ def real_workflow(request, app_ctx, monkeypatch, tmp_path):
     calls = []
     invoke = bridge._run
 
-    def real_call(arguments, *, timeout):
+    def real_call(arguments, *, timeout, **kwargs):
         calls.append(list(arguments))
-        return invoke(arguments, timeout=timeout)
+        return invoke(arguments, timeout=timeout, **kwargs)
 
     monkeypatch.setattr(bridge, "_run", real_call)
     monkeypatch.setattr(pipeline, "get_bridge", lambda: bridge)
