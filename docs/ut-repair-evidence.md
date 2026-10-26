@@ -218,3 +218,35 @@ them as finished or hide an execution that is still active.
 The existing WinAMS execution lock and human approval gates still apply. An old
 ut-agent that rejects the new flag fails explicitly instead of silently changing
 the generation/execution protocol. Existing artifact/version locks are preserved.
+
+## Observational step timing
+
+Job details expose `timing` (`ut-platform.job-timing/1`). Platform intervals are
+persisted in `generation.platform_timing`, independently of frozen provenance,
+CSV identity, machine evidence and repair budgets. Each actual check, execution,
+Host preparation and model request has its own start/end and duration, with the
+candidate version and logical round where applicable. Failed requests remain
+visible even when no repair round is consumed. A new request appends a new
+interval; it never resets an earlier attempt's duration.
+
+Queue scheduling, execution-resource waits, paused waits and human waits are
+separate from work. Completed external calls use a monotonic clock. Intervals
+crossing process boundaries use UTC wall time; a backwards clock produces an
+unknown duration. Reads only estimate elapsed running time and do not mutate
+records. Recovery interrupts abandoned calls without inventing their end time
+or charging worker downtime as execution. A queued duplicate does not prove
+that an old call is still alive. Superseding a job closes its human/paused wait.
+Legacy jobs have incomplete timing history rather than fabricated zeroes.
+
+The details page lists persisted platform intervals and ut-agent phase timings,
+including final per-function generation/conversion/projection/write durations.
+Clang extraction is explicitly shared by the batch, with its own observation
+timestamp. A batch-identified shared snapshot is retained in job timing metadata
+at handoff (including failures); it survives removal of progress files and
+remains shared even when displayed from multiple jobs. Per-function worker queue
+intervals also survive handoff. Workflow groups include child calls and can span candidate versions;
+shared, nested and concurrent intervals must not be summed as exclusive CPU
+time. Active durations are provisional, stale backend observations stop
+extrapolating, and completed durations stay fixed across refreshes. Timing is
+diagnostic information and cannot promote an unknown semantic result or approve
+a candidate.

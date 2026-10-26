@@ -140,8 +140,9 @@ def lifecycle(tmp_path, monkeypatch):
     new_attempt(job, UtAttempt.ORIGIN_GENERATOR, REFERENCE)
     history = SimpleNamespace(filter_by=lambda **kw: SimpleNamespace(order_by=lambda *args: list(attempts.values())))
     session = SimpleNamespace(get=lambda model, ident: batch if ident == 2 else attempts[ident],
-                              query=Mock(), commit=Mock(), refresh=Mock())
+                              query=Mock(), commit=Mock(), refresh=Mock(), is_active=True)
     monkeypatch.setattr(pipeline, "db", SimpleNamespace(session=session))
+    monkeypatch.setattr(pipeline.timing, "db", SimpleNamespace(session=session))
     monkeypatch.setattr(pipeline, "UtAttempt", SimpleNamespace(**{name: getattr(UtAttempt, name) for name in (
         "ORIGIN_GENERATOR", "ORIGIN_LLM", "ORIGIN_HUMAN", "ORIGIN_HOST_DERIVED", "ORIGIN_CAPTURE")},
         query=history, seq=object()))

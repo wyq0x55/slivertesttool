@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from contextlib import nullcontext
 from pathlib import Path
 
 from ..ai import config as ai_config
@@ -79,12 +80,15 @@ def _mismatch_cases(execution: dict) -> list:
 
 
 def execute(*, bridge, ir_json, intents, reference, candidate, out: Path, config: dict,
-            model_timeout: int, persist, continuing) -> tuple[dict, dict]:
+            model_timeout: int, persist, continuing, observe=None) -> tuple[dict, dict]:
     out.mkdir(parents=True, exist_ok=False)
     metadata = {"mode": config.get("stub_mode", "deterministic"), "rounds": [],
                 "artifact_root": str(out.resolve()), "artifacts": []}
     latest = {"status": "HOST_UNSUPPORTED", "evidence_source": "HOST_EXECUTION",
               "counts_as_target_evidence": False, "delivery_validated": False}
+
+    def measured(step, **options):
+        return observe(step, **options) if observe is not None else nullcontext()
 
     def save():
         artifacts = []
@@ -120,8 +124,9 @@ def execute(*, bridge, ir_json, intents, reference, candidate, out: Path, config
         nonlocal latest
         if not continuing():
             return blocked("Stopped before host execution", "STOPPED")
-        result = bridge.host_execute(**arguments, out=directory, config=config,
-                                     stub_request=request, stub_response=response)
+        with measured("host_execute"):
+            result = bridge.host_execute(**arguments, out=directory, config=config,
+                                         stub_request=request, stub_response=response)
         latest = {**result["execution"], "evidence_source": "HOST_EXECUTION",
                   "counts_as_target_evidence": False, "delivery_validated": False}
         check = {**result["check"], "evidence_source": "HOST_EXECUTION",
@@ -137,7 +142,8 @@ def execute(*, bridge, ir_json, intents, reference, candidate, out: Path, config
         return run(out / "host")
 
     prepare_options = {"manifest": Path(config["manifest_path"])} if config.get("manifest_path") else {}
-    prepared = bridge.host_prepare(**arguments, out=out / "prepare", **prepare_options)
+    with measured("host_prepare"):
+        prepared = bridge.host_prepare(**arguments, out=out / "prepare", **prepare_options)
     _write_json(out / "prepared.json", prepared)
     metadata["prepared"] = prepared
     save()
@@ -179,7 +185,7 @@ def execute(*, bridge, ir_json, intents, reference, candidate, out: Path, config
         metadata["rounds"].append(record)
         save()
         try:
-            with provider.capture_provider_provenance() as receipt:
+            with measured("stub_model", round_number=number), provider.capture_provider_provenance() as receipt:
                 reply = provider.invoke_chat(messages, model=model or None, temperature=0,
                                              max_tokens=8192, json_mode=True, usage=usage,
                                              timeout=model_timeout)

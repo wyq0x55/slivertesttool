@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -382,7 +383,7 @@ def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: by
            check: dict[str, Any], execution: Optional[dict[str, Any]],
            history: list[dict[str, Any]], open_gaps: list[dict[str, Any]], allowed: set[str],
            model: str = "", timeout: int = 900,
-           prefix_snapshot: Optional[dict[str, str]] = None) -> Revision:
+           prefix_snapshot: Optional[dict[str, str]] = None, observe=None) -> Revision:
     """Ask the configured model for input rows and append the valid ones.
 
     Raises :class:`provider.ProviderError` when the model is unreachable so the
@@ -432,9 +433,10 @@ def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: by
     usage: dict[str, int] = {}
     configured = ai_config.get_ai_config()[ai_config.KEY_MODEL]
     meta["model"] = model or configured
-    reply = provider.invoke_chat(messages, temperature=0.1, max_tokens=8192,
-                                 json_mode=True, usage=usage, model=model or None,
-                                 timeout=timeout, stream=True)
+    with observe("input_model") if observe is not None else nullcontext():
+        reply = provider.invoke_chat(messages, temperature=0.1, max_tokens=8192,
+                                     json_mode=True, usage=usage, model=model or None,
+                                     timeout=timeout, stream=True)
     meta["usage"] = usage
     try:
         parsed = provider.extract_json(reply)

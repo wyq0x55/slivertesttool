@@ -136,6 +136,52 @@ async function ready(h, value = job()) {
   await settle();
 }
 
+test("step timing shows frozen, running, failed and per-version records safely", async () => {
+  const h = harness(), value = job(20, "executing");
+  value.timing = { history_complete: true, steps: [
+    { step: "queue", kind: "wait", status: "completed", duration_ms: 0 },
+    { step: "host_execute", status: "completed", duration_ms: 1250, attempt_seq: 1 },
+    { step: "input_model", status: "failed", duration_ms: 2500, attempt_seq: 2, round: 1 },
+    { step: "<img src=x onerror=alert(1)>", status: "running", elapsed_ms: 4000 }
+  ] };
+  await ready(h, value);
+  const table = h.get("ut-d-timing").innerHTML;
+  assert.match(table, /排队调度等待（等待）.*0 毫秒/);
+  assert.match(table, /LLVM 编译、执行与校验.*第 1 版.*1.25 秒/);
+  assert.match(table, /补用例模型请求.*第 2 版 · 第 1 轮.*调用失败.*2.50 秒/);
+  assert.match(table, /已用 4.00 秒/);
+  assert.doesNotMatch(table, /<img/);
+  assert.match(table, /&lt;img/);
+  h.click("ut-d-refresh"); await settle();
+  h.details.at(-1).reject(new Error("offline")); await settle();
+  assert.equal(h.get("ut-d-timing").innerHTML, table);
+  assert.match(h.get("ut-d-sync").textContent, /刷新失败/);
+});
+
+test("shared and function timing use independent timestamps and stop extrapolating stale observations", async () => {
+  const h = harness(), value = job(null, "generating");
+  value.timing = { history_complete: false, generation: {
+    batch_id: 8, observed_at: "2026-10-26T00:00:10Z",
+    project_updated_at: "2026-10-26T00:00:05Z", function_updated_at: "2026-10-25T23:59:00Z",
+    shared: [{ phase: "extracting", status: "running", elapsed_ms: 1000 }],
+    function: [{ phase: "solving", status: "running", elapsed_ms: 2000 },
+      { phase: "validating", status: "interrupted", duration_ms: 999999 }]
+  } };
+  await ready(h, value);
+  const table = h.get("ut-d-timing").innerHTML;
+  assert.match(table, /Clang 抽取（整批共享）.*整批 #8.*已用 6.00 秒/);
+  assert.match(table, /求解测试义务.*记录未更新.*已用 2.00 秒/);
+  assert.match(table, /校验用例集.*中断，结束时间未知.*未记录/);
+  assert.match(h.get("ut-d-timing-note").textContent, /历史耗时不完整.*不能相加/);
+});
+
+test("legacy timing is unknown instead of a fabricated zero", async () => {
+  const h = harness();
+  await ready(h);
+  assert.equal(h.get("ut-d-timing").innerHTML, "");
+  assert.match(h.get("ut-d-timing-note").textContent, /旧记录不补算为 0/);
+});
+
 test("typed Host outputs have a distinct origin and remain pending before reexecution", async () => {
   const h = harness(), value = job(20, "executing");
   value.last_verdict = null;
