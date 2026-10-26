@@ -127,12 +127,9 @@
       <section id="ut-d-progress" class="ut-progress" aria-labelledby="ut-d-progress-title" hidden>
         <div class="panel-bar"><h4 id="ut-d-progress-title">运行进度</h4></div>
         <p id="ut-d-progress-summary" class="ut-progress-summary" role="status" aria-live="polite"></p>
+        {# Each stage carries its own duration and folded step timings. #}
         <ol id="ut-d-progress-steps" class="ut-progress-steps" aria-label="作业流程"></ol>
-        <details class="ut-step-timing" open>
-          <summary>步骤用时</summary>
-          <p id="ut-d-timing-note" class="muted"></p>
-          <div id="ut-d-timing" class="ut-step-timing-scroll"></div>
-        </details>
+        <p id="ut-d-timing-note" class="ut-timing-note"></p>
         <p id="ut-d-sync" class="ut-progress-sync"></p>
       </section>
       <div id="ut-d-review-section" hidden>
@@ -179,16 +176,20 @@
     </div>
   </div>
 
+  {# One host panel: execution result, its coverage report, and the stub
+     evidence folded away. None of it counts as target or delivery evidence. #}
   <div class="panel ut-host-evidence" id="ut-d-host" hidden style="margin-top:20px">
-    <div class="panel-bar"><h4>Clang 主机候选证据</h4></div>
-    <p class="ut-hint">PASS 仅表示主机观测比较通过。覆盖率为实测值，不代表基准覆盖率验收；以下证据不计入目标执行或正式交付验收。审核通过保留候选及机器判定。</p>
+    <div class="panel-bar"><h4>主机执行与覆盖率 <span class="submuted">· Clang / llvm-cov，仅开发期证据</span></h4></div>
     <div id="ut-d-host-summary"></div>
-    <div id="ut-d-stub-rounds"></div>
-    <div id="ut-d-host-artifacts"></div>
-  </div>
-  <div class="panel ut-coverage" id="ut-d-coverage" hidden style="margin-top:20px">
-    <div class="panel-bar"><h4>覆盖率报告 <span class="submuted">· 被测函数逐行 C0 / C1 / MC/DC（主机 llvm-cov）</span></h4></div>
-    <div id="ut-d-coverage-body"></div>
+    <div class="ut-coverage" id="ut-d-coverage" hidden>
+      <div id="ut-d-coverage-body"></div>
+    </div>
+    <details class="ut-host-more">
+      <summary>桩生成与产物</summary>
+      <p class="ut-hint">PASS 仅表示主机观测比较通过，不计入目标执行或正式交付验收。审核通过保留候选及机器判定。</p>
+      <div id="ut-d-stub-rounds"></div>
+      <div id="ut-d-host-artifacts"></div>
+    </details>
   </div>
   <div class="panel" style="margin-top:20px">
     <div class="panel-bar">

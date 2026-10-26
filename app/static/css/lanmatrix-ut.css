@@ -120,14 +120,18 @@
   color:var(--text-2); font-size:12px; line-height:1.7; overflow-wrap:anywhere; }
 .ut-gen-meter{ display:block; width:100%; max-width:320px; height:6px; margin:6px 0 2px; accent-color:var(--run); }
 .ut-gen-stale{ color:var(--warn-text); }
-.ut-step-timing{ margin-top:12px; }
-.ut-step-timing summary{ cursor:pointer; font-size:13px; font-weight:600; }
-.ut-step-timing .muted{ font-size:12px; line-height:1.6; }
-.ut-step-timing-scroll{ overflow:auto; max-height:360px; }
-.ut-step-timing table{ width:100%; border-collapse:collapse; font-size:12px; }
-.ut-step-timing th,.ut-step-timing td{ padding:8px; text-align:left; border-bottom:1px solid var(--border); white-space:nowrap; }
-.ut-step-timing tr.is-group td{ background:var(--surface-2); color:var(--text-2); }
-.ut-step-timing td:first-child{ white-space:normal; min-width:170px; }
+/* Each pipeline stage carries its duration; its step records fold beneath it. */
+.ut-progress-step-head .ut-stage-time{ margin-left:auto; color:var(--text-2); font-variant-numeric:tabular-nums; }
+.ut-stage-timing{ margin-top:6px; }
+.ut-stage-timing summary{ cursor:pointer; color:var(--brand-text); font-size:12px; padding:2px 0; }
+.ut-stage-timing table{ width:100%; margin-top:4px; border-collapse:collapse; font-size:12px; font-variant-numeric:tabular-nums; }
+.ut-stage-timing th{ text-align:left; font-weight:500; color:var(--text-3); padding:4px 8px 4px 0; border-bottom:1px solid var(--border); }
+.ut-stage-timing td{ padding:4px 8px 4px 0; border-bottom:1px solid var(--border); white-space:nowrap; color:var(--text-2); }
+.ut-stage-timing td:first-child{ white-space:normal; min-width:150px; color:var(--text); }
+.ut-stage-timing td:last-child, .ut-stage-timing th:last-child{ text-align:right; padding-right:0; }
+.ut-stage-timing tr.is-group td{ background:var(--surface-2); }
+.ut-timing-note{ margin:12px 0 0; font-size:12px; color:var(--text-3); line-height:1.6; }
+.ut-timing-note:empty{ display:none; }
 .ut-progress-sync{ margin:18px 0 0; padding-top:12px; border-top:1px solid var(--border);
   color:var(--text-3); font-size:12px; line-height:1.7; overflow-wrap:anywhere; }
 .ut-progress.is-stale .ut-progress-marker{ border-color:var(--border-strong); background:var(--surface-2); color:var(--text-3); }
@@ -172,8 +176,9 @@
 .ut-guidance{ font-size:13px; line-height:1.6; overflow-wrap:anywhere; }
 .ut-guidance p{ margin:8px 0; }
 .ut-guidance ol{ margin:8px 0; padding-left:22px; }
-.ut-gap-card{ margin-top:12px; padding:10px 14px; border:1px solid var(--border); border-radius:var(--radius-sm); }
-.ut-gap-card > p{ margin:0; }
+.ut-gap-card{ margin-top:8px; padding:6px 14px; border:1px solid var(--border); border-radius:var(--radius-sm); }
+.ut-issue .ut-gap-card > summary{ color:var(--text); font-size:13px; }
+.ut-gap-card[open] > summary{ border-bottom:1px solid var(--border); margin-bottom:6px; }
 .ut-gap-card code{ overflow-wrap:anywhere; }
 .ut-diagnostic-raw pre{ white-space:pre-wrap; overflow-wrap:anywhere; max-height:480px; overflow:auto; font-size:12px; }
 .ut-diagnostic-tools{ display:flex; align-items:center; flex-wrap:wrap; gap:10px; }
@@ -225,23 +230,48 @@
 .ut-host-evidence { padding: 16px; }
 .ut-artifact-list { display: flex; flex-wrap: wrap; gap: 8px 24px; padding-left: 20px; }
 .ut-artifact-list li { overflow-wrap: anywhere; }
-/* Per-line host coverage report of the function under test. */
-.ut-cov-link { font-size: 12px; }
-.ut-coverage { padding: 16px; }
-.ut-cov-note { font-size: 12.5px; color: var(--warn-text); }
-.ut-cov-summary { display: flex; flex-wrap: wrap; gap: 6px 24px; margin: 8px 0; font-variant-numeric: tabular-nums; }
-.ut-cov-summary b { font-weight: 500; color: var(--text-3); margin-right: 4px; }
-.ut-cov-gaps { font-size: 12.5px; color: var(--text-2); }
-.ut-cov-views { margin: 8px 0; }
-.ut-cov-lines { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-.ut-cov-lines th { text-align: left; font-weight: 500; color: var(--text-3); padding: 4px 8px; border-bottom: 1px solid var(--border); }
-.ut-cov-lines td { padding: 1px 8px; vertical-align: top; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.ut-cov-lines tr.is-miss td { background: var(--danger-soft); }
-.ut-cov-lines tr.is-gap td { background: var(--warn-soft); }
-.ut-cov-src code { white-space: pre; tab-size: 4; background: none; }
-.ut-cov-mark { display: inline-block; margin-right: 6px; }
-.ut-cov-lines .is-full { color: var(--ok-text); }
-.ut-cov-lines .is-miss, .ut-cov-mark.is-miss { color: var(--danger-text); }
-.ut-cov-mark.is-gap { color: var(--warn-text); }
-.ut-cov-mark.is-missing { color: var(--text-3); }
-.ut-coverage #ut-d-coverage-body { overflow-x: auto; }
+/* Per-line host coverage. Metrics stay in columns; MC/DC conditions open on hover. */
+.ut-cov-mini.is-inline{ flex-direction:row; flex-wrap:wrap; gap:0 10px; }
+.ut-cov-mini.is-inline b{ min-width:0; margin-right:2px; }
+.ut-coverage{ margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
+.ut-cov-note{ margin:0; font-size:12.5px; color:var(--warn-text); }
+.ut-cov-gaps{ margin:10px 0 0; font-size:12.5px; color:var(--text-2); }
+.ut-cov-views{ margin:10px 0 8px; }
+.ut-cov-wrap{ max-height:70vh; overflow:auto; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface); }
+.ut-cov-lines{ width:100%; border-collapse:separate; border-spacing:0; font-size:12.5px; }
+.ut-cov-lines th{ position:sticky; top:0; z-index:1; background:var(--surface-2); text-align:left; font-weight:500; color:var(--text-3); padding:6px 10px; border-bottom:1px solid var(--border); white-space:nowrap; }
+.ut-cov-lines td{ padding:2px 10px; vertical-align:middle; white-space:nowrap; font-variant-numeric:tabular-nums; border-bottom:1px solid var(--border); }
+.ut-cov-lines th:nth-child(1), .ut-cov-lines td:nth-child(1), .ut-cov-lines th:nth-child(3), .ut-cov-lines td:nth-child(3){ text-align:right; }
+.ut-cov-lines th:nth-child(2), .ut-cov-lines td:nth-child(2){ text-align:center; }
+.ut-cov-lines tr.is-miss td{ background:var(--danger-soft); }
+.ut-cov-lines tr.is-gap td{ background:var(--warn-soft); }
+.ut-cov-src code{ white-space:pre; tab-size:4; background:none; }
+.ut-cov-mark{ display:inline-block; margin-right:6px; }
+.ut-cov-lines .is-full{ color:var(--ok-text); }
+.ut-cov-lines .is-miss, .ut-cov-mark.is-miss{ color:var(--danger-text); }
+.ut-cov-mark.is-gap{ color:var(--warn-text); }
+.ut-cov-mark.is-missing{ color:var(--text-3); }
+.ut-mcdc{ cursor:help; }
+.ut-mcdc-tip{ display:none; }
+.ut-mcdc-pop{ position:fixed; z-index:80; min-width:220px; max-width:420px; padding:8px 10px; background:var(--surface); color:var(--text); border:1px solid var(--border-strong); border-radius:var(--radius-sm); white-space:normal; font-size:12px; line-height:1.55; text-align:left; display:flex; flex-direction:column; gap:2px; }
+.ut-mcdc-pop[hidden]{ display:none; }
+.ut-mcdc-pop .is-full{ color:var(--ok-text); }
+.ut-mcdc-pop .is-miss{ color:var(--danger-text); }
+.ut-mcdc-where{ color:var(--text-3); }
+.ut-host-more{ margin-top:14px; }
+.ut-host-more summary{ cursor:pointer; color:var(--brand-text); font-size:12.5px; }
+/* Issues are read one type at a time; each tab shows its severity and count. */
+.ut-issue-tabs{ display:flex; flex-wrap:wrap; margin:12px 0 10px; }
+.ut-issue-tabs button{ display:inline-flex; align-items:center; gap:6px; }
+.ut-tab-dot{ width:7px; height:7px; border-radius:50%; background:var(--border-strong); }
+.ut-issue-tabs .sev-error .ut-tab-dot{ background:var(--danger); }
+.ut-issue-tabs .sev-warning .ut-tab-dot{ background:var(--warn); }
+.ut-tab-n{ font-variant-numeric:tabular-nums; color:var(--text-3); }
+.ut-issue-count{ color:var(--text-3); font-variant-numeric:tabular-nums; }
+.ut-issue-route{ padding:1px 8px; border-radius:999px; font-size:11.5px; white-space:nowrap; }
+.ut-issue-route.is-model{ background:var(--run-soft); color:var(--run-text); }
+.ut-issue-route.is-human{ background:var(--surface-2); color:var(--text-2); }
+.ut-issue-msgs{ margin:8px 0 0; padding-left:22px; font-size:12.5px; color:var(--text-2); }
+.ut-issue-msgs li + li{ margin-top:4px; }
+.ut-requirements summary{ cursor:pointer; }
+.ut-requirements ul{ margin:4px 0 8px; }
