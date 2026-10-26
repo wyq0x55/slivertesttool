@@ -67,6 +67,13 @@ def validate_manifest(project_id: int):
     return ok(pipeline.validate_manifest(project_id, _body().get("manifest_document")))
 
 
+@bp.get("/manifest/options")
+@login_required
+def manifest_options(project_id: int):
+    _project_and_role(project_id, "project.view")
+    return ok(pipeline.manifest_options())
+
+
 @bp.post("/targets/import")
 @login_required
 def import_targets(project_id: int):

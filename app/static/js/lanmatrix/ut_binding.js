@@ -16,6 +16,7 @@
   var LIMIT = 256 * 1024;
   var draft = {}, snapshots = {}, savedConfig = null, savedState = "", rawSnapshot = "";
   var busy = true, loaded = false;
+  var choices = null;
   function $(id) { return document.getElementById(id); }
   function field(path) { return $("ut-m-" + path.replace(".", "-")); }
   function object(value) { return value !== null && typeof value === "object" && !Array.isArray(value); }
@@ -69,7 +70,56 @@
     }
     return parsed;
   }
+  function acceptChoices(value) {
+    if (!object(value) || value.contract !== "ut-agent.configuration-options/1")
+      throw new Error("工具未提供可用的项目配置目录，请升级配套 ut-agent 后刷新。");
+    ["build_profiles", "interface_contracts"].forEach(function (key) {
+      var ids = new Set();
+      if (!Array.isArray(value[key]) || (key === "build_profiles" && !value[key].length))
+        throw new Error("项目配置目录不完整，请检查 ut-agent 后刷新。");
+      value[key].forEach(function (item) {
+        if (!object(item) || typeof item.id !== "string" || !item.id.trim() ||
+            typeof item.label !== "string" || !item.label.trim() || ids.has(item.id))
+          throw new Error("项目配置目录含有无效选项，请检查 ut-agent 后刷新。");
+        ids.add(item.id);
+      });
+    });
+    choices = value;
+  }
+  function renderSelect(path, items, emptyLabel) {
+    var select = field(path), current = get(path);
+    select.replaceChildren();
+    function option(value, label, unavailable) {
+      var node = document.createElement("option");
+      node.value = value; node.textContent = label; node.disabled = !!unavailable;
+      select.appendChild(node);
+    }
+    option("", emptyLabel);
+    items.forEach(function (item) {
+      var label = path === "build.profile" && item.id === "default" ? "不声明目标 ABI（仅无指针函数）" : item.label;
+      if (path === "build.profile" && Number.isInteger(item.pointer_size) && item.pointer_size > 0)
+        label += " · " + item.pointer_size * 8 + " 位指针";
+      option(item.id, label);
+    });
+    if (typeof current === "string" && current && !items.some(function (item) { return item.id === current; }))
+      option(current, "当前配置未在本机目录中：" + current, true);
+  }
+  function configurationDetails() {
+    var build = choices && choices.build_profiles.find(function (item) { return item.id === get("build.profile"); });
+    var contract = choices && choices.interface_contracts.find(function (item) { return item.id === get("interfaces.contract"); });
+    $("ut-build-profile-description").textContent = build ?
+      (Number.isInteger(build.pointer_size) && build.pointer_size > 0 ? "指针宽度：" + build.pointer_size * 8 + " 位。" :
+        "此选项未声明目标指针宽度，涉及指针的函数仍会被阻断。") + " " + (build.description || "") :
+      get("build.profile") ? "当前配置不在本机可选目录中，已保留原值，请检查工具版本与配置。" : "尚未选择执行配置，请在保存前明确选择。";
+    $("ut-interface-contract-description").textContent = contract ?
+      (contract.description || "") + " 适用函数：" + (Array.isArray(contract.functions) ? contract.functions.join("、") : "请核对契约范围") +
+      "。审批：" + (contract.approved_by || "见契约记录") + " / " + (contract.approved_at || "见契约记录") :
+      get("interfaces.contract") ? "当前契约不在本机已审批目录中，已保留原值，请检查工具版本与契约。" :
+        "未使用接口契约；外部指针参数必须能由类型化实现证据证明，否则需要在这里选择适用契约。";
+  }
   function renderFields() {
+    renderSelect("build.profile", choices ? choices.build_profiles : [], "请选择执行配置");
+    renderSelect("interfaces.contract", choices ? choices.interface_contracts : [], "不使用接口契约（须已有实现证据）");
     FIELDS.forEach(function (p) {
       var value = get(p);
       if (p === "build.exclude_directories") value = Array.isArray(value) ? value.join("\n") : "";
@@ -79,6 +129,7 @@
       snapshots[p] = value;
     });
     policyView();
+    configurationDetails();
   }
   function policyView() {
     var legacy = own(draft, "baseline"), explicit = own(draft, "test_policy");
@@ -127,14 +178,18 @@
     else FIELDS.forEach(function (p) { snapshots[p] = field(p).value; });
     renderRaw();
     policyView();
+    configurationDetails();
   }
   function required() {
+    if (!choices) throw error("可选配置尚未加载，请检查 ut-agent 后刷新页面。", field("build.profile"));
     var labels = { "project.id": "项目标识", "baseline.id": "测试基准 ID", "baseline.version": "基准版本" };
     var legacy = own(draft, "baseline"), explicit = own(draft, "test_policy");
     (legacy ? ["project.id", "baseline.id", "baseline.version"] : ["project.id"]).forEach(function (p) {
       if (typeof get(p) !== "string" || !get(p).trim()) throw error("请填写" + labels[p] + "。", field(p));
     });
     if (legacy && explicit) throw error("清单只能包含 Baseline 或显式测试要求之一，请在完整 JSON 中修正。", $("ut-manifest-json"));
+    if (typeof get("build.profile") !== "string" || !get("build.profile").trim())
+      throw error("请选择目标 ABI；仅无指针函数可以选择不声明目标 ABI。", field("build.profile"));
     if (legacy) return;
     POLICY.forEach(function (key) {
       if (typeof get("test_policy." + key) !== "boolean") throw error("请明确选择每项测试要求的是或否。", field("test_policy." + key));
@@ -154,10 +209,13 @@
       $("ut-c-" + k).disabled = locked || readonly ||
         (!llm && MODEL.indexOf(k) >= 0);
     });
-    FIELDS.forEach(function (p) { field(p).disabled = locked || readonly; });
+    FIELDS.forEach(function (p) { field(p).disabled = locked || readonly ||
+      (!choices && (p === "build.profile" || p === "interfaces.contract")); });
     $("ut-manifest-json").readOnly = readonly;
     $("ut-manifest-json").disabled = locked;
-    ["ut-config-save", "ut-manifest-import", "ut-manifest-file", "ut-manifest-validate"].forEach(function (id) { $(id).disabled = locked || readonly; });
+    ["ut-config-save", "ut-manifest-import", "ut-manifest-file", "ut-manifest-validate"].forEach(function (id) {
+      $(id).disabled = locked || readonly || (!choices && (id === "ut-config-save" || id === "ut-manifest-validate"));
+    });
     $("ut-manifest-export").disabled = locked;
     policyView();
     changed();
@@ -284,7 +342,14 @@
   });
   (window.LMReady || Promise.resolve()).then(async function () {
     lock(true);
-    try { savedConfig = await LMApi.utGetConfig(pid); populate(savedConfig); lock(false); }
-    catch (e) { fail(e.message); }
+    var results = await Promise.allSettled([LMApi.utGetConfig(pid), LMApi.utManifestOptions(pid)]);
+    if (results[0].status !== "fulfilled") { fail(results[0].reason.message); return; }
+    var optionError;
+    try {
+      if (results[1].status !== "fulfilled") throw results[1].reason;
+      acceptChoices(results[1].value);
+    } catch (e) { optionError = e; }
+    savedConfig = results[0].value; populate(savedConfig); lock(false);
+    if (optionError) fail(optionError.message, null, false);
   });
 })(window, document);

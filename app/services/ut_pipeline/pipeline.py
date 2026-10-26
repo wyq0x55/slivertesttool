@@ -94,6 +94,22 @@ def validate_manifest(project_id: int, document: object) -> dict:
     return binding.prepare_manifest(project_id, document, bridge=get_bridge(), workspace=_workspace(), persist=False)
 
 
+def manifest_options() -> dict:
+    """Offer installed, authoritative choices without selecting project semantics."""
+    try:
+        result = get_bridge().configuration_options()
+    except (BridgeError, KeyError, TypeError) as exc:
+        raise ServiceError("无法加载项目清单可选配置，请检查 ut-agent 版本与连接后刷新页面。",
+                           code="UT_CONFIGURATION_OPTIONS_UNAVAILABLE") from exc
+    if (not isinstance(result, dict)
+            or result.get("contract") != "ut-agent.configuration-options/1"
+            or not all(isinstance(result.get(key), list)
+                       for key in ("build_profiles", "interface_contracts"))):
+        raise ServiceError("ut-agent 返回了无效的项目清单选项，请升级配套工具后刷新页面。",
+                           code="UT_CONFIGURATION_OPTIONS_UNAVAILABLE")
+    return result
+
+
 def require_config(project_id: int) -> UtPipelineConfig:
     config = get_config(project_id)
     if config is None or not all(getattr(config, key) for key in _REQUIRED_FIELDS):
