@@ -60,7 +60,7 @@ def real_workflow(request, app_ctx, monkeypatch, tmp_path):
             "mcdc": True, "arithmetic": False, "combination_group": True,
         }
     manifest.write_text(json.dumps(manifest_data), encoding="utf-8")
-    settings = BridgeSettings(str(root), python, extractor, "", 120, 180, 120)
+    settings = BridgeSettings(str(root), python, extractor, 120, 180, 120)
     bridge = UtAgentBridge(settings)
     calls = []
     invoke = bridge._run
@@ -74,7 +74,7 @@ def real_workflow(request, app_ctx, monkeypatch, tmp_path):
     monkeypatch.setattr(provider, "invoke_chat", lambda *a, **k: pytest.fail("Actual model must not be contacted"))
     config = {"execution_backend": "clang", "stub_mode": "deterministic",
               "manifest_path": str(manifest),
-              "index_csv": str(index), "product_root": str(product), "work_root": "",
+              "index_csv": str(index), "product_root": str(product),
               "stub_max_rounds": 2, "stub_model": "workflow-fake-model"}
     status, body = env.call("put", "/config", json=config)
     assert status == 200, body
@@ -152,8 +152,8 @@ def test_real_index_generation_execution_review_and_export(real_workflow, monkey
                    and row["counts_as_target_evidence"] == "False" and row["delivery_validated"] == "False"
                    for row in table)
     commands = [arguments[0] for arguments in calls]
-    assert {"index", "constraints", "generate", "host-execute"} <= set(commands)
-    assert "execute" not in commands and "check" not in commands
+    assert {"index", "constraints", "generate", "execute"} <= set(commands)
+    assert "winams-execute" not in commands and "check" not in commands
     if stub_mode == "llm":
         assert len(prompts) == 2  # classify has no dependency stubs.
         assert commands.count("host-prepare") == 3
@@ -201,4 +201,4 @@ def test_real_generation_failure_keeps_extractor_diagnostic_in_the_job(real_work
     assert "does-not-exist" in failed["reason"] and "generation report" in failed["reason"]
     assert "生成结果中缺少该函数" not in failed["reason"]
     assert not failed["attempts"]
-    assert not any(arguments[0] == "host-execute" for arguments in calls)
+    assert not any(arguments[0] == "execute" for arguments in calls)

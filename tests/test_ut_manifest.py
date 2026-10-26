@@ -154,7 +154,7 @@ def real_bridge(monkeypatch):
     python = os.environ.get("UT_HOST_TEST_PYTHON")
     if not root or not python:
         pytest.skip("External ut-agent checkout and interpreter are required")
-    bridge = UtAgentBridge(BridgeSettings(root, python, "", "", 120, 120, 120))
+    bridge = UtAgentBridge(BridgeSettings(root, python, "", 120, 120, 120))
     monkeypatch.setattr(pipeline, "get_bridge", lambda: bridge)
     return bridge
 

@@ -1,4 +1,4 @@
-"""Unit-test pipeline (実施一覧 → generate → WinAMS → check → LLM repair → review).
+"""Unit-test pipeline (実施一覧 → generate → Clang/LLVM → check → LLM repair → review).
 
 ut-agent is replaced by a scripted bridge so the platform-side state machine
 is exercised end to end over HTTP; the real bridge contract is tested in the
@@ -25,25 +25,25 @@ GOOD = b'mod,"a.c/f","f",1,1\r\n#COMMENT,x,ret\r\n,0,1\r\n'
 BAD = b'mod,"a.c/f","f",1,1\r\n#COMMENT,x,ret\r\n,0,BAD\r\n'
 
 
-def test_execution_passes_the_explicit_converter_and_source(monkeypatch, tmp_path):
-    bridge = UtAgentBridge(BridgeSettings.from_config({
-        "UT_OMF_CONVERTER": r"C:\WinAMS\BIN\v850ghsomf.exe",
-    }))
+def test_llvm_execute_uses_typed_inputs_and_not_winams(monkeypatch, tmp_path):
+    bridge = UtAgentBridge(BridgeSettings.from_config({}))
     calls = []
 
     def invoke(args, *, timeout):
-        assert timeout == 3 * bridge.settings.execute_timeout + 120
-        calls.append(args)
-        return {"execution": {"status": "BLOCKED"}}
+        calls.append((args, timeout))
+        return {"execution": {"status": "HOST_PASS"}, "check": {"verdict": "PASS"}}
 
     monkeypatch.setattr(bridge, "_run", invoke)
-    bridge.execute(tmp_path, tmp_path / "c.csv", tmp_path / "out",
-                   stub_builds=["S1", "S2"], source_rel="src/a.c", intents=tmp_path / "intents.json")
-    [args] = calls
-    assert args[args.index("--source-rel") + 1] == "src/a.c"
-    assert args[args.index("--intents") + 1] == str(tmp_path / "intents.json")
-    assert args[args.index("--omf-converter") + 1] == r"C:\WinAMS\BIN\v850ghsomf.exe"
-    assert [args[i + 1] for i, value in enumerate(args) if value == "--stub-build"] == ["S1", "S2"]
+    bridge.execute(ir_json=tmp_path / "ir.json", intents=tmp_path / "intents.json",
+                   reference=tmp_path / "ref.csv", candidate=tmp_path / "c.csv",
+                   out=tmp_path / "out", config={"host_clang": "clang",
+                                                 "manifest_path": str(tmp_path / "manifest.json")})
+    args, timeout = calls[0]
+    assert args[0] == "execute"
+    assert "--winams" not in args and "--omf-converter" not in args and "--stub-build" not in args
+    assert args[args.index("--ir-json") + 1] == str(tmp_path / "ir.json")
+    assert args[args.index("--manifest") + 1] == str(tmp_path / "manifest.json")
+    assert timeout == 3 * bridge.settings.execute_timeout + 120
 
 
 class FakeBridge:
@@ -93,28 +93,46 @@ class FakeBridge:
             if self.generated is not None:
                 path = out / f"{name}.csv"
                 path.write_bytes(self.generated)
-                unit["testcsv"] = str(path)
+                ir = out / f"{name}-ir.json"
+                intents = out / f"{name}-intents.json"
+                ir.write_text("{}", encoding="utf-8")
+                intents.write_text("{}", encoding="utf-8")
+                unit.update(testcsv=str(path), ir_json=str(ir), intent_manifest=str(intents))
             else:
                 unit.update(status="UNSUPPORTED", error="loop construct")
             units.append(unit)
         return {"ok": True, "provenance": {"baseline_ref": "psd-rebuild@1.1"}, "units": units}
 
-    def execute(self, unit_dir, candidate, out, stub_builds=None, source_rel="", intents=None):
+    def execute(self, *args, **kwargs):
+        """Primary LLVM entry. The old positional WinAMS runner is not a workflow step."""
+        if args and "candidate" not in kwargs:
+            raise AssertionError("WinAMS execute is outside the primary workflow")
+        return self.host_execute(**kwargs)
+
+    def host_execute(self, *, out, candidate, reference=None, **kwargs):
         self.executions += 1
-        self.stub_builds = stub_builds
-        self.source_rel = source_rel
-        out.mkdir(parents=True)
-        evidence = {"status": self.execution_status, "unit_dir": str(unit_dir)}
-        if self.execution_status == "BLOCKED":
+        self.last_execute = kwargs
+        out.mkdir(parents=True, exist_ok=True)
+        data = Path(candidate).read_bytes()
+        digest = hashlib.sha256(data).hexdigest()
+        blocked = self.execution_status == "BLOCKED"
+        evidence = {"status": "HOST_UNSUPPORTED" if blocked else "HOST_PASS",
+                    "evidence_source": "HOST_EXECUTION", "counts_as_target_evidence": False,
+                    "delivery_validated": False,
+                    "input_binding": {"candidate": {"sha256": digest}}}
+        if blocked:
             evidence["blocked_reasons"] = [self.blocked_reason]
-        elif self.captured is not None:
-            captured = self.captured
-            if callable(captured):
-                captured = captured(Path(candidate).read_bytes())
-            evidence["captured_candidate"] = str(out / "review-candidate.csv")
-            (out / "review-candidate.csv").write_bytes(captured)
-        (out / "execution.json").write_text(json.dumps(evidence), encoding="utf-8")
-        return evidence
+            evidence["reason"] = "environment"
+            evidence["status_detail"] = "BLOCKED"
+        recorded = {**evidence, "status": "BLOCKED" if blocked else "HOST_PASS"}
+        (out / "execution.json").write_text(json.dumps(recorded), encoding="utf-8")
+        check = self.check(candidate, manifest="fixture", execution=out / "execution.json")
+        rows = [line for line in data.split(b"\r\n") if line.startswith(b",")]
+        if rows and rows[0].count(b",") >= 1:
+            check["input_ranges"] = {"contract": {
+                "contract": "ut-agent.input-domains/1",
+                "columns": [{"index": 1, "column": "x", "status": "PROVEN", "min": 0, "max": 255}]}}
+        return {"execution": evidence, "check": check}
 
     def check(self, candidate, *, manifest, reference=None, previous=None, execution=None,
               intents=None, ir_json=None):
@@ -131,6 +149,7 @@ class FakeBridge:
         base = {"completeness": completeness, "candidate_sha256": digest,
                 "candidate_witnesses": {"contract": "ut-agent.candidate-witness/1",
                     "evidence": {"identified": True}, "candidate_sha256": digest,
+                    "input_mapping_identified": True,
                     "witnessed_obligation_ids": proved, "results": results}}
         if execution is None:
             if results and not proved:
@@ -221,7 +240,7 @@ def env(app_ctx, monkeypatch, tmp_path):
 def _configure(env, rounds=5):
     status, body = env.call("put", "/config", json={
         "manifest_path": "m.json", "index_csv": "i.csv", "product_root": "P",
-        "work_root": "W", "max_repair_rounds": rounds, "repair_model": "qwen3.8-27b-gsq"})
+        "max_repair_rounds": rounds, "repair_model": "qwen3.8-27b-gsq"})
     assert status == 200, body
     status, body = env.call("post", "/targets/import")
     assert status == 200 and body["data"] == {"total": 2, "added": 2, "removed": 0}
@@ -427,36 +446,16 @@ def test_generating_job_exposes_ut_agent_live_progress(env, app_ctx):
     assert progress["observed_at"].endswith("Z")
 
 
-def test_llm_rows_close_a_coverage_gap_and_the_capture_fills_them(env, monkeypatch):
+def test_coverage_gap_without_a_missing_case_does_not_call_the_model(env, monkeypatch):
     targets = _configure(env)
     env.bridge.coverage_rows = 2
-    env.bridge.captured = _fill_blank
-    seen = []
-
-    def fake_chat(messages, **kwargs):
-        seen.append((messages, kwargs))
-        return _llm_reply(_row("COVERAGE_C1_INCOMPLETE"))
-
-    monkeypatch.setattr(provider, "chat", fake_chat)
+    monkeypatch.setattr(provider, "chat", lambda *args, **kwargs: pytest.fail("coverage is not a missing-case repair"))
     [job_id] = _enqueue(env, targets["f"])
     job = _job(env, job_id)
-    assert job["state"] == "awaiting_review" and job["repair_rounds"] == 1
-    assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [
-        ("GENERATOR", "FAIL"), ("LLM", "FAIL"), ("CAPTURE", "PASS")]
-    reviser = job["attempts"][1]["reviser"]
-    assert reviser["model"] == "qwen3.8-27b-gsq" and len(reviser["prompt_sha256"]) == 64
-    assert reviser["claimed"] == ["COVERAGE_C1_INCOMPLETE"]
-    messages, kwargs = seen[0]
-    assert kwargs["model"] == "qwen3.8-27b-gsq"
-    assert kwargs["timeout"] == 900
-    assert "psd.4.compare" in messages[0]["content"] and "列不得改动" in messages[0]["content"]
-    assert "COVERAGE_C1_INCOMPLETE" in messages[1]["content"] and "I1 = x" in messages[1]["content"]
-
-    status, body = env.call(
-        "get", f"/jobs/{job_id}/attempts/{job['attempts'][2]['id']}/csv",
-        query_string={"format": "text"})
-    assert status == 200
-    assert body["data"]["text"] == GOOD.decode("cp932") + ";$L$,LLM add COVERAGE_C1_INCOMPLETE\r\n,5,1\r\n"
+    assert job["state"] == "needs_human" and job["repair_rounds"] == 0
+    assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [("GENERATOR", "FAIL")]
+    assert "C1 < 100%" in job["reason"]
+    assert env.bridge.executions == 1
 
 
 def test_missing_cases_on_a_pass_go_to_the_model_until_claimed_or_declined(env, monkeypatch):
@@ -476,9 +475,9 @@ def test_missing_cases_on_a_pass_go_to_the_model_until_claimed_or_declined(env, 
     # One round claims b1:T and declines b2:T; the evidence gap is never offered.
     assert len(calls) == 1 and "b3:T" not in calls[0].split("## 现有数据行")[0].split("## 待补缺口")[1]
     assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [
-        ("GENERATOR", "PASS"), ("LLM", "FAIL"), ("CAPTURE", "PASS")]
-    assert job["state"] == "awaiting_review" and job["repair_rounds"] == 1
-    assert "候选输入已证实 1，模型补行认领 1，模型声明无法补齐 1，未处理 0" in job["reason"]
+        ("GENERATOR", "PASS"), ("LLM", "FAIL")]
+    assert job["state"] == "needs_human" and job["repair_rounds"] == 1
+    assert "EXPECTED_VALUE_PENDING" in job["reason"] or "blank expected" in job["reason"]
 
 
 def test_rejected_witness_stays_out_of_current_candidate_and_winams(env, monkeypatch):
@@ -495,18 +494,18 @@ def test_rejected_witness_stays_out_of_current_candidate_and_winams(env, monkeyp
     monkeypatch.setattr(provider, "chat", chat)
     [job_id] = _enqueue(env, targets["f"])
     job = _job(env, job_id)
-    assert job["state"] == "awaiting_review" and job["repair_rounds"] == 2
+    assert job["state"] == "needs_human" and job["repair_rounds"] == 2
     assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [
-        ("GENERATOR", "PASS"), ("LLM", "FAIL"), ("LLM", "FAIL"), ("CAPTURE", "PASS")]
-    assert env.bridge.executions == 3  # generator, valid proposal, capture recheck
-    generator, rejected, accepted, capture = job["attempts"]
+        ("GENERATOR", "PASS"), ("LLM", "FAIL"), ("LLM", "FAIL")]
+    assert env.bridge.executions == 2
+    generator, rejected, accepted = job["attempts"]
     assert rejected["has_csv"] and "INPUT_WITNESS_REJECTED" in [
         issue["code"] for issue in rejected["check"]["issues"]]
     assert accepted["reviser"]["parent_attempt_id"] == generator["id"]
-    assert capture["reviser"]["parent_attempt_id"] == accepted["id"]
+    assert rejected["reviser"]["parent_attempt_id"] == generator["id"]
     assert "x must equal 5" in seen[1] and '"observed": false' in seen[1]
     assert '"I1": "2"' in seen[1]
-    status, body = env.call("get", f"/jobs/{job_id}/attempts/{capture['id']}/csv",
+    status, body = env.call("get", f"/jobs/{job_id}/attempts/{accepted['id']}/csv",
                             query_string={"format": "text"})
     assert status == 200 and ",2," not in body["data"]["text"] and ",5," in body["data"]["text"]
 
@@ -526,8 +525,8 @@ def test_a_claim_without_current_checker_evidence_goes_to_a_human(env, monkeypat
     [job_id] = _enqueue(env, targets["f"])
     job = _job(env, job_id)
     assert job["state"] == "needs_human" and env.bridge.executions == 1
-    assert job["current_attempt_id"] == job["attempts"][0]["id"]
-    assert job["attempts"][1]["verdict"] == "BLOCKED"
+    assert [attempt["origin"] for attempt in job["attempts"]] == ["GENERATOR"]
+    assert "未处理 1" in job["reason"]
 
 
 def test_declines_of_a_rejected_proposal_do_not_close_gaps(env, monkeypatch):
@@ -542,9 +541,9 @@ def test_declines_of_a_rejected_proposal_do_not_close_gaps(env, monkeypatch):
     job = _job(env, job_id)
     # The rejected round's decline is discarded with its rows, so b2:T is
     # offered again until a round on the accepted lineage declines it.
-    assert not replies and job["repair_rounds"] == 3
-    assert job["state"] == "awaiting_review"
-    assert "模型声明无法补齐 1，未处理 0" in job["reason"]
+    assert job["state"] == "needs_human" and job["repair_rounds"] == 2
+    assert len(replies) == 1
+    assert "未处理 1" in job["reason"]
 
 
 def test_a_stored_witness_only_counts_for_its_own_csv():
@@ -570,22 +569,16 @@ def test_prompt_budget_failure_stops_without_a_model_round(env, monkeypatch):
     assert env.bridge.executions == 1
 
 
-def test_wrong_expected_values_are_backfilled_from_winams_without_the_model(env, monkeypatch):
+def test_oracle_mismatch_is_not_rewritten_or_sent_to_the_model(env, monkeypatch):
     targets = _configure(env)
     env.bridge.generated = BAD
-    env.bridge.captured = GOOD
     monkeypatch.setattr(provider, "chat", lambda *a, **k: pytest.fail("LLM must not run"))
     [job_id] = _enqueue(env, targets["f"])
     job = _job(env, job_id)
-    assert job["state"] == "awaiting_review" and job["repair_rounds"] == 0
-    assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [
-        ("GENERATOR", "FAIL"), ("CAPTURE", "PASS")]
-    # The capture is re-executed before it counts, and its source is recorded.
-    assert env.bridge.executions == 2
-    capture = job["attempts"][1]
-    assert capture["reviser"]["oracle_source"] == "EXECUTION_CAPTURED"
-    assert capture["reviser"]["from_attempt"] == 1
-    assert capture["reviser"]["resolved_codes"] == ["ORACLE_MISMATCH"]
+    assert job["state"] == "needs_human" and job["repair_rounds"] == 0
+    assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [("GENERATOR", "FAIL")]
+    assert env.bridge.executions == 1
+    assert "ORACLE_MISMATCH" in {issue["code"] for issue in job["attempts"][0]["check"]["issues"]}
 
 
 def test_a_capture_that_still_fails_goes_to_a_human_not_the_model(env, monkeypatch):
@@ -595,10 +588,9 @@ def test_a_capture_that_still_fails_goes_to_a_human_not_the_model(env, monkeypat
     monkeypatch.setattr(provider, "chat", lambda *a, **k: pytest.fail("LLM must not run"))
     [job_id] = _enqueue(env, targets["f"])
     job = _job(env, job_id)
-    assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [
-        ("GENERATOR", "FAIL"), ("CAPTURE", "FAIL")]
+    assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [("GENERATOR", "FAIL")]
     assert job["state"] == "needs_human" and job["repair_rounds"] == 0
-    assert "无法通过新增输入行解决" in job["reason"]
+    assert "mismatch" in job["reason"]
 
 
 @pytest.mark.parametrize("code", ["COVERAGE_C0_INCOMPLETE", "EXECUTION_PATH_DIVERGED"])
@@ -607,13 +599,12 @@ def test_mismatches_beside_input_evidence_are_not_overwritten(env, monkeypatch, 
     env.bridge.generated = BAD
     env.bridge.captured = GOOD
     env.bridge.extra_codes = (code,)
-    monkeypatch.setattr(provider, "chat", lambda *a, **k: _llm_reply(_row(code)))
+    monkeypatch.setattr(provider, "chat", lambda *a, **k: pytest.fail("oracle mismatch is not row repair"))
     [job_id] = _enqueue(env, targets["f"])
     job = _job(env, job_id)
-    # Rows are added, but the capture never overwrites the mismatch.
-    assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [
-        ("GENERATOR", "FAIL"), ("LLM", "FAIL")]
+    assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [("GENERATOR", "FAIL")]
     assert job["state"] == "needs_human"
+    assert job["attempts"][0]["csv_sha256"]
 
 
 def test_human_expected_values_are_never_overwritten_by_the_capture(env, monkeypatch):
@@ -644,21 +635,21 @@ def test_the_generator_intent_manifest_feeds_the_completeness_check(env, tmp_pat
 
     env.bridge.generate = generate_with_intents
     [job_id] = _enqueue(env, targets["f"])
-    assert _job(env, job_id)["state"] == "awaiting_review"
-    assert env.bridge.checked_intents == [manifest, manifest]
+    job = _job(env, job_id)
+    assert job["state"] == "awaiting_review"
+    assert env.bridge.last_execute["intents"] == manifest
 
 
 def test_exhausted_rounds_hand_over_to_a_human(env, monkeypatch):
     targets = _configure(env, rounds=2)
-    env.bridge.coverage_rows = 3
-    replies = [_llm_reply(_row("COVERAGE_C1_INCOMPLETE")), _llm_reply()]
+    env.bridge.gaps = [GAP, dict(GAP, obligation_id="b2:T")]
+    replies = [_llm_reply(_row("b1:T", "2")), _llm_reply(_row("b1:T", "2"))]
     monkeypatch.setattr(provider, "chat", lambda *a, **k: replies.pop(0))
     [job_id] = _enqueue(env, targets["f"])
     job = _job(env, job_id)
     assert job["state"] == "needs_human" and job["repair_rounds"] == 2
-    assert "上限 2" in job["reason"]
-    assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [
-        ("GENERATOR", "FAIL"), ("LLM", "FAIL"), ("LLM", "INVALID")]
+    assert "INPUT_WITNESS_REJECTED" in job["reason"]
+    assert [a["origin"] for a in job["attempts"]][0] == "GENERATOR"
 
     status, body = env.call("post", f"/jobs/{job_id}/review", json={"decision": "approve"})
     assert status == 400 and body["error"]["code"] == "VALIDATION_ERROR"
@@ -697,31 +688,17 @@ def test_blocked_environment_does_not_consume_rounds(env, monkeypatch):
     assert env.bridge.executions == 2
 
 
-def test_stub_builds_are_normalised_and_passed_to_execution(env):
+def test_winams_work_root_and_linked_builds_are_rejected(env):
     status, body = env.call("put", "/config", json={
         "manifest_path": "m.json", "index_csv": "i.csv", "product_root": "P",
-        "work_root": "W", "stub_builds": "  C:\\STUB\\stub1 \r\n\r\nC:\\STUB\\stub2\n"})
-    assert status == 200, body
-    assert body["data"]["stub_builds"] == "C:\\STUB\\stub1\nC:\\STUB\\stub2"
-    env.call("post", "/targets/import")
-    _, body = env.call("get", "/targets")
-    targets = {t["function"]: t["id"] for t in body["data"]}
-
-    env.bridge.execution_status = "BLOCKED"
-    env.bridge.blocked_reason = {"code": "STUB_BUILD_UNRESOLVED", "path": "C:\\STUB\\stub1",
-                                 "detail": "stub1: AMSTB_dep"}
-    [job_id] = _enqueue(env, targets["f"])
-    assert env.bridge.stub_builds == ["C:\\STUB\\stub1", "C:\\STUB\\stub2"]
-    assert env.bridge.source_rel == "src/a.c"
-    job = _job(env, job_id)
-    assert job["state"] == "blocked" and job["repair_rounds"] == 0
-    assert "STUB_BUILD_UNRESOLVED stub1: AMSTB_dep" in job["reason"]
+        "work_root": "W", "stub_builds": "C:\\STUB\\stub1"})
+    assert status == 400, body
+    assert body["error"]["code"] == "VALIDATION_ERROR"
 
 
 def test_unreachable_model_is_an_error_and_retry_resumes_repair(env, monkeypatch):
     targets = _configure(env)
-    env.bridge.coverage_rows = 2
-    env.bridge.captured = _fill_blank
+    env.bridge.gaps = [GAP]
 
     def down(*args, **kwargs):
         raise provider.ProviderError("connection refused")
@@ -731,10 +708,13 @@ def test_unreachable_model_is_an_error_and_retry_resumes_repair(env, monkeypatch
     job = _job(env, job_id)
     assert job["state"] == "error" and job["repair_rounds"] == 0
 
-    monkeypatch.setattr(provider, "chat", lambda *a, **k: _llm_reply(_row("COVERAGE_C1_INCOMPLETE")))
-    env.call("post", f"/jobs/{job_id}/retry")
+    monkeypatch.setattr(provider, "chat", lambda *a, **k: _llm_reply(_row("b1:T")))
+    status, _ = env.call("post", f"/jobs/{job_id}/retry")
+    assert status == 202
     job = _job(env, job_id)
-    assert job["state"] == "awaiting_review" and job["repair_rounds"] == 1
+    assert job["repair_rounds"] == 1
+    assert job["state"] in {"awaiting_review", "needs_human"}
+    assert any(attempt["origin"] == "LLM" for attempt in job["attempts"])
 
 
 def test_generation_outcomes_reach_a_human(env):

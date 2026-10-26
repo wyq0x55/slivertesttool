@@ -210,6 +210,10 @@ class UtAgentBridge:
             raise BridgeError("LLVM execute returned no execution/check evidence")
         return {"execution": document["execution"], "check": document["check"]}
 
+    def host_execute(self, **kwargs):
+        """Alias used by older call sites; the subprocess command remains execute."""
+        return self.execute(**kwargs)
+
     def check(self, candidate: Path, *, manifest: str, reference: Optional[Path] = None,
               previous: Optional[Path] = None, execution: Optional[Path] = None,
               intents: Optional[Path] = None, ir_json: Optional[Path] = None) -> dict[str, Any]:

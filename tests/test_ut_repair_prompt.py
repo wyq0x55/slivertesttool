@@ -104,11 +104,11 @@ def test_output_oracle_noise_is_summarized_and_the_input_cause_kept():
     incomplete = "obligation evaluation UNKNOWN: semantic evaluation incomplete: call:g:param:0:0"
     noisy = dict(GAP, reason="; ".join(oracles + [incomplete]))
     line = repair._gap_line(noisy)
-    assert line.endswith("：另缺 27 个输出期望值（由 WinAMS 捕获回填，不是放弃补行的理由）")
+    assert line.endswith("：另缺 27 个输出期望值（只能由有充分证据的类型化实现 oracle 推导；不能猜测）")
     assert "call:g:param" not in line
     mixed = dict(GAP, reason="; ".join(["intent failed validation"] + oracles))
     assert repair._gap_line(mixed).endswith("：intent failed validation；另缺 27 个输出期望值"
-                                             "（由 WinAMS 捕获回填，不是放弃补行的理由）")
+                                             "（只能由有充分证据的类型化实现 oracle 推导；不能猜测）")
 
 
 def test_boundary_facts_never_render_a_missing_value_as_none():
@@ -128,7 +128,7 @@ def test_system_prompt_asks_for_rows_not_a_csv():
     system = repair._system_prompt(CONSTRAINTS)
     assert '"rows"' in system and '"declined"' in system and "不要输出 CSV" in system
     assert "不能仅凭冲突认定缺少输入" in system
-    assert repair.PROMPT_VERSION == "ut-repair/7.6"
+    assert repair.PROMPT_VERSION == "ut-repair/8.0"
 
 
 def _revise(monkeypatch, reply, allowed=frozenset({"b6:boundary:1:above:2"})):
@@ -148,7 +148,7 @@ def test_reply_rows_are_appended_and_claims_recorded(monkeypatch):
     assert revision.csv_bytes.decode("cp932") == CSV + ";$L$,LLM add b6:boundary:1:above:2\r\n,0,2,\r\n"
     assert revision.meta["claimed"] == ["b6:boundary:1:above:2"]
     assert [item["index"] for item in revision.meta["rejected"]] == [1]
-    assert revision.meta["prompt_version"] == "ut-repair/7.6"
+    assert revision.meta["prompt_version"] == "ut-repair/8.0"
 
 
 def test_a_declining_reply_adds_nothing(monkeypatch):
@@ -241,13 +241,17 @@ def test_column_compression_preserves_exact_names_and_tokens():
     assert aliases and len(text) < len(increment.columns_section(table))
 
 
-def test_verified_winams_records_reach_dynamic_prompt_without_changing_prefix():
-    check = dict(CHECK, coverage_feedback={"records": [
-        {"report_line": 18, "c1_observation": "T/-", "mapping_status": "UNKNOWN"}]})
-    prompt = _user(CSV, check, [])
-    assert '"c1_observation": "T/-"' in prompt and '"mapping_status": "UNKNOWN"' in prompt
+def test_llvm_coverage_reaches_dynamic_prompt_without_changing_prefix():
+    coverage = {"report_line": 18, "c1_observation": "T/-", "mapping_status": "UNKNOWN"}
+    target = {"function": "f", "source_rel": "src/f.c"}
     table = increment.parse(CSV)
-    assert repair._function_prompt({"function": "f"}, table, check) == repair._function_prompt({"function": "f"}, table, CHECK)
+    prompt = repair._user_prompt(target, table, CHECK, {"status": "HOST_PASS", "coverage": coverage}, [], [])
+    assert '"c1_observation": "T/-"' in prompt and '"mapping_status": "UNKNOWN"' in prompt
+    bare = repair._user_prompt(target, table, CHECK, {"status": "HOST_PASS"}, [], [])
+    assert '"c1_observation"' not in bare
+    stamped = dict(CHECK, coverage_feedback={"records": [coverage]})
+    assert repair._function_prompt(target, table, stamped) == repair._function_prompt(target, table, CHECK)
+    assert '"c1_observation"' not in repair._function_prompt(target, table, CHECK)
 
 
 def test_evidence_beyond_render_budget_still_invalidates_prefix(monkeypatch):

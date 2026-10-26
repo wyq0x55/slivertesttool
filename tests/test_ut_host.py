@@ -85,7 +85,7 @@ def configured(env, monkeypatch, tmp_path):
     env.bridge = bridge
     monkeypatch.setattr(pipeline, "get_bridge", lambda: bridge)
     ids = _configure(env)
-    status, body = env.call("put", "/config", json={"execution_backend": "clang", "work_root": ""})
+    status, body = env.call("put", "/config", json={"execution_backend": "clang"})
     assert status == 200, body
     monkeypatch.setattr(provider, "invoke_chat", lambda *a, **k: pytest.fail("Unexpected gateway call"))
     return env, ids
@@ -107,7 +107,7 @@ def test_bridge_host_contract_arguments(monkeypatch, tmp_path):
                         stub_request=tmp_path / "request", stub_response=tmp_path / "response")
     assert calls[0][0][0] == "host-prepare"
     args, timeout = calls[1]
-    assert args[0] == "host-execute"
+    assert args[0] == "execute"
     assert args[args.index("--clang") + 1] == "custom clang"
     assert args[args.index("--profile-runtime") + 1] == "runtime.lib"
     assert "--stub-request" in args and "--stub-response" in args
@@ -116,7 +116,7 @@ def test_bridge_host_contract_arguments(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("values", [
-    {"execution_backend": "unknown"}, {"stub_mode": "other"}, {"stub_mode": "llm"},
+    {"execution_backend": "unknown"}, {"stub_mode": "other"},
     {"stub_max_rounds": 0}, {"stub_max_rounds": 6}, {"stub_max_rounds": True},
     {"stub_max_rounds": "2"}, {"host_clang": ""}, {"stub_model": 7},
 ])
@@ -131,8 +131,7 @@ def test_invalid_settings_do_not_persist(env, values):
 
 def test_clang_dispatch_no_winams_check_or_capture(configured, monkeypatch):
     env, ids = configured
-    monkeypatch.setattr(env.bridge, "check", lambda *a, **k: pytest.fail("WinAMS checker called"))
-    monkeypatch.setattr(pipeline, "_capture_backfill", lambda *a, **k: pytest.fail("Host capture backfill"))
+    monkeypatch.setattr(env.bridge, "check", lambda *a, **k: pytest.fail("static checker called"))
     [job_id] = _enqueue(env, ids["f"])
     job = _job(env, job_id)
     assert job["state"] == "awaiting_review"
@@ -292,7 +291,7 @@ def test_batch_snapshot_freezes_executor_and_stub_fields(configured, app_ctx):
 
 
 def test_host_capture_cannot_change_expected_values():
-    assert pipeline._capture_backfill(None, None, {"evidence_source": "HOST_EXECUTION"}, {}) is False
+    assert not hasattr(pipeline, "_capture_backfill")
 
 
 def test_host_missing_case_creates_derived_version_then_reexecutes_before_review(configured, monkeypatch):
@@ -332,7 +331,6 @@ def test_host_missing_case_creates_derived_version_then_reexecutes_before_review
 
     monkeypatch.setattr(provider, "invoke_chat", chat)
     monkeypatch.setattr(env.bridge, "host_execute", host_execute)
-    monkeypatch.setattr(env.bridge, "execute", lambda *a, **k: pytest.fail("WinAMS must not execute"))
     [job_id] = _enqueue(env, ids["f"])
     job = _job(env, job_id)
     assert job["state"] == "awaiting_review" and job["repair_rounds"] == 1
@@ -394,7 +392,7 @@ def test_bootstrap_upgrades_existing_config_columns_idempotently(env, app_ctx):
         _migrate_schema()
         assert set(columns) <= {c["name"] for c in inspect(db.engine).get_columns("ut_pipeline_configs")}
         config = pipeline.get_config(env.pid)
-        assert config.execution_backend == "winams" and config.stub_mode == "deterministic"
+        assert config.execution_backend == "clang" and config.stub_mode == "deterministic"
         assert config.stub_max_rounds == 2 and config.host_clang == "clang"
 
 

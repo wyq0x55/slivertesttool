@@ -263,6 +263,7 @@
     clearError();
     try {
       syncForm(); required();
+      $("ut-c-execution_backend").value = "clang";
       var values = { manifest_document: draft };
       KEYS.forEach(function (k) { values[k] = $("ut-c-" + k).value.trim(); });
       values.max_repair_rounds = Number(values.max_repair_rounds);

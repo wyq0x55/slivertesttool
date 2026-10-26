@@ -15,7 +15,7 @@
 {# Import with context: the strip reads `project` to pick the tab set. Both
    project types share 成员 / 审计; the first slot is what differs — a Silver
    project configures matrix fields and .sil models, a unit-test project its
-   ut-agent / WinAMS binding. 回收站 holds deleted cases, fields and runs, none
+   ut-agent / Clang/LLVM binding. 回收站 holds deleted cases, fields and runs, none
    of which a unit-test project has. #}
 {% set is_ut = project is defined and project and project.project_type == 'unit_test' %}
 {% if is_ut %}

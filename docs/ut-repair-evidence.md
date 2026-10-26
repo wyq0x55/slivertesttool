@@ -134,8 +134,8 @@ repair provider consumes no input round; retry resumes that stage without
 renewing the stub evidence. A stub retry still creates a new attempt so old
 review selections remain stale.
 
-Repair prompt version `ut-repair/7.6` distinguishes scalar input constraints
-from `predicate_context`. Raw decision atoms describe the typed decision;
+Repair prompt version `ut-repair/8.0` distinguishes scalar input constraints
+from `predicate_context`. LLVM coverage stays in the dynamic execution section and does not enter the stable function prefix. Raw decision atoms describe the typed decision;
 they are not a conjunction that every proposed input must make true. An exact
 boundary with no required outcome does not acquire one from its decision text.
 Streamed provider failures retain bounded upstream type/code/message details

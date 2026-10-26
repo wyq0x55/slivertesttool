@@ -12,7 +12,7 @@
         FAIL that input rows cannot close  → needs_human
         FAIL, rounds exhausted             → needs_human
         FAIL on a human revision           → needs_human
-        BLOCKED by execution prerequisites → needs_human
+        BLOCKED by missing execution tools   → blocked (retryable)
         BLOCKED otherwise                  → needs_human
     human gates (awaiting_review, needs_human, blocked, error):
         upload revision → executing · approve → approved · reject → rejected
@@ -671,6 +671,61 @@ def _execute_step(job: UtJob) -> None:
     _execute_host_step(job, attempt, config)
 
 
+# Errors that appended input rows can address. Expected values belong to the
+# capture, and format or column errors cannot be fixed by adding rows.
+_ROW_FIXABLE = frozenset({"EXECUTION_PATH_DIVERGED", "ROW_COUNT_BELOW_REFERENCE",
+                          "REFERENCE_CASE_REMOVED", "FORMAT_NO_DATA_ROWS"})
+
+
+def _row_tags(check: dict[str, Any]) -> set[str]:
+    """Error codes a model row may name besides a missing case (e.g. coverage)."""
+    return {issue["code"] for issue in check.get("issues", ())
+            if issue.get("severity") == "error" and issue.get("repairable")
+            and (issue["code"].startswith("COVERAGE_") or issue["code"] in _ROW_FIXABLE)}
+
+
+def next_state(check: dict[str, Any], origin: str, rounds: int, max_rounds: int,
+               gaps: Optional[dict[str, Any]] = None) -> tuple[str, str, str]:
+    """Pure transition after one checked attempt: (state, reason, gate code)."""
+    verdict = check.get("verdict")
+    codes = ", ".join(_error_codes(check))
+    evidence_gate = _report_gate(check)
+    if evidence_gate and (evidence_gate[2] != GateCode.REPORT_INCOMPLETE or verdict in {"PASS", "FAIL"}):
+        return evidence_gate
+    if gaps and gaps.get("report_complete") is False and verdict in {"PASS", "FAIL"}:
+        return (UtJob.NEEDS_HUMAN,
+                "测试义务明细不完整；请重新生成或重新校验以取得完整缺口清单，再核对输入证明。不能将预览视为全部完成。",
+                GateCode.REPORT_INCOMPLETE)
+    if verdict == "PASS":
+        if gaps and gaps["open"] and origin != UtAttempt.ORIGIN_HUMAN:
+            if rounds >= max_rounds:
+                return (UtJob.NEEDS_HUMAN, f"仍有 {len(gaps['open'])} 个输入义务未证明，已到修订上限 {max_rounds}"
+                        + _gap_note(gaps), GateCode.OPEN_GAPS_EXHAUSTED)
+            return UtJob.REPAIRING, "", ""
+        return UtJob.AWAITING_REVIEW, "机器校验通过，等待人工审核" + _gap_note(gaps), GateCode.MACHINE_PASS
+    if verdict == "BLOCKED":
+        blocked = next((issue for issue in check.get("issues", ())
+                        if issue["code"] == "EXECUTION_BLOCKED"), None)
+        if blocked is not None:
+            reasons = blocked.get("detail") or []
+            listed = "; ".join(
+                f"{item.get('code')} {item.get('detail') or item.get('path', '')}"
+                for item in reasons[:5])
+            return UtJob.BLOCKED, f"Clang/LLVM 执行环境不完整：{listed}", GateCode.ENV_BLOCKED
+        return UtJob.NEEDS_HUMAN, f"存在无法自动修复的问题：{codes}", GateCode.CHECK_BLOCKED
+    if verdict != "FAIL":
+        return UtJob.NEEDS_HUMAN, f"未知判定：{verdict}", GateCode.UNKNOWN_VERDICT
+    if origin == UtAttempt.ORIGIN_HUMAN:
+        return UtJob.NEEDS_HUMAN, f"人工修订仍未通过校验：{codes}", GateCode.HUMAN_REVISION_FAILED
+    if not _row_tags(check) and not (gaps and gaps["open"]):
+        # The model only adds input rows; nothing here can be closed that way.
+        return UtJob.NEEDS_HUMAN, f"剩余问题无法通过新增输入行解决：{codes}", GateCode.NOT_ROW_FIXABLE
+    if rounds >= max_rounds:
+        return (UtJob.NEEDS_HUMAN, f"本地模型已修正 {rounds} 次仍未通过（上限 {max_rounds}）：{codes}",
+                GateCode.ROUNDS_EXHAUSTED)
+    return UtJob.REPAIRING, "", ""
+
+
 def _host_case_context(attempt: UtAttempt, gaps: dict[str, Any]) -> bool:
     """Only identified missing-case work can use the Host input-row model."""
     check = attempt.check or {}
@@ -710,9 +765,16 @@ def _host_next_state(job: UtJob, attempt: UtAttempt, gaps: dict[str, Any]) -> tu
         return (UtJob.AWAITING_REVIEW,
                 "Clang/LLVM 校验通过，等待人工审核" + _gap_note(gaps),
                 GateCode.MACHINE_PASS)
+    if check.get("verdict") in {"BLOCKED", "INVALID"} or attempt.origin == UtAttempt.ORIGIN_HUMAN:
+        state, reason, code = next_state(check, attempt.origin, job.repair_rounds, job.max_repair_rounds, gaps)
+        detail = (attempt.execution or {}).get("reason")
+        if detail and detail not in reason and code != GateCode.ENV_BLOCKED:
+            reason = f"{reason}：{detail}" if reason else str(detail)
+        return state, reason, code
     reason = (attempt.execution or {}).get("reason") or "; ".join(
         str(issue.get("message", issue.get("code", ""))) for issue in check.get("issues", ()))
-    return UtJob.NEEDS_HUMAN, "Clang/LLVM 校验需人工处理：" + reason + _gap_note(gaps), GateCode.CHECK_BLOCKED
+    return (UtJob.NEEDS_HUMAN, "Clang/LLVM 校验需人工处理：" + reason + _gap_note(gaps),
+            GateCode.CHECK_BLOCKED)
 
 
 def _host_gaps(job: UtJob, attempt: UtAttempt) -> dict[str, Any]:

@@ -147,4 +147,5 @@ def test_real_host_preparation_failure_preserves_its_actionable_reason(tmp_path,
     assert attempt.verdict == "BLOCKED" and job.repair_rounds == 0
     assert attempt.check["counts_as_target_evidence"] is False
     assert attempt.check["delivery_validated"] is False
+    assert not bridge.execute.called
     assert not bridge.host_execute.called
