@@ -1,71 +1,86 @@
-# Unit-test pipeline (ut-agent + WinAMS + local LLM)
+# Unit-test pipeline (ut-agent + Clang/LLVM + local model)
 
-The 単体テスト page (`/lanmatrix/projects/<id>/ut`) turns a project's
-test index (e.g. `HOYU/N-O2606-PSD-049.csv`) into a 実施一覧 and drives the
-selected functions through:
+Clang/LLVM is the platform's sole production UT execution path. A project binds
+its ProjectManifest, function index and source root; selected functions enter:
 
-```
-実施一覧 ─select→ batch ─ut-agent generate→ candidate TestCsv
-   ─ut-agent check (static)→ ─ut-agent execute (WinAMS sandbox)→ ─ut-agent check→
-   PASS ─────────────────────────────────────────────→ awaiting_review
-   FAIL ─local LLM revision (≤ max_repair_rounds)→ execute/check again
-   FAIL after the limit / on a human revision ───────→ needs_human
-   WinAMS environment incomplete ────────────────────→ blocked
-   bridge / model unreachable ───────────────────────→ error
-human gates → upload revision · approve · reject · retry (blocked/error)
+```text
+index → one shared Clang extraction → Typed FunctionIR → deterministic Suite/CSV
+→ each completed function immediately enters LLVM execution, coverage and check
+→ identified missing-case work: model inputs → static typed witness validation
+→ typed expected values → immutable HOST_DERIVED child → execute its new SHA
+→ machine result → human review
 ```
 
-No machine outcome is final: every path ends at a human gate, and approving a
-candidate whose machine verdict is not `PASS` requires a review note.
+The original compiler, OMF conversion, linked WinAMS builds and WinAMS execution
+are not scheduled, including on retry, resume or worker recovery. Missing LLVM
+tools or unsupported semantics produce actionable blocking results, without an
+alternative executor. Existing test jobs are not migrated or reinterpreted.
 
-## Ownership
+## Ownership and evidence
 
-| Concern | Owner |
-| --- | --- |
-| Index parsing, generation, format/baseline checks, WinAMS execution, coverage targets | ut-agent, via the `ut-agent bridge` JSON contract (`ut-agent.bridge/1`) |
-| 実施一覧, batches, job state, provenance, LLM calls, human review | this platform (`app/services/ut_pipeline/`) |
+ut-agent owns extraction, deterministic generation, typed bindings, harnesses,
+implementation-derived expected values, execution and measured coverage. It runs
+in its separately versioned checkout/interpreter through `ut-agent.bridge/1`;
+this application never imports it. The platform owns configuration, jobs,
+immutable candidate versions, bounded model requests and human decisions.
 
-ut-agent runs in its own interpreter and checkout and is never imported. The
-LLM only revises CSVs; its output is a candidate that ut-agent executes and
-checks again. The repair prompt is rendered from the constraint pack ut-agent
-exports for the bound baseline, which also contains the revision rules its
-checker enforces.
+The primary execution command is `bridge execute` with IR, intents, manifest,
+reference and candidate inputs. `bridge host-prepare` prepares typed stub requests;
+`bridge check` verifies proposed rows before execution and does not run WinAMS.
+The model only proposes input rows or per-callee stub bodies. It cannot rewrite
+the subject, original Suite, existing expected values or trusted harness.
+
+Actual execution retains `HOST_EXECUTION` as its source identifier. Formal LLVM
+workflow PASS and human approval do not manufacture physical target execution
+evidence. UNKNOWN, UNSUPPORTED, policy conflicts, hash drift and required
+coverage gaps remain explicit and do not become PASS by changing the executor.
 
 ## Configuration
 
-Environment (`.env`):
+Environment settings are `UT_AGENT_ROOT`, `UT_AGENT_PYTHON`,
+`UT_AGENT_EXTRACTOR`, `UT_GENERATE_TIMEOUT`, `UT_EXECUTE_TIMEOUT`,
+`UT_BRIDGE_TIMEOUT`, `UT_REPAIR_MAX_ROUNDS` and `UT_REPAIR_TIMEOUT`.
+The model endpoint and credentials use the existing global AI settings.
 
-| Key | Meaning |
-| --- | --- |
-| `UT_AGENT_ROOT` | ut-agent checkout (its `src/` is put on `PYTHONPATH`) |
-| `UT_AGENT_PYTHON` | interpreter with ut-agent's dependencies |
-| `UT_AGENT_EXTRACTOR` | `ut-clang-extract.exe` used for generation |
-| `WINAMS_EXECUTABLE` | `SSTManager.exe` (default `C:\WinAMS\BIN\SSTManager.exe`) |
-| `UT_GENERATE_TIMEOUT` / `UT_EXECUTE_TIMEOUT` / `UT_BRIDGE_TIMEOUT` | seconds |
-| `UT_REPAIR_MAX_ROUNDS` | default LLM rounds for new project bindings (5) |
+The project configuration requires only the manifest, index and Product/source
+root. `execution_backend` is fixed to `clang`; other values and removed
+`work_root`/`stub_builds` options are rejected. Configure `host_clang`,
+`host_llvm_cov`, `host_llvm_profdata` and, if the declared ABI requires it,
+`host_profile_runtime`. ut-agent checks the required tool/runtime identities.
+An ABI/layout profile is semantic input, not a request to run the original
+compiler. The manifest's CSV projection profile remains an exchange-format
+contract and does not require a WinAMS installation.
 
-The model endpoint is the existing AI setting (OpenAI-compatible
-`api_base` / `api_key` / `model`). A project binding may override the model
-name (e.g. `qwen3.8-27b-gsq`) for repair only.
+Stub mode is deterministic or local-model candidates. `stub_model` and
+`stub_max_rounds` control stub proposals; `repair_model` and
+`max_repair_rounds` independently control missing input cases. Both are available
+on the LLVM settings page. A batch freezes the effective configuration and
+versioned requirements when queued.
 
-Per project (page → ut-agent 项目绑定): ProjectManifest path, index CSV,
-Product/Soft root, WinAMS work root (the directory containing the index's
-`WinAMS/src/...` unit tree), repair limit and model. A batch freezes the
-binding it was queued with.
+## Job lifecycle
 
-## Evidence kept per job
+Each attempt (`GENERATOR`, `LLM`, `HUMAN`, `HOST_DERIVED`) retains its exact CSV,
+SHA, check and execution evidence. Appended blank outputs may only be filled by
+the proven typed implementation oracle. The resulting child must run with its
+own SHA before approval. Expected-value disagreements in original rows require
+review; no execution-capture overwrite path exists in platform jobs.
 
-Each candidate is an immutable `ut_attempts` row (`GENERATOR`, `LLM`, `HUMAN`)
-with its CSV (under `WORKSPACE_DIR/ut/p<project>/b<batch>/j<job>/`), execution
-evidence, check verdict and, for LLM rounds, model, token usage, prompt digest,
-rationale and declared changes. The batch stores generator provenance
-(commit, extractor SHA256, baseline) and the constraint pack.
+Every machine outcome ends at a human gate. Approving a non-PASS candidate
+requires a review note; approval does not change its machine verdict. Stop waits
+for the current external call, preserving results. Retry preserves candidate
+lineage and model budgets; an unavailable model consumes no repair round.
 
-## Runtime notes
+Shared extraction is serialized, while finalized functions can execute on other
+Huey worker threads before sibling generation completes. At least two worker
+threads are needed for asynchronous overlap. Per-step timing separates waits,
+actual requests and shared/nested intervals. The details page also provides
+measured C0/C1/MC/DC and per-line evidence with unknowns left unmeasured.
 
-- WinAMS runs and project-wide generation are serialised inside the worker
-  process; checks and LLM calls run concurrently on Huey threads.
-- A static check runs before WinAMS so a malformed revision does not consume a
-  WinAMS run.
-- C source is not sent to the model; the prompt carries the CSV, the verdict
-  and the execution summary.
+## Verification
+
+Run focused PostgreSQL lifecycle/configuration tests and frontend regressions,
+then the repository CI contract. Actual extractor/LLVM integration tests use
+repository-owned synthetic C, typed appended inputs and scripted model replies.
+Negative tests prohibit original-compiler/OMF/WinAMS calls and check missing
+tools, unsupported ABI, evidence drift, policy requirements and model outages.
+No old-job migration or database cleanup is part of this change.

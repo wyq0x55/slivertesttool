@@ -25,7 +25,7 @@
     rejected: ["cancelled", "审核驳回"],
     stopped: ["cancelled", "已停止"],
     /* Display-only: an active job whose stop request the worker has not
-       reached yet (it finishes the running WinAMS / model call first). */
+       reached yet (it finishes the running LLVM / model call first). */
     stopping: ["running", "停止中"]
   };
   var VERDICT = {
@@ -58,7 +58,7 @@
     NO_TESTCSV: ["未生成 CSV", "生成器没有产出 TestCsv，无法执行。" + REQUEUE],
     PROMPT_PREFIX_CHANGED: ["证据已变化", "基准、列或语义证据与本作业的固定提示词不一致，未调用模型。" + REQUEUE],
     PROMPT_BUDGET_EXCEEDED: ["上下文超限", "修订上下文超出预算，未调用模型，不计修订次数。" + REVISE],
-    ENV_BLOCKED: ["环境阻塞", "WinAMS 执行环境不完整。修好后" + RETRY],
+    ENV_BLOCKED: ["环境阻塞", "LLVM 执行环境不完整。修好后" + RETRY],
     GENERATION_FAILED: ["生成失败", "ut-agent 生成失败。" + REQUEUE],
     TOOL_ERROR: ["工具异常", "ut-agent 调用失败。确认 ut-agent 正常后" + RETRY],
     MODEL_UNAVAILABLE: ["模型不可用", "本地模型没有响应，本轮不计修订次数。服务恢复后" + RETRY + "也可以直接人工修订。"],
@@ -106,9 +106,7 @@
   function verdictPill(verdict, backend) {
     if (!verdict) return '<span class="muted">—</span>';
     var m = VERDICT[verdict] || ["pending", verdict];
-    if (backend === "clang") return LMPill.html(m[0], "主机 " + verdict,
-      "仅主机观测比较；实测覆盖率不代表基准覆盖率验收，不计入目标证据或正式交付验收");
-    return LMPill.html(m[0], m[1], "机器判定：" + verdict);
+    return LMPill.html(m[0], "LLVM " + verdict, "Clang/LLVM 机器判定：" + verdict);
   }
   function time(iso) {
     return window.LMTaskRow ? LMTaskRow.fmtTime(iso) : (iso || "");
@@ -137,7 +135,7 @@
     return {
       kind: "ut_job", task_id: "ut:" + job.id, project_id: job.project_id,
       test_id: (job.target || {}).function || ("作业 #" + job.id),
-      sil_name: job.execution_backend === "clang" ? "Clang 主机（实验）" : "WinAMS", submitter: job.submitter || "",
+      sil_name: "Clang/LLVM", submitter: job.submitter || "",
       status: job.task_status, created_at: job.created_at, finished_at: job.updated_at,
       review: {
         status: job.state === "approved" || job.state === "rejected" ? job.state

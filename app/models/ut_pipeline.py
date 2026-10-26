@@ -1,4 +1,4 @@
-"""Unit-test pipeline models (ut-agent generation → WinAMS → check → repair → review).
+"""Unit-test pipeline models (ut-agent generation → LLVM → check → repair → review).
 
 One project binds to one ut-agent ProjectManifest and index CSV
 (:class:`UtPipelineConfig`).  The index rows form the 実施一覧
@@ -29,12 +29,11 @@ class UtPipelineConfig(db.Model):
     # Five-column project index (HOYU/<project>.csv) and the Soft/Product root.
     index_csv = db.Column(db.String(1024), nullable=False, default="")
     product_root = db.Column(db.String(1024), nullable=False, default="")
-    # Directory that holds the WinAMS unit tree named by the index (unit_rel).
+    # Dormant storage columns retain insert defaults on existing schemas.
+    # They are not exposed as configuration or consumed by the LLVM workflow.
     work_root = db.Column(db.String(1024), nullable=False, default="")
-    # Linked builds that differ only in stub bodies, one directory per line in
-    # priority order.  Empty keeps the build each unit project names itself.
     stub_builds = db.Column(db.Text, nullable=False, default="")
-    execution_backend = db.Column(db.String(16), nullable=False, default="winams")
+    execution_backend = db.Column(db.String(16), nullable=False, default="clang")
     stub_mode = db.Column(db.String(16), nullable=False, default="deterministic")
     stub_model = db.Column(db.String(128), nullable=False, default="")
     stub_max_rounds = db.Column(db.Integer, nullable=False, default=2)
@@ -54,8 +53,6 @@ class UtPipelineConfig(db.Model):
             "manifest_path": self.manifest_path,
             "index_csv": self.index_csv,
             "product_root": self.product_root,
-            "work_root": self.work_root,
-            "stub_builds": self.stub_builds,
             "execution_backend": self.execution_backend,
             "stub_mode": self.stub_mode,
             "stub_model": self.stub_model,
@@ -267,7 +264,7 @@ class UtJob(db.Model):
             "repair_rounds": self.repair_rounds,
             "max_repair_rounds": self.max_repair_rounds,
             "generation_status": self.generation_status,
-            "execution_backend": (self.generation or {}).get("execution_backend", "winams"),
+            "execution_backend": "clang",
             "has_reference": bool(self.reference_csv),
             "current_attempt_id": self.current_attempt_id,
             "last_verdict": self.last_verdict or None,

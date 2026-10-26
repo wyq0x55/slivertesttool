@@ -1,4 +1,4 @@
-"""Experimental host execution and bounded, non-authoritative stub proposals.
+"""Primary LLVM execution and bounded, non-authoritative stub proposals.
 
 Only ut-agent owns typed facts, harness construction, CSV binding and compilation.
 This service owns the model call, durable artifacts and workflow checkpoints.
@@ -125,14 +125,14 @@ def execute(*, bridge, ir_json, intents, reference, candidate, out: Path, config
         if not continuing():
             return blocked("Stopped before host execution", "STOPPED")
         with measured("host_execute"):
-            result = bridge.host_execute(**arguments, out=directory, config=config,
+            result = bridge.execute(**arguments, out=directory, config=config,
                                          stub_request=request, stub_response=response)
         latest = {**result["execution"], "evidence_source": "HOST_EXECUTION",
                   "counts_as_target_evidence": False, "delivery_validated": False}
         check = {**result["check"], "evidence_source": "HOST_EXECUTION",
                  "counts_as_target_evidence": False, "delivery_validated": False, "repairable": False}
         if check.get("verdict") not in ("PASS", "FAIL", "BLOCKED"):
-            raise BridgeError("host-execute returned an unknown verdict")
+            raise BridgeError("LLVM execute returned an unknown verdict")
         save()
         return latest, check
 

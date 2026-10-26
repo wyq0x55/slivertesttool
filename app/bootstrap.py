@@ -155,8 +155,7 @@ def _migrate_schema() -> None:
             "deprecated_at": "TIMESTAMP",
         },
         "ut_pipeline_configs": {
-            "stub_builds": "TEXT NOT NULL DEFAULT ''",
-            "execution_backend": "VARCHAR(16) NOT NULL DEFAULT 'winams'",
+            "execution_backend": "VARCHAR(16) NOT NULL DEFAULT 'clang'",
             "stub_mode": "VARCHAR(16) NOT NULL DEFAULT 'deterministic'",
             "stub_model": "VARCHAR(128) NOT NULL DEFAULT ''",
             "stub_max_rounds": "INTEGER NOT NULL DEFAULT 2",
