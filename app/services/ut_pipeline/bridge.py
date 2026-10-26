@@ -109,38 +109,44 @@ class UtAgentBridge:
                 on_unit(receipt)
                 seen.add(path.name)
 
-        with subprocess.Popen(command, cwd=root, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                              start_new_session=os.name != "nt") as child:
-            try:
-                while True:
-                    consume()
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise subprocess.TimeoutExpired(command, timeout)
+        child = subprocess.Popen(command, cwd=root, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 start_new_session=os.name != "nt")
+        try:
+            while True:
+                consume()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(command, timeout)
+                try:
+                    stdout, stderr = child.communicate(timeout=min(0.1, remaining))
+                except subprocess.TimeoutExpired:
+                    continue
+                consume()
+                return subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
+        except BaseException as failure:
+            # Pool workers inherit the output pipes. Killing only their
+            # parent can leave communicate() waiting for live descendants.
+            if child.poll() is None:
+                if os.name == "nt":
                     try:
-                        stdout, stderr = child.communicate(timeout=min(0.1, remaining))
-                    except subprocess.TimeoutExpired:
-                        continue
-                    consume()
-                    return subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
-            except BaseException:
-                # Pool workers inherit the output pipes. Killing only their
-                # parent can leave communicate() waiting for live descendants.
-                if child.poll() is None:
-                    if os.name == "nt":
-                        try:
-                            subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"],
-                                           capture_output=True, check=False, timeout=5)
-                        except (OSError, subprocess.TimeoutExpired):
-                            child.kill()
-                    else:
-                        try:
-                            os.killpg(child.pid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
-                child.kill()
-                child.communicate()
-                raise
+                        subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"],
+                                       capture_output=True, check=False, timeout=5)
+                    except (OSError, subprocess.TimeoutExpired):
+                        child.kill()
+                else:
+                    try:
+                        os.killpg(child.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+            child.kill()
+            try:
+                child.communicate(timeout=2)
+            except subprocess.TimeoutExpired:
+                # Do not enter Popen.__exit__ or close reader-owned pipes here:
+                # either can wait indefinitely when OS tree termination fails.
+                raise BridgeError(f"{failure}; generation cleanup could not drain descendant pipes; "
+                                  "check remaining generation processes") from failure
+            raise
 
     @staticmethod
     def _manifest(manifest: str) -> list[str]:

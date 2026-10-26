@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -128,6 +129,36 @@ time.sleep(20)
             [sys.executable, "-c", script], str(tmp_path), os.environ.copy(),
             0.5, tmp_path / "ready", tmp_path, lambda _: pytest.fail("No completed unit exists"))
     assert time.monotonic() - started < 6
+
+
+def test_failed_tree_cleanup_reports_an_error_without_waiting_for_live_descendants(tmp_path, monkeypatch):
+    pid_file = tmp_path / "descendant.pid"
+    script = """
+import subprocess,sys,time
+from pathlib import Path
+child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(20)'])
+Path(sys.argv[1]).write_text(str(child.pid))
+time.sleep(20)
+"""
+    run = subprocess.run
+    kill_group = getattr(os, "killpg", None)
+    monkeypatch.setattr(bridge.subprocess, "run", lambda *args, **kwargs: subprocess.CompletedProcess(args, 1))
+    if kill_group is not None:
+        monkeypatch.setattr(bridge.os, "killpg", lambda *args: None)
+    started = time.monotonic()
+    try:
+        with pytest.raises(bridge.BridgeError, match="cleanup could not drain"):
+            bridge.UtAgentBridge._stream_units(
+                [sys.executable, "-c", script, str(pid_file)], str(tmp_path), os.environ.copy(),
+                1, tmp_path / "ready", tmp_path, lambda _: pytest.fail("No completed unit exists"))
+        assert time.monotonic() - started < 7
+    finally:
+        if pid_file.is_file():
+            pid = int(pid_file.read_text())
+            if os.name == "nt":
+                run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, check=False, timeout=5)
+            else:
+                os.kill(pid, signal.SIGKILL)
 
 
 def test_existing_receipts_are_rejected_before_starting_another_generator(tmp_path, monkeypatch):
