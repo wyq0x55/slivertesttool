@@ -135,7 +135,9 @@ def test_real_host_preparation_failure_preserves_its_actionable_reason(tmp_path,
     monkeypatch.setattr(pipeline, "_gate", gate)
     monkeypatch.setattr(pipeline, "get_bridge", lambda: bridge)
     monkeypatch.setattr(pipeline, "_fresh_exec_dir", lambda *args: tmp_path / "out")
-    monkeypatch.setattr(pipeline, "db", SimpleNamespace(session=SimpleNamespace(commit=Mock(), refresh=Mock())))
+    session = SimpleNamespace(commit=Mock(), refresh=Mock(), is_active=True)
+    monkeypatch.setattr(pipeline, "db", SimpleNamespace(session=session))
+    monkeypatch.setattr(pipeline.timing, "db", SimpleNamespace(session=session))
     monkeypatch.setattr(pipeline, "current_app", SimpleNamespace(config={"UT_REPAIR_TIMEOUT": 1}))
     pipeline._execute_host_step(job, attempt, {"execution_backend": "clang", "stub_mode": "llm"})
     assert gate.call_args.args[1] == UtJob.NEEDS_HUMAN
