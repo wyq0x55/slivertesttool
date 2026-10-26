@@ -233,3 +233,21 @@ time. Active durations are provisional, stale backend observations stop
 extrapolating, and completed durations stay fixed across refreshes. Timing is
 diagnostic information and cannot promote an unknown semantic result or approve
 a candidate.
+
+## Configuration and interface prerequisites
+
+An automation block is not a claim that a function cannot be supported.
+`ABI_POINTER_SIZE_UNDECLARED` requires an applicable, evidence-backed
+`build.profile`, recorded with its matching layout triple in the extracted
+CompileContext. Fix the project manifest and create a new batch; retrying a
+frozen candidate or changing CSV inputs cannot supply an ABI declaration.
+Do not substitute the native host pointer width for the project's ABI.
+
+A `MISSING_INTERFACE_CONTRACT` projection failure identifies the callee and
+zero-based argument index even when no CSV or attempt exists. The job reason
+explains the corresponding human parameter number and the `interfaces.contract`
+configuration (`ID@version`). Alternatively, extractor support can establish
+direction from a bound implementation. A model proposal alone proves neither
+pointer direction nor pointee extent. Preserve the raw diagnostic and regenerate
+after adding approved evidence; these prerequisites do not consume input repair
+rounds or permit automatic approval.

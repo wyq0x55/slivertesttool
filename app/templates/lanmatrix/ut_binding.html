@@ -29,7 +29,7 @@
       </div>
       <div class="ut-fields">
         <div class="field"><label for="ut-m-project-id">项目标识 *</label><input id="ut-m-project-id" required autocomplete="off" placeholder="项目编号或唯一标识"></div>
-        <div class="field"><label for="ut-m-build-profile">构建 Profile</label><input id="ut-m-build-profile" autocomplete="off" placeholder="例如 rh850-ghs"></div>
+        <div class="field"><label for="ut-m-build-profile">构建 Profile</label><input id="ut-m-build-profile" autocomplete="off" placeholder="例如 rh850-ghs" aria-describedby="ut-build-profile-hint"><p class="ut-hint" id="ut-build-profile-hint">涉及指针的函数需要适用于本项目、且已声明 ABI 的 Profile。留空的 default 不提供目标指针宽度；修改后需创建新批次。</p></div>
       </div>
       <div id="ut-policy-section" class="ut-subsection" aria-labelledby="ut-policy-heading">
         <h3 id="ut-policy-heading">测试要求</h3>
@@ -57,7 +57,7 @@
         <summary>更多清单设置</summary>
         <div class="ut-fields">
           <div class="field"><label for="ut-m-winams-profile">CSV 投影 Profile</label><input id="ut-m-winams-profile" autocomplete="off" placeholder="例如 standard"></div>
-          <div class="field"><label for="ut-m-interfaces-contract">接口契约</label><input id="ut-m-interfaces-contract" autocomplete="off" placeholder="契约 ID@版本，可留空"></div>
+          <div class="field"><label for="ut-m-interfaces-contract">接口契约</label><input id="ut-m-interfaces-contract" autocomplete="off" placeholder="契约 ID@版本，可留空" aria-describedby="ut-interface-contract-hint"><p class="ut-hint" id="ut-interface-contract-hint">外部调用的指针读写方向无法从类型化实现证明时，需要已审批的接口契约。缺少证据会阻止 CSV 生成，不能通过 AI 补行解决。</p></div>
           <div class="field"><label for="ut-m-rules-project_pack">项目规则包</label><input id="ut-m-rules-project_pack" autocomplete="off" placeholder="规则包 ID@版本，可留空"></div>
           <div class="field ut-field-wide"><label for="ut-m-build-exclude_directories">排除目录</label><textarea id="ut-m-build-exclude_directories" rows="3" wrap="off" autocomplete="off" spellcheck="false" placeholder="每行一个源码根目录下的相对目录"></textarea></div>
         </div>
