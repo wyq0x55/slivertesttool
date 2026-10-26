@@ -314,7 +314,7 @@ def test_host_capture_cannot_change_expected_values():
 
 
 def test_host_missing_case_creates_derived_version_then_reexecutes_before_review(configured, monkeypatch):
-    from test_ut_pipeline import GAP, _fill_blank, _llm_reply, _row
+    from test_ut_pipeline import GAP, _llm_reply, _row
 
     env, ids = configured
     env.bridge.gaps = [GAP]
@@ -341,7 +341,7 @@ def test_host_missing_case_creates_derived_version_then_reexecutes_before_review
                      "sandbox": str(out.resolve()), "input_binding": {"candidate": {"sha256": digest}}}
         if b",5,\r\n" in data:
             typed = out / "typed.csv"
-            typed.write_bytes(_fill_blank(data))
+            typed.write_bytes(data.replace(b",\r\n", b",1\r\n"))  # derived expected fills the blank
             execution["typed_candidate"] = {"contract": "ut-agent.host-typed-candidate/1",
                 "path": str(typed.resolve()), "sha256": hashlib.sha256(typed.read_bytes()).hexdigest(),
                 "source_candidate_sha256": digest, "reference_rows": 1,
