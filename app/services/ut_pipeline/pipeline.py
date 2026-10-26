@@ -104,8 +104,7 @@ def manifest_options() -> dict:
     if (not isinstance(result, dict)
             or result.get("contract") != "ut-agent.configuration-options/2"
             or not all(isinstance(result.get(key), list) and result.get(key)
-                       for key in ("pointer_sizes", "interface_directions", "build_profiles"))
-            or not isinstance(result.get("interface_contracts"), list)):
+                       for key in ("pointer_sizes", "build_profiles"))):
         raise ServiceError("ut-agent 返回了无效的项目清单选项，请升级配套工具后刷新页面。",
                            code="UT_CONFIGURATION_OPTIONS_UNAVAILABLE")
     return result
