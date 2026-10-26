@@ -7,8 +7,15 @@ requested from inside the fake bridge call itself.
 
 from __future__ import annotations
 
-from test_ut_pipeline import (_configure, _enqueue, _fill_blank, _job, _llm_reply,  # noqa: F401
-                              _row, _ut_reviews, env)
+from test_ut_pipeline import (  # noqa: F401
+    GAP,
+    _configure,
+    _enqueue,
+    _job,
+    _llm_reply,
+    _ut_reviews,
+    env,
+)
 
 from app.services.ai import provider
 from app.services.ut_pipeline import pipeline
@@ -52,17 +59,16 @@ def test_a_queued_job_stops_at_once_and_its_batch_never_generates(env, app_ctx):
 
 def test_a_running_job_finishes_its_call_then_stops_before_the_model(env, monkeypatch):
     targets = _configure(env)
-    env.bridge.coverage_rows = 2
-    env.bridge.captured = _fill_blank
+    env.bridge.gaps = [GAP]
     calls = []
     monkeypatch.setattr(provider, "chat", lambda *a, **k: calls.append(1) or
-                        _llm_reply(_row("COVERAGE_C1_INCOMPLETE")))
+                        _llm_reply(declined=("b1:T",)))
     execute = env.bridge.execute
 
-    def execute_then_stop(unit_dir, candidate, out, **kwargs):
-        evidence = execute(unit_dir, candidate, out, **kwargs)
+    def execute_then_stop(**kwargs):
+        evidence = execute(**kwargs)
         if env.bridge.executions == 1:
-            # The request a user makes while WinAMS is running.
+            # The request a user makes while LLVM is running.
             from app.models import LMUser, UtJob
             job = UtJob.query.order_by(UtJob.id.desc()).first()
             admin = LMUser.query.filter_by(is_system_admin=True).first()
@@ -73,10 +79,10 @@ def test_a_running_job_finishes_its_call_then_stops_before_the_model(env, monkey
     env.bridge.execute = execute_then_stop
     [job_id] = _enqueue(env, targets["f"])
     job = _job(env, job_id)
-    # The WinAMS run completed and its verdict is kept; the repair never started.
+    # The LLVM verdict is retained; the missing-case repair never started.
     assert job["state"] == "stopped" and calls == []
-    assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [("GENERATOR", "FAIL")]
-    assert job["last_verdict"] == "FAIL" and "已按请求停止" in job["reason"]
+    assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [("GENERATOR", "PASS")]
+    assert job["last_verdict"] == "PASS" and "已按请求停止" in job["reason"]
 
     status, body = env.call("post", f"/jobs/{job_id}/stop")
     assert status == 400 and body["error"]["code"] == "INVALID_STATE"

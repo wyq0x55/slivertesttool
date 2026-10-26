@@ -765,7 +765,8 @@ def _host_next_state(job: UtJob, attempt: UtAttempt, gaps: dict[str, Any]) -> tu
         return (UtJob.AWAITING_REVIEW,
                 "Clang/LLVM 校验通过，等待人工审核" + _gap_note(gaps),
                 GateCode.MACHINE_PASS)
-    if check.get("verdict") in {"BLOCKED", "INVALID"} or attempt.origin == UtAttempt.ORIGIN_HUMAN:
+    if (check.get("verdict") in {"BLOCKED", "INVALID"}
+            or (attempt.origin == UtAttempt.ORIGIN_HUMAN and check.get("verdict") == "FAIL")):
         state, reason, code = next_state(check, attempt.origin, job.repair_rounds, job.max_repair_rounds, gaps)
         detail = (attempt.execution or {}).get("reason")
         if detail and detail not in reason and code != GateCode.ENV_BLOCKED:

@@ -2,7 +2,7 @@
 
 from copy import deepcopy
 
-from test_ut_pipeline import _configure, _enqueue, _job
+from test_ut_pipeline import GAP, _configure, _enqueue, _job
 from test_ut_pipeline import env as workflow_env
 
 from app.services.ai import provider
@@ -18,7 +18,7 @@ def test_completed_calls_survive_metadata_handoff_and_read_refresh(env, monkeypa
     from app.models import UtJob
 
     targets = _configure(env)
-    check = env.bridge.check
+    execute = env.bridge.execute
     seen = []
 
     def observed(*args, **kwargs):
@@ -28,16 +28,15 @@ def test_completed_calls_survive_metadata_handoff_and_read_refresh(env, monkeypa
             rows = item.generation[timing.KEY]["steps"]
             assert rows[-1]["status"] == "running"
             seen.append(rows[-1]["step"])
-        return check(*args, **kwargs)
+        return execute(*args, **kwargs)
 
-    monkeypatch.setattr(env.bridge, "check", observed)
+    monkeypatch.setattr(env.bridge, "execute", observed)
     [ident] = _enqueue(env, targets["f"])
     first = _job(env, ident)["timing"]
-    assert seen == ["static_check", "result_check"]
+    assert seen == ["host_execute"]
     assert first["history_complete"]
     work = [row for row in first["steps"] if row["kind"] == "work"]
-    assert {row["step"] for row in work} == {"static_check", "winams_execute", "result_check",
-                                             "captured_candidate_processing"}
+    assert {row["step"] for row in work} == {"host_execute"}
     assert all(row["status"] == "completed" and row["duration_ms"] >= 0 for row in work)
     assert all(row["attempt_id"] and row["attempt_seq"] == 1 and row["candidate_sha256"] for row in work)
     with app_ctx.app_context():
@@ -53,7 +52,7 @@ def test_completed_calls_survive_metadata_handoff_and_read_refresh(env, monkeypa
 
 def test_failed_model_request_is_timed_again_on_retry_without_consuming_round(env, monkeypatch):
     targets = _configure(env)
-    env.bridge.coverage_rows = 2
+    env.bridge.gaps = [GAP]
 
     def offline(*args, **kwargs):
         raise provider.ProviderError("offline")
@@ -116,10 +115,11 @@ def test_pending_duplicate_cannot_keep_a_dead_call_running(env, app_ctx):
         # This durable start is what a process killed inside an engine leaves.
         span = timing.stage(item, "host_execute")
         span.__enter__()
+        call_id = item.generation[timing.KEY]["steps"][-1]["id"]
         recovered = pipeline.recover_interrupted({ident}, set())
         assert recovered["pending"] == [ident]
         rows = item.generation[timing.KEY]["steps"]
-        call = next(row for row in rows if row["step"] == "host_execute")
+        call = next(row for row in rows if row["id"] == call_id)
         assert call["status"] == "interrupted" and call["duration_ms"] is None
         span.__exit__(None, None, None)
         pipeline.advance_job(ident)

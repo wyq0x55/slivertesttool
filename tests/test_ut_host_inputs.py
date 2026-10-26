@@ -161,9 +161,8 @@ def lifecycle(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline, "_job_gaps", gaps)
     bridge = SimpleNamespace(check=Mock(side_effect=lambda path, **kwargs: checked(
         Path(path).read_bytes(), witnessed=True, verdict="FORMAT_OK")),
-        execute=Mock(side_effect=AssertionError("WinAMS must never run")))
+        execute=Mock(side_effect=AssertionError("host.execute is isolated in this unit test")))
     monkeypatch.setattr(pipeline, "get_bridge", lambda: bridge)
-    monkeypatch.setattr(pipeline, "_capture_backfill", Mock(side_effect=AssertionError("No Host capture")))
 
     def execute(**kwargs):
         data = Path(kwargs["candidate"]).read_bytes()

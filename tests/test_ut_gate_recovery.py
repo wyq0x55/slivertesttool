@@ -5,7 +5,15 @@ Reuses the scripted bridge of test_ut_pipeline (Huey in immediate mode).
 
 from __future__ import annotations
 
-from test_ut_pipeline import _configure, _enqueue, _job, _llm_reply, _row, env  # noqa: F401
+from test_ut_pipeline import (  # noqa: F401
+    GAP,
+    _configure,
+    _enqueue,
+    _job,
+    _llm_reply,
+    _row,
+    env,
+)
 
 from app.services.ai import provider
 from app.services.ut_pipeline import pipeline
@@ -24,7 +32,7 @@ def _replies(monkeypatch, *replies):
 
 def test_a_model_that_proposes_nothing_stops_after_one_round(env, monkeypatch):
     targets = _configure(env)
-    env.bridge.coverage_rows = 2  # the generator CSV fails C1, a row could fix it
+    env.bridge.gaps = [GAP]
     calls = _replies(monkeypatch, _llm_reply())
     [job_id] = _enqueue(env, targets["f"])
     job = _job(env, job_id)
@@ -35,14 +43,14 @@ def test_a_model_that_proposes_nothing_stops_after_one_round(env, monkeypatch):
 
 def test_rejected_rows_are_feedback_not_a_stall(env, monkeypatch):
     targets = _configure(env, rounds=2)
-    env.bridge.coverage_rows = 2
+    env.bridge.gaps = [GAP]
     # Names an obligation that is not open: the row is rejected, and the next
     # round sees that rejection, so it is worth asking again.
     calls = _replies(monkeypatch, _llm_reply(_row("b9:NOT_OPEN")))
     [job_id] = _enqueue(env, targets["f"])
     job = _job(env, job_id)
     assert len(calls) == 2
-    assert job["state"] == "needs_human" and job["gate_code"] == "ROUNDS_EXHAUSTED"
+    assert job["state"] == "needs_human" and job["gate_code"] == "OPEN_GAPS_EXHAUSTED"
 
 
 def test_every_gate_carries_a_code_and_a_decision_clears_it(env, monkeypatch):
@@ -57,7 +65,7 @@ def test_every_gate_carries_a_code_and_a_decision_clears_it(env, monkeypatch):
     assert _job(env, blocked)["gate_code"] == "ENV_BLOCKED"
 
     env.bridge.execution_status = "EXECUTED"
-    env.bridge.coverage_rows = 2
+    env.bridge.gaps = [GAP]
 
     def offline(*a, **k):
         raise provider.ProviderError("offline")
