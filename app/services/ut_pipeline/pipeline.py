@@ -446,12 +446,11 @@ def _run_generation(batch_id: int, on_ready: Callable[[int], None] | None) -> li
         job.generation = {**unit, "execution_backend": "clang",
                           **({timing.KEY: recorded} if recorded is not None else {})}
         if not unit.get("testcsv"):
-            detail = unit.get("error") or unit.get("projection_failure") or ""
             if job.stop_requested_at is not None:
                 _halt(job)
             else:
                 _gate(job, UtJob.NEEDS_HUMAN,
-                      f"生成器未产出 TestCsv（{job.generation_status}）：{detail}", GateCode.NO_TESTCSV)
+                      diagnostic.generation_failure_reason(unit), GateCode.NO_TESTCSV)
         else:
             try:
                 data = Path(unit["testcsv"]).read_bytes()
@@ -718,7 +717,7 @@ def next_state(check: dict[str, Any], origin: str, rounds: int, max_rounds: int,
                 f"{item.get('code')} {item.get('detail') or item.get('path', '')}"
                 for item in reasons[:5])
             return UtJob.BLOCKED, f"Clang/LLVM 执行环境不完整：{listed}", GateCode.ENV_BLOCKED
-        return UtJob.NEEDS_HUMAN, f"存在无法自动修复的问题：{codes}", GateCode.CHECK_BLOCKED
+        return UtJob.NEEDS_HUMAN, diagnostic.blocked_reason(check, codes), GateCode.CHECK_BLOCKED
     if verdict != "FAIL":
         return UtJob.NEEDS_HUMAN, f"未知判定：{verdict}", GateCode.UNKNOWN_VERDICT
     if origin == UtAttempt.ORIGIN_HUMAN:

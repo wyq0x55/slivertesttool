@@ -10,6 +10,40 @@ from typing import Any
 from . import increment
 
 
+def generation_failure_reason(unit: dict[str, Any]) -> str:
+    """Explain structured projection failures without inventing C semantics."""
+    failure = unit.get("projection_failure")
+    detail = unit.get("error") or failure or ""
+    prefix = f"生成器未产出 TestCsv（{unit.get('status') or ''}）："
+    if isinstance(failure, dict) and failure.get("code") == "MISSING_INTERFACE_CONTRACT":
+        callee, index = failure.get("callee"), failure.get("argument_index")
+        location = (f"{callee} 的第 {index + 1} 个参数（argument_index={index}）"
+                    if isinstance(callee, str) and type(index) is int and index >= 0
+                    else "外部调用的指针参数")
+        return (f"{prefix}MISSING_INTERFACE_CONTRACT：{location}缺少已证明的读写方向。"
+                "请在项目绑定页的“接口契约”配置 interfaces.contract（已审批的 ID@版本），"
+                "或由开发人员检查该调用的实现是否已纳入 Clang 提取并形成类型化方向证据。"
+                "补齐后保存清单并创建新批次；AI 补 CSV 行不能代替接口证据。"
+                f"原始诊断：{detail}")
+    return prefix + str(detail)
+
+
+def blocked_reason(check: dict[str, Any], codes: str) -> str:
+    """A stopped automation does not imply the problem is unfixable."""
+    steps = []
+    for issue in check.get("issues") or ():
+        guide = issue.get("guidance")
+        if isinstance(guide, dict) and guide.get("action_scope") == "PROJECT_CONFIGURATION":
+            instructions = guide.get("steps")
+            if not isinstance(instructions, list):
+                continue
+            for step in instructions:
+                if isinstance(step, str) and step not in steps:
+                    steps.append(step)
+    return f"当前校验被阻断，需要补齐配置、证据或修复实现：{codes}" + (
+        "。处理步骤：" + " ".join(steps) if steps else "")
+
+
 def report_records(check: dict[str, Any], key: str) -> list[dict[str, Any]]:
     """Read record objects safely; gap_report still rejects any invalid entry."""
     completeness = check.get("completeness")
