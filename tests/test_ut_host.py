@@ -86,7 +86,7 @@ def configured(env, monkeypatch, tmp_path):
     env.bridge = bridge
     monkeypatch.setattr(pipeline, "get_bridge", lambda: bridge)
     ids = _configure(env)
-    status, body = env.call("put", "/config", json={"execution_backend": "clang"})
+    status, body = env.call("put", "/config", json={"stub_mode": "deterministic"})
     assert status == 200, body
     monkeypatch.setattr(provider, "invoke_chat", lambda *a, **k: pytest.fail("Unexpected gateway call"))
     return env, ids
@@ -135,7 +135,7 @@ def test_bridge_host_contract_arguments(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("values", [
-    {"execution_backend": "unknown"}, {"stub_mode": "other"},
+    {"stub_mode": "other"},
     {"stub_max_rounds": 0}, {"stub_max_rounds": 6}, {"stub_max_rounds": True},
     {"stub_max_rounds": "2"}, {"host_clang": ""}, {"stub_model": 7},
 ])
@@ -413,6 +413,25 @@ def test_bootstrap_upgrades_existing_config_columns_idempotently(env, app_ctx):
         config = pipeline.get_config(env.pid)
         assert config.execution_backend == "clang" and config.stub_mode == "deterministic"
         assert config.stub_max_rounds == 2 and config.host_clang == "clang"
+
+
+def test_bootstrap_drops_retired_winams_config_columns(env, app_ctx):
+    _configure(env)
+    with app_ctx.app_context():
+        from sqlalchemy import inspect, text
+
+        from app.bootstrap import _migrate_schema
+        from app.extensions import db
+        with db.engine.begin() as connection:
+            connection.execute(text("ALTER TABLE ut_pipeline_configs "
+                                    "ADD COLUMN work_root VARCHAR(1024) NOT NULL DEFAULT ''"))
+            connection.execute(text("ALTER TABLE ut_pipeline_configs "
+                                    "ADD COLUMN stub_builds TEXT NOT NULL DEFAULT ''"))
+        _migrate_schema()
+        _migrate_schema()
+        names = {c["name"] for c in inspect(db.engine).get_columns("ut_pipeline_configs")}
+        assert not names & {"work_root", "stub_builds"}
+        assert pipeline.get_config(env.pid).execution_backend == "clang"
 
 
 def test_artifacts_follow_project_view_auth_and_settings_require_edit(configured, app_ctx):

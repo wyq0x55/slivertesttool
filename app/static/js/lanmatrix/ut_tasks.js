@@ -323,8 +323,7 @@
   function originOf(a) {
     var r = a.reviser || {};
     var o = esc(U.ORIGIN[a.origin] || a.origin);
-    var detail = a.origin === "CAPTURE" && r.from_attempt ? "来自第 " + r.from_attempt + " 版"
-      : a.origin === "LLM" && r.model ? r.model : "";
+    var detail = a.origin === "LLM" && r.model ? r.model : "";
     return detail ? o + '<div class="submuted">' + wrapCode(detail) + "</div>" : o;
   }
   // A model round only appends input rows; say what it added, what the
@@ -605,7 +604,7 @@
         job.superseded_by + "\">#" + job.superseded_by + "</a>。本作业只保留为历史记录，不能再审核或修订。"
       : "";
     $("ut-d-sub").textContent = "作业 #" + job.id + " · " + (t.source_rel || "");
-    $("ut-d-verdict").innerHTML = U.verdictPill(job.last_verdict, job.execution_backend);
+    $("ut-d-verdict").innerHTML = U.verdictPill(job.last_verdict);
     $("ut-d-function").textContent = t.function || "";
     $("ut-d-source").textContent = t.source_rel || "";
     var b = job.batch || {};
@@ -671,7 +670,7 @@
       return head + '<tr data-attempt="' + a.id + '"' + (isCurrent ? ' class="is-current" title="当前版本"' : "") +
         (run ? ' data-run-member="' + run.key + '"' + (folded ? " hidden" : "") : "") + ">" +
         '<td class="ut-num">' + a.seq + "</td><td>" + originOf(a) + "</td>" +
-        "<td>" + (a.verdict ? U.verdictPill(a.verdict, "clang") :
+        "<td>" + (a.verdict ? U.verdictPill(a.verdict) :
           (U.ACTIVE[job.state] ? U.statePill("executing") : "—")) + "</td>" +
         '<td class="ut-att-issues">' + topIssues(a.check) + "</td><td>" + coverage(a.execution) +
           stubBuild(a.execution) + "</td>" +

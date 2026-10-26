@@ -54,7 +54,7 @@
       "<td><code>" + esc(t.function) + "</code>" +
         '<div class="ut-src submuted" title="' + esc(t.source_rel) + '">' + esc(t.source_name) + "</div></td>" +
       "<td>" + U.statePill(j && j.state, tip) + "</td>" +
-      "<td>" + U.verdictPill(j && j.last_verdict, j && j.execution_backend) + "</td>" +
+      "<td>" + U.verdictPill(j && j.last_verdict) + "</td>" +
       '<td class="ut-num">' + (j ? esc(j.repair_rounds) : "—") + "</td>" +
       '<td class="lm-row-actions"><span class="row-acts">' + (j ? jobLink(j) : "") + "</span></td></tr>";
   }

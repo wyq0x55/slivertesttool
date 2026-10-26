@@ -29,10 +29,6 @@ class UtPipelineConfig(db.Model):
     # Five-column project index (HOYU/<project>.csv) and the Soft/Product root.
     index_csv = db.Column(db.String(1024), nullable=False, default="")
     product_root = db.Column(db.String(1024), nullable=False, default="")
-    # Dormant storage columns retain insert defaults on existing schemas.
-    # They are not exposed as configuration or consumed by the LLVM workflow.
-    work_root = db.Column(db.String(1024), nullable=False, default="")
-    stub_builds = db.Column(db.Text, nullable=False, default="")
     execution_backend = db.Column(db.String(16), nullable=False, default="clang")
     stub_mode = db.Column(db.String(16), nullable=False, default="deterministic")
     stub_model = db.Column(db.String(128), nullable=False, default="")
@@ -293,8 +289,6 @@ class UtAttempt(db.Model):
     ORIGIN_GENERATOR = "GENERATOR"
     ORIGIN_LLM = "LLM"
     ORIGIN_HUMAN = "HUMAN"
-    # Expected values replaced by the outputs WinAMS captured for the same inputs.
-    ORIGIN_CAPTURE = "CAPTURE"
     # Appended outputs proven by the typed implementation oracle, then re-executed.
     ORIGIN_HOST_DERIVED = "HOST_DERIVED"
 

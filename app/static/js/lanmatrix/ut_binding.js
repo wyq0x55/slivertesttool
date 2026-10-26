@@ -5,8 +5,8 @@
   if (!root) return;
   var pid = Number(root.dataset.project);
   var KEYS = ["index_csv", "product_root", "max_repair_rounds", "repair_model",
-    "execution_backend", "stub_mode", "stub_model", "stub_max_rounds", "host_clang", "host_llvm_cov", "host_llvm_profdata", "host_profile_runtime"];
-  var DEFAULTS = { execution_backend: "clang", stub_mode: "deterministic", stub_max_rounds: 2,
+    "stub_mode", "stub_model", "stub_max_rounds", "host_clang", "host_llvm_cov", "host_llvm_profdata", "host_profile_runtime"];
+  var DEFAULTS = { stub_mode: "deterministic", stub_max_rounds: 2,
     host_clang: "clang", host_llvm_cov: "llvm-cov", host_llvm_profdata: "llvm-profdata", max_repair_rounds: 5 };
   var MODEL = ["stub_model", "stub_max_rounds"];
   var POLICY = ["boundary_adjacent", "c1", "mcdc", "arithmetic", "combination_group"];
@@ -425,7 +425,7 @@
   }
   function populate(c) {
     c = c || {};
-    KEYS.forEach(function (k) { $("ut-c-" + k).value = k === "execution_backend" ? "clang" : String(c[k] != null ? c[k] : DEFAULTS[k] != null ? DEFAULTS[k] : ""); });
+    KEYS.forEach(function (k) { $("ut-c-" + k).value = String(c[k] != null ? c[k] : DEFAULTS[k] != null ? DEFAULTS[k] : ""); });
     draft = object(c.manifest_document) ? JSON.parse(JSON.stringify(c.manifest_document)) : { test_policy: { version: "1" } };
     $("ut-c-manifest_path").value = c.manifest_path || "";
     $("ut-manifest-sha256").textContent = c.manifest_sha256 || "—";
@@ -549,7 +549,6 @@
     clearError();
     try {
       syncForm(); required();
-      $("ut-c-execution_backend").value = "clang";
       var values = { manifest_document: draft };
       KEYS.forEach(function (k) { values[k] = $("ut-c-" + k).value.trim(); });
       values.max_repair_rounds = Number(values.max_repair_rounds);

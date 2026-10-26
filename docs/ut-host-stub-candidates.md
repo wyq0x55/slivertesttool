@@ -1,6 +1,7 @@
 # Primary Clang/LLVM execution and stub candidates
 
-The UT project binding uses `execution_backend=clang` exclusively.
+Every UT job executes on Clang/LLVM; `execution_backend=clang` is recorded on
+configurations, jobs and exports as a fact, not offered as a setting.
 The normal batch/job/attempt workflow and human review gate own this primary path.
 LLVM PASS is the primary workflow machine result. Frozen test requirements
 are enforced by the checker; measured coverage remains actual LLVM evidence.
@@ -43,7 +44,6 @@ project edit permissions and CSRF contract. All settings are frozen in
 
 | Field | Default | Validation |
 | --- | --- | --- |
-| execution_backend | clang | clang only |
 | stub_mode | deterministic | deterministic or llm |
 | stub_model | empty | String override on the existing global AI gateway |
 | stub_max_rounds | 2 | Integer 1..5; independent of CSV repair rounds |

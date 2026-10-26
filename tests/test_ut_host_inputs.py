@@ -144,7 +144,7 @@ def lifecycle(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline, "db", SimpleNamespace(session=session))
     monkeypatch.setattr(pipeline.timing, "db", SimpleNamespace(session=session))
     monkeypatch.setattr(pipeline, "UtAttempt", SimpleNamespace(**{name: getattr(UtAttempt, name) for name in (
-        "ORIGIN_GENERATOR", "ORIGIN_LLM", "ORIGIN_HUMAN", "ORIGIN_HOST_DERIVED", "ORIGIN_CAPTURE")},
+        "ORIGIN_GENERATOR", "ORIGIN_LLM", "ORIGIN_HUMAN", "ORIGIN_HOST_DERIVED")},
         query=history, seq=object()))
     monkeypatch.setattr(pipeline, "_new_attempt", new_attempt)
     monkeypatch.setattr(pipeline, "_fresh_exec_dir", lambda job, a: tmp_path / f"exec-{a.seq}")

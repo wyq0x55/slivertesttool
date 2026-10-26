@@ -123,7 +123,6 @@ test("raw JSON refuses rounding and accepts equivalent numeric notation", async 
 test("llvm execution controls stay visible and stub options follow the selected mode", async () => {
   const h = harness();
   await settle();
-  assert.equal(h.get("ut-c-execution_backend").value, "clang");
   assert.equal(h.get("ut-host-controls").hidden, false);
   assert.equal(h.get("ut-c-stub_model").disabled, true);
   assert.equal(h.get("ut-stub-llm-controls").hidden, true);
@@ -232,13 +231,12 @@ test("saving uses numeric limits, CSRF and the document contract while keeping C
   await h.save();
   assert.equal(h.writes[0].stub_max_rounds, 3);
   assert.equal(h.writes[0].stub_model, "local-stub");
-  assert.equal(h.writes[0].execution_backend, "clang");
+  assert.equal(Object.hasOwn(h.writes[0], "execution_backend"), false);
   assert.equal(h.writes[0].host_clang, "clang");
   assert.equal(h.writes[0].max_repair_rounds, 5);
   assert.equal(Object.hasOwn(h.writes[0], "manifest_path"), false);
   assert.equal(h.requests.find(r => r.method === "PUT").headers["X-CSRF-Token"], "csrf-test");
-  h.change("execution_backend", "winams"); await h.save();
-  assert.equal(h.writes[1].execution_backend, "clang");
+  await h.save();
   assert.equal(h.writes[1].stub_mode, "llm");
   assert.equal(h.get("ut-manifest-sha256").textContent, "saved-sha");
   assert.equal(h.get("ut-draft-state").textContent, "已保存");
@@ -377,7 +375,7 @@ test("import rejects extension, oversize, invalid UTF-8 and non-object JSON with
 
 test("readers can inspect and export but cannot import, validate or save", async () => {
   const h = harness(false, { manifest_document: manifest(), execution_backend: "clang", stub_mode: "llm" }); await settle();
-  for (const id of ["ut-c-execution_backend", "ut-c-stub_mode", "ut-c-stub_model", "ut-c-stub_max_rounds", "ut-c-host_clang", "ut-m-project-id", "ut-manifest-file", "ut-manifest-import"]) assert.equal(h.get(id).disabled, true);
+  for (const id of ["ut-c-stub_mode", "ut-c-stub_model", "ut-c-stub_max_rounds", "ut-c-host_clang", "ut-m-project-id", "ut-manifest-file", "ut-manifest-import"]) assert.equal(h.get(id).disabled, true);
   assert.equal(h.get("ut-manifest-json").readOnly, true);
   assert.deepEqual(JSON.parse(h.get("ut-manifest-json").value), manifest());
   await h.import(JSON.stringify({ project: { id: "forbidden" } }));

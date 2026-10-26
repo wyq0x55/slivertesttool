@@ -43,8 +43,8 @@ Environment settings are `UT_AGENT_ROOT`, `UT_AGENT_PYTHON`,
 The model endpoint and credentials use the existing global AI settings.
 
 The project configuration requires only the manifest, index and Product/source
-root. `execution_backend` is fixed to `clang`; other values and removed
-`work_root`/`stub_builds` options are rejected. Configure `host_clang`,
+root. `execution_backend` is not a setting: the server records `clang` for
+every configuration and job, and ignores a submitted value. Configure `host_clang`,
 `host_llvm_cov`, `host_llvm_profdata` and, if the declared ABI requires it,
 `host_profile_runtime`. ut-agent checks the required tool/runtime identities.
 An ABI/layout profile is semantic input, not a request to run the original
