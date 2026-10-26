@@ -6,11 +6,12 @@
     GET  /targets                        実施一覧 with each target's latest job
     POST /batches                        {target_ids, label} → queue (item.edit)
     GET  /batches                        batches with per-state counts
-    GET  /jobs                           ?state&batch_id
+    GET  /jobs                           ?state&batch_id; host C0/C1/MC/DC digest per job
     GET  /repair-stats                   model-round outcomes per model
     GET  /approved/export                ?batch_id; zip of approved CSVs + manifest
     GET  /jobs/<id>                      job + every attempt (origin, verdict, evidence)
     GET  /jobs/<id>/attempts/<aid>/csv   CP932 download; ?format=text for preview
+    GET  /jobs/<id>/attempts/<aid>/coverage  per-line host llvm-cov C0/C1/MC/DC report
     POST /jobs/<id>/revision             human revision: {csv, note} or multipart file
     POST /jobs/<id>/review               {decision: approve|reject, note} (item.review)
     POST /jobs/<id>/retry                blocked / error / stopped → resume (item.edit)
@@ -125,6 +126,13 @@ def attempt_csv(project_id: int, job_id: int, attempt_id: int):
         return ok({"name": name, "text": data.decode("cp932", "replace")})
     return Response(data, mimetype="text/csv",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@bp.get("/jobs/<int:job_id>/attempts/<int:attempt_id>/coverage")
+@login_required
+def attempt_coverage(project_id: int, job_id: int, attempt_id: int):
+    _project_and_role(project_id, "project.view")
+    return ok(pipeline.attempt_coverage_report(project_id, job_id, attempt_id))
 
 
 @bp.get("/jobs/<int:job_id>/attempts/<int:attempt_id>/artifacts/<artifact_id>")

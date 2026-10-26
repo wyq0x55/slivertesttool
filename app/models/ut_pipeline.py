@@ -344,4 +344,7 @@ def _execution_summary(execution: dict | None) -> dict | None:
     keep = ("status", "exit_code", "diagnostic", "blocked_reasons", "coverage", "sandbox",
             "evidence_source", "counts_as_target_evidence", "delivery_validated", "reason",
             "stub_generation")
-    return {key: execution.get(key) for key in keep if key in execution}
+    summary = {key: execution.get(key) for key in keep if key in execution}
+    # The per-line report itself is fetched on demand (it carries source text).
+    summary["has_coverage_report"] = isinstance(execution.get("coverage_report"), dict)
+    return summary

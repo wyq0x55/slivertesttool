@@ -1405,7 +1405,48 @@ def list_jobs(project_id: int, *, state: Optional[str] = None,
         query = query.filter(UtJob.state == state)
     if batch_id:
         query = query.filter(UtJob.batch_id == batch_id)
-    return [job.to_dict() for job in query.order_by(UtJob.id.desc()).limit(_JOB_LIST_LIMIT)]
+    jobs = query.order_by(UtJob.id.desc()).limit(_JOB_LIST_LIMIT).all()
+    digests = _host_coverage_digests([job.current_attempt_id for job in jobs if job.current_attempt_id])
+    entries = []
+    for job in jobs:
+        entry = job.to_dict()
+        entry["coverage"] = digests.get(job.current_attempt_id)
+        entries.append(entry)
+    return entries
+
+
+_COVERAGE_LINES_CONTRACT = "ut-agent.coverage-lines/1"
+
+
+def _percent(count: Any) -> Optional[float]:
+    return count.get("percent") if isinstance(count, dict) else None
+
+
+def _host_coverage_digests(attempt_ids: list[int]) -> dict[int, dict[str, Any]]:
+    """C0/C1/MC/DC percentages of each current attempt's host llvm-cov run.
+
+    Only HOST_EXECUTION evidence is summarised (the platform does not process
+    WinAMS coverage), and only the small JSON paths are read, never the
+    attempt's whole execution document.
+    """
+    if not attempt_ids:
+        return {}
+    rows = (db.session.query(UtAttempt.id, UtAttempt.execution["evidence_source"],
+                             UtAttempt.execution["coverage"],
+                             UtAttempt.execution["coverage_report"]["contract"])
+            .filter(UtAttempt.id.in_(attempt_ids)).all())
+    digests = {}
+    for attempt_id, source, coverage, contract in rows:
+        if source != "HOST_EXECUTION" or not isinstance(coverage, dict) or coverage.get("status") != "MEASURED":
+            continue
+        digests[attempt_id] = {
+            "evidence_source": source,
+            "c0": _percent(coverage.get("lines")),
+            "c1": _percent(coverage.get("c1")),
+            "mcdc": _percent(coverage.get("mcdc")),
+            "has_report": contract == _COVERAGE_LINES_CONTRACT,
+        }
+    return digests
 
 
 def _round_outcome(attempt: UtAttempt) -> str:
@@ -1552,6 +1593,23 @@ def attempt_diagnostic(project_id: int, job_id: int, attempt_id: int) -> dict[st
             editable_columns=repair._editable_columns(table, check))
     except (ValueError, UnicodeDecodeError) as exc:
         raise ServiceError(str(exc), code="INTEGRITY_ERROR") from exc
+
+
+def attempt_coverage_report(project_id: int, job_id: int, attempt_id: int) -> dict[str, Any]:
+    """The per-line C0/C1/MC/DC report of one attempt's host llvm-cov run.
+
+    Development-time host evidence only; it never stands for target coverage.
+    """
+    attempt = (UtAttempt.query.join(UtJob, UtJob.id == UtAttempt.job_id)
+               .filter(UtAttempt.id == attempt_id, UtJob.id == job_id,
+                       UtJob.project_id == project_id).first())
+    report = (attempt.execution or {}).get("coverage_report") if attempt else None
+    if (not isinstance(report, dict) or report.get("contract") != _COVERAGE_LINES_CONTRACT
+            or report.get("evidence_source") != "HOST_EXECUTION"
+            or not isinstance(report.get("lines"), list)):
+        raise ServiceError("该版本没有主机覆盖率报告", code="NOT_FOUND")
+    return {"attempt": {"id": attempt.id, "seq": attempt.seq, "verdict": attempt.verdict or None},
+            "report": report}
 
 
 def attempt_artifact(project_id: int, job_id: int, attempt_id: int, artifact_id: str) -> tuple[bytes, str]:

@@ -413,6 +413,9 @@
       return request("GET", `/projects/${pid}/ut/jobs/${jobId}/attempts/${attemptId}/csv`,
         { query: { format: "diagnostic" } });
     },
+    utAttemptCoverage(pid, jobId, attemptId) {
+      return request("GET", `/projects/${pid}/ut/jobs/${jobId}/attempts/${attemptId}/coverage`);
+    },
     utAttemptUrl(pid, jobId, attemptId) {
       return `${BASE}/projects/${pid}/ut/jobs/${jobId}/attempts/${attemptId}/csv`;
     },

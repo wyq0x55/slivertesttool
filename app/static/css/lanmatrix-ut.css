@@ -217,3 +217,23 @@
 .ut-host-evidence { padding: 16px; }
 .ut-artifact-list { display: flex; flex-wrap: wrap; gap: 8px 24px; padding-left: 20px; }
 .ut-artifact-list li { overflow-wrap: anywhere; }
+/* Per-line host coverage report of the function under test. */
+.ut-cov-link { font-size: 12px; }
+.ut-coverage { padding: 16px; }
+.ut-cov-note { font-size: 12.5px; color: var(--warn-text); }
+.ut-cov-summary { display: flex; flex-wrap: wrap; gap: 6px 24px; margin: 8px 0; font-variant-numeric: tabular-nums; }
+.ut-cov-summary b { font-weight: 500; color: var(--text-3); margin-right: 4px; }
+.ut-cov-gaps { font-size: 12.5px; color: var(--text-2); }
+.ut-cov-views { margin: 8px 0; }
+.ut-cov-lines { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.ut-cov-lines th { text-align: left; font-weight: 500; color: var(--text-3); padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.ut-cov-lines td { padding: 1px 8px; vertical-align: top; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ut-cov-lines tr.is-miss td { background: var(--danger-soft); }
+.ut-cov-lines tr.is-gap td { background: var(--warn-soft); }
+.ut-cov-src code { white-space: pre; tab-size: 4; background: none; }
+.ut-cov-mark { display: inline-block; margin-right: 6px; }
+.ut-cov-lines .is-full { color: var(--ok-text); }
+.ut-cov-lines .is-miss, .ut-cov-mark.is-miss { color: var(--danger-text); }
+.ut-cov-mark.is-gap { color: var(--warn-text); }
+.ut-cov-mark.is-missing { color: var(--text-3); }
+.ut-coverage #ut-d-coverage-body { overflow-x: auto; }
