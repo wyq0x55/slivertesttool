@@ -7,18 +7,20 @@ requested from inside the fake bridge call itself.
 
 from __future__ import annotations
 
-from test_ut_pipeline import (  # noqa: F401
+from test_ut_pipeline import (
     GAP,
     _configure,
     _enqueue,
     _job,
     _llm_reply,
     _ut_reviews,
-    env,
 )
+from test_ut_pipeline import env as workflow_env
 
 from app.services.ai import provider
 from app.services.ut_pipeline import pipeline
+
+env = workflow_env
 
 
 def _queued_batch(env, app_ctx, *target_ids):

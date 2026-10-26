@@ -69,6 +69,11 @@ Every machine outcome ends at a human gate. Approving a non-PASS candidate
 requires a review note; approval does not change its machine verdict. Stop waits
 for the current external call, preserving results. Retry preserves candidate
 lineage and model budgets; an unavailable model consumes no repair round.
+`HOST_TOOL_UNAVAILABLE` without another error is a retryable `blocked` environment
+gate. Restoring the tool at its frozen path permits the same job to execute
+again. Changing configured tool paths requires a new batch; retry does not
+replace the existing snapshot. Semantic, policy and binding failures remain
+human work, including when a tool failure is reported alongside them.
 
 Shared extraction is serialized, while finalized functions can execute on other
 Huey worker threads before sibling generation completes. At least two worker

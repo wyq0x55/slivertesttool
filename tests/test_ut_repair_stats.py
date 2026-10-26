@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-from test_ut_pipeline import (  # noqa: F401
+from test_ut_pipeline import (
     GAP,
     _configure,
     _enqueue,
     _llm_reply,
     _row,
-    env,
 )
+from test_ut_pipeline import env as workflow_env
 
 from app.services.ai import provider
+
+env = workflow_env
 
 
 def test_rounds_are_classified_by_what_they_produced(env, monkeypatch):

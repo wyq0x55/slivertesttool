@@ -704,6 +704,12 @@ def next_state(check: dict[str, Any], origin: str, rounds: int, max_rounds: int,
             return UtJob.REPAIRING, "", ""
         return UtJob.AWAITING_REVIEW, "机器校验通过，等待人工审核" + _gap_note(gaps), GateCode.MACHINE_PASS
     if verdict == "BLOCKED":
+        if set(_error_codes(check)) == {"HOST_TOOL_UNAVAILABLE"}:
+            messages = "; ".join(
+                str(issue.get("message") or issue["code"]) for issue in check.get("issues", ())
+                if issue.get("code") == "HOST_TOOL_UNAVAILABLE")
+            return (UtJob.BLOCKED, f"Clang/LLVM 执行工具不可用：{messages}",
+                    GateCode.ENV_BLOCKED)
         blocked = next((issue for issue in check.get("issues", ())
                         if issue["code"] == "EXECUTION_BLOCKED"), None)
         if blocked is not None:

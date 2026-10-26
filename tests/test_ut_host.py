@@ -71,7 +71,8 @@ class HostBridge(FakeBridge):
                                   "output_pending": [], "output_pending_count": 0, "details_complete": True},
                  "evidence_source": "HOST_EXECUTION", "counts_as_target_evidence": False,
                  "delivery_validated": False, "issues": [] if verdict == "PASS" else [
-                     {"code": "HOST_CSV_NOT_BOUND" if not bound else status, "severity": "error",
+                     {"code": "HOST_CSV_NOT_BOUND" if not bound else execution.get("reason_code") or status,
+                      "severity": "error",
                       "repairable": False, "message": execution["reason"]}]}
         for name, value in (("execution.json", execution), ("check.json", check)):
             (out / name).write_text(json.dumps(value), encoding="utf-8")
@@ -89,6 +90,24 @@ def configured(env, monkeypatch, tmp_path):
     assert status == 200, body
     monkeypatch.setattr(provider, "invoke_chat", lambda *a, **k: pytest.fail("Unexpected gateway call"))
     return env, ids
+
+
+def test_missing_llvm_tool_can_retry_the_same_job_without_spending_model_rounds(configured):
+    env, ids = configured
+    env.bridge.outcomes = ["HOST_UNSUPPORTED", "HOST_PASS"]
+    env.bridge.reason_codes = ["HOST_TOOL_UNAVAILABLE", ""]
+    [job_id] = _enqueue(env, ids["f"])
+    failed = _job(env, job_id)
+    assert failed["state"] == "blocked" and failed["gate_code"] == "ENV_BLOCKED"
+    assert "Clang/LLVM" in failed["reason"]
+    assert failed["repair_rounds"] == 0 and len(env.bridge.host_calls) == 1
+
+    status, body = env.call("post", f"/jobs/{job_id}/retry")
+    assert status == 202, body
+    retried = _job(env, job_id)
+    assert retried["state"] == "awaiting_review" and retried["gate_code"] == "MACHINE_PASS"
+    assert retried["id"] == job_id and retried["batch_id"] == failed["batch_id"]
+    assert retried["repair_rounds"] == 0 and len(env.bridge.host_calls) == 2
 
 
 def test_bridge_host_contract_arguments(monkeypatch, tmp_path):

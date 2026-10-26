@@ -5,18 +5,20 @@ Reuses the scripted bridge of test_ut_pipeline (Huey in immediate mode).
 
 from __future__ import annotations
 
-from test_ut_pipeline import (  # noqa: F401
+from test_ut_pipeline import (
     GAP,
     _configure,
     _enqueue,
     _job,
     _llm_reply,
     _row,
-    env,
 )
+from test_ut_pipeline import env as workflow_env
 
 from app.services.ai import provider
 from app.services.ut_pipeline import pipeline
+
+env = workflow_env
 
 
 def _replies(monkeypatch, *replies):

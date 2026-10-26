@@ -649,7 +649,7 @@ def test_exhausted_rounds_hand_over_to_a_human(env, monkeypatch):
     job = _job(env, job_id)
     assert job["state"] == "needs_human" and job["repair_rounds"] == 2
     assert "INPUT_WITNESS_REJECTED" in job["reason"]
-    assert [a["origin"] for a in job["attempts"]][0] == "GENERATOR"
+    assert job["attempts"][0]["origin"] == "GENERATOR"
 
     status, body = env.call("post", f"/jobs/{job_id}/review", json={"decision": "approve"})
     assert status == 400 and body["error"]["code"] == "VALIDATION_ERROR"

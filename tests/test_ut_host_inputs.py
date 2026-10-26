@@ -233,6 +233,25 @@ def test_host_cases_without_repair_authority_stay_human(lifecycle, case):
     assert job.state == UtJob.NEEDS_HUMAN and not ctx.revision.called
 
 
+@pytest.mark.parametrize("other_code", ["HOST_POLICY_NOT_BOUND", "HOST_CSV_NOT_BOUND",
+                                       "ABI_POINTER_SIZE_MISMATCH", None])
+def test_missing_tool_does_not_make_semantic_or_binding_failures_retryable(lifecycle, other_code):
+    ctx, job = lifecycle, lifecycle.job
+    attempt = ctx.attempts[job.current_attempt_id]
+    attempt.execution = {"status": "HOST_UNSUPPORTED"}
+    attempt.check = checked(REFERENCE, verdict="BLOCKED")
+    attempt.check["issues"] = [{"code": "HOST_TOOL_UNAVAILABLE", "severity": "error",
+                                "message": "tool unavailable: clang"}]
+    if other_code:
+        attempt.check["issues"].append({"code": other_code, "severity": "error"})
+    state, reason, code = pipeline._host_next_state(job, attempt, pipeline._host_gaps(job, attempt))
+    assert state == (UtJob.NEEDS_HUMAN if other_code else UtJob.BLOCKED)
+    assert code == (GateCode.CHECK_BLOCKED if other_code else GateCode.ENV_BLOCKED)
+    if not other_code:
+        assert "tool unavailable: clang" in reason
+    assert not ctx.revision.called
+
+
 def test_case_model_outage_retries_repair_without_stub_renewal(lifecycle):
     ctx, job = lifecycle, lifecycle.job
     pipeline._execute_step(job)
