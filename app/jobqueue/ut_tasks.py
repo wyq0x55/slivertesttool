@@ -1,4 +1,4 @@
-"""Huey tasks for the unit-test pipeline (ut-agent + WinAMS + local LLM).
+"""Huey tasks for the unit-test pipeline (ut-agent + Clang/LLVM + local LLM).
 
 ``ut_generate_batch`` runs one project-wide generation for a batch and
 enqueues ``ut_advance_job`` as each function is finalized; each drives its job through

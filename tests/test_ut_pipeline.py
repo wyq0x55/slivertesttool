@@ -56,10 +56,7 @@ class FakeBridge:
         self.execution_status = execution_status
         self.generate_error = generate_error
         self.executions = 0
-        self.stub_builds = None
         self.source_rel = None
-        # Bytes WinAMS "captures" for any candidate; None means no capture.
-        self.captured = None
         # Additional error codes reported next to ORACLE_MISMATCH for BAD candidates.
         self.extra_codes = ()
         # Data rows C1 coverage needs; fewer rows fail with a coverage gap.
@@ -186,11 +183,6 @@ def _llm_reply(*rows, declined=()):
 
 def _row(obligation, value="5"):
     return {"obligation": obligation, "base_row": 1, "inputs": {"I1": value}, "reason": "x"}
-
-
-def _fill_blank(csv_bytes):
-    """What a WinAMS capture does to blank expected values in the fakes."""
-    return csv_bytes.replace(b",\r\n", b",1\r\n")
 
 
 GAP = {"obligation_id": "b1:T", "kind": "branch", "gap_class": "MISSING_CASE",
@@ -460,7 +452,6 @@ def test_coverage_gap_without_a_missing_case_does_not_call_the_model(env, monkey
 
 def test_missing_cases_on_a_pass_go_to_the_model_until_claimed_or_declined(env, monkeypatch):
     targets = _configure(env)
-    env.bridge.captured = _fill_blank
     env.bridge.gaps = [GAP, dict(GAP, obligation_id="b2:T"),
                        dict(GAP, obligation_id="b3:T", gap_class="SEMANTIC_EVIDENCE")]
     calls = []
@@ -483,7 +474,6 @@ def test_missing_cases_on_a_pass_go_to_the_model_until_claimed_or_declined(env, 
 def test_rejected_witness_stays_out_of_current_candidate_and_winams(env, monkeypatch):
     targets = _configure(env)
     env.bridge.gaps = [GAP]
-    env.bridge.captured = _fill_blank
     replies = [_llm_reply(_row("b1:T", "2")), _llm_reply(_row("b1:T", "5"))]
     seen = []
 
@@ -532,7 +522,6 @@ def test_a_claim_without_current_checker_evidence_goes_to_a_human(env, monkeypat
 def test_declines_of_a_rejected_proposal_do_not_close_gaps(env, monkeypatch):
     targets = _configure(env)
     env.bridge.gaps = [GAP, dict(GAP, obligation_id="b2:T")]
-    env.bridge.captured = _fill_blank
     replies = [_llm_reply(_row("b1:T", "2"), declined=["b2:T"]),
                _llm_reply(_row("b1:T", "5")),
                _llm_reply(declined=["b2:T"])]
@@ -581,10 +570,9 @@ def test_oracle_mismatch_is_not_rewritten_or_sent_to_the_model(env, monkeypatch)
     assert "ORACLE_MISMATCH" in {issue["code"] for issue in job["attempts"][0]["check"]["issues"]}
 
 
-def test_a_capture_that_still_fails_goes_to_a_human_not_the_model(env, monkeypatch):
+def test_a_generated_oracle_mismatch_goes_to_a_human_not_the_model(env, monkeypatch):
     targets = _configure(env)
     env.bridge.generated = BAD
-    env.bridge.captured = BAD.replace(b"BAD", b"BAD2")
     monkeypatch.setattr(provider, "chat", lambda *a, **k: pytest.fail("LLM must not run"))
     [job_id] = _enqueue(env, targets["f"])
     job = _job(env, job_id)
@@ -597,7 +585,6 @@ def test_a_capture_that_still_fails_goes_to_a_human_not_the_model(env, monkeypat
 def test_mismatches_beside_input_evidence_are_not_overwritten(env, monkeypatch, code):
     targets = _configure(env, rounds=1)
     env.bridge.generated = BAD
-    env.bridge.captured = GOOD
     env.bridge.extra_codes = (code,)
     monkeypatch.setattr(provider, "chat", lambda *a, **k: pytest.fail("oracle mismatch is not row repair"))
     [job_id] = _enqueue(env, targets["f"])
@@ -607,13 +594,12 @@ def test_mismatches_beside_input_evidence_are_not_overwritten(env, monkeypatch, 
     assert job["attempts"][0]["csv_sha256"]
 
 
-def test_human_expected_values_are_never_overwritten_by_the_capture(env, monkeypatch):
+def test_human_expected_values_are_never_overwritten(env, monkeypatch):
     targets = _configure(env, rounds=1)
     env.bridge.generated = BAD
     monkeypatch.setattr(provider, "chat", lambda *a, **k: pytest.fail("LLM must not run"))
     [job_id] = _enqueue(env, targets["f"])
     assert _job(env, job_id)["state"] == "needs_human"
-    env.bridge.captured = GOOD
     status, _ = env.call("post", f"/jobs/{job_id}/revision", json={"csv": BAD.decode("cp932")})
     assert status == 202
     job = _job(env, job_id)
@@ -691,14 +677,6 @@ def test_blocked_environment_does_not_consume_rounds(env, monkeypatch):
     assert env.bridge.executions == 2
 
 
-def test_winams_work_root_and_linked_builds_are_rejected(env):
-    status, body = env.call("put", "/config", json={
-        "manifest_path": "m.json", "index_csv": "i.csv", "product_root": "P",
-        "work_root": "W", "stub_builds": "C:\\STUB\\stub1"})
-    assert status == 400, body
-    assert body["error"]["code"] == "VALIDATION_ERROR"
-
-
 def test_unreachable_model_is_an_error_and_retry_resumes_repair(env, monkeypatch):
     targets = _configure(env)
     env.bridge.gaps = [GAP]
@@ -755,7 +733,7 @@ def test_next_state_is_pure_and_total():
     passed = {"verdict": "PASS", "completeness": complete, "issues": []}
     gaps = {"missing": 1, "claimed": 0, "declined": 0, "open": [GAP]}
     assert pipeline.next_state(passed, "GENERATOR", 0, 5, gaps)[0] == "repairing"
-    assert pipeline.next_state(passed, "CAPTURE", 5, 5, gaps)[0] == "needs_human"
+    assert pipeline.next_state(passed, "LLM", 5, 5, gaps)[0] == "needs_human"
     assert pipeline.next_state(passed, "HUMAN", 0, 5, gaps)[0] == "awaiting_review"
     assert pipeline.next_state(passed, "GENERATOR", 0, 5)[0] == "awaiting_review"
 

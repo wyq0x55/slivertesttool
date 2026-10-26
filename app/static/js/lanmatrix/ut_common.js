@@ -32,7 +32,7 @@
     PASS: ["passed", "PASS"], FORMAT_OK: ["pending", "仅格式通过"],
     FAIL: ["failed", "FAIL"], BLOCKED: ["error", "阻塞"], INVALID: ["failed", "无效"]
   };
-  var ORIGIN = { GENERATOR: "生成器", LLM: "本地模型", CAPTURE: "执行捕获", HUMAN: "人工", HOST_DERIVED: "类型推导" };
+  var ORIGIN = { GENERATOR: "生成器", LLM: "本地模型", HUMAN: "人工", HOST_DERIVED: "类型推导" };
   var ACTIVE = { queued: 1, generating: 1, executing: 1, repairing: 1 };
   /* Machine outcomes that wait for a person. */
   var GATES = { awaiting_review: 1, needs_human: 1, blocked: 1, error: 1 };
@@ -103,7 +103,7 @@
     var m = STATE[state] || ["notask", state || "未执行"];
     LMPill.apply(el, m[0], m[1]);
   }
-  function verdictPill(verdict, backend) {
+  function verdictPill(verdict) {
     if (!verdict) return '<span class="muted">—</span>';
     var m = VERDICT[verdict] || ["pending", verdict];
     return LMPill.html(m[0], "LLVM " + verdict, "Clang/LLVM 机器判定：" + verdict);
@@ -150,7 +150,7 @@
     var decided = job.state === "approved" || job.state === "rejected";
     return {
       status: ACTIVE[job.state] ? statePill(job.state)
-        : job.last_verdict ? verdictPill(job.last_verdict, job.execution_backend)
+        : job.last_verdict ? verdictPill(job.last_verdict)
           : job.generation_status === "ERROR" ? LMPill.html("error", "生成异常")
             : LMPill.html("notask", "未判定"),
       // Decided and awaiting jobs read with the run list's review vocabulary

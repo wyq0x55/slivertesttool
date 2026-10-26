@@ -252,7 +252,8 @@ def project_tasks(project_id: int):
 
     Both project types share this destination; only the run model differs:
     Silver runs uploaded test ids on a .sil model, a unit-test project runs
-    ut-agent → WinAMS jobs that end at a human review gate.
+    ut-agent jobs (generate → LLVM execute → check → repair) that end at a
+    human review gate.
     """
     user = _current_user()
     if user is None:
@@ -306,7 +307,7 @@ def project_settings(project_id: int):
 @pages_bp.get("/projects/<int:project_id>/settings/binding")
 def ut_binding(project_id: int):
     """项目绑定 tab of a unit-test project: the ut-agent manifest, index CSV,
-    Product and WinAMS roots and the model-repair limit. Takes the slot that
+    Product root and the model-repair limit. Takes the slot that
     字段配置 / 模型管理 hold for a Silver project."""
     user = _current_user()
     if user is None:

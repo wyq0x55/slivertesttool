@@ -29,10 +29,6 @@ class UtPipelineConfig(db.Model):
     # Five-column project index (HOYU/<project>.csv) and the Soft/Product root.
     index_csv = db.Column(db.String(1024), nullable=False, default="")
     product_root = db.Column(db.String(1024), nullable=False, default="")
-    # Dormant storage columns retain insert defaults on existing schemas.
-    # They are not exposed as configuration or consumed by the LLVM workflow.
-    work_root = db.Column(db.String(1024), nullable=False, default="")
-    stub_builds = db.Column(db.Text, nullable=False, default="")
     execution_backend = db.Column(db.String(16), nullable=False, default="clang")
     stub_mode = db.Column(db.String(16), nullable=False, default="deterministic")
     stub_model = db.Column(db.String(128), nullable=False, default="")
@@ -241,7 +237,7 @@ class UtJob(db.Model):
     reviewed_at = db.Column(db.DateTime, nullable=True)
     review_note = db.Column(db.Text, nullable=False, default="")
     # A stop request for a job whose worker is inside an external call
-    # (generation, WinAMS, model).  The worker honours it at the next step
+    # (generation, LLVM execution, model).  The worker honours it at the next step
     # boundary, so the running call finishes and its evidence is recorded.
     stop_requested_at = db.Column(db.DateTime, nullable=True)
     stop_requested_by = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True)
@@ -293,8 +289,6 @@ class UtAttempt(db.Model):
     ORIGIN_GENERATOR = "GENERATOR"
     ORIGIN_LLM = "LLM"
     ORIGIN_HUMAN = "HUMAN"
-    # Expected values replaced by the outputs WinAMS captured for the same inputs.
-    ORIGIN_CAPTURE = "CAPTURE"
     # Appended outputs proven by the typed implementation oracle, then re-executed.
     ORIGIN_HOST_DERIVED = "HOST_DERIVED"
 
@@ -335,7 +329,7 @@ class UtAttempt(db.Model):
 
 
 def _execution_summary(execution: dict | None) -> dict | None:
-    """Drop the bulky per-cell capture diff; the check already lists conflicts."""
+    """Drop the bulky per-cell execution detail; the check already lists conflicts."""
     if not execution:
         return None
     keep = ("status", "exit_code", "diagnostic", "blocked_reasons", "coverage", "sandbox",

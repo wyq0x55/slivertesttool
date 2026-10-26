@@ -181,6 +181,19 @@ def _migrate_schema() -> None:
                 conn.execute(text(
                     f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
 
+    # WinAMS work directories and linked stub builds left the job configuration
+    # once execution moved to Clang/LLVM; drop the retired columns. Idempotent.
+    retired = {"ut_pipeline_configs": ("work_root", "stub_builds")}
+    for table, columns in retired.items():
+        if table not in existing_tables:
+            continue
+        have = {c["name"] for c in inspector.get_columns(table)}
+        for name in columns:
+            if name not in have:
+                continue
+            with db.engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {name}"))
+
     _migrate_model_version_identity(existing_tables)
 
     # The ``sheet`` columns are filtered on every field/item load, so back them

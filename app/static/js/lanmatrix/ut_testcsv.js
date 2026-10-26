@@ -1,5 +1,6 @@
 /*
- * ut_testcsv.js — window.LMTestCsv: a WinAMS TestCsv seen as a step table.
+ * ut_testcsv.js — window.LMTestCsv: a TestCsv (the shared WinAMS-format CSV
+ * the LLVM pipeline executes) seen as a step table.
  *
  * The step-detail drawer (steps_editor.js) edits a columnar document of input
  * signals, expected signals and steps. A TestCsv maps onto it directly:

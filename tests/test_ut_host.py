@@ -86,7 +86,7 @@ def configured(env, monkeypatch, tmp_path):
     env.bridge = bridge
     monkeypatch.setattr(pipeline, "get_bridge", lambda: bridge)
     ids = _configure(env)
-    status, body = env.call("put", "/config", json={"execution_backend": "clang"})
+    status, body = env.call("put", "/config", json={"stub_mode": "deterministic"})
     assert status == 200, body
     monkeypatch.setattr(provider, "invoke_chat", lambda *a, **k: pytest.fail("Unexpected gateway call"))
     return env, ids
@@ -135,7 +135,7 @@ def test_bridge_host_contract_arguments(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("values", [
-    {"execution_backend": "unknown"}, {"stub_mode": "other"},
+    {"stub_mode": "other"},
     {"stub_max_rounds": 0}, {"stub_max_rounds": 6}, {"stub_max_rounds": True},
     {"stub_max_rounds": "2"}, {"host_clang": ""}, {"stub_model": 7},
 ])
@@ -314,7 +314,7 @@ def test_host_capture_cannot_change_expected_values():
 
 
 def test_host_missing_case_creates_derived_version_then_reexecutes_before_review(configured, monkeypatch):
-    from test_ut_pipeline import GAP, _fill_blank, _llm_reply, _row
+    from test_ut_pipeline import GAP, _llm_reply, _row
 
     env, ids = configured
     env.bridge.gaps = [GAP]
@@ -341,7 +341,7 @@ def test_host_missing_case_creates_derived_version_then_reexecutes_before_review
                      "sandbox": str(out.resolve()), "input_binding": {"candidate": {"sha256": digest}}}
         if b",5,\r\n" in data:
             typed = out / "typed.csv"
-            typed.write_bytes(_fill_blank(data))
+            typed.write_bytes(data.replace(b",\r\n", b",1\r\n"))  # derived expected fills the blank
             execution["typed_candidate"] = {"contract": "ut-agent.host-typed-candidate/1",
                 "path": str(typed.resolve()), "sha256": hashlib.sha256(typed.read_bytes()).hexdigest(),
                 "source_candidate_sha256": digest, "reference_rows": 1,
@@ -413,6 +413,25 @@ def test_bootstrap_upgrades_existing_config_columns_idempotently(env, app_ctx):
         config = pipeline.get_config(env.pid)
         assert config.execution_backend == "clang" and config.stub_mode == "deterministic"
         assert config.stub_max_rounds == 2 and config.host_clang == "clang"
+
+
+def test_bootstrap_drops_retired_winams_config_columns(env, app_ctx):
+    _configure(env)
+    with app_ctx.app_context():
+        from sqlalchemy import inspect, text
+
+        from app.bootstrap import _migrate_schema
+        from app.extensions import db
+        with db.engine.begin() as connection:
+            connection.execute(text("ALTER TABLE ut_pipeline_configs "
+                                    "ADD COLUMN work_root VARCHAR(1024) NOT NULL DEFAULT ''"))
+            connection.execute(text("ALTER TABLE ut_pipeline_configs "
+                                    "ADD COLUMN stub_builds TEXT NOT NULL DEFAULT ''"))
+        _migrate_schema()
+        _migrate_schema()
+        names = {c["name"] for c in inspect(db.engine).get_columns("ut_pipeline_configs")}
+        assert not names & {"work_root", "stub_builds"}
+        assert pipeline.get_config(env.pid).execution_backend == "clang"
 
 
 def test_artifacts_follow_project_view_auth_and_settings_require_edit(configured, app_ctx):

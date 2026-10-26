@@ -60,7 +60,7 @@ _GENERATION_GATE = threading.Lock()
 _EXPECTED_ATTEMPT_UNSET = object()
 
 _CONFIG_TEXT_FIELDS = ("manifest_path", "index_csv", "product_root",
-                       "repair_model", "execution_backend", "stub_mode",
+                       "repair_model", "stub_mode",
                        "stub_model", "host_clang", "host_llvm_cov", "host_llvm_profdata",
                        "host_profile_runtime")
 _REQUIRED_FIELDS = ("manifest_path", "index_csv", "product_root")
@@ -123,8 +123,6 @@ def require_config(project_id: int) -> UtPipelineConfig:
 
 
 def save_config(project_id: int, values: dict[str, Any], user_id: int) -> UtPipelineConfig:
-    if set(values) & {"work_root", "stub_builds"}:
-        raise ServiceError("WinAMS 工作目录和链接构建不再属于作业配置", code="VALIDATION_ERROR")
     existing = get_config(project_id)
     before = existing.to_dict() if existing else None
     normalized = {}
@@ -137,12 +135,12 @@ def save_config(project_id: int, values: dict[str, Any], user_id: int) -> UtPipe
             if len(value) > limit:
                 raise ServiceError(f"{key} exceeds {limit} characters", code="VALIDATION_ERROR")
             normalized[key] = value
-    for key, default, allowed in (("execution_backend", "clang", ("clang",)),
-                                  ("stub_mode", "deterministic", ("deterministic", "llm"))):
-        effective = normalized.get(key, default if key == "execution_backend" else getattr(existing, key, default))
-        if effective not in allowed:
-            raise ServiceError(f"{key} must be one of {', '.join(allowed)}", code="VALIDATION_ERROR")
-        normalized[key] = effective
+    stub_mode = normalized.get("stub_mode", getattr(existing, "stub_mode", "deterministic"))
+    if stub_mode not in ("deterministic", "llm"):
+        raise ServiceError("stub_mode must be one of deterministic, llm", code="VALIDATION_ERROR")
+    normalized["stub_mode"] = stub_mode
+    # Recorded fact, not a choice: every job executes on Clang/LLVM.
+    normalized["execution_backend"] = "clang"
     for key in ("host_clang", "host_llvm_cov", "host_llvm_profdata"):
         if key in normalized and not normalized[key]:
             raise ServiceError(f"{key} must not be empty", code="VALIDATION_ERROR")
@@ -688,7 +686,7 @@ def _execute_step(job: UtJob) -> None:
 
 
 # Errors that appended input rows can address. Expected values belong to the
-# capture, and format or column errors cannot be fixed by adding rows.
+# typed oracle, and format or column errors cannot be fixed by adding rows.
 _ROW_FIXABLE = frozenset({"EXECUTION_PATH_DIVERGED", "ROW_COUNT_BELOW_REFERENCE",
                           "REFERENCE_CASE_REMOVED", "FORMAT_NO_DATA_ROWS"})
 
