@@ -21,7 +21,7 @@ def generation_failure_reason(unit: dict[str, Any]) -> str:
                     if isinstance(callee, str) and type(index) is int and index >= 0
                     else "外部调用的指针参数")
         return (f"{prefix}MISSING_INTERFACE_CONTRACT：{location}缺少已证明的读写方向。"
-                "请在项目绑定页的“接口契约”配置 interfaces.contract（已审批的 ID@版本），"
+                "请在设置的项目清单中查看“外部函数指针接口契约”，从列表选择适用的已审批契约，"
                 "或由开发人员检查该调用的实现是否已纳入 Clang 提取并形成类型化方向证据。"
                 "补齐后保存清单并创建新批次；AI 补 CSV 行不能代替接口证据。"
                 f"原始诊断：{detail}")

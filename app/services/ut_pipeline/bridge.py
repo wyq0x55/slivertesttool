@@ -158,6 +158,10 @@ class UtAgentBridge:
                              timeout=self.settings.timeout)
         return {key: value for key, value in document.items() if key not in ("contract", "ok")}
 
+    def configuration_options(self) -> dict[str, Any]:
+        return self._run(["configuration-options"],
+                         timeout=self.settings.timeout)["configuration_options"]
+
     def generate(self, manifest: str, index_csv: str, product_root: str, out: Path,
                  functions: list[str], *, progress_dir: Path,
                  on_unit: Callable[[dict], None] | None = None) -> dict[str, Any]:

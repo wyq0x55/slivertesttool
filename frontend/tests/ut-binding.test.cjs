@@ -7,15 +7,27 @@ const { TextDecoder } = require("node:util");
 const settle = () => new Promise(resolve => setImmediate(resolve));
 const base = path.resolve(__dirname, "../..");
 const clone = value => JSON.parse(JSON.stringify(value));
-const manifest = () => ({ project: { id: "demo" }, baseline: { id: "baseline", version: "1" } });
-function harness(configure = true, config = { manifest_document: manifest() }) {
+const manifest = () => ({ project: { id: "demo" }, baseline: { id: "baseline", version: "1" }, build: { profile: "default" } });
+const catalog = () => ({
+  contract: "ut-agent.configuration-options/1",
+  build_profiles: [
+    { id: "default", label: "不声明目标 ABI（仅无指针函数）", pointer_size: null },
+    { id: "typed32", label: "已验证的 32 位配置", pointer_size: 4, description: "Typed ABI evidence" },
+  ],
+  interface_contracts: [
+    { id: "approved@2", label: "已审批的外部接口 · 版本 2", description: "Pointer direction approved",
+      functions: ["external_read"], approved_by: "reviewer", approved_at: "2026-10-26" },
+  ],
+});
+function harness(configure = true, config = { manifest_document: manifest() }, settings = {}) {
   const nodes = new Map(), writes = [], validations = [], requests = [], downloads = [], events = {};
   let focused = null, current = config, apiError = null;
   const template = fs.readFileSync(path.join(base, "app/templates/lanmatrix/ut_binding.html"), "utf8");
   function node(id) {
     const attributes = {}, classes = new Set();
     return { id, value: "", disabled: false, hidden: false, readOnly: false, textContent: "", open: false,
-      parentElement: { hidden: false }, listeners: {}, dataset: { project: "4" },
+      parentElement: { hidden: false }, listeners: {}, dataset: { project: "4" }, children: [],
+      replaceChildren() { this.children = []; }, appendChild(child) { this.children.push(child); },
       classList: { toggle(k, on) { on ? classes.add(k) : classes.delete(k); }, contains(k) { return classes.has(k); } },
       addEventListener(type, fn) { this.listeners[type] = fn; },
       setAttribute(k, v) { attributes[k] = v; }, removeAttribute(k) { delete attributes[k]; },
@@ -29,13 +41,17 @@ function harness(configure = true, config = { manifest_document: manifest() }) {
   const context = vm.createContext({ window, TextDecoder, Blob, FormData, URLSearchParams,
     URL: { createObjectURL(blob) { downloads.push(blob); return "blob:draft"; }, revokeObjectURL() {} },
     document: { querySelector: () => get("root"), getElementById: id => id.startsWith("lm-") ? null : get(id), addEventListener() {},
-      createElement(tag) { assert.equal(tag, "a"); return { click() {} }; } },
+      createElement(tag) { if (tag === "option") return node("option"); assert.equal(tag, "a"); return { click() {} }; } },
     LMUt: { say() {}, time: value => value, can: () => configure },
     fetch: async (url, opts) => {
       const body = opts.body ? JSON.parse(opts.body) : null;
       requests.push({ url, ...opts, body });
       let data;
       if (url.endsWith("/auth/me")) data = { csrf_token: "csrf-test", user: {} };
+      else if (url.endsWith("/manifest/options")) {
+        if (settings.catalogError) throw new Error(settings.catalogError);
+        data = settings.catalog || catalog();
+      }
       else if (opts.method === "GET") data = current;
       else if (url.endsWith("/manifest/validate")) { validations.push(body); data = { sha256: "validated-sha", baseline: "baseline" }; }
       else { writes.push(body); data = current = { ...body, manifest_path: "server/sha.json", manifest_sha256: "saved-sha" }; }
@@ -96,6 +112,86 @@ test("llvm execution controls stay visible and stub options follow the selected 
   assert.equal(h.get("ut-c-stub_model").disabled, false);
 });
 
+test("ABI and interface selectors are always in the expanded manifest form", () => {
+  const html = fs.readFileSync(path.join(base, "app/templates/lanmatrix/ut_binding.html"), "utf8");
+  for (const id of ["ut-m-build-profile", "ut-m-interfaces-contract"]) {
+    assert.match(html, new RegExp('<select id="' + id + '"'));
+    assert.ok(html.indexOf('id="' + id + '"') < html.indexOf("<details"),
+      id + " must appear before collapsed advanced settings");
+  }
+});
+
+test("installed choices show evidence and save manifest references without manual entry", async () => {
+  const h = harness(); await settle();
+  assert.deepEqual(h.get("ut-m-build-profile").children.map(o => o.value), ["", "default", "typed32"]);
+  h.input("ut-m-build-profile", "typed32", "change");
+  h.input("ut-m-interfaces-contract", "approved@2", "change");
+  assert.match(h.get("ut-build-profile-description").textContent, /32 位/);
+  assert.match(h.get("ut-interface-contract-description").textContent, /external_read/);
+  assert.match(h.get("ut-interface-contract-description").textContent, /reviewer/);
+  await h.save();
+  assert.deepEqual(h.writes[0].manifest_document.build, { profile: "typed32" });
+  assert.deepEqual(h.writes[0].manifest_document.interfaces, { contract: "approved@2" });
+});
+
+test("missing ABI choice blocks save instead of silently relying on an undeclared default", async () => {
+  const existing = manifest(); delete existing.build;
+  const h = harness(true, { manifest_document: existing }); await settle();
+  assert.equal(h.get("ut-m-build-profile").value, "");
+  await h.save();
+  assert.equal(h.writes.length, 0);
+  assert.equal(h.focused(), "ut-m-build-profile");
+  assert.match(h.get("ut-binding-error").textContent, /请选择目标 ABI/);
+  h.input("ut-m-build-profile", "default", "change");
+  await h.save();
+  assert.equal(h.writes[0].manifest_document.build.profile, "default");
+  assert.match(h.get("ut-build-profile-description").textContent, /涉及指针的函数仍会被阻断/);
+});
+
+test("unavailable pinned choices remain visible and roundtrip without substitution", async () => {
+  const existing = { ...manifest(), build: { profile: "pinned-old" }, interfaces: { contract: "old@7" } };
+  const h = harness(true, { manifest_document: existing }); await settle();
+  assert.equal(h.get("ut-m-build-profile").value, "pinned-old");
+  assert.equal(h.get("ut-m-build-profile").children.at(-1).disabled, true);
+  assert.equal(h.get("ut-m-interfaces-contract").value, "old@7");
+  await h.save();
+  assert.deepEqual(h.writes[0].manifest_document, existing);
+});
+
+test("catalog failure keeps the saved document inspectable but disables save and validation", async () => {
+  const h = harness(true, { manifest_document: manifest() }, { catalogError: "tool version unavailable" });
+  await settle();
+  assert.equal(h.get("ut-m-project-id").value, "demo");
+  assert.equal(h.get("ut-config-save").disabled, true);
+  assert.equal(h.get("ut-manifest-validate").disabled, true);
+  assert.equal(h.get("ut-manifest-export").disabled, false);
+  assert.match(h.get("ut-binding-error").textContent, /tool version unavailable/);
+  await h.save();
+  assert.equal(h.writes.length, 0);
+});
+
+test("malformed or duplicate catalogs are rejected without guessed choices", async () => {
+  for (const options of [{}, { ...catalog(), build_profiles: [] },
+    { ...catalog(), interface_contracts: [{ id: "x", label: "one" }, { id: "x", label: "duplicate" }] }]) {
+    const h = harness(true, { manifest_document: manifest() }, { catalog: options });
+    await settle();
+    assert.equal(h.get("ut-config-save").disabled, true);
+    assert.equal(h.get("ut-m-build-profile").disabled, true);
+    assert.equal(h.get("ut-m-build-profile").value, "default");
+  }
+});
+
+test("catalog text is displayed as text and never inserted as markup", async () => {
+  const options = catalog();
+  options.interface_contracts[0].label = '<img src=x onerror="alert(1)">';
+  options.interface_contracts[0].description = "<script>bad()</script>";
+  const h = harness(true, { manifest_document: manifest() }, { catalog: options });
+  await settle();
+  assert.equal(h.get("ut-m-interfaces-contract").children[1].textContent, options.interface_contracts[0].label);
+  h.input("ut-m-interfaces-contract", "approved@2", "change");
+  assert.match(h.get("ut-interface-contract-description").textContent, /<script>bad\(\)<\/script>/);
+});
+
 test("saving uses numeric limits, CSRF and the document contract while keeping Clang", async () => {
   const h = harness(); await settle();
   h.change("stub_mode", "llm");
@@ -144,6 +240,7 @@ test("a new document keeps every policy choice unselected and omits optional fie
     assert.equal(h.get("ut-m-test_policy-" + key).value, "");
   }
   h.input("ut-m-project-id", "demo");
+  h.input("ut-m-build-profile", "default", "change");
   await h.save();
   assert.equal(h.writes.length, 0);
   assert.equal(h.focused(), "ut-m-test_policy-boundary_adjacent");
@@ -153,6 +250,7 @@ test("a new document keeps every policy choice unselected and omits optional fie
   await h.save();
   assert.deepEqual(h.writes[0].manifest_document, {
     project: { id: "demo" },
+    build: { profile: "default" },
     test_policy: { version: "1", boundary_adjacent: false, c1: true, mcdc: false, arithmetic: false, combination_group: false },
   });
 });
@@ -178,6 +276,7 @@ test("legacy import stays unchanged until conversion, which clears every policy 
   await h.save();
   assert.deepEqual(h.writes[1].manifest_document, {
     project: imported.project, custom: imported.custom, profile: { approved_exceptions: ["keep"] },
+    build: imported.build,
     test_policy: { version: "1", boundary_adjacent: true, c1: true, mcdc: true, arithmetic: false, combination_group: true },
   });
   assert.equal(Object.hasOwn(h.writes[1].manifest_document, "baseline"), false);

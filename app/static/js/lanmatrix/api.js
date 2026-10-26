@@ -385,6 +385,7 @@
 
     // --- Unit-test pipeline (ut-agent → WinAMS → check → LLM → review) --- //
     utGetConfig(pid) { return request("GET", `/projects/${pid}/ut/config`); },
+    utManifestOptions(pid) { return request("GET", `/projects/${pid}/ut/manifest/options`); },
     utPutConfig(pid, values) {
       return request("PUT", `/projects/${pid}/ut/config`, { body: values });
     },

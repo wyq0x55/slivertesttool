@@ -148,6 +148,26 @@ def test_manifest_validation_requires_csrf(env):
     assert response.status_code == 403
 
 
+def test_installed_choices_can_be_read_before_binding_without_mutating_config(env, monkeypatch):
+    from test_ut_manifest_options import options
+
+    monkeypatch.setattr(env.bridge, "configuration_options", options, raising=False)
+    assert env.call("get", "/config")[1]["data"] is None
+    status, body = env.call("get", "/manifest/options")
+    assert status == 200 and body["data"] == options(), body
+    assert env.call("get", "/config")[1]["data"] is None
+
+
+def test_reader_can_inspect_installed_choices_but_cannot_save_them(env, app_ctx, monkeypatch):
+    from test_ut_manifest_options import options
+
+    monkeypatch.setattr(env.bridge, "configuration_options", options, raising=False)
+    _as(env, _member(app_ctx, env.pid, "reader"))
+    status, body = env.call("get", "/manifest/options")
+    assert status == 200 and body["data"] == options(), body
+    assert env.call("put", "/config", json={"manifest_document": DOCUMENT})[0] == 403
+
+
 @pytest.fixture()
 def real_bridge(monkeypatch):
     root = os.environ.get("UT_HOST_TEST_AGENT_ROOT")
@@ -166,6 +186,17 @@ def test_real_bridge_accepts_versioned_manifest_and_rejects_unknown_schema_field
     status, body = env.call("post", "/manifest/validate", json={"manifest_document": invalid})
     assert status == 400 and "not_a_manifest_property" in body["error"]["message"], body
     assert env.call("get", "/config")[1]["data"]["manifest_path"] == saved["manifest_path"]
+
+
+def test_real_installed_options_are_available_without_a_manifest(env, real_bridge):
+    status, body = env.call("get", "/manifest/options")
+    assert status == 200, body
+    options = body["data"]
+    assert options["contract"] == "ut-agent.configuration-options/1"
+    assert any(item["id"] == "rh850-ghs" and item["pointer_size"] == 4
+               for item in options["build_profiles"])
+    assert any(item["id"] == "psd049-pal@1.1" for item in options["interface_contracts"])
+    assert env.call("get", "/config")[1]["data"] is None
 
 
 def test_legacy_nonmanifest_json_is_not_exposed_as_a_generic_file_reader(env, real_bridge, tmp_path):

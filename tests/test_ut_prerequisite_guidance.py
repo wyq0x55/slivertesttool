@@ -47,7 +47,7 @@ def test_projection_failure_identifies_contract_and_parameter_before_csv_exists(
                                    "callee": "external_read", "argument_index": 0}}
     reason = diagnostic.generation_failure_reason(unit)
     assert "external_read 的第 1 个参数（argument_index=0）" in reason
-    assert "interfaces.contract" in reason and "ID@版本" in reason
+    assert "外部函数指针接口契约" in reason and "从列表选择" in reason
     assert "新批次" in reason and "original typed diagnostic" in reason
     assert "类型化方向证据" in reason
 

@@ -236,6 +236,22 @@ a candidate.
 
 ## Configuration and interface prerequisites
 
+Settings exposes the target ABI selector and approved external-pointer interface
+selector directly in the expanded ProjectManifest form. The installed ut-agent
+supplies these choices through the read-only `configuration-options` bridge
+command; the platform's project-view-authorized `GET /manifest/options` does not
+need or change a saved binding. Users select a named configuration, see its
+pointer width or approved function scope, and the form stores the versioned
+references. No project-name matching or automatic ABI/contract selection occurs.
+
+Saving through the form requires an explicit ABI choice. The default option
+explicitly declares no target ABI and cannot execute pointer-bearing functions.
+An interface contract is conditional: when no implementation evidence proves
+external pointer direction, the user must select an applicable approved contract.
+Existing references absent from the installed catalog stay visible and unchanged.
+If discovery fails, the saved document remains inspectable/exportable, while
+save and validation are disabled until the tool connection is restored.
+
 An automation block is not a claim that a function cannot be supported.
 `ABI_POINTER_SIZE_UNDECLARED` requires an applicable, evidence-backed
 `build.profile`, recorded with its matching layout triple in the extracted
