@@ -138,6 +138,18 @@ async function ready(h, value = job()) {
   h.details.at(-1).resolve(value);
   await settle();
 }
+function issueTab(h, code, version) {
+  h.get("ut-d-issues").listeners.click({ target: { closest(selector) {
+    return selector === "[data-issue-tab]" ? { dataset: { issueTab: code, issueVersion: String(version) } } : null;
+  } } });
+  return h.get("ut-d-issues").innerHTML;
+}
+// Issues are shown one type at a time; this reads every tab in order.
+function allIssues(h, version = 10) {
+  const first = h.get("ut-d-issues").innerHTML;
+  const codes = [...first.matchAll(/data-issue-tab="([^"]+)"/g)].map((m) => m[1]);
+  return codes.length ? codes.map((code) => issueTab(h, code, version)).join("") : first;
+}
 
 test("step timing shows frozen, running, failed and per-version records safely", async () => {
   const h = harness(), value = job(20, "executing");
@@ -148,8 +160,10 @@ test("step timing shows frozen, running, failed and per-version records safely",
     { step: "<img src=x onerror=alert(1)>", status: "running", elapsed_ms: 4000 }
   ] };
   await ready(h, value);
-  const table = h.get("ut-d-timing").innerHTML;
-  assert.match(table, /排队调度等待（等待）.*0 毫秒/);
+  const table = h.get("ut-d-progress-steps").innerHTML;
+  // Each record sits under its pipeline stage; only state intervals add up.
+  assert.match(table, /排队.*ut-stage-time">用时 0 毫秒<.*步骤用时 · 1 项.*排队调度等待（等待）.*0 毫秒/);
+  assert.match(table, /data-keep="stage:2"><summary>步骤用时 · 3 项/);
   assert.match(table, /LLVM 编译、执行与校验.*第 1 版.*1.25 秒/);
   assert.match(table, /补用例模型请求.*第 2 版 · 第 1 轮.*调用失败.*2.50 秒/);
   assert.match(table, /已用 4.00 秒/);
@@ -157,7 +171,7 @@ test("step timing shows frozen, running, failed and per-version records safely",
   assert.match(table, /&lt;img/);
   h.click("ut-d-refresh"); await settle();
   h.details.at(-1).reject(new Error("offline")); await settle();
-  assert.equal(h.get("ut-d-timing").innerHTML, table);
+  assert.equal(h.get("ut-d-progress-steps").innerHTML, table);
   assert.match(h.get("ut-d-sync").textContent, /刷新失败/);
 });
 
@@ -171,7 +185,8 @@ test("shared and function timing use independent timestamps and stop extrapolati
       { phase: "validating", status: "interrupted", duration_ms: 999999 }]
   } };
   await ready(h, value);
-  const table = h.get("ut-d-timing").innerHTML;
+  const table = h.get("ut-d-progress-steps").innerHTML;
+  assert.match(table, /data-keep="stage:1"><summary>步骤用时 · 3 项/);
   assert.match(table, /Clang 抽取（整批共享）.*整批 #8.*已用 6.00 秒/);
   assert.match(table, /求解测试义务.*记录未更新.*已用 2.00 秒/);
   assert.match(table, /校验用例集.*中断，结束时间未知.*未记录/);
@@ -181,7 +196,7 @@ test("shared and function timing use independent timestamps and stop extrapolati
 test("legacy timing is unknown instead of a fabricated zero", async () => {
   const h = harness();
   await ready(h);
-  assert.equal(h.get("ut-d-timing").innerHTML, "");
+  assert.doesNotMatch(h.get("ut-d-progress-steps").innerHTML, /步骤用时|ut-stage-time/);
   assert.match(h.get("ut-d-timing-note").textContent, /旧记录不补算为 0/);
 });
 
@@ -447,7 +462,10 @@ test("check issues render as structured evidence instead of raw JSON", async () 
       detail: { c0: 50, c0_ratio: [1, 2], c1: null, c1_ratio: [0, -1], mcdc: null } },
   ] };
   await ready(h, value);
-  const html = h.get("ut-d-issues").innerHTML;
+  const first = h.get("ut-d-issues").innerHTML;
+  assert.match(first, /data-issue-tab="ORACLE_MISMATCH"[^>]*>.*1 个期望值.*<span class="ut-tab-n">1</);
+  assert.doesNotMatch(first, /C0<\/b> 50%/);
+  const html = allIssues(h);
   assert.match(html, /<table class="ut-issue-table">[\s\S]*#1[\s\S]*f@@/);
   assert.match(html, /C0<\/b> 50%（1 \/ 2）/);
   assert.match(html, /C1<\/b> 未测量/);
@@ -513,9 +531,15 @@ test("the selected version's host coverage report shows each line's C0, C1 and M
   assert.match(html, /C1（判定）<\/b> 75%（3 \/ 4）/);
   assert.match(html, /MC\/DC<\/b> 50%（1 \/ 2）/);
   assert.match(html, /未执行的行：10 · 未完全覆盖的判定所在行：4, 7/);
-  assert.match(html, /<tr class="is-miss"><td class="ut-num">10<\/td><td><span class="is-miss">×/);
-  assert.match(html, /1 \/ 2<span class="submuted"> 未证明条件 2/);
-  assert.match(html, /T✓<\/span><span class="is-miss">F✗/);
+  // gcov -b layout: count (##### never run, - non-code), line number, source,
+  // then each decision's outcomes on annotation rows beneath it.
+  assert.match(html, /<tr class="ut-gcov-line is-miss"><td class="ut-gcov-count">#####<\/td><td class="ut-gcov-no">10</);
+  assert.match(html, /<td class="ut-gcov-count">-<\/td><td class="ut-gcov-no">2</);
+  assert.match(html, /<td class="ut-gcov-count">2<\/td><td class="ut-gcov-no">4<\/td><td class="ut-gcov-src"><code>\tif/);
+  assert.match(html, /ut-gcov-note is-full"><td><\/td><td><\/td><td><span class="ut-gcov-kind">判定 第 9 列<\/span>/);
+  assert.match(html, /MC\/DC 第 9 列<\/span>1 \/ 2 个条件已证明独立影响 · 未证明条件 2/);
+  assert.match(html, /ut-gcov-line is-gap"><td class="ut-gcov-count">1<\/td><td class="ut-gcov-no">7</);
+  assert.match(html, /真 1 ✓<\/span> · <span class="is-miss">假 0 ✗/);
   assert.match(html, /x &lt; &lt;y&gt;/);
   assert.match(html, /函数范围外的记录：第 30 行/);
   assert.match(html, /宏展开的判定（行号属于宏定义文件）：第 3 行/);
@@ -524,7 +548,7 @@ test("the selected version's host coverage report shows each line's C0, C1 and M
   h.get("ut-d-coverage").listeners.click({ target: { closest: () => ({ dataset: { covView: "gaps" } }) } });
   const gaps = h.get("ut-d-coverage-body").innerHTML;
   assert.doesNotMatch(gaps, /classify/);
-  assert.match(gaps, /<td class="ut-num">7<\/td>/);
+  assert.match(gaps, /<td class="ut-gcov-no">7<\/td>/);
   h.click("ut-d-refresh");
   await settle();
   h.details.at(-1).resolve(value);
@@ -594,7 +618,7 @@ test("diagnostic guidance keeps actionable steps uncut, escapes evidence and dow
   value.attempts[0].execution = { evidence_source: "HOST_EXECUTION", counts_as_target_evidence: false };
   await ready(h, value);
   h.pin(10);
-  const html = h.get("ut-d-issues").innerHTML;
+  const html = allIssues(h);
   assert.match(html, /处理入口[\s\S]*语义／环境证据[\s\S]*补齐类型化读取契约/);
   assert.match(html, /如何确认完成[\s\S]*重新提取与校验/);
   assert.ok(html.includes(longReason));
@@ -690,17 +714,21 @@ test("full machine gap and output lists paginate beyond the 50-item issue previe
   value.attempts[0].csv_sha256 = "sha10";
   value.attempts[0].check = typedCheck();
   await ready(h, value);
-  let html = h.get("ut-d-issues").innerHTML;
+  let html = issueTab(h, "INPUT_OBLIGATION_UNRESOLVED", 10);
+  assert.match(html, /data-issue-tab="INPUT_OBLIGATION_UNRESOLVED".*<span class="ut-tab-n">65</);
+  assert.match(html, /data-issue-tab="OUTPUT_ORACLE_PENDING".*<span class="ut-tab-n">61</);
   assert.equal((html.match(/class="ut-gap-card"/g) || []).length, 8);
   assert.match(html, /显示 1–8 \/ 65 项/);
-  assert.match(html, /显示 1–8 \/ 61 项/);
-  assert.doesNotMatch(html, /B64|O60/);
+  assert.match(issueTab(h, "OUTPUT_ORACLE_PENDING", 10), /显示 1–8 \/ 61 项/);
+  assert.doesNotMatch(allIssues(h), /B64|O60/);
+  issueTab(h, "INPUT_OBLIGATION_UNRESOLVED", 10);
   issueAction(h, "[data-gap-page]", { gapVersion: "10", gapKind: "unresolved", gapPage: "8" });
   html = h.get("ut-d-issues").innerHTML;
   assert.equal((html.match(/class="ut-gap-card"/g) || []).length, 1);
   assert.match(html, /显示 65–65 \/ 65 项/);
   assert.match(html, /B64/);
   assert.doesNotMatch(html, /<code>B0<\/code>/);
+  issueTab(h, "OUTPUT_ORACLE_PENDING", 10);
   issueAction(h, "[data-gap-page]", { gapVersion: "10", gapKind: "output_pending", gapPage: "7" });
   assert.match(h.get("ut-d-issues").innerHTML, /O60/);
 });
@@ -851,12 +879,48 @@ test("a missing case names its configured requirement while missing annotations 
       detail: [{ inputs: { x: "3" }, missing_kind: "ANNOTATION", annotation: "境界値 3" }] },
   ];
   await ready(h, value);
-  const html = h.get("ut-d-issues").innerHTML;
+  const html = allIssues(h);
   assert.match(html, /配置依据[\s\S]*C1 分支结果覆盖=要求/);
   assert.match(html, /具体缺口[\s\S]*判定 B；目标结果为假/);
   assert.match(html, /需恢复的注释／标签[\s\S]*境界値 3/);
   assert.match(html, /处理入口[\s\S]*注释／标签/);
   assert.match(html, /输入行仍存在，补注释即可/);
+});
+
+test("issues are read one type at a time, repeated codes collapse and each type says who can fix it", async () => {
+  const h = harness();
+  const value = job();
+  const review = { title: "主机用例集需人工复核", action_scope: "HUMAN_REVIEW", steps: ["核对证据"], verification: "复核" };
+  value.attempts[0].check.issues = [
+    { code: "INPUT_OBLIGATION_UNRESOLVED", severity: "warning", message: "3 个测试要求未解决",
+      detail: [{ obligation_id: "B1", gap_class: "SEMANTIC_EVIDENCE" }, { obligation_id: "B2", gap_class: "MISSING_CASE" },
+        { obligation_id: "B3", gap_class: "SEMANTIC_EVIDENCE" }] },
+    { code: "HOST_SUITE_REVIEW_REQUIRED", severity: "warning", message: "B1 需复核", repairable: false, guidance: review },
+    { code: "HOST_SUITE_REVIEW_REQUIRED", severity: "warning", message: "B3 需复核", repairable: false, guidance: review },
+    { code: "ORACLE_MISMATCH", severity: "error", message: "期望值不一致", repairable: true },
+  ];
+  await ready(h, value);
+  // Errors come first and are the default tab; only that type is rendered.
+  let html = h.get("ut-d-issues").innerHTML;
+  assert.match(html, /class="sev-error on" aria-pressed="true" data-issue-tab="ORACLE_MISMATCH"/);
+  assert.ok(html.indexOf('data-issue-tab="ORACLE_MISMATCH"') < html.indexOf('data-issue-tab="INPUT_OBLIGATION_UNRESOLVED"'));
+  assert.match(html, /data-issue-tab="HOST_SUITE_REVIEW_REQUIRED"[^>]*>.*主机用例集需人工复核 <span class="ut-tab-n">2</);
+  assert.match(html, /ut-issue-route is-model">可由本地模型补输入行/);
+  assert.doesNotMatch(html, /B1 需复核/);
+
+  html = issueTab(h, "HOST_SUITE_REVIEW_REQUIRED", 10);
+  assert.equal((html.match(/<li class="ut-issue /g) || []).length, 1);
+  assert.match(html, /<span class="ut-issue-count">×2<\/span>/);
+  assert.equal((html.match(/处理入口/g) || []).length, 1);
+  assert.match(html, /<ol class="ut-issue-msgs"><li>B1 需复核<\/li><li>B3 需复核<\/li><\/ol>/);
+  assert.match(html, /ut-issue-route is-human">本地模型不能修正：需人工确认/);
+  assert.match(html, /完整原始诊断[\s\S]*B1 需复核[\s\S]*B3 需复核/);
+
+  html = issueTab(h, "INPUT_OBLIGATION_UNRESOLVED", 10);
+  assert.match(html, /1 项缺用例可由本地模型补输入行，其余需补证据或人工确认/);
+  // Gap cards fold to one line each.
+  assert.equal((html.match(/<details class="ut-gap-card" data-keep="gap:10:B\d"><summary>/g) || []).length, 3);
+  assert.equal(h.get("ut-d-issues-sum").textContent, "· 1 个错误 · 3 个警告");
 });
 
 test("a page without a candidate never offers approval", async () => {
@@ -1024,7 +1088,7 @@ test("superseded jobs leave the working list until asked for", async () => {
   assert.doesNotMatch(rows, /data-retry="1"/);
 });
 
-test("the job list shows host C0/C1/MC/DC and links the per-line report", async () => {
+test("the job list shows host C0/C1/MC/DC on one line without a report link", async () => {
   const h = harness(undefined, "ut_tasks.js", { jobs: [
     listed(7, "awaiting_review", { coverage: { evidence_source: "HOST_EXECUTION", c0: 100, c1: 75, mcdc: null,
       has_report: true } }),
@@ -1033,8 +1097,8 @@ test("the job list shows host C0/C1/MC/DC and links the per-line report", async 
   await settle();
   const rows = h.get("ut-rows").innerHTML;
   assert.match(rows, /class="is-full"><b>C0<\/b> 100%[\s\S]*class="is-gap"><b>C1<\/b> 75%[\s\S]*class="is-missing"><b>MC\/DC<\/b> —/);
-  assert.match(rows, /href="\?job=7" data-job="7" data-coverage="1">逐行报告/);
-  assert.equal((rows.match(/逐行报告/g) || []).length, 1);
+  assert.match(rows, /class="ut-cov-mini is-inline"/);
+  assert.doesNotMatch(rows, /逐行报告|data-coverage/);
   assert.match(rows, /#6[\s\S]*<td><span class="submuted">—<\/span><\/td>/);
 });
 
