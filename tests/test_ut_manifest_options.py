@@ -35,12 +35,26 @@ def test_options_use_the_installed_bridge_without_a_manifest(monkeypatch):
 
 
 @pytest.mark.parametrize("result", [None, {}, {"contract": "other"},
-                                   {**options(), "build_profiles": None}])
+                                   {**options(), "build_profiles": None},
+                                   {**options(), "pointer_sizes": []}])
 def test_malformed_discovery_is_a_visible_error_not_a_guessed_default(monkeypatch, result):
     monkeypatch.setattr(pipeline, "get_bridge", lambda: SimpleNamespace(configuration_options=lambda: result))
     with pytest.raises(ServiceError) as error:
         pipeline.manifest_options()
     assert error.value.code == "UT_CONFIGURATION_OPTIONS_UNAVAILABLE"
+
+
+@pytest.mark.parametrize("value", [None, []])
+def test_interface_catalogs_are_optional_for_normal_unit_test_configuration(monkeypatch, value):
+    result = options()
+    if value is None:
+        del result["interface_directions"]
+        del result["interface_contracts"]
+    else:
+        result["interface_directions"] = value
+        result["interface_contracts"] = value
+    monkeypatch.setattr(pipeline, "get_bridge", lambda: SimpleNamespace(configuration_options=lambda: result))
+    assert pipeline.manifest_options() == result
 
 
 def test_old_or_unavailable_engine_has_an_actionable_error(monkeypatch):

@@ -234,24 +234,28 @@ extrapolating, and completed durations stay fixed across refreshes. Timing is
 diagnostic information and cannot promote an unknown semantic result or approve
 a candidate.
 
-## Configuration and interface prerequisites
+## Configuration and automated dependency stubs
 
-Settings exposes a generic target-ABI pointer width and an external pointer
-entry editor in the expanded ProjectManifest form. The installed ut-agent
-supplies the allowed widths and direction pairs through the read-only
+Settings exposes a generic target-ABI pointer width in the expanded
+ProjectManifest form. Dependency calls use automated synthetic controlled stubs;
+interface declarations and pointer-direction editing are not prerequisites for
+unit testing. The installed ut-agent supplies allowed widths and compiler
+compatibility profiles through the read-only
 `configuration-options` contract `ut-agent.configuration-options/2`. The
 project-view-authorized `GET /manifest/options` does not need or change a saved
 binding. A 32-bit or 64-bit choice writes `build.abi.pointer_size` and asserts
-only that width. Compiler-compatibility profiles and packaged interface
-contracts remain optional; they are not the only way to declare these facts.
+only that width. Compiler-compatibility profiles remain optional.
 No project-name matching or automatic selection occurs.
 
 Saving a new declaration requires an explicit width. Undeclared width cannot
 execute pointer-bearing functions. Existing manifests that only named
-`build.profile` stay unchanged until the width control is edited. Interface
-entries name the function, zero-based parameter index and direction. A packaged
-contract can still be selected. References absent from the installed catalog
-stay visible and unchanged. If discovery fails, the saved document remains
+`build.profile` stay unchanged until the width control is edited. Advanced users
+can still import, preserve and edit raw `interfaces.entries` and
+`interfaces.contract` in the full JSON editor. The platform passes those fields
+to ut-agent without interpreting or normalizing their semantics. Ordinary form
+edits preserve them, including references absent from the installed catalog.
+The form does not require interface catalogs. If ABI/profile discovery fails,
+the saved document remains
 inspectable and exportable, while save and validation are disabled.
 
 An automation block is not a claim that a function cannot be supported.
@@ -264,9 +268,16 @@ pointer width as record-layout proof.
 
 A `MISSING_INTERFACE_CONTRACT` projection failure identifies the callee and
 zero-based argument index even when no CSV or attempt exists. The job reason
-tells the user to enter that function, parameter index and direction, or to
-select a packaged contract whose entry matches. Direction is never guessed from
-a name. Extractor support can still establish it from a bound implementation.
-A model proposal alone proves neither pointer direction nor pointee extent.
-Preserve the raw diagnostic and regenerate after adding the declaration; these
-prerequisites do not consume input repair rounds or permit automatic approval.
+preserves the original diagnostic and directs developers to check the paired
+ut-agent version, configuration and automated stub support. It does not require
+the user to declare real dependency pointer semantics or include its implementation.
+After resolving the tool limitation, create a new batch. CSV input repair cannot
+remove this block.
+
+Deterministic automated stubs are the default. Optional model bodies remain
+candidates until externally validated, compiled, executed and compared with
+deterministic observations, then reviewed by a human. The unit boundary includes
+all dependency callees, including those in the same translation unit. Recording
+and configurable writeback belong to ut-agent. Synthetic behavior and model
+proposals do not prove real dependency semantics or pointee extent. Platform
+diagnostics never promote this evidence to target validation or automatic approval.

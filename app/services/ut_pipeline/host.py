@@ -1,7 +1,9 @@
-"""Primary LLVM execution and bounded, non-authoritative stub proposals.
+"""Primary LLVM execution with automatic controlled stubs by default.
 
 Only ut-agent owns typed facts, harness construction, CSV binding and compilation.
-This service owns the model call, durable artifacts and workflow checkpoints.
+This service owns the optional model call, durable artifacts and checkpoints.
+Model bodies remain candidates until checked by the external execute command;
+the platform neither infers dependency semantics nor requires interface entries.
 """
 
 from __future__ import annotations

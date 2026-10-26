@@ -57,6 +57,23 @@ are independent of any original compiler. Stub-model and input-repair model
 settings are both available, with separate budgets. Credentials remain global.
 No WinAMS work root, linked build or OMF tool belongs to a platform job.
 
+Unit testing uses automated, synthetic controlled stubs for dependency calls,
+including other callees in the same translation unit. `deterministic` is the
+default; a model is optional. The normal binding form does not require
+`interfaces.entries`, an interface contract reference, or a pointer-direction
+editor. Advanced users may still import, preserve and edit `interfaces.entries`
+and `interfaces.contract` in the full manifest JSON. These raw fields go unchanged
+to ut-agent for authoritative validation; saving ordinary form fields does not
+normalize or discard them. Interface catalogs are not required to load this form.
+ABI declarations and the selected test policy remain separate requirements.
+
+Stub behavior controls a test dependency; it does not prove the real dependency's
+implementation semantics. The external ut-agent owns the isolation boundary,
+typed parameter handling, recording and configurable writeback. This platform
+does not infer pointer direction, size, layout or write order. A model candidate
+cannot supply that proof. An unsupported type or tool limitation remains an
+explicit diagnostic, rather than a claim that execution succeeded.
+
 ## Ownership and execution
 
 - Models and additive PostgreSQL column upgrades: `app/models/ut_pipeline.py`
@@ -83,11 +100,19 @@ behavior and raw fields, so reference reprojection uses the same typed evidence
 as formal generation. Missing selected generation units fail with the original
 extractor/generation report diagnostic instead of an empty successful response.
 
-Deterministic mode calls execute once. LLM mode prepares once per execution
+Deterministic mode calls execute once with automated stubs and no model call.
+Both exposed modes use the external stub boundary; neither is a switch to execute
+real dependencies. The platform exposes no disable-stubs flag and adds no new
+backend flags. Isolation inside the generated harness must be verified in
+ut-agent; platform-only tests do not prove it.
+LLM mode prepares once per execution
 attempt, skips the model when no stubs exist, and otherwise calls the existing
 provider with the prepared messages, temperature zero and at most 8192 output
 tokens. The model proposes only per-callee body statements, without outer braces.
 It cannot replace the trusted harness, subject, observations or expected values.
+Every proposed body goes through the external tool's validation, compilation,
+execution and comparison with deterministic observations. A CANDIDATE label
+alone does not establish PASS, target evidence or delivery validation.
 
 The exact proposal keys are `status`, `stub_bodies`, `evidence_ids`, `limitations`.
 CANDIDATE requires both `typed-function-ir-v5` and `suite-stub-projection-v1` IDs.
@@ -119,6 +144,18 @@ entries retain host-only evidence qualifiers; approval does not install stubs in
 WinAMS or mutate formal generation outputs.
 
 ## Verification
+
+Focused platform checks require neither a database nor a model gateway:
+
+```text
+python -m pytest tests/test_ut_stub_boundary.py tests/test_ut_prerequisite_guidance.py tests/test_ut_manifest_options.py -q
+node --test frontend/tests/ut-binding.test.cjs frontend/tests/ut-project.test.cjs
+```
+
+These cover default execution dispatch, optional candidate validation routing,
+raw manifest preservation, actionable diagnostics and binding-form behavior.
+They use fake bridge responses and do not prove C stub semantics or same-TU
+isolation in the external generator.
 
 Run targeted PostgreSQL tests with an explicitly disposable `TEST_DATABASE_URL`
 whose database ends in `_test` (the fixture resets its tables):

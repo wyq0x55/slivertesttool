@@ -11,7 +11,7 @@
   var MODEL = ["stub_model", "stub_max_rounds"];
   var POLICY = ["boundary_adjacent", "c1", "mcdc", "arithmetic", "combination_group"];
   var FIELDS = ["project.id", "baseline.id", "baseline.version", "build.profile", "winams.profile",
-    "interfaces.contract", "rules.project_pack", "build.exclude_directories", "profile.mcdc_enabled"]
+    "rules.project_pack", "build.exclude_directories", "profile.mcdc_enabled"]
     .concat(POLICY.map(function (key) { return "test_policy." + key; }));
   var LIMIT = 256 * 1024;
   var draft = {}, snapshots = {}, savedConfig = null, savedState = "", rawSnapshot = "";
@@ -73,9 +73,9 @@
   function acceptChoices(value) {
     if (!object(value) || value.contract !== "ut-agent.configuration-options/2")
       throw new Error("工具未提供可用的项目配置目录，请升级配套 ut-agent 后刷新。");
-    ["build_profiles", "interface_contracts", "pointer_sizes", "interface_directions"].forEach(function (key) {
+    ["build_profiles", "pointer_sizes"].forEach(function (key) {
       var ids = new Set();
-      if (!Array.isArray(value[key]) || (key !== "interface_contracts" && !value[key].length))
+      if (!Array.isArray(value[key]) || !value[key].length)
         throw new Error("项目配置目录不完整，请检查 ut-agent 后刷新。");
       value[key].forEach(function (item) {
         if (!object(item) || typeof item.id !== "string" || !item.id.trim() ||
@@ -84,8 +84,6 @@
         if (key === "pointer_sizes" && item.pointer_size !== null &&
             !(Number.isInteger(item.pointer_size) && item.pointer_size > 0))
           throw new Error("项目配置目录含有无效指针宽度，请检查 ut-agent 后刷新。");
-        if (key === "interface_directions" && (typeof item.direction !== "string" || typeof item.pointee_access_order !== "string"))
-          throw new Error("项目配置目录含有无效接口方向，请检查 ut-agent 后刷新。");
         ids.add(item.id);
       });
     });
@@ -93,12 +91,6 @@
   }
   function pointerItem(id) {
     return choices && choices.pointer_sizes.find(function (item) { return item.id === id; });
-  }
-  function directionItem(id) {
-    return choices && choices.interface_directions.find(function (item) { return item.id === id; });
-  }
-  function entryList() {
-    return object(draft.interfaces) && Array.isArray(draft.interfaces.entries) ? draft.interfaces.entries : [];
   }
   function renderSelect(path, items, emptyLabel) {
     var select = field(path), current = get(path);
@@ -146,99 +138,8 @@
     if (current === "custom") option("custom", "当前指针宽度不在本机目录中：" + draft.build.abi.pointer_size, true);
     select.value = current;
   }
-  function renderEntries() {
-    var host = $("ut-interface-entries");
-    host.replaceChildren();
-    entryList().forEach(function (entry) { host.appendChild(entryRow(entry)); });
-  }
-  function entryRow(entry) {
-    var row = document.createElement("div");
-    row.className = "ut-entry-row";
-    function labeled(text, control) {
-      var wrap = document.createElement("label");
-      wrap.appendChild(document.createTextNode(text));
-      wrap.appendChild(control);
-      return wrap;
-    }
-    var name = document.createElement("input");
-    name.type = "text"; name.autocomplete = "off"; name.spellcheck = false;
-    name.value = typeof entry.function === "string" ? entry.function : "";
-    var index = document.createElement("input");
-    index.type = "number"; index.min = "0"; index.step = "1";
-    index.value = typeof entry.parameter_index === "number" ? String(entry.parameter_index) : "";
-    var direction = document.createElement("select");
-    var empty = document.createElement("option");
-    empty.value = ""; empty.textContent = "请选择方向";
-    direction.appendChild(empty);
-    var directionLabels = {
-      "in": "输入，只读", "out": "输出，只写",
-      "inout-read-first": "输入输出，先读后写", "inout-write-first": "输入输出，先写后读"
-    };
-    (choices ? choices.interface_directions : []).forEach(function (item) {
-      var node = document.createElement("option");
-      node.value = item.id; node.textContent = directionLabels[item.id] || item.label;
-      direction.appendChild(node);
-    });
-    var selected = "";
-    if (choices) {
-      var match = choices.interface_directions.find(function (item) {
-        return item.direction === entry.direction && item.pointee_access_order === entry.pointee_access_order;
-      });
-      selected = match ? match.id : "";
-    }
-    if (!selected && entry.direction) {
-      var custom = document.createElement("option");
-      custom.value = "custom"; custom.disabled = true; custom.textContent = "当前方向不在目录中";
-      direction.appendChild(custom);
-      selected = "custom";
-    }
-    direction.value = selected;
-    row._storedDirection = entry.direction || "";
-    row._storedOrder = entry.pointee_access_order || "";
-    var remove = document.createElement("button");
-    remove.type = "button"; remove.className = "btn"; remove.textContent = "删除";
-    remove.addEventListener("click", function () {
-      if (!editable()) return;
-      row.remove();
-      clearError();
-      try { syncForm(false); } catch (e) { fail(e.message, e.node); }
-      changed();
-    });
-    [name, index, direction].forEach(function (control) {
-      ["input", "change"].forEach(function (event) {
-        control.addEventListener(event, function () {
-          if (!editable()) return;
-          clearError();
-          try { syncForm(false); } catch (e) { fail(e.message, e.node); }
-          changed();
-        });
-      });
-    });
-    row._name = name; row._index = index; row._direction = direction;
-    row.appendChild(labeled("函数", name));
-    row.appendChild(labeled("参数序号", index));
-    row.appendChild(labeled("方向", direction));
-    row.appendChild(remove);
-    return row;
-  }
-  function readEntries() {
-    return $("ut-interface-entries").children.map(function (row) {
-      var spec = directionItem(row._direction.value);
-      var token = String(row._index.value == null ? "" : row._index.value).trim();
-      var parameter = /^(0|[1-9]\d*)$/.test(token) ? Number(token) : token;
-      return {
-        function: String(row._name.value || "").trim(),
-        parameter_index: parameter,
-        direction: spec ? spec.direction : (row._direction.value === "custom" ? row._storedDirection : ""),
-        pointee_access_order: spec ? spec.pointee_access_order : (row._direction.value === "custom" ? row._storedOrder : "")
-      };
-    }).filter(function (entry) {
-      return entry.function || entry.parameter_index !== "" || entry.direction;
-    });
-  }
   function configurationDetails() {
     var build = choices && choices.build_profiles.find(function (item) { return item.id === get("build.profile"); });
-    var contract = choices && choices.interface_contracts.find(function (item) { return item.id === get("interfaces.contract"); });
     var abiValue = $("ut-m-build-abi").value, abi = pointerItem(abiValue);
     var abiText = "请选择指针宽度。32 位或 64 位只声明指针宽度。";
     if (abiValue === "legacy")
@@ -253,20 +154,10 @@
     $("ut-build-abi-description").textContent = abiText + (abi && abi.description ? " " + abi.description : "");
     $("ut-build-profile-description").textContent = build ? (build.description || "") :
       get("build.profile") ? "当前编译器兼容配置不在本机目录中，已保留原值。" : "使用默认编译上下文，不附加特定编译器兼容项。";
-    $("ut-interface-entry-description").textContent = entryList().length ?
-      "已声明 " + entryList().length + " 条外部指针方向。保存后创建新批次才会用于提取。" :
-      "未声明条目。外部指针参数必须能由类型化实现证据证明，或在这里逐条填写。";
-    $("ut-interface-contract-description").textContent = contract ?
-      (contract.description || "") + " 适用函数：" + (Array.isArray(contract.functions) ? contract.functions.join("、") : "请核对契约范围") +
-      "。审批：" + (contract.approved_by || "见契约记录") + " / " + (contract.approved_at || "见契约记录") :
-      get("interfaces.contract") ? "当前契约不在本机已审批目录中，已保留原值，请检查工具版本与契约。" :
-        "未引用已审批契约。需要时直接填写上面的函数条目。";
   }
   function renderFields() {
     renderAbi();
-    renderEntries();
     renderSelect("build.profile", choices ? choices.build_profiles : [], "默认编译上下文");
-    renderSelect("interfaces.contract", choices ? choices.interface_contracts : [], "不引用已审批契约");
     FIELDS.forEach(function (p) {
       var value = get(p);
       if (p === "build.exclude_directories") value = Array.isArray(value) ? value.join("\n") : "";
@@ -312,19 +203,6 @@
     if (!object(draft.build)) draft.build = {};
     draft.build.abi = { pointer_size: item.pointer_size };
   }
-  function applyEntries() {
-    var entries = readEntries();
-    if (JSON.stringify(entries) === JSON.stringify(entryList())) return;
-    if (!entries.length) {
-      if (object(draft.interfaces)) {
-        delete draft.interfaces.entries;
-        if (!Object.keys(draft.interfaces).length) delete draft.interfaces;
-      }
-      return;
-    }
-    if (!object(draft.interfaces)) draft.interfaces = {};
-    draft.interfaces.entries = entries;
-  }
   // Only changed fields are projected, preserving unknown keys, explicit nulls and absence.
   function syncForm(refreshFields) {
     var edits = FIELDS.filter(function (p) { return field(p).value !== snapshots[p]; })
@@ -347,7 +225,6 @@
       }
     });
     applyAbi();
-    applyEntries();
     if (refreshFields !== false) renderFields();
     else FIELDS.forEach(function (p) { snapshots[p] = field(p).value; });
     renderRaw();
@@ -372,18 +249,6 @@
     } else if (profile && profile.pointer_size != null && profile.pointer_size !== abi.pointer_size) {
       throw error("指针宽度与编译器兼容配置不一致。请改成相同宽度，或改用默认编译上下文。", $("ut-m-build-abi"));
     }
-    var seen = {};
-    entryList().forEach(function (entry) {
-      if (typeof entry.function !== "string" || !/^\S+$/.test(entry.function))
-        throw error("请填写外部函数名，不能包含空白。", $("ut-interface-add"));
-      if (typeof entry.parameter_index !== "number" || !Number.isInteger(entry.parameter_index) || entry.parameter_index < 0)
-        throw error("参数序号必须是从 0 开始的整数。", $("ut-interface-add"));
-      if (!entry.direction || !entry.pointee_access_order)
-        throw error("请选择该指针参数的读写方向。", $("ut-interface-add"));
-      var key = entry.function + "\u0000" + entry.parameter_index;
-      if (seen[key]) throw error("同一函数的同一参数不能重复声明。", $("ut-interface-add"));
-      seen[key] = true;
-    });
     if (legacy) return;
     POLICY.forEach(function (key) {
       if (typeof get("test_policy." + key) !== "boolean") throw error("请明确选择每项测试要求的是或否。", field("test_policy." + key));
@@ -404,16 +269,8 @@
         (!llm && MODEL.indexOf(k) >= 0);
     });
     FIELDS.forEach(function (p) { field(p).disabled = locked || readonly ||
-      (!choices && (p === "build.profile" || p === "interfaces.contract")); });
+      (!choices && p === "build.profile"); });
     $("ut-m-build-abi").disabled = locked || readonly || !choices;
-    $("ut-interface-add").disabled = locked || readonly || !choices;
-    (function walk(node) {
-      Array.prototype.forEach.call(node.children || [], function (child) {
-        if (child && /^(input|select|button)$/i.test(child.tagName || ""))
-          child.disabled = locked || readonly || !choices;
-        walk(child);
-      });
-    })($("ut-interface-entries"));
     $("ut-manifest-json").readOnly = readonly;
     $("ut-manifest-json").disabled = locked;
     ["ut-config-save", "ut-manifest-import", "ut-manifest-file", "ut-manifest-validate"].forEach(function (id) {
@@ -456,23 +313,6 @@
       try { syncForm(false); } catch (e) { fail(e.message, e.node); }
       changed();
     });
-  });
-  $("ut-interface-add").addEventListener("click", function () {
-    if (!editable()) return;
-    clearError();
-    try {
-      syncForm(false);
-      if (!object(draft.interfaces)) draft.interfaces = {};
-      var entries = entryList().slice();
-      entries.push({ function: "", parameter_index: "", direction: "", pointee_access_order: "" });
-      draft.interfaces.entries = entries;
-      renderEntries();
-      renderRaw();
-      configurationDetails();
-      changed();
-      var rows = $("ut-interface-entries").children;
-      if (rows.length) rows[rows.length - 1]._name.focus();
-    } catch (e) { fail(e.message, e.node); }
   });
   $("ut-manifest-json").addEventListener("input", function () {
     if (!editable()) return;

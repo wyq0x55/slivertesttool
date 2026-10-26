@@ -132,38 +132,90 @@ test("llvm execution controls stay visible and stub options follow the selected 
   assert.equal(h.get("ut-c-stub_model").disabled, false);
 });
 
-test("ABI width and interface entries are always in the expanded manifest form", () => {
+test("normal form exposes ABI and automatic stubs without a pointer direction editor", () => {
   const html = fs.readFileSync(path.join(base, "app/templates/lanmatrix/ut_binding.html"), "utf8");
-  for (const id of ["ut-m-build-abi", "ut-interface-entries"]) {
-    assert.ok(html.includes('id="' + id + '"'));
-    assert.ok(html.indexOf('id="' + id + '"') < html.indexOf("<details"),
-      id + " must appear before collapsed advanced settings");
+  assert.ok(html.indexOf('id="ut-m-build-abi"') < html.indexOf("<details"));
+  for (const id of ["ut-interface-entries", "ut-interface-add", "ut-m-interfaces-contract"]) {
+    assert.ok(!html.includes('id="' + id + '"'));
   }
-  assert.match(html, /指针宽度/);
+  assert.match(html, /无需先填写接口契约或指针方向/);
+  assert.match(html, /自动 Stub（默认，确定性）/);
+  assert.match(html, /模型候选（可选，须验证）/);
+  assert.match(html, /同一源码文件中的其他被调函数/);
+  assert.ok(html.indexOf("interfaces.entries") > html.indexOf('id="ut-manifest-advanced"'));
   assert.doesNotMatch(html, /rh850|psd049|phd038/);
 });
 
-test("pointer width and interface entries save without a chip or project contract", async () => {
+test("pointer width saves with default automated stubs and no interface declaration", async () => {
   const h = harness(); await settle();
   assert.deepEqual(h.get("ut-m-build-abi").children.map(o => o.value), ["", "legacy", "undeclared", "32", "64"]);
   h.input("ut-m-build-abi", "32", "change");
   assert.match(h.get("ut-build-abi-description").textContent, /32 位/);
   assert.match(h.get("ut-build-abi-description").textContent, /不证明结构体布局/);
-  await h.emit("ut-interface-add", "click");
-  const row = h.get("ut-interface-entries").children[0];
-  row._name.value = "external_read";
-  row._index.value = "0";
-  row._direction.value = "out";
-  row._direction.listeners.change.call(row._direction);
-  h.input("ut-m-interfaces-contract", "approved@2", "change");
-  assert.match(h.get("ut-interface-contract-description").textContent, /external_read/);
+  await h.emit("ut-manifest-validate", "click");
+  assert.equal(Object.hasOwn(h.validations[0].manifest_document, "interfaces"), false);
   await h.save();
   assert.equal(h.writes[0].manifest_document.build.profile, "default");
   assert.deepEqual(h.writes[0].manifest_document.build.abi, { pointer_size: 4 });
-  assert.deepEqual(h.writes[0].manifest_document.interfaces.entries, [{
-    function: "external_read", parameter_index: 0, direction: "out", pointee_access_order: "write_only",
-  }]);
-  assert.equal(h.writes[0].manifest_document.interfaces.contract, "approved@2");
+  assert.equal(h.writes[0].stub_mode, "deterministic");
+  assert.equal(Object.hasOwn(h.writes[0].manifest_document, "interfaces"), false);
+});
+
+test("raw optional contracts and entries survive import, normal edits, validation and export", async () => {
+  const h = harness(); await settle();
+  const imported = { ...manifest(), interfaces: {
+    contract: "unlisted@7",
+    entries: [{ function: "dep", parameter_index: 0, direction: "inout",
+      pointee_access_order: "read_before_write", custom: { retained: true } }],
+    custom: { retained: ["raw"] },
+  } };
+  await h.import(JSON.stringify(imported));
+  h.input("ut-m-project-id", "edited");
+  imported.project.id = "edited";
+  await h.emit("ut-manifest-validate", "click");
+  assert.deepEqual(h.validations[0].manifest_document, imported);
+  await h.save();
+  assert.deepEqual(h.writes[0].manifest_document, imported);
+  imported.interfaces.entries[0].direction = "out";
+  imported.interfaces.entries[0].pointee_access_order = "write_only";
+  h.get("ut-manifest-json").value = JSON.stringify(imported);
+  await h.save();
+  assert.deepEqual(h.writes[1].manifest_document, imported);
+  await h.emit("ut-manifest-export", "click");
+  assert.deepEqual(JSON.parse(await h.downloads[0].text()), imported);
+  delete imported.interfaces;
+  h.input("ut-manifest-json", JSON.stringify(imported));
+  await h.save();
+  assert.deepEqual(h.writes[2].manifest_document, imported);
+});
+
+test("optional raw interface fields go to authoritative validation without local direction rules", async () => {
+  const h = harness(); await settle();
+  const raw = { ...manifest(), interfaces: { entries: [{ custom: "backend-owned" }] } };
+  h.input("ut-manifest-json", JSON.stringify(raw));
+  h.reject("Unsupported interface entry");
+  await h.emit("ut-manifest-validate", "click");
+  assert.deepEqual(h.validations[0].manifest_document, raw);
+  assert.match(h.get("ut-binding-error").textContent, /Unsupported interface entry/);
+  assert.equal(h.writes.length, 0);
+});
+
+test("unused interface catalogs are not prerequisites for automated stubs", async () => {
+  for (const value of [undefined, [], null]) {
+    const options = catalog();
+    delete options.interface_contracts;
+    delete options.interface_directions;
+    if (value !== undefined) {
+      options.interface_contracts = value;
+      options.interface_directions = value;
+    }
+    const h = harness(true, { manifest_document: manifest() }, { catalog: options });
+    await settle();
+    assert.equal(h.get("ut-config-save").disabled, false);
+    await h.save();
+    assert.equal(h.writes[0].stub_mode, "deterministic");
+    assert.deepEqual(h.writes[0].manifest_document, manifest());
+  }
 });
 
 test("missing ABI choice blocks save instead of silently relying on an undeclared default", async () => {
@@ -185,7 +237,7 @@ test("unavailable pinned choices remain visible and roundtrip without substituti
   const h = harness(true, { manifest_document: existing }); await settle();
   assert.equal(h.get("ut-m-build-profile").value, "pinned-old");
   assert.equal(h.get("ut-m-build-profile").children.at(-1).disabled, true);
-  assert.equal(h.get("ut-m-interfaces-contract").value, "old@7");
+  assert.equal(JSON.parse(h.get("ut-manifest-json").value).interfaces.contract, "old@7");
   await h.save();
   assert.deepEqual(h.writes[0].manifest_document, existing);
 });
@@ -204,7 +256,7 @@ test("catalog failure keeps the saved document inspectable but disables save and
 
 test("malformed or duplicate catalogs are rejected without guessed choices", async () => {
   for (const options of [{}, { ...catalog(), build_profiles: [] },
-    { ...catalog(), interface_contracts: [{ id: "x", label: "one" }, { id: "x", label: "duplicate" }] }]) {
+    { ...catalog(), build_profiles: [{ id: "x", label: "one" }, { id: "x", label: "duplicate" }] }]) {
     const h = harness(true, { manifest_document: manifest() }, { catalog: options });
     await settle();
     assert.equal(h.get("ut-config-save").disabled, true);
@@ -215,13 +267,13 @@ test("malformed or duplicate catalogs are rejected without guessed choices", asy
 
 test("catalog text is displayed as text and never inserted as markup", async () => {
   const options = catalog();
-  options.interface_contracts[0].label = '<img src=x onerror="alert(1)">';
-  options.interface_contracts[0].description = "<script>bad()</script>";
+  options.build_profiles[1].label = '<img src=x onerror="alert(1)">';
+  options.build_profiles[1].description = "<script>bad()</script>";
   const h = harness(true, { manifest_document: manifest() }, { catalog: options });
   await settle();
-  assert.equal(h.get("ut-m-interfaces-contract").children[1].textContent, options.interface_contracts[0].label);
-  h.input("ut-m-interfaces-contract", "approved@2", "change");
-  assert.match(h.get("ut-interface-contract-description").textContent, /<script>bad\(\)<\/script>/);
+  assert.match(h.get("ut-m-build-profile").children[2].textContent, /<img src=x onerror="alert\(1\)">/);
+  h.input("ut-m-build-profile", "typed32", "change");
+  assert.match(h.get("ut-build-profile-description").textContent, /<script>bad\(\)<\/script>/);
 });
 
 test("saving uses numeric limits, CSRF and the document contract while keeping Clang", async () => {

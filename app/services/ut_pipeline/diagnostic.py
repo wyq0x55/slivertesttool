@@ -20,11 +20,11 @@ def generation_failure_reason(unit: dict[str, Any]) -> str:
         location = (f"{callee} 的第 {index + 1} 个参数（argument_index={index}）"
                     if isinstance(callee, str) and type(index) is int and index >= 0
                     else "外部调用的指针参数")
-        return (f"{prefix}MISSING_INTERFACE_CONTRACT：{location}缺少已证明的读写方向。"
-                "请在设置的项目清单中为“外部函数指针接口契约”填写该函数、从 0 开始的参数序号和读写方向，"
-                "或选择与该参数一致的已审批契约。"
-                "不能根据函数名猜测方向。也可以由开发人员检查该调用的实现是否已纳入 Clang 提取并形成类型化方向证据。"
-                "补齐后保存清单并创建新批次；AI 补 CSV 行不能代替接口证据。"
+        return (f"{prefix}MISSING_INTERFACE_CONTRACT：{location}的投影被工具阻断。"
+                "单元测试应自动生成受控 Stub 来隔离依赖，无需先填写接口契约或指针方向。"
+                "请检查配套 ut-agent 的版本、配置与自动 Stub 支持，交由开发人员核查该阻断后创建新批次。"
+                "高级用法仍可在完整 JSON 中保留 interfaces.entries 或 interfaces.contract，由 ut-agent 校验。"
+                "可选模型仅提供须验证的 Stub 候选，不证明真实接口语义；AI 补 CSV 行不能解除该阻断。"
                 f"原始诊断：{detail}")
     return prefix + str(detail)
 

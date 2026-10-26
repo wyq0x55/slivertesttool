@@ -41,15 +41,33 @@ def test_malformed_optional_guidance_cannot_interrupt_the_human_gate(instruction
     assert "ABI_POINTER_SIZE_UNDECLARED" in reason and "处理步骤" not in reason
 
 
-def test_projection_failure_identifies_contract_and_parameter_before_csv_exists():
+def test_projection_failure_preserves_location_without_requiring_a_contract():
     unit = {"status": "NEEDS_REVIEW", "error": "original typed diagnostic",
             "projection_failure": {"code": "MISSING_INTERFACE_CONTRACT",
                                    "callee": "external_read", "argument_index": 0}}
     reason = diagnostic.generation_failure_reason(unit)
     assert "external_read 的第 1 个参数（argument_index=0）" in reason
-    assert "外部函数指针接口契约" in reason and "参数序号" in reason
+    assert "无需先填写接口契约或指针方向" in reason
+    assert "自动 Stub 支持" in reason and "ut-agent" in reason
     assert "新批次" in reason and "original typed diagnostic" in reason
-    assert "类型化方向证据" in reason
+    assert "interfaces.entries" in reason and "interfaces.contract" in reason
+    assert "须验证" in reason and "不证明真实接口语义" in reason
+    assert "检查该调用的实现是否已纳入" not in reason
+
+
+@pytest.mark.parametrize("failure", [
+    {"code": "MISSING_INTERFACE_CONTRACT"},
+    {"code": "MISSING_INTERFACE_CONTRACT", "callee": "dep", "argument_index": True},
+    {"code": "MISSING_INTERFACE_CONTRACT", "callee": "dep", "argument_index": -1},
+])
+def test_contract_failure_without_an_exact_location_remains_actionable(failure):
+    reason = diagnostic.generation_failure_reason({
+        "status": "NEEDS_REVIEW", "projection_failure": failure,
+    })
+    assert "外部调用的指针参数" in reason
+    assert "MISSING_INTERFACE_CONTRACT" in reason
+    assert "无需先填写接口契约或指针方向" in reason
+    assert "原始诊断" in reason
 
 
 def test_other_generation_failures_keep_original_evidence():
