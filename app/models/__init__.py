@@ -51,7 +51,7 @@ __all__ = [
     "DataJob",
     "CollabDoc",
     "CollabPresence",
-    # Unit-test pipeline (ut-agent + WinAMS + local LLM repair).
+    # Unit-test pipeline (ut-agent + Clang/LLVM execution + local LLM repair).
     "UtPipelineConfig",
     "UtTarget",
     "UtBatch",

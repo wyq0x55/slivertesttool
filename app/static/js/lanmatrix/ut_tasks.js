@@ -753,8 +753,8 @@
 
   // ------------------------------------------------- host coverage report
   // Per-line C0 / C1 / MC/DC of the selected version's host llvm-cov run,
-  // fetched once per version (versions are immutable). Development-time host
-  // evidence only; WinAMS target coverage is not shown here.
+  // fetched once per version (versions are immutable). HOST_EXECUTION
+  // evidence only, never target coverage.
   var coverageCache = {};
   var coverageEpoch = 0;
   var coverageView = "all";

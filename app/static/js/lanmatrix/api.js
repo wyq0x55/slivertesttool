@@ -383,7 +383,7 @@
         { body: { project_id: projectId, entries: entries } });
     },
 
-    // --- Unit-test pipeline (ut-agent → WinAMS → check → LLM → review) --- //
+    // --- Unit-test pipeline (ut-agent → LLVM execute → check → LLM → review) --- //
     utGetConfig(pid) { return request("GET", `/projects/${pid}/ut/config`); },
     utManifestOptions(pid) { return request("GET", `/projects/${pid}/ut/manifest/options`); },
     utPutConfig(pid, values) {

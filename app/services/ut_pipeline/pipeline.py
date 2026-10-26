@@ -688,7 +688,7 @@ def _execute_step(job: UtJob) -> None:
 
 
 # Errors that appended input rows can address. Expected values belong to the
-# capture, and format or column errors cannot be fixed by adding rows.
+# typed oracle, and format or column errors cannot be fixed by adding rows.
 _ROW_FIXABLE = frozenset({"EXECUTION_PATH_DIVERGED", "ROW_COUNT_BELOW_REFERENCE",
                           "REFERENCE_CASE_REMOVED", "FORMAT_NO_DATA_ROWS"})
 

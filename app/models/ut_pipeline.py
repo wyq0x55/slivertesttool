@@ -241,7 +241,7 @@ class UtJob(db.Model):
     reviewed_at = db.Column(db.DateTime, nullable=True)
     review_note = db.Column(db.Text, nullable=False, default="")
     # A stop request for a job whose worker is inside an external call
-    # (generation, WinAMS, model).  The worker honours it at the next step
+    # (generation, LLVM execution, model).  The worker honours it at the next step
     # boundary, so the running call finishes and its evidence is recorded.
     stop_requested_at = db.Column(db.DateTime, nullable=True)
     stop_requested_by = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True)
@@ -335,7 +335,7 @@ class UtAttempt(db.Model):
 
 
 def _execution_summary(execution: dict | None) -> dict | None:
-    """Drop the bulky per-cell capture diff; the check already lists conflicts."""
+    """Drop the bulky per-cell execution detail; the check already lists conflicts."""
     if not execution:
         return None
     keep = ("status", "exit_code", "diagnostic", "blocked_reasons", "coverage", "sandbox",
