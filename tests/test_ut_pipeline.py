@@ -82,7 +82,7 @@ class FakeBridge:
                 "rules": [{"rule_id": "psd.4.compare", "meaning": "境界值"}],
                 "revision_rules": ["列不得改动"], "coverage_policy": {"c1": True}, "effective_test_policy": {"version": "1", "c1": True, "mcdc": False}, "test_policy_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "test_rules_ref": "universal-test-rules@1", "test_rules": {"version": "1"}}
 
-    def generate(self, manifest, index_csv, product_root, out, functions, *, progress_dir):
+    def generate(self, manifest, index_csv, product_root, out, functions, *, progress_dir, on_unit=None):
         self.progress_dir = progress_dir
         if self.generate_error:
             raise BridgeError(self.generate_error)

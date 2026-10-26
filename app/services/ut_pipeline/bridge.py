@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -50,7 +53,8 @@ class UtAgentBridge:
     def __init__(self, settings: BridgeSettings):
         self.settings = settings
 
-    def _run(self, args: list[str], *, timeout: int) -> dict[str, Any]:
+    def _run(self, args: list[str], *, timeout: int,
+             on_unit: Callable[[dict], None] | None = None) -> dict[str, Any]:
         root, python = self.settings.root, self.settings.python
         if not root or not python:
             raise BridgeError("ut-agent 未配置：请设置 UT_AGENT_ROOT 与 UT_AGENT_PYTHON")
@@ -61,8 +65,13 @@ class UtAgentBridge:
         env["PYTHONIOENCODING"] = "utf-8"
         command = [python, "-m", "ut_agent", "bridge", *args]
         try:
-            proc = subprocess.run(command, cwd=root, env=env, capture_output=True,
-                                  timeout=timeout, check=False)
+            if on_unit is None:
+                proc = subprocess.run(command, cwd=root, env=env, capture_output=True,
+                                      timeout=timeout, check=False)
+            else:
+                directory = Path(args[args.index("--unit-ready-dir") + 1])
+                output = Path(args[args.index("--out") + 1])
+                proc = self._stream_units(command, root, env, timeout, directory, output, on_unit)
         except subprocess.TimeoutExpired as exc:
             raise BridgeError(f"ut-agent bridge {args[0]} 超时（{timeout}s）") from exc
         except OSError as exc:
@@ -83,6 +92,57 @@ class UtAgentBridge:
         return document
 
     @staticmethod
+    def _stream_units(command, root, env, timeout, directory, output, on_unit):
+        from .generated_unit import read_receipt
+
+        seen = set()
+        deadline = time.monotonic() + timeout
+
+        def consume():
+            for path in sorted(directory.glob("*.json")):
+                if path.name in seen:
+                    continue
+                try:
+                    receipt = read_receipt(path, output)
+                except (OSError, ValueError, TypeError) as exc:
+                    raise BridgeError(f"Invalid completed-unit receipt {path.name}: {exc}") from exc
+                on_unit(receipt)
+                seen.add(path.name)
+
+        with subprocess.Popen(command, cwd=root, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              start_new_session=os.name != "nt") as child:
+            try:
+                while True:
+                    consume()
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired(command, timeout)
+                    try:
+                        stdout, stderr = child.communicate(timeout=min(0.1, remaining))
+                    except subprocess.TimeoutExpired:
+                        continue
+                    consume()
+                    return subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
+            except BaseException:
+                # Pool workers inherit the output pipes. Killing only their
+                # parent can leave communicate() waiting for live descendants.
+                if child.poll() is None:
+                    if os.name == "nt":
+                        try:
+                            subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"],
+                                           capture_output=True, check=False, timeout=5)
+                        except (OSError, subprocess.TimeoutExpired):
+                            child.kill()
+                    else:
+                        try:
+                            os.killpg(child.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                child.kill()
+                child.communicate()
+                raise
+
+    @staticmethod
     def _manifest(manifest: str) -> list[str]:
         return ["--manifest", manifest]
 
@@ -97,7 +157,8 @@ class UtAgentBridge:
         return {key: value for key, value in document.items() if key not in ("contract", "ok")}
 
     def generate(self, manifest: str, index_csv: str, product_root: str, out: Path,
-                 functions: list[str], *, progress_dir: Path) -> dict[str, Any]:
+                 functions: list[str], *, progress_dir: Path,
+                 on_unit: Callable[[dict], None] | None = None) -> dict[str, Any]:
         args = ["generate", *self._manifest(manifest), "--index-csv", index_csv,
                 "--product-root", product_root, "--out", str(out),
                 "--progress-dir", str(progress_dir)]
@@ -105,6 +166,12 @@ class UtAgentBridge:
             args += ["--function", name]
         if self.settings.extractor:
             args += ["--clang-extractor", self.settings.extractor]
+        if on_unit is not None:
+            directory = out / "unit-ready"
+            if directory.exists() and any(directory.iterdir()):
+                raise BridgeError("Completed-unit directory is not empty; refusing stale generation receipts")
+            args += ["--unit-ready-dir", str(directory)]
+            return self._run(args, timeout=self.settings.generate_timeout, on_unit=on_unit)
         return self._run(args, timeout=self.settings.generate_timeout)
 
     def execute(self, unit_dir: Path, candidate: Path, out: Path,

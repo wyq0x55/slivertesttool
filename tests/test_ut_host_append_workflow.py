@@ -26,6 +26,9 @@ def _run_host_append_trial(real_workflow, monkeypatch, *, model_invoke=None, rep
     observed = {}
 
     def remove_boundary(*args, **kwargs):
+        # Inject the fault before the platform accepts the generated artifact.
+        # Early publication itself is covered by the streaming workflow test.
+        kwargs.pop("on_unit", None)
         result = generate(*args, **kwargs)
         unit = next(unit for unit in result["units"] if unit["function"] == "classify")
         # Inject a missing-case fault after real formal generation. Keep the
