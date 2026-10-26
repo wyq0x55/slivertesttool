@@ -42,7 +42,7 @@ raise SystemExit(main())
         return spawn(command, **kwargs)
 
     monkeypatch.setattr(subprocess, "Popen", instrument)
-    execute = bridge.host_execute
+    execute = bridge.execute
     executions = []
 
     def observed(**kwargs):
@@ -54,7 +54,7 @@ raise SystemExit(main())
         executions.append(result)
         return result
 
-    monkeypatch.setattr(bridge, "host_execute", observed)
+    monkeypatch.setattr(bridge, "execute", observed)
     assert env.call("post", "/targets/import")[0] == 200
     _, targets = env.call("get", "/targets")
     ids = [target["id"] for target in targets["data"] if target["function"] in {"classify", "relay"}]
@@ -83,7 +83,7 @@ raise SystemExit(main())
     assert len(executions) == 2 and marker.exists()
     generation_calls = [call for call in calls if call[0] == "generate"]
     assert len(generation_calls) == 1
-    assert not any(call[0] in {"execute", "capture"} for call in calls)
+    assert not any(call[0] in {"winams-execute", "capture"} for call in calls)
     out = generation_calls[0][generation_calls[0].index("--out") + 1]
     from pathlib import Path
 

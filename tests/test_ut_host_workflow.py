@@ -9,6 +9,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import zipfile
 from pathlib import Path
 
@@ -60,7 +61,7 @@ def real_workflow(request, app_ctx, monkeypatch, tmp_path):
             "mcdc": True, "arithmetic": False, "combination_group": True,
         }
     manifest.write_text(json.dumps(manifest_data), encoding="utf-8")
-    settings = BridgeSettings(str(root), python, extractor, "", 120, 180, 120)
+    settings = BridgeSettings(str(root), python, extractor, 120, 180, 120)
     bridge = UtAgentBridge(settings)
     calls = []
     invoke = bridge._run
@@ -74,7 +75,7 @@ def real_workflow(request, app_ctx, monkeypatch, tmp_path):
     monkeypatch.setattr(provider, "invoke_chat", lambda *a, **k: pytest.fail("Actual model must not be contacted"))
     config = {"execution_backend": "clang", "stub_mode": "deterministic",
               "manifest_path": str(manifest),
-              "index_csv": str(index), "product_root": str(product), "work_root": "",
+              "index_csv": str(index), "product_root": str(product),
               "stub_max_rounds": 2, "stub_model": "workflow-fake-model"}
     status, body = env.call("put", "/config", json=config)
     assert status == 200, body
@@ -152,8 +153,8 @@ def test_real_index_generation_execution_review_and_export(real_workflow, monkey
                    and row["counts_as_target_evidence"] == "False" and row["delivery_validated"] == "False"
                    for row in table)
     commands = [arguments[0] for arguments in calls]
-    assert {"index", "constraints", "generate", "host-execute"} <= set(commands)
-    assert "execute" not in commands and "check" not in commands
+    assert {"index", "constraints", "generate", "execute"} <= set(commands)
+    assert "winams-execute" not in commands and "check" not in commands
     if stub_mode == "llm":
         assert len(prompts) == 2  # classify has no dependency stubs.
         assert commands.count("host-prepare") == 3
@@ -173,7 +174,7 @@ def test_missing_llvm_tool_is_reported_and_fixed_settings_apply_to_a_new_batch(r
     _, jobs = env.call("get", "/jobs", query_string={"batch_id": first["data"]["id"]})
     failed_id = jobs["data"][0]["id"]
     failed = _job(env, failed_id)
-    assert failed["state"] == "needs_human", failed.get("reason")
+    assert failed["state"] == "blocked" and failed["gate_code"] == "ENV_BLOCKED", failed.get("reason")
     assert failed["attempts"][-1]["check"]["issues"][0]["code"] == "HOST_TOOL_UNAVAILABLE"
     assert missing in failed["reason"]
     assert env.call("put", "/config", json={"host_llvm_cov": "llvm-cov"})[0] == 200
@@ -183,6 +184,34 @@ def test_missing_llvm_tool_is_reported_and_fixed_settings_apply_to_a_new_batch(r
     successful = _job(env, jobs["data"][0]["id"])
     assert successful["state"] == "awaiting_review", successful.get("reason")
     assert _job(env, failed_id)["attempts"][-1]["check"]["issues"][0]["code"] == "HOST_TOOL_UNAVAILABLE"
+
+
+def test_missing_llvm_tool_retries_after_restoration_at_the_frozen_path(real_workflow, tmp_path):
+    env, _bridge, _calls, _config = real_workflow
+    installed = shutil.which("llvm-cov")
+    assert installed
+    restored = tmp_path / Path(installed).name
+    assert env.call("put", "/config", json={"host_llvm_cov": str(restored)})[0] == 200
+    assert env.call("post", "/targets/import")[0] == 200
+    _, targets = env.call("get", "/targets")
+    target = next(t for t in targets["data"] if t["function"] == "classify")
+    status, batch = env.call("post", "/batches", json={"target_ids": [target["id"]]})
+    assert status == 202, batch
+    _, jobs = env.call("get", "/jobs", query_string={"batch_id": batch["data"]["id"]})
+    job_id = jobs["data"][0]["id"]
+    failed = _job(env, job_id)
+    assert failed["state"] == "blocked" and failed["gate_code"] == "ENV_BLOCKED"
+    assert str(restored) in failed["reason"] and failed["repair_rounds"] == 0
+
+    shutil.copy2(installed, restored)
+    status, body = env.call("post", f"/jobs/{job_id}/retry")
+    assert status == 202, body
+    retried = _job(env, job_id)
+    assert retried["state"] == "awaiting_review", retried.get("reason")
+    assert retried["batch_id"] == batch["data"]["id"] and retried["repair_rounds"] == 0
+    assert retried["attempts"][-1]["execution"]["status"] == "HOST_PASS"
+    assert retried["attempts"][-1]["execution"]["evidence_source"] == "HOST_EXECUTION"
+    assert retried["attempts"][-1]["check"]["counts_as_target_evidence"] is False
 
 
 def test_real_generation_failure_keeps_extractor_diagnostic_in_the_job(real_workflow):
@@ -201,4 +230,4 @@ def test_real_generation_failure_keeps_extractor_diagnostic_in_the_job(real_work
     assert "does-not-exist" in failed["reason"] and "generation report" in failed["reason"]
     assert "生成结果中缺少该函数" not in failed["reason"]
     assert not failed["attempts"]
-    assert not any(arguments[0] == "host-execute" for arguments in calls)
+    assert not any(arguments[0] == "execute" for arguments in calls)

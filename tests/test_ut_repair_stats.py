@@ -2,19 +2,27 @@
 
 from __future__ import annotations
 
-from test_ut_pipeline import _configure, _enqueue, _fill_blank, _llm_reply, _row, env  # noqa: F401
+from test_ut_pipeline import (
+    GAP,
+    _configure,
+    _enqueue,
+    _llm_reply,
+    _row,
+)
+from test_ut_pipeline import env as workflow_env
 
 from app.services.ai import provider
+
+env = workflow_env
 
 
 def test_rounds_are_classified_by_what_they_produced(env, monkeypatch):
     targets = _configure(env, rounds=2)
-    env.bridge.coverage_rows = 2
-    env.bridge.captured = _fill_blank
+    env.bridge.gaps = [GAP]
     reply = {}
     monkeypatch.setattr(provider, "chat", lambda *a, **k: reply["text"])
 
-    reply["text"] = _llm_reply(_row("COVERAGE_C1_INCOMPLETE"))  # a row WinAMS executes
+    reply["text"] = _llm_reply(_row("b1:T"))  # A witnessed row reaches LLVM execution.
     _enqueue(env, targets["f"])
     reply["text"] = _llm_reply()                                 # proposes nothing
     _enqueue(env, targets["g"])

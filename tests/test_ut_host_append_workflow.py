@@ -22,7 +22,7 @@ def _run_host_append_trial(real_workflow, monkeypatch, *, model_invoke=None, rep
     settings["test_policy"]["combination_group"] = False
     manifest.write_text(json.dumps(settings), encoding="utf-8")
     assert env.call("put", "/config", json={"repair_model": repair_model})[0] == 200
-    generate, execute = bridge.generate, bridge.host_execute
+    generate, execute = bridge.generate, bridge.execute
     observed = {}
 
     def remove_boundary(*args, **kwargs):
@@ -91,7 +91,7 @@ summary_path.write_text(json.dumps(summary),encoding='utf-8')
         return json.dumps({"rows": rows, "declined": [], "rationale": "Typed fixture input repair"})
 
     monkeypatch.setattr(bridge, "generate", remove_boundary)
-    monkeypatch.setattr(bridge, "host_execute", record_execution)
+    monkeypatch.setattr(bridge, "execute", record_execution)
     monkeypatch.setattr(provider, "invoke_chat", propose)
     status, imported = env.call("post", "/targets/import")
     assert status == 200, imported
@@ -113,7 +113,7 @@ summary_path.write_text(json.dumps(summary),encoding='utf-8')
     assert derived["execution"]["status"] == "HOST_PASS"
     assert derived["check"]["counts_as_target_evidence"] is False
     assert derived["check"]["delivery_validated"] is False
-    assert not any(call[0] in {"execute", "capture"} for call in calls)
+    assert not any(call[0] in {"winams-execute", "capture"} for call in calls)
     assert job["reviewed_at"] is None
     return {"job": job, "calls": calls, "prompts": prompts}
 

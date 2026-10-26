@@ -149,7 +149,7 @@ class Project(db.Model):
     description = db.Column(db.Text, nullable=False, default="")
     # draft | active | frozen | archived
     status = db.Column(db.String(16), nullable=False, default="draft", index=True)
-    # silver (Synopsys Silver / plant model) | unit_test (ut-agent / WinAMS)
+    # silver (Synopsys Silver / plant model) | unit_test (ut-agent / Clang/LLVM)
     project_type = db.Column(db.String(32), nullable=False, default="silver", server_default="silver")
     owner_id = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True)
     created_by = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True)

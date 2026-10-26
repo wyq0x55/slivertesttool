@@ -165,7 +165,7 @@ def test_existing_receipts_are_rejected_before_starting_another_generator(tmp_pa
     directory = tmp_path / "unit-ready"
     directory.mkdir()
     (directory / "stale.json").write_text("{}", encoding="utf-8")
-    client = bridge.UtAgentBridge(bridge.BridgeSettings(str(tmp_path), sys.executable, "", "", 1, 1, 1))
+    client = bridge.UtAgentBridge(bridge.BridgeSettings(str(tmp_path), sys.executable, "", 1, 1, 1))
     monkeypatch.setattr(client, "_run", lambda *a, **k: pytest.fail("Stale receipt launched a generator"))
     with pytest.raises(bridge.BridgeError, match="stale"):
         client.generate("m", "i", "p", tmp_path, ["f"], progress_dir=tmp_path / "progress", on_unit=lambda _: None)

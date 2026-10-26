@@ -186,14 +186,12 @@ class Config:
         ).split(",") if n.strip()
     ]
 
-    # --- Unit-test pipeline (ut-agent + WinAMS) ---
+    # --- Unit-test pipeline (ut-agent + Clang/LLVM) ---
     # ut-agent is an external, separately versioned checkout invoked only via
     # ``python -m ut_agent bridge ...`` (JSON contract); it is never imported.
     UT_AGENT_ROOT = os.environ.get("UT_AGENT_ROOT", "")
     UT_AGENT_PYTHON = os.environ.get("UT_AGENT_PYTHON", "")
     UT_AGENT_EXTRACTOR = os.environ.get("UT_AGENT_EXTRACTOR", "")
-    WINAMS_EXECUTABLE = os.environ.get("WINAMS_EXECUTABLE", r"C:\WinAMS\BIN\SSTManager.exe")
-    UT_OMF_CONVERTER = os.environ.get("UT_OMF_CONVERTER", "")
     # Seconds. Generation covers the whole-project extraction of a batch.
     UT_GENERATE_TIMEOUT = _as_int(os.environ.get("UT_GENERATE_TIMEOUT"), 3600)
     UT_EXECUTE_TIMEOUT = _as_int(os.environ.get("UT_EXECUTE_TIMEOUT"), 300)

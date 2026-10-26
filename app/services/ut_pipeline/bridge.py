@@ -29,11 +29,9 @@ class BridgeSettings:
     root: str
     python: str
     extractor: str
-    winams: str
     timeout: int
     generate_timeout: int
     execute_timeout: int
-    omf_converter: str = ""
 
     @classmethod
     def from_config(cls, config) -> "BridgeSettings":
@@ -41,11 +39,9 @@ class BridgeSettings:
             root=config.get("UT_AGENT_ROOT", ""),
             python=config.get("UT_AGENT_PYTHON", ""),
             extractor=config.get("UT_AGENT_EXTRACTOR", ""),
-            winams=config.get("WINAMS_EXECUTABLE", ""),
             timeout=int(config.get("UT_BRIDGE_TIMEOUT", 120)),
             generate_timeout=int(config.get("UT_GENERATE_TIMEOUT", 3600)),
             execute_timeout=int(config.get("UT_EXECUTE_TIMEOUT", 300)),
-            omf_converter=config.get("UT_OMF_CONVERTER", ""),
         )
 
 
@@ -180,26 +176,6 @@ class UtAgentBridge:
             return self._run(args, timeout=self.settings.generate_timeout, on_unit=on_unit)
         return self._run(args, timeout=self.settings.generate_timeout)
 
-    def execute(self, unit_dir: Path, candidate: Path, out: Path,
-                stub_builds: Optional[list[str]] = None,
-                source_rel: str = "", intents: Optional[Path] = None) -> dict[str, Any]:
-        args = ["execute", "--unit-dir", str(unit_dir), "--candidate", str(candidate),
-                "--out", str(out), "--timeout", str(self.settings.execute_timeout)]
-        if self.settings.winams:
-            args += ["--winams", self.settings.winams]
-        # ut-agent picks the first build whose map defines every declared stub
-        # and whose MCDC build instruments the source under test.
-        for build in stub_builds or ():
-            args += ["--stub-build", build]
-        if stub_builds and source_rel:
-            args += ["--source-rel", source_rel]
-        if self.settings.omf_converter:
-            args += ["--omf-converter", self.settings.omf_converter]
-        if intents is not None:
-            args += ["--intents", str(intents)]
-        # The plain and instrumented objects are converted separately before
-        # WinAMS runs; each subprocess has its own execution timeout.
-        return self._run(args, timeout=3 * self.settings.execute_timeout + 120)["execution"]
 
     @staticmethod
     def _host_args(ir_json: Path, intents: Path, reference: Path,
@@ -214,11 +190,11 @@ class UtAgentBridge:
             args += ["--manifest", str(manifest)]
         return self._run(args, timeout=self.settings.timeout)["prepared"]
 
-    def host_execute(self, *, ir_json: Path, intents: Path, reference: Path,
+    def execute(self, *, ir_json: Path, intents: Path, reference: Path,
                      candidate: Path, out: Path, config: dict,
                      stub_request: Optional[Path] = None,
                      stub_response: Optional[Path] = None) -> dict[str, Any]:
-        args = ["host-execute", *self._host_args(ir_json, intents, reference, candidate, out),
+        args = ["execute", *self._host_args(ir_json, intents, reference, candidate, out),
                 "--timeout", str(self.settings.execute_timeout)]
         if config.get("manifest_path"):
             args += ["--manifest", str(config["manifest_path"])]
@@ -231,8 +207,12 @@ class UtAgentBridge:
                 args += [flag, str(value)]
         document = self._run(args, timeout=3 * self.settings.execute_timeout + 120)
         if not isinstance(document.get("execution"), dict) or not isinstance(document.get("check"), dict):
-            raise BridgeError("host-execute returned no execution/check evidence")
+            raise BridgeError("LLVM execute returned no execution/check evidence")
         return {"execution": document["execution"], "check": document["check"]}
+
+    def host_execute(self, **kwargs):
+        """Alias used by older call sites; the subprocess command remains execute."""
+        return self.execute(**kwargs)
 
     def check(self, candidate: Path, *, manifest: str, reference: Optional[Path] = None,
               previous: Optional[Path] = None, execution: Optional[Path] = None,

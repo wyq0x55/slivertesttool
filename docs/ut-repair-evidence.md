@@ -1,6 +1,6 @@
 # Unit-test repair evidence and prefix reuse
 
-Repair prompt version `ut-repair/7.0` separates the baseline instruction prefix
+Repair prompt version `ut-repair/8.0` separates the baseline instruction prefix
 (shared across functions) from the function prefix and changing round state.
 The function prefix contains exact column tokens, ranges and typed obligation
 context. Repeated column-name prefixes are factored by exact string
@@ -42,30 +42,13 @@ requests continue to bypass the system proxy. SSE can avoid a long silent
 response transfer but cannot guarantee that an upstream service emits tokens
 or heartbeats during prefill, stays online or keeps its KV cache resident.
 
-WinAMS execution now records hashes of the function's coverage report and
-supporting line/address/jump/binary artifacts. Before passing observations to
-the model, the checker validates the candidate hash against the execution and
-capture receipts and checks the source-qualified function identity,
-checks artifact paths/digests and reparses the report. It passes report
-positions, observed C1 fields and execution counts to the witness report and
-repair prompt. Source text is not parsed for C semantics.
-
-New isolated WinAMS runs enable the existing `[TEST].PutLineNo` setting, when
-present and supported, and retain its before/after hashes. The coverage parser
-preserves the optional source-line column and the documented `T/`, `/F` and `/`
-observations, including explicitly unexecuted rows. A source line and a missing
-outcome are still observations; they do not establish the IR mapping below.
-
-The observed legacy reports do not establish an IR branch ID, C true/false
-orientation, per-row attribution, or an assembly-to-C mapping. Those mappings
-remain `UNKNOWN`. Coverage observations never close a typed input obligation,
-establish MC/DC pairing or approve a candidate on their own. Missing artifacts,
-changed hashes and percentage-only evidence cannot turn into branch proofs.
-
-WinAMS remains serial and every outcome still requires human review. None of
-these transport or cache changes proves requirement-correct expected values,
-eliminates HTTP 499/502, or establishes real repair effectiveness without a
-corresponding real execution trial.
+The primary LLVM workflow records source/IR/Suite/reference/candidate identities,
+actual observations and llvm-cov coverage. Input repair requires complete
+obligation reports, identified input-column mappings and typed witnesses.
+Percentages alone cannot prove an obligation or an MC/DC pair. Source text is
+not parsed for C semantics. Missing required coverage or tool/runtime identity
+blocks with actionable evidence and no original-compiler/WinAMS fallback.
+Every outcome still requires human review.
 
 ## Human navigation and offline diagnostic packets
 
@@ -151,8 +134,8 @@ repair provider consumes no input round; retry resumes that stage without
 renewing the stub evidence. A stub retry still creates a new attempt so old
 review selections remain stale.
 
-Repair prompt version `ut-repair/7.6` distinguishes scalar input constraints
-from `predicate_context`. Raw decision atoms describe the typed decision;
+Repair prompt version `ut-repair/8.0` distinguishes scalar input constraints
+from `predicate_context`. LLVM coverage stays in the dynamic execution section and does not enter the stable function prefix. Raw decision atoms describe the typed decision;
 they are not a conjunction that every proposed input must make true. An exact
 boundary with no required outcome does not acquire one from its decision text.
 Streamed provider failures retain bounded upstream type/code/message details
@@ -160,7 +143,7 @@ with configured keys and Bearer credentials redacted, and remain failures.
 
 Appended rows pass the existing static `check`/witness verifier before LLVM
 execution. This check runs without an execution argument and never launches
-WinAMS. Host prepare/execute receive the configured manifest for typed binding;
+a target executor. LLVM prepare/execute receive the configured manifest for typed binding;
 the original Suite and reference CSV remain immutable.
 
 The Host engine may return `execution.typed_candidate` with contract
@@ -215,7 +198,7 @@ tasks reschedule, and startup recovery includes both queued and scheduled tasks.
 Those tasks can resume only still-queued generation. Jobs already claimed by a
 generator that died are marked interrupted; a delayed duplicate cannot certify
 them as finished or hide an execution that is still active.
-The existing WinAMS execution lock and human approval gates still apply. An old
+LLVM executions may overlap; human approval gates still apply. An old
 ut-agent that rejects the new flag fails explicitly instead of silently changing
 the generation/execution protocol. Existing artifact/version locks are preserved.
 

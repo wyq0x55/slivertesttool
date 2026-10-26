@@ -1,5 +1,5 @@
 /*
- * 任务与运行 of a unit-test project: every ut-agent → WinAMS job, and the job
+ * 任务与运行 of a unit-test project: every ut-agent → LLVM job, and the job
  * detail where its attempts are inspected and its human gate is worked.
  *
  * Mirrors project_tasks.js: the detail is an inline section toggled over the
@@ -112,8 +112,8 @@
       (jobs.length ? "没有符合条件的作业" : "还没有作业：在「实施一览」勾选函数后加入队列") + "</td></tr>";
   }
 
-  // The current version's host llvm-cov C0 (line) / C1 / MC/DC on one line;
-  // the per-line report is in the job detail. Development-time evidence only.
+  // The current version's Clang/LLVM C0/C1/MC/DC on one line. The per-line
+  // report stays in the job detail. This is HOST_EXECUTION, not target evidence.
   function coverageDigest(j) {
     var c = j.coverage;
     if (!c) return '<span class="submuted">—</span>';
@@ -124,7 +124,7 @@
       return '<span class="' + (!measured ? "is-missing" : v >= 100 ? "is-full" : "is-gap") +
         '"><b>' + k[1] + "</b> " + (measured ? esc(v + "%") : "—") + "</span>";
     }).join("");
-    return '<div class="ut-cov-mini is-inline" title="主机 llvm-cov 观测，仅开发期证据">' + cells + "</div>";
+    return '<div class="ut-cov-mini is-inline" title="Clang/LLVM 实测覆盖率（HOST_EXECUTION），不计入目标机证据">' + cells + "</div>";
   }
 
   async function retryFromList(id, button) {
@@ -146,7 +146,7 @@
   }
 
   function stopNote(job) {
-    return job.state === "queued" ? "已停止" : "将在当前 WinAMS / 模型调用结束后停止，已得到的结果会保留";
+    return job.state === "queued" ? "已停止" : "将在当前 LLVM / 模型调用结束后停止，已得到的结果会保留";
   }
 
   async function stopFromList(id, button) {
@@ -478,9 +478,9 @@
     execution_workflow: "执行与校验阶段（含调度）", repair_workflow: "模型修订阶段",
     human_wait: "等待人工处理", stopped_wait: "暂停等待",
     execution_resource_wait: "等待执行资源", static_check: "执行前静态检查",
-    winams_execute: "WinAMS 执行（含后端捕获）", result_check: "执行结果校验",
-    captured_candidate_processing: "期望值回填检查", typed_candidate_processing: "类型推导候选处理",
-    host_workflow: "主机处理总计（含桩模型）", host_prepare: "主机桩接口准备",
+    result_check: "执行结果校验",
+    typed_candidate_processing: "类型推导候选处理",
+    host_workflow: "LLVM 处理总计（含桩模型）", host_prepare: "桩接口准备",
     host_execute: "LLVM 编译、执行与校验", stub_model: "桩函数模型请求",
     input_model: "补用例模型请求", candidate_check: "模型候选静态检查",
     extracting: "Clang 抽取（整批共享）", queued: "等待生成进程", generating: "开始生成",
@@ -671,8 +671,7 @@
       return head + '<tr data-attempt="' + a.id + '"' + (isCurrent ? ' class="is-current" title="当前版本"' : "") +
         (run ? ' data-run-member="' + run.key + '"' + (folded ? " hidden" : "") : "") + ">" +
         '<td class="ut-num">' + a.seq + "</td><td>" + originOf(a) + "</td>" +
-        "<td>" + (a.verdict ? U.verdictPill(a.verdict,
-          a.execution && a.execution.evidence_source === "HOST_EXECUTION" ? "clang" : "winams") :
+        "<td>" + (a.verdict ? U.verdictPill(a.verdict, "clang") :
           (U.ACTIVE[job.state] ? U.statePill("executing") : "—")) + "</td>" +
         '<td class="ut-att-issues">' + topIssues(a.check) + "</td><td>" + coverage(a.execution) +
           stubBuild(a.execution) + "</td>" +
@@ -853,7 +852,7 @@
     var data = coverageCache[key], r = data.report || {}, s = r.summary || {};
     var lines = r.lines || [];
     var c1Label = r.c1_basis === "DECISION" ? "C1（判定）" : "C1（条件）";
-    var head = '<p class="ut-cov-note">主机 llvm-cov 观测（HOST_EXECUTION），仅开发期证据，不作为目标覆盖率。' +
+    var head = '<p class="ut-cov-note">Clang/LLVM 实测覆盖率（HOST_EXECUTION），按项目测试要求展示。' +
       "第 " + esc(data.attempt.seq) + " 版 · 用例 " + esc(r.cases) + " 条" +
       (r.source_sha256 ? ' · 源文件 <code>' + esc(String(r.source_sha256).slice(0, 12)) + "</code>" : "") + "</p>" +
       '<div class="ut-cov">' + covChip("C0（行）", s.c0) +
@@ -1414,7 +1413,7 @@
     if (epoch !== previewEpoch || openJobId !== id) return;
     var model = window.LMTestCsv.parse(text);
     if (!model) {
-      LMUI.alert({ title: "无法以表格显示", body: "该版本缺少 #COMMENT 列头，不是 WinAMS TestCsv。请下载后查看原文。" });
+      LMUI.alert({ title: "无法以表格显示", body: "该版本缺少 #COMMENT 列头，不是有效 TestCsv。请下载后查看原文。" });
       return;
     }
     var unchanged = window.LMTestCsv.serialize(model, window.LMTestCsv.toDoc(model));
@@ -1706,7 +1705,7 @@
     if (!id || !active || !U.can("edit")) return;
     var ok = await LMUI.confirm({
       title: "停止批次 #" + id,
-      body: "停止该批次中 " + active + " 个进行中的作业。正在执行的 WinAMS 或模型调用会先完成，" +
+      body: "停止该批次中 " + active + " 个进行中的作业。正在执行的 LLVM 或模型调用会先完成，" +
         "结果保留；之后可在作业详情中继续。",
       confirmText: "停止批次",
     });
@@ -1750,7 +1749,7 @@
     var id = job.id, note = $("ut-d-revision-note").value;
     var ok = await LMUI.confirm({
       title: "导入人工修订",
-      body: "将「" + file.name + "」作为新版本提交，并重新执行 WinAMS 与校验。",
+      body: "将「" + file.name + "」作为新版本提交，并重新执行 LLVM 与校验。",
       confirmText: "导入并执行",
     });
     if (!ok || !job || job.id !== id) return;

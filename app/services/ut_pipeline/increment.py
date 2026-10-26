@@ -5,7 +5,7 @@ and the input cells to change; the platform copies the reference row, applies
 the changes and appends it with every expected-value cell blank.  Existing
 lines are kept byte for byte, so rows cannot be deleted, columns cannot be
 changed and expected values cannot be rewritten by construction.  Blank
-expected values are then settled by the WinAMS capture.
+appended outputs require the typed implementation oracle and re-execution.
 
 Input columns are addressed by short tokens (``I1`` .. ``In``) so the prompt
 stays small and a model cannot misspell a long WinAMS column name.  Reference

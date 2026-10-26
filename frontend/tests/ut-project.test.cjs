@@ -526,7 +526,8 @@ test("the selected version's host coverage report shows each line's C0, C1 and M
   h.coverages[0].resolve(coverageReport());
   await settle();
   const html = h.get("ut-d-coverage-body").innerHTML;
-  assert.match(html, /仅开发期证据，不作为目标覆盖率/);
+  assert.match(html, /Clang\/LLVM 实测覆盖率（HOST_EXECUTION），按项目测试要求展示/);
+  assert.doesNotMatch(html, /仅开发期证据|不作为目标覆盖率|实验/);
   assert.match(html, /C0（行）<\/b> 88.9%（8 \/ 9）/);
   assert.match(html, /C1（判定）<\/b> 75%（3 \/ 4）/);
   assert.match(html, /MC\/DC<\/b> 50%（1 \/ 2）/);
@@ -1014,7 +1015,7 @@ test("UT jobs use the shared task row with separate result and review cells", ()
   assert.match(html, /lm-cell-status[\s\S]*?FAIL/);
   assert.match(html, /lm-cell-review[\s\S]*?已通过/);
   assert.doesNotMatch(html, /lm-task-(sel|steps|cancel|retest|del)/);
-  assert.match(html, /WinAMS/);
+  assert.match(html, /Clang\/LLVM/);
   assert.match(html, /lm-cell-time"><code>26\/10\/19/);
   const queued = window.LMTaskRow.rowHtml({ ...task, finished_at: null }, { projectId: 4 });
   assert.match(queued, /lm-cell-time"><span class="muted">—<\/span>/);

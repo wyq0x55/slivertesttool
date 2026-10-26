@@ -6,7 +6,7 @@ of the target, the input columns and the existing rows, and the machine
 verdict.  It returns input rows only: an obligation, a reference row and the
 input cells to change.  The platform appends them with blank expected values
 (see ``increment``), so existing rows, columns and expected values cannot
-change. Blank expected values are settled by WinAMS capture or the typed Host oracle, and every
+change. Blank appended outputs require a proven typed implementation oracle, and every
 outcome is executed, checked again and still ends at a human gate.
 
 Prompt layout follows prefix-cache reuse on the local model: the system
@@ -29,7 +29,7 @@ from ..ai import config as ai_config
 from ..ai import provider
 from . import diagnostic, increment
 
-PROMPT_VERSION = "ut-repair/7.6"
+PROMPT_VERSION = "ut-repair/8.0"
 # Bound the prompt: issue details are already truncated by ut-agent.
 _MAX_DETAIL_CHARS = 6000
 _MAX_DECISION_CHARS = 200
@@ -73,15 +73,11 @@ def _system_prompt(constraints: dict[str, Any]) -> str:
             f"## 项目绑定的测试基准 {baseline.get('id')}@{baseline.get('version')}"
             f"（{source.get('document', '')} / {source.get('sheet', '')}）\n"
         )
-    host = constraints.get("execution_backend") == "clang"
-    introduction = ("You propose appended TestCsv inputs for Clang Host replay. " if host else
-                    "你是 WinAMS 单元测试用例（TestCsv）的输入手順助手。")
-    output_rule = ("Output cells stay blank; only the typed implementation oracle may fill appended outputs." if host else
-                   "平台把新增行的期望值全部留空，由 WinAMS 执行捕获回填。")
-    expectation_rule = ("Existing expectations remain immutable; disagreements require human review." if host else
-                        "期望值与实际值不一致由平台用执行捕获值覆盖，不需要你处理。")
-    execution_name = "Host execution" if host else "WinAMS"
-    coverage_name = "Host coverage records" if host else "WinAMS 分支记录"
+    introduction = "You propose input rows for the primary Clang/LLVM execution workflow. "
+    output_rule = "Output cells stay blank; only the typed implementation oracle may fill appended outputs."
+    expectation_rule = "Existing expectations remain immutable; disagreements require human review."
+    execution_name = "Clang/LLVM execution"
+    coverage_name = "LLVM coverage records"
     return (
         f"{introduction}你只提出新增的输入行，"
         "平台按你的提议追加行并交给 ut-agent 校验器重新执行与判定，最终由人工审核。\n\n"
@@ -169,7 +165,7 @@ def _gap_reason(reason: str) -> str:
 
     ut-agent lists every output without an expected value and every
     evaluation left incomplete by them.  Expected values are settled by the
-    WinAMS capture, so they are no reason to decline an input row, yet on
+    typed implementation oracle when proven; otherwise they remain unknown. On
     real data they filled the whole truncated reason.
     """
     kept, oracles = [], 0
@@ -180,7 +176,7 @@ def _gap_reason(reason: str) -> str:
             kept.append(part)
     text = "; ".join(kept)[:_MAX_DECISION_CHARS]
     if oracles:
-        note = f"另缺 {oracles} 个输出期望值（由 WinAMS 捕获回填，不是放弃补行的理由）"
+        note = f"另缺 {oracles} 个输出期望值（只能由有充分证据的类型化实现 oracle 推导；不能猜测）"
         text = f"{text}；{note}" if text else note
     return text
 
@@ -337,7 +333,7 @@ def _user_prompt(target: dict[str, Any], table: increment.Table, check: dict[str
         f"## 当前版本的校验判定：{check.get('verdict')}\n{issues}\n\n"
         f"## 上轮新增行的程序检查反馈\n{feedback}\n\n"
         f"## 执行摘要\n{execution_summary}\n\n"
-        f"## WinAMS 实际分支覆盖证据\n{_bounded_records((check.get('coverage_feedback') or {}).get('records') or [], 6000)}\n\n"
+        f"## LLVM 实测覆盖证据\n{_bounded_records([(execution or {}).get('coverage') or {}], 6000)}\n\n"
         f"## 已有版本的判定历史\n{rounds}"
     )
 

@@ -83,36 +83,34 @@ test("raw JSON refuses rounding and accepts equivalent numeric notation", async 
   assert.deepEqual(h.writes[0].manifest_document.targets, { n: 1, f: 0.1, text: "9007199254740993" });
 });
 
-test("executor and stub controls preserve WinAMS paths and mode-specific toggles", async () => {
-  const h = harness(true, { manifest_document: manifest(), work_root: "W", stub_builds: "S" });
+test("llvm execution controls stay visible and stub options follow the selected mode", async () => {
+  const h = harness();
   await settle();
-  assert.equal(h.get("ut-host-controls").hidden, true);
-  assert.equal(h.get("ut-c-stub_model").disabled, true);
-  h.change("execution_backend", "clang");
-  assert.equal(h.get("ut-winams-controls").hidden, true);
-  assert.equal(h.get("ut-c-work_root").disabled, true);
-  assert.equal(h.get("ut-csv-repair-heading").parentElement.hidden, true);
+  assert.equal(h.get("ut-c-execution_backend").value, "clang");
   assert.equal(h.get("ut-host-controls").hidden, false);
+  assert.equal(h.get("ut-c-stub_model").disabled, true);
+  assert.equal(h.get("ut-stub-llm-controls").hidden, true);
+  assert.equal(h.get("ut-csv-repair-heading").parentElement.hidden, false);
   h.change("stub_mode", "llm");
   assert.equal(h.get("ut-stub-llm-controls").hidden, false);
   assert.equal(h.get("ut-c-stub_model").disabled, false);
-  assert.equal(h.get("ut-c-work_root").value, "W");
-  assert.equal(h.get("ut-c-stub_builds").value, "S");
 });
 
-test("saving uses numeric limits, CSRF and document contract; WinAMS normalizes stub mode", async () => {
+test("saving uses numeric limits, CSRF and the document contract while keeping Clang", async () => {
   const h = harness(); await settle();
-  h.change("execution_backend", "clang"); h.change("stub_mode", "llm");
+  h.change("stub_mode", "llm");
   h.get("ut-c-stub_model").value = " local-stub "; h.get("ut-c-stub_max_rounds").value = "3";
   await h.save();
   assert.equal(h.writes[0].stub_max_rounds, 3);
   assert.equal(h.writes[0].stub_model, "local-stub");
+  assert.equal(h.writes[0].execution_backend, "clang");
   assert.equal(h.writes[0].host_clang, "clang");
   assert.equal(h.writes[0].max_repair_rounds, 5);
   assert.equal(Object.hasOwn(h.writes[0], "manifest_path"), false);
   assert.equal(h.requests.find(r => r.method === "PUT").headers["X-CSRF-Token"], "csrf-test");
   h.change("execution_backend", "winams"); await h.save();
-  assert.equal(h.writes[1].stub_mode, "deterministic");
+  assert.equal(h.writes[1].execution_backend, "clang");
+  assert.equal(h.writes[1].stub_mode, "llm");
   assert.equal(h.get("ut-manifest-sha256").textContent, "saved-sha");
   assert.equal(h.get("ut-draft-state").textContent, "已保存");
 });

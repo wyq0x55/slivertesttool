@@ -56,7 +56,7 @@
       <details class="ut-advanced">
         <summary>更多清单设置</summary>
         <div class="ut-fields">
-          <div class="field"><label for="ut-m-winams-profile">WinAMS Profile</label><input id="ut-m-winams-profile" autocomplete="off" placeholder="例如 standard"></div>
+          <div class="field"><label for="ut-m-winams-profile">CSV 投影 Profile</label><input id="ut-m-winams-profile" autocomplete="off" placeholder="例如 standard"></div>
           <div class="field"><label for="ut-m-interfaces-contract">接口契约</label><input id="ut-m-interfaces-contract" autocomplete="off" placeholder="契约 ID@版本，可留空"></div>
           <div class="field"><label for="ut-m-rules-project_pack">项目规则包</label><input id="ut-m-rules-project_pack" autocomplete="off" placeholder="规则包 ID@版本，可留空"></div>
           <div class="field ut-field-wide"><label for="ut-m-build-exclude_directories">排除目录</label><textarea id="ut-m-build-exclude_directories" rows="3" wrap="off" autocomplete="off" spellcheck="false" placeholder="每行一个源码根目录下的相对目录"></textarea></div>
@@ -79,20 +79,16 @@
       </div>
     </section>
     <section class="panel ut-settings-section" aria-labelledby="ut-executor-heading">
-      <div class="ut-section-head"><span class="ut-section-number" aria-hidden="true">03</span><div><h2 id="ut-executor-heading">执行与 Stub</h2><p>按所选执行方式显示工具、Stub 与修正设置。</p></div></div>
-      <div class="ut-fields"><div class="field"><label for="ut-c-execution_backend">执行后端</label><select id="ut-c-execution_backend"><option value="winams">WinAMS</option><option value="clang">Clang 主机（实验）</option></select></div></div>
-      <div id="ut-winams-controls" class="ut-fields ut-subsection">
-        <div class="field ut-field-wide"><label for="ut-c-work_root">WinAMS 工作根目录</label><input id="ut-c-work_root" autocomplete="off"><p class="ut-hint">包含索引第 5 列所指 WinAMS 单元树的目录。</p></div>
-        <div class="field ut-field-wide"><label for="ut-c-stub_builds">Stub 构建目录</label><textarea id="ut-c-stub_builds" rows="4" wrap="off" autocomplete="off" spellcheck="false" placeholder="每行一个已链接构建目录，按优先级排列"></textarea><p class="ut-hint">构建应包含 MCDC 子目录。优先使用定义了全部 Stub 且已对被测源码插桩的构建，留空使用单元工程自带构建。</p></div>
-      </div>
-      <div id="ut-host-controls" class="ut-subsection" hidden>
-        <p class="ut-hint">仅执行与生成意图绑定的 CSV；未映射的行或期望值改动会阻塞。主机证据不代表目标机执行或正式交付验收。</p>
+      <div class="ut-section-head"><span class="ut-section-number" aria-hidden="true">03</span><div><h2 id="ut-executor-heading">Clang/LLVM 执行与 Stub</h2><p>使用 LLVM 编译执行、采集覆盖率并校验用例。</p></div></div>
+      <input id="ut-c-execution_backend" type="hidden" value="clang">
+      <div id="ut-host-controls" class="ut-subsection">
+        <p class="ut-hint">执行与生成意图绑定的 CSV；新增输入先通过证明检查，派生期望值的新版本需重新执行后审核。</p>
         <div class="ut-fields">
           <div class="field"><label for="ut-c-host_clang">Clang</label><input id="ut-c-host_clang" value="clang" autocomplete="off"></div>
           <div class="field"><label for="ut-c-host_llvm_cov">llvm-cov</label><input id="ut-c-host_llvm_cov" value="llvm-cov" autocomplete="off"></div>
           <div class="field"><label for="ut-c-host_llvm_profdata">llvm-profdata</label><input id="ut-c-host_llvm_profdata" value="llvm-profdata" autocomplete="off"></div>
           <div class="field"><label for="ut-c-host_profile_runtime">Profile runtime（可选路径）</label><input id="ut-c-host_profile_runtime" autocomplete="off"></div>
-          <div class="field"><label for="ut-c-stub_mode">Stub 模式</label><select id="ut-c-stub_mode"><option value="deterministic">确定性模板</option><option value="llm">本地模型候选（实验）</option></select></div>
+          <div class="field"><label for="ut-c-stub_mode">Stub 模式</label><select id="ut-c-stub_mode"><option value="deterministic">确定性模板</option><option value="llm">本地模型候选</option></select></div>
         </div>
         <div id="ut-stub-llm-controls" hidden>
           <div class="ut-fields"><div class="field"><label for="ut-c-stub_model">Stub 模型</label><input id="ut-c-stub_model" autocomplete="off" placeholder="留空使用全局 AI 模型"></div><div class="field"><label for="ut-c-stub_max_rounds">Stub 候选轮数</label><input id="ut-c-stub_max_rounds" type="number" min="1" max="5" step="1" value="2"></div></div>
@@ -100,7 +96,7 @@
         </div>
       </div>
       <div class="ut-subsection">
-        <h3 id="ut-csv-repair-heading">WinAMS CSV 本地模型修正</h3>
+        <h3 id="ut-csv-repair-heading">补用例模型</h3>
         <div class="ut-fields"><div class="field"><label for="ut-c-max_repair_rounds">修正上限（次）</label><input id="ut-c-max_repair_rounds" type="number" min="0" max="20" step="1"><p class="ut-hint">达到上限仍未通过时转入人工处理。</p></div><div class="field"><label for="ut-c-repair_model">修正模型</label><input id="ut-c-repair_model" autocomplete="off" placeholder="留空使用全局 AI 模型"></div></div>
       </div>
     </section>

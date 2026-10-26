@@ -178,7 +178,7 @@ def build_packet(*, project_id: int, job_id: int, attempt: dict[str, Any],
             "editable_input_tokens": editable, "max_rows": increment.MAX_ROWS_PER_ROUND,
             "base_row": "1-based data row; 0 means all inputs blank; omitted inputs copy base_row",
             "existing_rows": "immutable", "columns": "immutable", "test_policy": "immutable",
-            "expected_values": "new rows stay blank; execution capture only",
+            "expected_values": "new rows stay blank; typed implementation oracle only; derived SHA must execute again",
             "unidentified_mapping": "decline; never infer binding from source, labels or similar names",
         },
         "reply_contract": {

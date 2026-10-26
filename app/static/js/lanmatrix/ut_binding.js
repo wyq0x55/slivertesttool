@@ -4,11 +4,10 @@
   var root = document.querySelector(".lm-ut-binding");
   if (!root) return;
   var pid = Number(root.dataset.project);
-  var KEYS = ["index_csv", "product_root", "work_root", "stub_builds", "max_repair_rounds", "repair_model",
+  var KEYS = ["index_csv", "product_root", "max_repair_rounds", "repair_model",
     "execution_backend", "stub_mode", "stub_model", "stub_max_rounds", "host_clang", "host_llvm_cov", "host_llvm_profdata", "host_profile_runtime"];
-  var DEFAULTS = { execution_backend: "winams", stub_mode: "deterministic", stub_max_rounds: 2,
+  var DEFAULTS = { execution_backend: "clang", stub_mode: "deterministic", stub_max_rounds: 2,
     host_clang: "clang", host_llvm_cov: "llvm-cov", host_llvm_profdata: "llvm-profdata", max_repair_rounds: 5 };
-  var HOST = ["stub_mode", "host_clang", "host_llvm_cov", "host_llvm_profdata", "host_profile_runtime"];
   var MODEL = ["stub_model", "stub_max_rounds"];
   var POLICY = ["boundary_adjacent", "c1", "mcdc", "arithmetic", "combination_group"];
   var FIELDS = ["project.id", "baseline.id", "baseline.version", "build.profile", "winams.profile",
@@ -148,16 +147,12 @@
   }
   function lock(locked) {
     busy = locked;
-    var readonly = !LMUt.can("configure"), clang = $("ut-c-execution_backend").value === "clang";
-    var llm = clang && $("ut-c-stub_mode").value === "llm";
-    $("ut-winams-controls").hidden = clang;
-    $("ut-host-controls").hidden = !clang;
+    var readonly = !LMUt.can("configure");
+    var llm = $("ut-c-stub_mode").value === "llm";
     $("ut-stub-llm-controls").hidden = !llm;
-    $("ut-csv-repair-heading").parentElement.hidden = clang;
     KEYS.forEach(function (k) {
       $("ut-c-" + k).disabled = locked || readonly ||
-        (clang && ["work_root", "stub_builds", "max_repair_rounds", "repair_model"].indexOf(k) >= 0) ||
-        (!clang && HOST.indexOf(k) >= 0) || (!llm && MODEL.indexOf(k) >= 0);
+        (!llm && MODEL.indexOf(k) >= 0);
     });
     FIELDS.forEach(function (p) { field(p).disabled = locked || readonly; });
     $("ut-manifest-json").readOnly = readonly;
@@ -169,7 +164,7 @@
   }
   function populate(c) {
     c = c || {};
-    KEYS.forEach(function (k) { $("ut-c-" + k).value = String(c[k] != null ? c[k] : DEFAULTS[k] != null ? DEFAULTS[k] : ""); });
+    KEYS.forEach(function (k) { $("ut-c-" + k).value = k === "execution_backend" ? "clang" : String(c[k] != null ? c[k] : DEFAULTS[k] != null ? DEFAULTS[k] : ""); });
     draft = object(c.manifest_document) ? JSON.parse(JSON.stringify(c.manifest_document)) : { test_policy: { version: "1" } };
     $("ut-c-manifest_path").value = c.manifest_path || "";
     $("ut-manifest-sha256").textContent = c.manifest_sha256 || "—";
@@ -268,11 +263,11 @@
     clearError();
     try {
       syncForm(); required();
+      $("ut-c-execution_backend").value = "clang";
       var values = { manifest_document: draft };
       KEYS.forEach(function (k) { values[k] = $("ut-c-" + k).value.trim(); });
       values.max_repair_rounds = Number(values.max_repair_rounds);
       values.stub_max_rounds = Number(values.stub_max_rounds);
-      if (values.execution_backend !== "clang") values.stub_mode = "deterministic";
       if (!Number.isInteger(values.stub_max_rounds) || values.stub_max_rounds < 1 || values.stub_max_rounds > 5)
         throw error("Stub 候选轮数必须是 1 至 5 之间的整数。", $("ut-c-stub_max_rounds"));
       if (!Number.isInteger(values.max_repair_rounds) || values.max_repair_rounds < 0 || values.max_repair_rounds > 20)
