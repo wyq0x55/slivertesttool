@@ -38,6 +38,7 @@ import json
 import re
 import threading
 from collections.abc import Callable
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, Optional
 
@@ -52,7 +53,7 @@ from ..ai.provider import ProviderError
 from ..lanmatrix import audit
 from ..lanmatrix import notification_service as notify_svc
 from ..lanmatrix.errors import ServiceError, VersionConflict
-from . import binding, diagnostic, host, host_candidate, repair
+from . import binding, diagnostic, host, host_candidate, repair, timing
 from .bridge import BridgeError, BridgeSettings, UtAgentBridge
 
 # The worker is one process with a thread pool.  WinAMS runs and project-wide
@@ -255,6 +256,11 @@ def create_batch(project_id: int, target_ids: Any, user_id: int, label: str = ""
                     max_repair_rounds=config.max_repair_rounds)
         db.session.add(job)
         db.session.flush()
+        timing.initialize(job)
+        previous = (UtJob.query.filter_by(id=target.latest_job_id)
+                    .with_for_update(of=UtJob).populate_existing().one()) if target.latest_job_id else None
+        if previous is not None:
+            timing.supersede(previous)
         target.latest_job_id = job.id
     audit.record("ut.batch.create", actor_id=user_id, object_type="ut_batch",
                  object_id=batch.id, project_id=project_id,
@@ -294,11 +300,18 @@ def _job_dir(job: UtJob) -> Path:
 
 def _gate(job: UtJob, state: str, reason: str = "", code: str = "") -> None:
     reached_gate = state in UtJob.HUMAN_GATES and job.state != state
-    job.state = state
+    _set_state(job, state)
     job.reason = reason
     job.gate_code = code if state in UtJob.ACTIONABLE else ""
     if reached_gate:
         _notify_requester(job, notify_svc.TASK_FINISHED, _GATE_TITLES[state], reason)
+
+
+def _set_state(job: UtJob, state: str) -> None:
+    if job.state == UtJob.GENERATING and state != UtJob.GENERATING:
+        timing.record_generation(job, _generation_progress(job))
+    timing.transition(job, state)
+    job.state = state
 
 
 _GATE_TITLES = {
@@ -384,7 +397,8 @@ def _run_generation(batch_id: int, on_ready: Callable[[int], None] | None) -> li
     batch = db.session.get(UtBatch, batch_id)
     if batch is None or batch.status != UtBatch.STATUS_GENERATING:
         return []
-    jobs = UtJob.query.filter_by(batch_id=batch_id, state=UtJob.QUEUED).all()
+    jobs = (UtJob.query.filter_by(batch_id=batch_id, state=UtJob.QUEUED)
+            .order_by(UtJob.id).all())
     if not jobs:
         interrupted = (UtJob.query.filter_by(batch_id=batch_id, state=UtJob.GENERATING)
                        .with_for_update(of=UtJob).populate_existing().all())
@@ -392,6 +406,7 @@ def _run_generation(batch_id: int, on_ready: Callable[[int], None] | None) -> li
             # A delayed duplicate cannot resume a generator that died after
             # claiming its jobs, nor certify the unfinished batch as done.
             for job in interrupted:
+                timing.interrupt(job)
                 if job.stop_requested_at is not None:
                     _halt(job)
                 else:
@@ -405,7 +420,7 @@ def _run_generation(batch_id: int, on_ready: Callable[[int], None] | None) -> li
         _refresh_batch(batch_id)
         return []
     for job in jobs:
-        job.state = UtJob.GENERATING
+        _set_state(job, UtJob.GENERATING)
     db.session.commit()
     config = batch.config_snapshot or {}
     bridge = get_bridge()
@@ -433,7 +448,9 @@ def _run_generation(batch_id: int, on_ready: Callable[[int], None] | None) -> li
             db.session.commit()
             return
         job.generation_status = str(unit.get("status") or "")
-        job.generation = {**unit, "execution_backend": config.get("execution_backend", "winams")}
+        recorded = (job.generation or {}).get(timing.KEY)
+        job.generation = {**unit, "execution_backend": config.get("execution_backend", "winams"),
+                          **({timing.KEY: recorded} if recorded is not None else {})}
         if not unit.get("testcsv"):
             detail = unit.get("error") or unit.get("projection_failure") or ""
             if job.stop_requested_at is not None:
@@ -454,7 +471,7 @@ def _run_generation(batch_id: int, on_ready: Callable[[int], None] | None) -> li
             if job.stop_requested_at is not None:
                 _halt(job)
             else:
-                job.state = UtJob.EXECUTING
+                _set_state(job, UtJob.EXECUTING)
         handed[name] = dict(unit)
         execute = job.state == UtJob.EXECUTING
         db.session.commit()
@@ -770,7 +787,8 @@ def _execute_step(job: UtJob) -> None:
     bridge = get_bridge()
     execution = None
     try:
-        check = bridge.check(candidate, **arguments)
+        with timing.stage(job, "static_check", attempt=attempt):
+            check = bridge.check(candidate, **arguments)
         if not _result_integrity(job, attempt, check, execution):
             db.session.commit()
             return
@@ -780,12 +798,16 @@ def _execute_step(job: UtJob) -> None:
             execute_args = {}
             if "intents" in arguments:
                 execute_args["intents"] = arguments["intents"]
-            with _WINAMS_GATE:
-                execution = bridge.execute(
-                    Path(config["work_root"]) / job.target.unit_rel, candidate, out,
-                    stub_builds=_lines(config.get("stub_builds", "")),
-                    source_rel=job.target.source_rel, **execute_args)
-            check = bridge.check(candidate, execution=out / "execution.json", **arguments)
+            with ExitStack() as held:
+                with timing.stage(job, "execution_resource_wait", attempt=attempt, kind="wait"):
+                    held.enter_context(_WINAMS_GATE)
+                with timing.stage(job, "winams_execute", attempt=attempt):
+                    execution = bridge.execute(
+                        Path(config["work_root"]) / job.target.unit_rel, candidate, out,
+                        stub_builds=_lines(config.get("stub_builds", "")),
+                        source_rel=job.target.source_rel, **execute_args)
+            with timing.stage(job, "result_check", attempt=attempt):
+                check = bridge.check(candidate, execution=out / "execution.json", **arguments)
     except BridgeError as exc:
         _gate(job, UtJob.ERROR, f"ut-agent 调用失败：{exc}", GateCode.TOOL_ERROR)
         db.session.commit()
@@ -797,7 +819,9 @@ def _execute_step(job: UtJob) -> None:
     attempt.execution = execution
     attempt.verdict = check["verdict"]
     job.last_verdict = check["verdict"]
-    if _capture_backfill(job, attempt, check, execution):
+    with timing.stage(job, "captured_candidate_processing", attempt=attempt):
+        backfilled = _capture_backfill(job, attempt, check, execution)
+    if backfilled:
         db.session.commit()
         return
     _gate(job, *next_state(check, attempt.origin, job.repair_rounds, job.max_repair_rounds,
@@ -877,12 +901,14 @@ def _execute_host_step(job: UtJob, attempt: UtAttempt, config: dict) -> None:
 
     execution_root = _fresh_exec_dir(job, attempt)
     try:
-        execution, check = host.execute(
-            bridge=get_bridge(), ir_json=generation.get("ir_json"),
-            intents=generation.get("intent_manifest"), reference=job.reference_csv,
-            candidate=attempt.csv_path, out=execution_root, config=config,
-            model_timeout=current_app.config["UT_REPAIR_TIMEOUT"],
-            persist=persist, continuing=continuing)
+        with timing.stage(job, "host_workflow", attempt=attempt, kind="group"):
+            execution, check = host.execute(
+                bridge=get_bridge(), ir_json=generation.get("ir_json"),
+                intents=generation.get("intent_manifest"), reference=job.reference_csv,
+                candidate=attempt.csv_path, out=execution_root, config=config,
+                model_timeout=current_app.config["UT_REPAIR_TIMEOUT"],
+                persist=persist, continuing=continuing,
+                observe=lambda step, **options: timing.stage(job, step, attempt=attempt, **options))
     except ProviderError as exc:
         _gate(job, UtJob.ERROR, f"本地模型不可用：{exc}", GateCode.MODEL_UNAVAILABLE)
     except BridgeError as exc:
@@ -906,8 +932,9 @@ def _execute_host_step(job: UtJob, attempt: UtAttempt, config: dict) -> None:
                 return
             try:
                 source = _read_attempt_csv(attempt)
-                derived, receipt = host_candidate.read_typed_candidate(
-                    execution, source, Path(job.reference_csv).read_bytes(), execution_root)
+                with timing.stage(job, "typed_candidate_processing", attempt=attempt):
+                    derived, receipt = host_candidate.read_typed_candidate(
+                        execution, source, Path(job.reference_csv).read_bytes(), execution_root)
                 if _read_attempt_csv(attempt) != source or job.current_attempt_id != attempt.id:
                     raise ValueError("Candidate version changed while reading typed outputs")
             except (OSError, UnicodeError, ValueError, TypeError, ServiceError) as exc:
@@ -1036,6 +1063,8 @@ def _repair_step(job: UtJob) -> None:
             model=(batch.config_snapshot or {}).get("repair_model", ""),
             timeout=current_app.config["UT_REPAIR_TIMEOUT"],
             prefix_snapshot=prefix,
+            observe=lambda step, **options: timing.stage(job, step, attempt=attempt,
+                                                       round_number=job.repair_rounds + 1, **options),
         )
     except ProviderError as exc:
         # The model never answered: no round is consumed.
@@ -1072,7 +1101,8 @@ def _repair_step(job: UtJob) -> None:
             if source and Path(source).is_file():
                 arguments[argument] = Path(source)
         try:
-            verification = get_bridge().check(Path(new.csv_path), **arguments)
+            with timing.stage(job, "candidate_check", attempt=new, round_number=job.repair_rounds):
+                verification = get_bridge().check(Path(new.csv_path), **arguments)
         except BridgeError as exc:
             new.verdict = "INVALID"
             new.note = f"候选检查失败：{exc}"
@@ -1095,7 +1125,7 @@ def _repair_step(job: UtJob) -> None:
         new.verdict = verification.get("verdict")
         if new.verdict == "FORMAT_OK":
             job.current_attempt_id = new.id
-            job.state = UtJob.EXECUTING
+            _set_state(job, UtJob.EXECUTING)
         else:
             errors = ", ".join(_error_codes(verification))
             new.note = f"新增行在执行前被拒绝：{errors}；当前候选保持第 {attempt.seq} 版"
@@ -1152,6 +1182,7 @@ def advance_job(job_id: int) -> None:
             _halt(job)
             db.session.commit()
             break
+        timing.driving(job)
         if job.state == UtJob.EXECUTING:
             _execute_step(job)
         elif job.state == UtJob.REPAIRING:
@@ -1182,8 +1213,11 @@ def recover_interrupted(pending_jobs: set[int], pending_batches: set[int]) -> di
         before_generation = job.state in (UtJob.QUEUED, UtJob.GENERATING)
         if ((job.state in (UtJob.EXECUTING, UtJob.REPAIRING) and job.id in pending_jobs)
                 or (job.state == UtJob.QUEUED and job.batch_id in pending_batches)):
+            timing.interrupt(job, preserve_waits=True)
+            timing.transition(job, job.state)
             result["pending"].append(job.id)
             continue
+        timing.interrupt(job)
         if job.stop_requested_at is not None:
             _halt(job)
             result["stopped"].append(job.id)
@@ -1237,7 +1271,7 @@ def _locked_job(project_id: int, job_id: int) -> UtJob:
 
 def _halt(job: UtJob) -> None:
     """Park an active job the user asked to stop; candidate and evidence stay."""
-    job.state = UtJob.STOPPED
+    _set_state(job, UtJob.STOPPED)
     job.reason = "已按请求停止；当前候选、机器判定与修订记录均已保留，可继续或重新入队"
     job.gate_code = GateCode.STOPPED
 
@@ -1341,11 +1375,11 @@ def review(project_id: int, job_id: int, decision: str, user_id: int, note: str 
         if evidence_gate and evidence_gate[2] == GateCode.INTEGRITY_ERROR:
             attempt.check = _integrity_check(attempt.check or {}, evidence_gate[1])
             attempt.verdict = job.last_verdict = "BLOCKED"
-        job.state = UtJob.APPROVED
+        _set_state(job, UtJob.APPROVED)
     else:
         if not note:
             raise ServiceError("驳回必须填写原因", code="VALIDATION_ERROR")
-        job.state = UtJob.REJECTED
+        _set_state(job, UtJob.REJECTED)
     job.reviewed_by = user_id
     job.reviewed_at = _utcnow()
     job.review_note = note
@@ -1505,8 +1539,10 @@ def job_detail(project_id: int, job_id: int) -> dict[str, Any]:
     attempts = UtAttempt.query.filter_by(job_id=job.id).order_by(UtAttempt.seq).all()
     entry = job.to_dict(attempts=attempts)
     entry["batch"] = db.session.get(UtBatch, job.batch_id).to_dict()
+    progress = _generation_progress(job)
     if job.state == UtJob.GENERATING:
-        entry["generation_progress"] = _generation_progress(job)
+        entry["generation_progress"] = progress
+    entry["timing"] = timing.snapshot(job, progress)
     return entry
 
 

@@ -120,4 +120,9 @@ summary_path.write_text(json.dumps(summary),encoding='utf-8')
 
 @pytest.mark.parametrize("real_workflow", ["explicit"], indirect=True)
 def test_real_missing_boundary_is_repaired_derived_and_reexecuted(real_workflow, monkeypatch):
-    _run_host_append_trial(real_workflow, monkeypatch)
+    result = _run_host_append_trial(real_workflow, monkeypatch)
+    rows = result["job"]["timing"]["steps"]
+    requests = [row for row in rows if row["step"] == "input_model"]
+    assert len(requests) == 1 and requests[0]["round"] == 1
+    executed_versions = {row["candidate_sha256"] for row in rows if row["step"] == "host_execute"}
+    assert executed_versions == {attempt["csv_sha256"] for attempt in result["job"]["attempts"]}

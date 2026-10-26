@@ -337,6 +337,7 @@
       : "当前无需自动刷新，可手动刷新。";
     $("ut-d-sync").textContent = mode + " " + last;
     $("ut-d-progress").classList.toggle("is-stale", !detailFresh);
+    $("ut-d-timing").classList.toggle("is-stale", !detailFresh);
   }
 
   function staleDetail() {
@@ -350,7 +351,7 @@
   var GEN_PHASE = {
     queued: "等待生成进程", generating: "开始生成", deriving_obligations: "推导测试义务",
     solving: "求解测试义务", validating: "校验用例集", writing_artifacts: "写出 TestCsv 等产物",
-    finished: "本函数已完成，等待批次内其他函数"
+    finished: "本函数生成已完成"
   };
   var GEN_STALE_SECONDS = 60;
 
@@ -447,7 +448,79 @@
         (index === 2 ? '<p class="ut-progress-loop">模型修正 ↔ 执行与校验<br>' + esc(rounds) + " · " + esc(repairNote) + "</p>" : "") + "</li>";
     }).join("");
     $("ut-d-review-section").hidden = active;
+    renderTiming();
     renderSync();
+  }
+
+  var TIMING_STEP = {
+    queue: "排队调度等待", driver_wait: "等待执行任务接手", generation: "用例生成阶段（含抽取与进程等待）",
+    execution_workflow: "执行与校验阶段（含调度）", repair_workflow: "模型修订阶段",
+    human_wait: "等待人工处理", stopped_wait: "暂停等待",
+    execution_resource_wait: "等待执行资源", static_check: "执行前静态检查",
+    winams_execute: "WinAMS 执行（含后端捕获）", result_check: "执行结果校验",
+    captured_candidate_processing: "期望值回填检查", typed_candidate_processing: "类型推导候选处理",
+    host_workflow: "主机处理总计（含桩模型）", host_prepare: "主机桩接口准备",
+    host_execute: "LLVM 编译、执行与校验", stub_model: "桩函数模型请求",
+    input_model: "补用例模型请求", candidate_check: "模型候选静态检查",
+    extracting: "Clang 抽取（整批共享）", queued: "等待生成进程", generating: "开始生成",
+    deriving_obligations: "推导测试义务", solving: "求解测试义务", validating: "校验用例集",
+    writing_artifacts: "写出产物", single_function_generation: "本函数用例生成",
+    suite_conversion: "用例清单转换", csv_projection: "CSV 投影",
+    artifact_serialization_write: "产物序列化与写出"
+  };
+
+  function timingDuration(value) {
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "未记录";
+    if (value < 1000) return value.toFixed(0) + " 毫秒";
+    if (value < 60000) return (value / 1000).toFixed(2) + " 秒";
+    var seconds = Math.floor(value / 1000), hours = Math.floor(seconds / 3600);
+    return (hours ? hours + " 小时 " : "") + Math.floor(seconds % 3600 / 60) + " 分 " + seconds % 60 + " 秒";
+  }
+
+  function timingStamp(value) {
+    if (!value) return "—";
+    var date = new Date(value);
+    return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { hour12: false }) : "—";
+  }
+
+  function renderTiming() {
+    var data = job.timing || {}, generated = data.generation || {}, rows = [];
+    (data.steps || []).forEach(function (row) { rows.push({ row: row, source: "platform" }); });
+    (generated.shared || []).forEach(function (row) { rows.push({ row: row, source: "shared" }); });
+    (generated.function || []).forEach(function (row) { rows.push({ row: row, source: "function" }); });
+    $("ut-d-timing-note").textContent = !rows.length ? "此作业没有逐步计时记录；旧记录不补算为 0。"
+      : (data.history_complete ? "" : "早期步骤未记录或发生中断，历史耗时不完整。") +
+        "等待与实际处理分别记录；阶段总计可能包含下级步骤，不能相加。整批共享抽取只计一次。进行中耗时为当前估计。";
+    if (!rows.length) { $("ut-d-timing").innerHTML = ""; return; }
+    $("ut-d-timing").innerHTML = '<table aria-label="各步骤用时"><thead><tr><th>步骤</th><th>版本 / 轮次</th>' +
+      '<th>状态</th><th>开始</th><th>结束</th><th>用时</th></tr></thead><tbody>' + rows.map(function (item) {
+        var row = item.row, step = row.step || row.phase || row.stage || "未知步骤";
+        var state = String(row.status || "").toLowerCase(), running = state === "running" || state === "waiting";
+        var stateLabel = { running: "进行中", waiting: "等待中", completed: "已结束", failed: "调用失败", interrupted: "中断，结束时间未知" }[state]
+          || (row.ended_at ? "已结束" : "状态未知");
+        var duration = row.elapsed_ms != null ? row.elapsed_ms : row.duration_ms;
+        var stale = false;
+        if (running && item.source !== "platform") {
+          var updated = Date.parse(item.source === "shared" ? generated.project_updated_at : generated.function_updated_at);
+          var observed = Date.parse(generated.observed_at);
+          stale = Number.isFinite(updated) && Number.isFinite(observed) && observed - updated > 60000;
+          if (!stale && Number.isFinite(updated) && Number.isFinite(observed) && typeof duration === "number") {
+            duration += Math.max(0, observed - updated);
+          }
+        }
+        if (stale) stateLabel = "记录未更新（截至最近更新）";
+        if (state === "interrupted") duration = null;
+        var version = item.source === "shared" ? "整批 #" + generated.batch_id
+          : (row.attempt_seq != null ? "第 " + row.attempt_seq + " 版" : "—");
+        if (row.round != null) version += " · 第 " + row.round + " 轮";
+        var label = TIMING_STEP[step] || step;
+        if (row.kind === "wait") label += "（等待）";
+        if (row.kind === "group") label += " · 阶段总计";
+        return '<tr' + (row.kind === "group" ? ' class="is-group"' : "") + '><td>' + esc(label) +
+          "</td><td>" + esc(version) + "</td><td>" + esc(stateLabel) + "</td><td>" + esc(timingStamp(row.started_at)) +
+          "</td><td>" + esc(timingStamp(row.ended_at)) + "</td><td>" +
+          esc((running ? "已用 " : "") + timingDuration(duration)) + "</td></tr>";
+      }).join("") + "</tbody></table>";
   }
 
   function renderJob() {

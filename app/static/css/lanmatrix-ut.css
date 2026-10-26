@@ -120,6 +120,14 @@
   color:var(--text-2); font-size:12px; line-height:1.7; overflow-wrap:anywhere; }
 .ut-gen-meter{ display:block; width:100%; max-width:320px; height:6px; margin:6px 0 2px; accent-color:var(--run); }
 .ut-gen-stale{ color:var(--warn-text); }
+.ut-step-timing{ margin-top:12px; }
+.ut-step-timing summary{ cursor:pointer; font-size:13px; font-weight:600; }
+.ut-step-timing .muted{ font-size:12px; line-height:1.6; }
+.ut-step-timing-scroll{ overflow:auto; max-height:360px; }
+.ut-step-timing table{ width:100%; border-collapse:collapse; font-size:12px; }
+.ut-step-timing th,.ut-step-timing td{ padding:8px; text-align:left; border-bottom:1px solid var(--border); white-space:nowrap; }
+.ut-step-timing tr.is-group td{ background:var(--surface-2); color:var(--text-2); }
+.ut-step-timing td:first-child{ white-space:normal; min-width:170px; }
 .ut-progress-sync{ margin:18px 0 0; padding-top:12px; border-top:1px solid var(--border);
   color:var(--text-3); font-size:12px; line-height:1.7; overflow-wrap:anywhere; }
 .ut-progress.is-stale .ut-progress-marker{ border-color:var(--border-strong); background:var(--surface-2); color:var(--text-3); }

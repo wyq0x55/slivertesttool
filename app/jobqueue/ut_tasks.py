@@ -52,7 +52,10 @@ def ut_advance_job(job_id: int) -> None:
             db.session.rollback()
             job = db.session.get(UtJob, job_id)
             if job is not None and job.state in UtJob.ACTIVE:
-                job.state = UtJob.ERROR
+                from ..services.ut_pipeline import timing
+
+                timing.interrupt(job)
+                pipeline._set_state(job, UtJob.ERROR)
                 job.reason = f"内部错误：{type(exc).__name__}: {exc}"
                 job.gate_code = GateCode.INTERNAL_ERROR
                 db.session.commit()

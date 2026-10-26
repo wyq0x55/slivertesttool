@@ -264,8 +264,9 @@ def test_host_execution_applies_all_report_gates_before_pass(tmp_path, monkeypat
     monkeypatch.setattr(pipeline.host, "execute", lambda **kwargs: (execution, check))
     monkeypatch.setattr(pipeline, "_fresh_exec_dir", lambda *args: tmp_path / "out")
     session = SimpleNamespace(get=lambda model, ident: {1: job, 2: SimpleNamespace(), 10: attempt}[ident],
-                              commit=Mock(), refresh=Mock())
+                              commit=Mock(), refresh=Mock(), is_active=True)
     monkeypatch.setattr(pipeline, "db", SimpleNamespace(session=session))
+    monkeypatch.setattr(pipeline.timing, "db", SimpleNamespace(session=session))
     monkeypatch.setattr(pipeline, "current_app", SimpleNamespace(config={"UT_REPAIR_TIMEOUT": 1}))
     pipeline._execute_host_step(job, attempt, {"execution_backend": "clang"})
     assert gate.call_args.args[3] == expected_gate

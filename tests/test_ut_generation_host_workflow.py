@@ -65,6 +65,21 @@ raise SystemExit(main())
         job = _job(env, item["id"])
         assert job["state"] == "awaiting_review", {"state": job["state"], "reason": job["reason"]}
         assert len(job["attempts"]) == 1 and job["reviewed_at"] is None
+        timing = job["timing"]
+        assert timing["history_complete"]
+        assert any(row["step"] == "host_execute" and row["duration_ms"] > 0 for row in timing["steps"])
+        assert all(row["status"] == "completed" for row in timing["generation"]["function"])
+        assert {row["phase"] for row in timing["generation"]["function"]} >= {
+            "solving", "single_function_generation", "csv_projection"}
+        assert job["generation"]["phase_timings"]
+        queued = next(row for row in timing["generation"]["function"] if row["phase"] == "queued")
+        assert queued["ended_at"] and queued["duration_ms"] >= 0
+        assert len(timing["generation"]["shared"]) == 1
+        assert timing["generation"]["shared"][0]["status"] == "completed"
+        from app.services.ut_pipeline import pipeline
+
+        monkeypatch.setattr(pipeline, "_generation_progress", lambda _: {})
+        assert _job(env, item["id"])["timing"]["generation"]["shared"] == timing["generation"]["shared"]
     assert len(executions) == 2 and marker.exists()
     generation_calls = [call for call in calls if call[0] == "generate"]
     assert len(generation_calls) == 1
