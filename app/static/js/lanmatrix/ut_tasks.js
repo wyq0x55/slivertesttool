@@ -103,12 +103,31 @@
           (j.superseded_by ? '<div class="submuted">已被 #' + j.superseded_by + " 取代</div>" : "") + "</td>" +
         "<td>" + U.verdictPill(j.last_verdict) + "</td>" +
         '<td class="ut-num">' + j.repair_rounds + " / " + j.max_repair_rounds + "</td>" +
+        "<td>" + coverageDigest(j) + "</td>" +
         '<td class="lm-cell-time"><code>' + esc(U.time(j.updated_at)) + "</code></td>" +
         '<td class="lm-row-actions"><span class="row-acts">' +
         iconButton(U.actionable(j) ? "审核" : "查看", ICO.view, 'data-job="' + j.id + '"') +
         stop + retry + download + "</span></td></tr>";
-    }).join("") : '<tr><td colspan="7" class="muted">' +
+    }).join("") : '<tr><td colspan="8" class="muted">' +
       (jobs.length ? "没有符合条件的作业" : "还没有作业：在「实施一览」勾选函数后加入队列") + "</td></tr>";
+  }
+
+  // The current version's host llvm-cov C0 (line) / C1 / MC/DC; the per-line
+  // report opens in the job detail. Development-time evidence, not target.
+  function coverageDigest(j) {
+    var c = j.coverage;
+    if (!c) return '<span class="submuted">—</span>';
+    // A metric with nothing to cover (e.g. no multi-condition decision) has no
+    // percentage and shows "—".
+    var cells = [["c0", "C0"], ["c1", "C1"], ["mcdc", "MC/DC"]].map(function (k) {
+      var v = c[k[0]], measured = typeof v === "number";
+      return '<span class="' + (!measured ? "is-missing" : v >= 100 ? "is-full" : "is-gap") +
+        '"><b>' + k[1] + "</b> " + (measured ? esc(v + "%") : "—") + "</span>";
+    }).join("");
+    var report = c.has_report
+      ? '<a class="ut-cov-link" href="?job=' + j.id + '" data-job="' + j.id +
+        '" data-coverage="1">逐行报告</a>' : "";
+    return '<div class="ut-cov-mini" title="主机 llvm-cov 观测，仅开发期证据">' + cells + "</div>" + report;
   }
 
   async function retryFromList(id, button) {
@@ -616,6 +635,7 @@
     if (wanted) select(wanted, false);
     else {
       $("ut-d-host").hidden = true;
+      hideCoverage();
       $("ut-d-issues-title").textContent = "校验问题";
       $("ut-d-issues-sum").textContent = "";
       $("ut-d-issues").innerHTML = '<p class="muted">尚无版本，尚未校验</p>';
@@ -680,6 +700,136 @@
     setActionBusy(actionPending);
     renderIssues(a);
     hostEvidence(a);
+    coverageReport(a);
+  }
+
+  // ------------------------------------------------- host coverage report
+  // Per-line C0 / C1 / MC/DC of the selected version's host llvm-cov run,
+  // fetched once per version (versions are immutable). Development-time host
+  // evidence only; WinAMS target coverage is not shown here.
+  var coverageCache = {};
+  var coverageEpoch = 0;
+  var coverageView = "all";
+  var coverageShown = null;
+  var focusCoverage = false;
+  var COV_CLASS = { COMPLETE: "is-full", PARTIAL: "is-gap", NONE: "is-miss", EXCLUDED: "is-missing" };
+
+  function hideCoverage() {
+    ++coverageEpoch;
+    coverageShown = null;
+    $("ut-d-coverage").hidden = true;
+    $("ut-d-coverage-body").innerHTML = "";
+  }
+
+  async function coverageReport(attempt) {
+    var panel = $("ut-d-coverage");
+    if (!(attempt.execution || {}).has_coverage_report) { hideCoverage(); focusCoverage = false; return; }
+    var epoch = ++coverageEpoch;
+    panel.hidden = false;
+    var key = job.id + ":" + attempt.id;
+    if (!coverageCache[key]) {
+      if (coverageShown !== key) $("ut-d-coverage-body").innerHTML = '<p class="muted">加载中…</p>';
+      try {
+        coverageCache[key] = await LMApi.utAttemptCoverage(pid, job.id, attempt.id);
+      } catch (e) {
+        if (epoch !== coverageEpoch) return;
+        coverageShown = null;
+        focusCoverage = false;
+        $("ut-d-coverage-body").innerHTML = '<p class="ut-batch-err">' + esc(e.message) + "</p>";
+        return;
+      }
+      if (epoch !== coverageEpoch) return;
+    }
+    // The detail re-renders on every poll; an unchanged report keeps its DOM.
+    if (coverageShown !== key) renderCoverage(key);
+    if (focusCoverage) {
+      focusCoverage = false;
+      if (panel.scrollIntoView) panel.scrollIntoView({ block: "start" });
+    }
+  }
+
+  function covCount(count) {
+    if (!count) return "—";
+    if (count.percent == null) return "无适用项（0 / 0）";
+    return esc(count.percent) + "%（" + esc(count.covered) + " / " + esc(count.total) + "）";
+  }
+  function covMark(ok, label) {
+    return '<span class="' + (ok ? "is-full" : "is-miss") + '">' + label + (ok ? "✓" : "✗") + "</span>";
+  }
+  function c1Cell(entries) {
+    return entries.map(function (e) {
+      if (e.kind === "SWITCH_OUTCOME") {
+        return '<span class="ut-cov-mark ' + COV_CLASS[e.state] + '" title="第 ' + esc(e.column) +
+          " 列 · 执行 " + esc(e.count) + ' 次">case ' + (e.count > 0 ? "✓" : "✗") + "</span>";
+      }
+      return '<span class="ut-cov-mark ' + COV_CLASS[e.state] + '" title="第 ' + esc(e.column) + " 列 · " +
+        (e.kind === "CONDITION" ? "条件" : "判定") + " · 真 " + esc(e.true) + " / 假 " + esc(e.false) + '">' +
+        covMark(e.true > 0, "T") + covMark(e.false > 0, "F") + "</span>";
+    }).join("");
+  }
+  function mcdcCell(entries) {
+    return entries.map(function (e) {
+      if (e.state === "EXCLUDED") {
+        return '<span class="ut-cov-mark is-missing" title="' + esc(e.reason || "") + '">不计入</span>';
+      }
+      return '<span class="ut-cov-mark ' + COV_CLASS[e.state] + '">' + esc(e.shown) + " / " + esc(e.conditions) +
+        ((e.uncovered || []).length ? '<span class="submuted"> 未证明条件 ' + esc(e.uncovered.join(", ")) + "</span>" : "") +
+        "</span>";
+    }).join("");
+  }
+  function lineGap(line) {
+    return line.c0 === "NOT_COVERED" ||
+      line.c1.concat(line.mcdc).some(function (e) { return e.state === "PARTIAL" || e.state === "NONE"; });
+  }
+
+  function renderCoverage(key) {
+    coverageShown = key;
+    var data = coverageCache[key], r = data.report || {}, s = r.summary || {};
+    var lines = r.lines || [];
+    var c1Label = r.c1_basis === "DECISION" ? "C1（判定）" : "C1（条件）";
+    var head = '<p class="ut-cov-note">主机 llvm-cov 观测（HOST_EXECUTION），仅开发期证据，不作为目标覆盖率。' +
+      "第 " + esc(data.attempt.seq) + " 版 · 用例 " + esc(r.cases) + " 条" +
+      (r.source_sha256 ? ' · 源文件 <code>' + esc(String(r.source_sha256).slice(0, 12)) + "</code>" : "") + "</p>" +
+      '<div class="ut-cov-summary"><span><b>C0（行）</b> ' + covCount(s.c0) + "</span><span><b>" + c1Label + "</b> " +
+      (s.c1 ? covCount(s.c1) : "未得出" + (r.c1_reason ? "：" + esc(r.c1_reason) : "")) + "</span><span><b>MC/DC</b> " +
+      (r.mcdc_reported ? covCount(s.mcdc) : "未插桩") + "</span></div>";
+    var missed = lines.filter(function (l) { return l.c0 === "NOT_COVERED"; }).map(function (l) { return l.line; });
+    var partial = lines.filter(function (l) {
+      return l.c1.concat(l.mcdc).some(function (e) { return e.state === "PARTIAL" || e.state === "NONE"; });
+    }).map(function (l) { return l.line; });
+    var gaps = '<p class="ut-cov-gaps">未执行的行：' + (missed.length ? esc(missed.join(", ")) : "无") +
+      " · 未完全覆盖的判定所在行：" + (partial.length ? esc(partial.join(", ")) : "无") + "</p>";
+    var views = '<div class="segmented ut-cov-views" role="group" aria-label="筛选覆盖率行">' +
+      [["all", "全部"], ["gaps", "仅未覆盖"], ["decisions", "仅判定"]].map(function (v) {
+        var on = coverageView === v[0];
+        return '<button type="button" class="' + (on ? "on" : "") + '" aria-pressed="' + on +
+          '" data-cov-view="' + v[0] + '">' + v[1] + "</button>";
+      }).join("") + "</div>";
+    var shown = lines.filter(function (l) {
+      return coverageView === "gaps" ? lineGap(l)
+        : coverageView === "decisions" ? l.c1.length || l.mcdc.length : true;
+    });
+    var table = r.reason ? '<p class="ut-batch-err">' + esc(r.reason) + "</p>"
+      : '<table class="ut-cov-lines"><thead><tr><th>行</th><th>C0</th><th>次数</th><th>' + c1Label +
+        "</th><th>MC/DC</th><th>源代码</th></tr></thead><tbody>" + (shown.map(function (l) {
+          return '<tr class="' + (l.c0 === "NOT_COVERED" ? "is-miss" : lineGap(l) ? "is-gap" : "") + '">' +
+            '<td class="ut-num">' + esc(l.line) + "</td><td>" +
+            (l.c0 === "COVERED" ? '<span class="is-full">○</span>' : l.c0 === "NOT_COVERED" ? '<span class="is-miss">×</span>' : "") +
+            '</td><td class="ut-num">' + (l.count == null ? "" : esc(l.count)) + "</td><td>" + c1Cell(l.c1) +
+            "</td><td>" + mcdcCell(l.mcdc) + '</td><td class="ut-cov-src"><code>' + esc(l.text) + "</code></td></tr>";
+        }).join("") || '<tr><td colspan="6" class="muted">没有符合条件的行</td></tr>') + "</tbody></table>";
+    // Macro-expanded records carry a line of the macro's definition file.
+    var unplaced = [["MACRO_EXPANSION", "宏展开的判定（行号属于宏定义文件）"],
+                    ["OUTSIDE_SHOWN_LINES", "函数范围外的记录"]].map(function (kind) {
+      var at = (r.unplaced || []).filter(function (u) {
+        return (u.origin || "OUTSIDE_SHOWN_LINES") === kind[0];
+      });
+      return at.length ? '<p class="submuted">' + kind[1] + "：第 " +
+        esc(at.map(function (u) { return u.line; }).join(", ")) + " 行</p>" : "";
+    }).join("");
+    var legend = '<p class="submuted">C0：○ 已执行 × 未执行，空白为非代码行。C1：T/F 为判定取真／取假，' +
+      "多条件判定的次数是不同测试向量数。MC/DC：已证明独立影响的条件数 / 条件总数。</p>";
+    $("ut-d-coverage-body").innerHTML = head + gaps + views + table + unplaced + legend;
   }
 
   function versionLabel(a) {
@@ -1168,12 +1318,16 @@
     var epoch = ++detailEpoch;
     ++previewEpoch;
     openJobId = id;
+    // Only the list's coverage link scrolls to the report; any other open
+    // (row, back/forward, URL) clears a focus request left by an earlier one.
+    focusCoverage = !!(opts || {}).coverage;
     job = null;
     detailFresh = false;
     detailSyncedAt = null;
     detailSyncFailed = false;
     $("ut-d-progress").hidden = true;
     $("ut-d-review-section").hidden = true;
+    hideCoverage();
     setActionBusy(true);
     shownAttempt = null;
     $("ut-d-note").value = "";
@@ -1193,6 +1347,7 @@
     showDetail(true);
     try { await loadJob(id, epoch); } catch (e) {
       if (epoch !== detailEpoch) return;
+      focusCoverage = false;
       $("ut-d-title").textContent = "作业 #" + id;
       say(e.message, true);
     }
@@ -1207,6 +1362,8 @@
     openJobId = null;
     ++detailEpoch;
     ++previewEpoch;
+    focusCoverage = false;
+    hideCoverage();
     showDetail(false);
     refresh();
   }
@@ -1286,12 +1443,18 @@
     var b = e.target.closest("[data-job]");
     if (!b) return;
     if (e.preventDefault) e.preventDefault();
-    openJob(Number(b.dataset.job));
+    openJob(Number(b.dataset.job), { coverage: !!b.dataset.coverage });
   });
   $("ut-refresh").addEventListener("click", refresh);
   $("ut-d-refresh").addEventListener("click", refresh);
 
   $("ut-d-close").addEventListener("click", function () { closeJob(); });
+  $("ut-d-coverage").addEventListener("click", function (e) {
+    var b = e.target.closest("[data-cov-view]");
+    if (!b || !coverageShown) return;
+    coverageView = b.dataset.covView;
+    renderCoverage(coverageShown);
+  });
   $("ut-d-attempts").addEventListener("click", function (e) {
     var toggle = e.target.closest("[data-run-toggle]");
     if (toggle && toggle.dataset.runToggle) {

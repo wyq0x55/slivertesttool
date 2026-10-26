@@ -32,7 +32,7 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
   root.dataset.project = "4";
   get("ut-detail").hidden = true;
   const details = [], previews = [], reviews = [], revisions = [], batches = [], sheets = [], downloads = [];
-  const stops = [], diagnostics = [];
+  const stops = [], diagnostics = [], coverages = [];
   let failList = false, onPop;
   // Browsers always provide visibility events; timers are recorded so a test
   // can fire the next poll itself.
@@ -83,6 +83,9 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
       utAttemptDiagnostic(pid, job, attempt) {
         const d = deferred(); diagnostics.push({ ...d, job, attempt }); return d.promise;
       },
+      utAttemptCoverage(pid, job, attempt) {
+        const d = deferred(); coverages.push({ ...d, job, attempt }); return d.promise;
+      },
       utAttemptUrl: (pid, job, attempt) => `/csv/${job}/${attempt}`,
       utArtifactUrl: (pid, job, attempt, artifact) => `/artifact/${job}/${attempt}/${artifact}`,
       utExportUrl: (pid, batch) => `/export/${batch || "all"}`,
@@ -116,7 +119,7 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
   }
   return { get, root, details, previews, reviews, revisions, batches, sheets, stops, open, pin, click,
     pop: (q) => onPop(q), failList: () => { failList = true; }, common: window.LMUt,
-    document, docListeners, timers, calls, downloads, diagnostics };
+    document, docListeners, timers, calls, downloads, diagnostics, coverages };
 }
 
 function candidate(id, seq) {
@@ -470,6 +473,80 @@ test("host evidence keeps line/branch metrics, unknown MC/DC and stub artifacts 
   assert.doesNotMatch(h.get("ut-d-host-summary").innerHTML, /C0|C1|100%/);
   assert.match(h.get("ut-d-stub-rounds").innerHTML, /&lt;stub-model&gt;[\s\S]*10 \/ 5/);
   assert.match(h.get("ut-d-host-artifacts").innerHTML, /href="\/artifact\/1\/10\/abc"/);
+});
+
+function coverageReport() {
+  return { attempt: { id: 10, seq: 1, verdict: "PASS" }, report: {
+    contract: "ut-agent.coverage-lines/1", evidence_source: "HOST_EXECUTION", cases: 3,
+    summary: { c0: { covered: 8, total: 9, percent: 88.9 }, c1: { covered: 3, total: 4, percent: 75 },
+      mcdc: { covered: 1, total: 2, percent: 50 } },
+    c1_basis: "DECISION", c1_reason: "", mcdc_reported: true, source_sha256: "0123456789abcdef",
+    lines: [
+      { line: 2, text: "int classify(int a, int b)", count: null, c0: null, c1: [], mcdc: [] },
+      { line: 4, text: "\tif (a > 0 && b > 0) {", count: 2, c0: "COVERED",
+        c1: [{ column: 9, kind: "DECISION", true: 1, false: 1, state: "COMPLETE" }],
+        mcdc: [{ column: 9, conditions: 2, shown: 1, uncovered: [2], state: "PARTIAL" }] },
+      { line: 7, text: "x < <y>", count: 1, c0: "COVERED",
+        c1: [{ column: 9, kind: "DECISION", true: 1, false: 0, state: "PARTIAL" }], mcdc: [] },
+      { line: 10, text: "return -1;", count: 0, c0: "NOT_COVERED", c1: [], mcdc: [] },
+    ], unplaced: [
+      { line: 30, origin: "OUTSIDE_SHOWN_LINES", c1: [], mcdc: [{ column: 3, state: "EXCLUDED", reason: "macro" }] },
+      { line: 3, origin: "MACRO_EXPANSION", c1: [{ column: 20, kind: "DECISION", true: 1, false: 0, state: "PARTIAL" }],
+        mcdc: [] },
+    ] } };
+}
+
+test("the selected version's host coverage report shows each line's C0, C1 and MC/DC", async () => {
+  const h = harness();
+  const value = job();
+  value.attempts[0].execution = { evidence_source: "HOST_EXECUTION", status: "HOST_PASS",
+    has_coverage_report: true, coverage: { lines: { percent: 88.9, covered: 8, total: 9 } } };
+  await ready(h, value);
+  assert.equal(h.get("ut-d-coverage").hidden, false);
+  assert.equal(h.coverages.length, 1);
+  assert.deepEqual([h.coverages[0].job, h.coverages[0].attempt], [1, 10]);
+  h.coverages[0].resolve(coverageReport());
+  await settle();
+  const html = h.get("ut-d-coverage-body").innerHTML;
+  assert.match(html, /仅开发期证据，不作为目标覆盖率/);
+  assert.match(html, /C0（行）<\/b> 88.9%（8 \/ 9）/);
+  assert.match(html, /C1（判定）<\/b> 75%（3 \/ 4）/);
+  assert.match(html, /MC\/DC<\/b> 50%（1 \/ 2）/);
+  assert.match(html, /未执行的行：10 · 未完全覆盖的判定所在行：4, 7/);
+  assert.match(html, /<tr class="is-miss"><td class="ut-num">10<\/td><td><span class="is-miss">×/);
+  assert.match(html, /1 \/ 2<span class="submuted"> 未证明条件 2/);
+  assert.match(html, /T✓<\/span><span class="is-miss">F✗/);
+  assert.match(html, /x &lt; &lt;y&gt;/);
+  assert.match(html, /函数范围外的记录：第 30 行/);
+  assert.match(html, /宏展开的判定（行号属于宏定义文件）：第 3 行/);
+
+  // Filters re-render from the cached report; a poll does not refetch it.
+  h.get("ut-d-coverage").listeners.click({ target: { closest: () => ({ dataset: { covView: "gaps" } }) } });
+  const gaps = h.get("ut-d-coverage-body").innerHTML;
+  assert.doesNotMatch(gaps, /classify/);
+  assert.match(gaps, /<td class="ut-num">7<\/td>/);
+  h.click("ut-d-refresh");
+  await settle();
+  h.details.at(-1).resolve(value);
+  await settle();
+  assert.equal(h.coverages.length, 1);
+  assert.equal(h.get("ut-d-coverage-body").innerHTML, gaps);
+});
+
+test("a version without a host report hides the coverage section and ignores late replies", async () => {
+  const h = harness();
+  const value = job(20);
+  value.attempts[0].execution = { evidence_source: "HOST_EXECUTION", has_coverage_report: true };
+  value.attempts[1].execution = { evidence_source: "HOST_EXECUTION", has_coverage_report: false };
+  await ready(h, value);
+  assert.equal(h.get("ut-d-coverage").hidden, true);
+  h.pin(10);
+  assert.equal(h.get("ut-d-coverage").hidden, false);
+  h.pin(20);
+  h.coverages[0].resolve(coverageReport());
+  await settle();
+  assert.equal(h.get("ut-d-coverage").hidden, true);
+  assert.equal(h.get("ut-d-coverage-body").innerHTML, "");
 });
 
 test("input-completeness gaps expose readable goals and full original evidence", async () => {
@@ -945,6 +1022,20 @@ test("superseded jobs leave the working list until asked for", async () => {
   assert.match(rows, /<tr class="is-stale"><td class="ut-num">#1</);
   assert.match(rows, /已被 #3 取代/);
   assert.doesNotMatch(rows, /data-retry="1"/);
+});
+
+test("the job list shows host C0/C1/MC/DC and links the per-line report", async () => {
+  const h = harness(undefined, "ut_tasks.js", { jobs: [
+    listed(7, "awaiting_review", { coverage: { evidence_source: "HOST_EXECUTION", c0: 100, c1: 75, mcdc: null,
+      has_report: true } }),
+    listed(6, "awaiting_review", { coverage: null }),
+  ] });
+  await settle();
+  const rows = h.get("ut-rows").innerHTML;
+  assert.match(rows, /class="is-full"><b>C0<\/b> 100%[\s\S]*class="is-gap"><b>C1<\/b> 75%[\s\S]*class="is-missing"><b>MC\/DC<\/b> —/);
+  assert.match(rows, /href="\?job=7" data-job="7" data-coverage="1">逐行报告/);
+  assert.equal((rows.match(/逐行报告/g) || []).length, 1);
+  assert.match(rows, /#6[\s\S]*<td><span class="submuted">—<\/span><\/td>/);
 });
 
 test("an active job offers 停止 until its stop is requested", async () => {

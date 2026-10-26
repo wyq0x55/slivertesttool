@@ -63,11 +63,12 @@
             <th>状态</th>
             <th>机器判定</th>
             <th>模型修正</th>
+            <th title="当前版本的主机 llvm-cov 观测，仅开发期证据">覆盖率 <span class="submuted">· 主机</span></th>
             <th>更新时间</th>
             <th class="lm-row-actions"></th>
           </tr>
         </thead>
-        <tbody id="ut-rows"><tr><td colspan="7" class="muted">加载中…</td></tr></tbody>
+        <tbody id="ut-rows"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -184,6 +185,10 @@
     <div id="ut-d-host-summary"></div>
     <div id="ut-d-stub-rounds"></div>
     <div id="ut-d-host-artifacts"></div>
+  </div>
+  <div class="panel ut-coverage" id="ut-d-coverage" hidden style="margin-top:20px">
+    <div class="panel-bar"><h4>覆盖率报告 <span class="submuted">· 被测函数逐行 C0 / C1 / MC/DC（主机 llvm-cov）</span></h4></div>
+    <div id="ut-d-coverage-body"></div>
   </div>
   <div class="panel" style="margin-top:20px">
     <div class="panel-bar">

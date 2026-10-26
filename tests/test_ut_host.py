@@ -26,6 +26,7 @@ class HostBridge(FakeBridge):
         self.stub_count = 1
         self.outcomes = ["HOST_PASS"]
         self.reason_codes = []
+        self.coverage_report = None
 
     def generate(self, *args, **kwargs):
         document = super().generate(*args, **kwargs)
@@ -59,6 +60,10 @@ class HostBridge(FakeBridge):
                      "coverage": {"lines": {"covered": 1, "total": 2, "percent": 50},
                                   "branches": {"covered": 1, "total": 2, "percent": 50},
                                   "mcdc": {"status": "UNSUPPORTED"}}, "build": {"stderr": "compile diagnostic"}}
+        if self.coverage_report is not None:
+            execution["coverage"].update(status="MEASURED", c1={"covered": 3, "total": 4, "percent": 75.0},
+                                         mcdc={"covered": 1, "total": 2, "percent": 50.0})
+            execution["coverage_report"] = self.coverage_report
         if self.reason_codes:
             execution["reason_code"] = self.reason_codes[min(len(self.host_calls) - 1, len(self.reason_codes) - 1)]
         check = {"verdict": verdict, "repairable": False, "executed": verdict != "BLOCKED",
@@ -484,3 +489,50 @@ def test_invalid_body_retry_stops_at_frozen_budget(configured, monkeypatch):
     job = _job(env, job_id)
     assert job["state"] == "needs_human" and job["last_verdict"] == "BLOCKED"
     assert len(env.bridge.host_calls) == 2
+
+
+COVERAGE_REPORT = {
+    "contract": "ut-agent.coverage-lines/1", "evidence_source": "HOST_EXECUTION",
+    "counts_as_target_coverage": False, "function": "f", "cases": 2,
+    "summary": {"c0": {"covered": 1, "total": 2, "percent": 50.0}},
+    "c1_basis": "DECISION", "mcdc_reported": True,
+    "lines": [{"line": 3, "text": "if (x) {", "count": 2, "c0": "COVERED",
+               "c1": [{"column": 5, "kind": "DECISION", "true": 1, "false": 0, "state": "PARTIAL"}],
+               "mcdc": []}],
+    "unplaced": [],
+}
+
+
+def test_host_coverage_report_is_listed_per_job_and_served_per_attempt(configured):
+    env, ids = configured
+    env.bridge.coverage_report = COVERAGE_REPORT
+    [job_id] = _enqueue(env, ids["f"])
+    job = _job(env, job_id)
+    attempt = job["attempts"][0]
+    assert attempt["execution"]["has_coverage_report"] is True
+    assert "coverage_report" not in attempt["execution"]
+
+    status, body = env.call("get", "/jobs")
+    assert status == 200
+    [listed] = [entry for entry in body["data"] if entry["id"] == job_id]
+    assert listed["coverage"] == {"evidence_source": "HOST_EXECUTION", "c0": 50,
+                                  "c1": 75.0, "mcdc": 50.0, "has_report": True}
+
+    status, body = env.call("get", f"/jobs/{job_id}/attempts/{attempt['id']}/coverage")
+    assert status == 200
+    assert body["data"]["attempt"] == {"id": attempt["id"], "seq": attempt["seq"], "verdict": "PASS"}
+    assert body["data"]["report"] == COVERAGE_REPORT
+    status, _ = env.call("get", f"/jobs/{job_id + 999}/attempts/{attempt['id']}/coverage")
+    assert status == 404
+
+
+def test_attempts_without_a_host_report_have_no_coverage_digest(configured):
+    env, ids = configured
+    [job_id] = _enqueue(env, ids["f"])
+    job = _job(env, job_id)
+    attempt = job["attempts"][0]
+    assert attempt["execution"]["has_coverage_report"] is False
+    _, body = env.call("get", "/jobs")
+    assert [entry["coverage"] for entry in body["data"] if entry["id"] == job_id] == [None]
+    status, _ = env.call("get", f"/jobs/{job_id}/attempts/{attempt['id']}/coverage")
+    assert status == 404
