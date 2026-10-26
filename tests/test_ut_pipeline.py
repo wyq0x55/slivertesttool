@@ -663,7 +663,10 @@ def test_exhausted_rounds_hand_over_to_a_human(env, monkeypatch):
     status, _ = env.call("post", f"/jobs/{job_id}/revision",
                          json={"csv": GOOD.decode("cp932").replace("\r\n", "\n")})
     job = _job(env, job_id)
-    assert job["state"] == "awaiting_review"
+    # A successful replay does not close the still-unproven input obligations.
+    assert status == 202 and job["state"] == "needs_human"
+    assert job["last_verdict"] == "PASS" and job["repair_rounds"] == 2
+    assert job["attempts"][-1]["check"]["completeness"]["unresolved_count"] == 2
     assert job["attempts"][-1]["origin"] == "HUMAN"
     status, body = env.call("post", f"/jobs/{job_id}/review", json={"decision": "reject"})
     assert status == 400
