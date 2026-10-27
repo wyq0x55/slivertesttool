@@ -10,8 +10,7 @@
     GET  /repair-stats                   model-round outcomes per model
     GET  /approved/export                ?batch_id; zip of approved CSVs + manifest
     GET  /jobs/<id>                      job + every attempt (origin, verdict, evidence)
-    GET  /jobs/<id>/attempts/<aid>/csv   CP932 download; ?format=text for preview,
-                                         ?view=raw for the executed form a revision extends
+    GET  /jobs/<id>/attempts/<aid>/csv   CP932 download; ?format=text for preview
     GET  /jobs/<id>/attempts/<aid>/coverage  per-line host llvm-cov C0/C1/MC/DC report
     POST /jobs/<id>/revision             human revision: {csv, note} or multipart file
     POST /jobs/<id>/review               {decision: approve|reject, note} (item.review)
@@ -129,7 +128,7 @@ def attempt_csv(project_id: int, job_id: int, attempt_id: int):
     _project_and_role(project_id, "project.view")
     if request.args.get("format") == "diagnostic":
         return ok(pipeline.attempt_diagnostic(project_id, job_id, attempt_id))
-    data, name = pipeline.attempt_csv(project_id, job_id, attempt_id, raw=request.args.get("view") == "raw")
+    data, name = pipeline.attempt_csv(project_id, job_id, attempt_id)
     if request.args.get("format") == "text":
         return ok({"name": name, "text": data.decode("cp932", "replace")})
     return Response(data, mimetype="text/csv",

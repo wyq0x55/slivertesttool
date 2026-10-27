@@ -142,9 +142,7 @@ def test_real_index_generation_execution_review_and_export(real_workflow, monkey
         for item in manifest["files"]:
             assert item["evidence_source"] == "HOST_EXECUTION"
             assert item["counts_as_target_evidence"] is False and item["delivery_validated"] is False
-            assert hashlib.sha256(archive.read(item["file"])).hexdigest() == item["file_sha256"]
-            # No repair rows were appended, so nothing is presented differently.
-            assert item["file_sha256"] == item["csv_sha256"]
+            assert hashlib.sha256(archive.read(item["file"])).hexdigest() == item["csv_sha256"]
         table = list(csv.DictReader(io.StringIO(archive.read("manifest.csv").decode("utf-8-sig"))))
         assert len(table) == 3
         assert all(row["execution_backend"] == "clang" and row["evidence_source"] == "HOST_EXECUTION"

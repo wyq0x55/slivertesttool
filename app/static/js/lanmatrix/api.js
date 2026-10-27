@@ -406,10 +406,9 @@
       return request("GET", `/projects/${pid}/ut/jobs`, { query: query || {} });
     },
     utJob(pid, jobId) { return request("GET", `/projects/${pid}/ut/jobs/${jobId}`); },
-    // raw: the executed form a revision extends, not the presented one.
-    utAttemptText(pid, jobId, attemptId, raw) {
+    utAttemptText(pid, jobId, attemptId) {
       return request("GET", `/projects/${pid}/ut/jobs/${jobId}/attempts/${attemptId}/csv`,
-        { query: raw ? { format: "text", view: "raw" } : { format: "text" } });
+        { query: { format: "text" } });
     },
     utAttemptDiagnostic(pid, jobId, attemptId) {
       return request("GET", `/projects/${pid}/ut/jobs/${jobId}/attempts/${attemptId}/csv`,

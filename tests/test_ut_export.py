@@ -74,34 +74,3 @@ def test_a_csv_changed_after_review_aborts_the_export(env, app_ctx):
     assert resp.status_code == 400
     error = resp.get_json()["error"]
     assert error["code"] == "INTEGRITY_ERROR" and "审核后被改动" in error["message"]
-
-
-def test_a_proven_presented_form_is_archived_and_a_changed_one_aborts(env, app_ctx, tmp_path):
-    from app.models import UtAttempt, UtJob
-
-    presented = GOOD.replace(b"#COMMENT,x,ret\r\n", b"#COMMENT,x,ret\r\n;$L$,TRUE\r\n")
-    sandbox = tmp_path / "exec"
-    sandbox.mkdir()
-    shown = sandbox / "presented-candidate.csv"
-    shown.write_bytes(presented)
-    targets = _configure(env)
-    [job_id] = _enqueue(env, targets["f"])
-    _approve(env, job_id)
-    with app_ctx.app_context():
-        from app.extensions import db
-        attempt = db.session.get(UtAttempt, db.session.get(UtJob, job_id).current_attempt_id)
-        attempt.execution = {"status": "HOST_PASS", "sandbox": str(sandbox), "presented_candidate": {
-            "contract": "ut-agent.host-presented-candidate/1", "path": str(shown),
-            "sha256": hashlib.sha256(presented).hexdigest(),
-            "source_candidate_sha256": hashlib.sha256(GOOD).hexdigest()}}
-        db.session.commit()
-
-    archive = zipfile.ZipFile(io.BytesIO(_export(env).data))
-    assert archive.read("src/a.c/f.csv") == presented
-    [entry] = json.loads(archive.read("manifest.json"))["files"]
-    assert entry["csv_sha256"] == hashlib.sha256(GOOD).hexdigest()
-    assert entry["file_sha256"] == hashlib.sha256(presented).hexdigest()
-
-    shown.write_bytes(presented.replace(b",0,1", b",0,9"))
-    resp = _export(env)
-    assert resp.status_code == 400 and "展示版" in resp.get_json()["error"]["message"]

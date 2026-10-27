@@ -1502,7 +1502,7 @@
     var epoch = ++previewEpoch, id = job.id, t = job.target || {};
     var text;
     try {
-      text = (await LMApi.utAttemptText(pid, id, attemptId, edit)).text;
+      text = (await LMApi.utAttemptText(pid, id, attemptId)).text;
     } catch (e) {
       if (epoch === previewEpoch && openJobId === id) say(e.message, true);
       return;

@@ -44,13 +44,22 @@ def test_typed_artifact_accepts_only_appended_blank_outputs(tmp_path):
     assert data == DERIVED and receipt == execution["typed_candidate"]
 
 
+def test_typed_artifact_may_label_and_place_added_rows_like_the_generator(tmp_path):
+    generated = REFERENCE.replace(b',0,0\r\n', b';$L$,label\r\n,5,1\r\n,0,0\r\n')
+    execution = artifact(tmp_path, data=generated)
+    data, _ = host_candidate.read_typed_candidate(execution, SOURCE, REFERENCE, tmp_path / "execution")
+    assert data == generated
+
+
 @pytest.mark.parametrize("case", ["contract", "source-sha", "sha", "source-kind", "outside", "sandbox",
                                    "relative", "bool-count", "count", "original", "input", "rows", "columns",
-                                   "malformed", "unclosed", "unchanged", "nonblank", "failed-execution",
+                                   "header", "malformed", "unclosed", "unchanged", "nonblank", "failed-execution",
                                    "foreign-evidence", "target-flag"])
 def test_untrusted_typed_artifact_is_rejected(tmp_path, case):
     source, data = SOURCE, DERIVED
-    if case == "original":
+    if case == "header":
+        data = DERIVED.replace(b'"f",1,1', b'"f",1,2')
+    elif case == "original":
         data = DERIVED.replace(b',0,0', b',0,9')
     elif case == "input":
         data = DERIVED.replace(b',5,1', b',6,1')
@@ -471,60 +480,3 @@ def test_typed_artifact_failure_keeps_parent_and_does_not_consume_round(lifecycl
     assert job.current_attempt_id == parent.id and len(ctx.attempts) == 2
     assert job.gate_code == GateCode.INTEGRITY_ERROR and job.repair_rounds == 0
     assert parent.check["verdict"] == "BLOCKED" and parent.check["evidence_integrity"]["status"] == "UNKNOWN"
-
-
-EXECUTED = REFERENCE + b';$L$,TRUE\r\n,1,1\r\n;$L$,LLM add A\r\n,5,1\r\n'
-PRESENTED = REFERENCE.replace(b',0,0\r\n', b';$L$,FALSE\r\n,0,0\r\n;$L$,\x91g\x8d\x87\x82\xb9(FALSE)\r\n,5,1\r\n'
-                              b';$L$,TRUE\r\n,1,1\r\n')
-
-
-def presented(tmp_path, source=EXECUTED, data=PRESENTED):
-    sandbox = tmp_path / "execution" / "sandbox"
-    sandbox.mkdir(parents=True, exist_ok=True)
-    path = sandbox / "presented-candidate.csv"
-    path.write_bytes(data)
-    return {"status": "HOST_PASS", "sandbox": str(sandbox), "presented_candidate": {
-        "contract": "ut-agent.host-presented-candidate/1", "path": str(path), "sha256": sha(data),
-        "source_candidate_sha256": sha(source)}}
-
-
-def test_presented_candidate_is_a_relabelled_permutation_of_the_executed_rows(tmp_path):
-    assert host_candidate.read_presented_candidate(presented(tmp_path), EXECUTED) == PRESENTED
-    assert host_candidate.read_presented_candidate({"status": "HOST_PASS"}, EXECUTED) is None
-    assert host_candidate.read_presented_candidate(None, EXECUTED) is None
-
-
-@pytest.mark.parametrize("case", ["contract", "source-sha", "sha", "failed-execution", "outside",
-                                   "cell", "dropped-row", "header"])
-def test_untrusted_presented_candidate_is_rejected(tmp_path, case):
-    data = {"cell": PRESENTED.replace(b",5,1", b",5,2"),
-            "dropped-row": PRESENTED.replace(b";$L$,TRUE\r\n,1,1\r\n", b""),
-            "header": PRESENTED.replace(b'"f",1,1', b'"g",1,1')}.get(case, PRESENTED)
-    execution = presented(tmp_path, data=data)
-    receipt = execution["presented_candidate"]
-    if case == "contract":
-        receipt["contract"] = "unknown"
-    elif case == "source-sha":
-        receipt["source_candidate_sha256"] = sha(SOURCE)
-    elif case == "sha":
-        receipt["sha256"] = sha(b"other")
-    elif case == "failed-execution":
-        execution["status"] = "HOST_MISMATCH"
-    elif case == "outside":
-        outside = tmp_path / "presented.csv"
-        outside.write_bytes(data)
-        receipt["path"] = str(outside)
-    with pytest.raises((ValueError, TypeError)):
-        host_candidate.read_presented_candidate(execution, EXECUTED)
-
-
-def test_attempt_csv_serves_presented_form_and_raw_form_for_revision(tmp_path, monkeypatch):
-    path = tmp_path / "a03-host_derived.csv"
-    path.write_bytes(EXECUTED)
-    attempt = SimpleNamespace(csv_path=str(path), csv_sha256=sha(EXECUTED), execution=presented(tmp_path))
-    monkeypatch.setattr(pipeline, "_csv_attempt", lambda *args: attempt)
-    assert pipeline.attempt_csv(1, 2, 3) == (PRESENTED, path.name)
-    assert pipeline.attempt_csv(1, 2, 3, raw=True) == (EXECUTED, path.name)
-    attempt.execution["presented_candidate"]["sha256"] = sha(b"other")
-    with pytest.raises(ServiceError):
-        pipeline.attempt_csv(1, 2, 3)
