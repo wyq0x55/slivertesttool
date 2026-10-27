@@ -418,7 +418,7 @@ def _run_generation(batch_id: int, on_ready: Callable[[int], None] | None) -> li
                 if job.stop_requested_at is not None:
                     _halt(job)
                 else:
-                    _gate(job, UtJob.ERROR, "生成进程中断；请从实施一览重新入队", GateCode.INTERRUPTED)
+                    _gate(job, UtJob.ERROR, "生成进程中断；请在「任务/运行」重新入队", GateCode.INTERRUPTED)
             batch.status = UtBatch.STATUS_FAILED
             batch.error = "生成进程中断，重复任务不能接管未完成的生成"
             batch.finished_at = _utcnow()
@@ -1133,7 +1133,7 @@ def recover_interrupted(pending_jobs: set[int], pending_batches: set[int]) -> di
             result["stopped"].append(job.id)
         elif before_generation or job.current_attempt_id is None:
             _gate(job, UtJob.ERROR,
-                  f"worker 在{_INTERRUPTED_STEP[job.state]}阶段中断，尚无可继续的候选；请从实施一览重新入队",
+                  f"worker 在{_INTERRUPTED_STEP[job.state]}阶段中断，尚无可继续的候选；请在「任务/运行」重新入队",
                   GateCode.INTERRUPTED)
             failed_batches.add(job.batch_id)
             result["interrupted"].append(job.id)

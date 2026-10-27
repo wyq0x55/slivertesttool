@@ -26,6 +26,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/></svg>
         刷新
       </button>
+      <button class="btn" id="ut-requeue" type="button" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        <span id="ut-requeue-label">重新入队</span>
+      </button>
       <a class="btn primary" href="/lanmatrix/projects/{{ project_id }}/ut"{% if not project_capabilities.edit %} hidden{% endif %}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
         从实施一览入队
@@ -58,6 +62,7 @@
       <table class="dt ut-table lm-tasks-table">
         <thead>
           <tr>
+            <th class="ut-check"><input type="checkbox" id="ut-requeue-all" title="选择可重新入队的作业" aria-label="选择可重新入队的作业"></th>
             <th>作业</th>
             <th>函数 <span class="submuted">· 源文件 · 批次</span></th>
             <th>状态</th>
@@ -68,7 +73,7 @@
             <th class="lm-row-actions"></th>
           </tr>
         </thead>
-        <tbody id="ut-rows"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
+        <tbody id="ut-rows"><tr><td colspan="9" class="muted">加载中…</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -92,6 +97,10 @@
       <button class="btn small" id="ut-d-stop" type="button" hidden>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
         停止
+      </button>
+      <button class="btn small" id="ut-d-requeue" type="button" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        重新入队
       </button>
       <button class="btn small" id="ut-d-retry" type="button" hidden>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>

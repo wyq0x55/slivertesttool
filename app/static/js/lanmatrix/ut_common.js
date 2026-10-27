@@ -40,7 +40,7 @@
   /* Gate code (models.ut_pipeline.GateCode) -> [label, what to do next].
    * The reason text carries the specifics; this says which action fits. */
   var RETRY = "点「重试」继续。";
-  var REQUEUE = "处理后从「实施一览」重新入队。";
+  var REQUEUE = "可在本页重新入队，不必返回实施一览。";
   var REVISE = "请人工修订，或在审核意见中说明后通过 / 驳回。";
   var GATE = {
     MACHINE_PASS: ["机器通过", "机器校验通过。核对版本历史与校验问题后决定通过或驳回。"],

@@ -28,12 +28,15 @@
     'stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/>' +
     '<path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
   var STOP_ICO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>';
+  var ENQUEUE_ICO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>';
 
   var jobs = [];
   var filter = (window.LMUrl && LMUrl.get("filter")) || "";
   var query = (window.LMUrl && LMUrl.get("q")) || "";
   var batchId = (window.LMUrl && LMUrl.get("batch")) || "";
   var showOld = false;
+  var selected = new Set();
+  var requeueing = false;
   var batches = [];
   // Expanded runs of fruitless model rounds, keyed "<job>:<first seq>".
   var expandedRuns = {};
@@ -72,8 +75,24 @@
       .indexOf(query.toLowerCase()) >= 0;
   }
 
+  function requeueable(j) {
+    var t = j.target || {};
+    return U.can("edit") && t.in_index === true && !!t.id && !j.superseded_by && !U.ACTIVE[j.state];
+  }
+
   function renderRows() {
     var rows = jobs.filter(visible);
+    selected.forEach(function (id) {
+      if (!jobs.some(function (j) { return (j.target || {}).id === id && requeueable(j); })) selected.delete(id);
+    });
+    var choices = rows.filter(requeueable);
+    $("ut-requeue").hidden = !U.can("edit");
+    $("ut-requeue").disabled = requeueing || selected.size === 0;
+    $("ut-requeue-label").textContent = selected.size ? "重新入队（" + selected.size + "）" : "重新入队";
+    $("ut-requeue-all").disabled = !choices.length;
+    $("ut-requeue-all").checked = choices.length > 0 && choices.every(function (j) {
+      return selected.has(j.target.id);
+    });
     var old = jobs.filter(function (j) { return j.superseded_by; }).length;
     // Export follows the batch filter; one function counts once.
     var approved = {};
@@ -89,11 +108,17 @@
       var resumable = j.state === "blocked" || j.state === "error" || j.state === "stopped";
       var retry = U.can("edit") && j.current_attempt_id && resumable && !j.superseded_by
         ? iconButton(j.state === "stopped" ? "继续" : "重试", ICO.retest, 'data-retry="' + j.id + '"') : "";
+      var again = requeueable(j)
+        ? iconButton("重新入队", ENQUEUE_ICO, 'data-requeue="' + t.id + '"') : "";
       var stop = U.can("edit") && U.ACTIVE[j.state] && !j.stop_requested
         ? iconButton("停止", STOP_ICO, 'data-stop="' + j.id + '"') : "";
       var download = j.current_attempt_id
         ? iconLink("下载当前版本", ICO.download, LMApi.utAttemptUrl(pid, j.id, j.current_attempt_id)) : "";
       return "<tr" + (j.superseded_by ? ' class="is-stale"' : "") + ">" +
+        '<td class="ut-check">' + (t.id
+          ? '<input type="checkbox" aria-label="选择作业 #' + j.id + '" data-requeue-target="' + t.id + '"' +
+            (selected.has(t.id) ? " checked" : "") + (requeueable(j) ? "" : " disabled") + ">"
+          : "") + "</td>" +
         '<td class="ut-num">#' + j.id + "</td>" +
         '<td class="lm-cell-testid"><a href="?job=' + j.id + '" data-job="' + j.id + '"><code>' +
           esc(t.function || "") + "</code></a>" +
@@ -107,8 +132,8 @@
         '<td class="lm-cell-time"><code>' + esc(U.time(j.updated_at)) + "</code></td>" +
         '<td class="lm-row-actions"><span class="row-acts">' +
         iconButton(U.actionable(j) ? "审核" : "查看", ICO.view, 'data-job="' + j.id + '"') +
-        stop + retry + download + "</span></td></tr>";
-    }).join("") : '<tr><td colspan="8" class="muted">' +
+        stop + retry + again + download + "</span></td></tr>";
+    }).join("") : '<tr><td colspan="9" class="muted">' +
       (jobs.length ? "没有符合条件的作业" : "还没有作业：在「实施一览」勾选函数后加入队列") + "</td></tr>";
   }
 
@@ -125,6 +150,38 @@
         '"><b>' + k[1] + "</b> " + (measured ? esc(v + "%") : "—") + "</span>";
     }).join("");
     return '<div class="ut-cov-mini is-inline" title="Clang/LLVM 实测覆盖率（HOST_EXECUTION），不计入目标机证据">' + cells + "</div>";
+  }
+
+  async function requeueTargets(ids) {
+    var unique = [];
+    ids.forEach(function (id) {
+      var eligible = jobs.some(function (j) { return (j.target || {}).id === id && requeueable(j); }) ||
+        (detailFresh && job && (job.target || {}).id === id && requeueable(job));
+      if (eligible && unique.indexOf(id) < 0) unique.push(id);
+    });
+    if (!unique.length || requeueing || !U.can("edit")) return;
+    requeueing = true;
+    renderRows();
+    $("ut-d-requeue").disabled = true;
+    try {
+      var ok = await LMUI.confirm({
+        title: "重新入队",
+        body: "将按当前项目配置重新生成并执行 " + unique.length +
+          " 个函数。当前作业保留为历史记录。",
+        confirmText: "重新入队",
+      });
+      if (!ok) return;
+      var batch = await LMApi.utCreateBatch(pid, unique, "");
+      selected.clear();
+      say("批次 #" + batch.id + " 已入队（" + unique.length + " 个函数）");
+      await refresh();
+    } catch (e) {
+      say(e.message, true);
+    } finally {
+      requeueing = false;
+      renderRows();
+      $("ut-d-requeue").disabled = !detailFresh;
+    }
   }
 
   async function retryFromList(id, button) {
@@ -628,6 +685,8 @@
     var resumable = job.state === "blocked" || job.state === "error" || job.state === "stopped";
     $("ut-d-retry").hidden = !U.can("edit") || !resumable || !!job.superseded_by;
     $("ut-d-retry-label").textContent = job.state === "stopped" ? "继续" : "重试";
+    $("ut-d-requeue").hidden = !requeueable(job);
+    $("ut-d-requeue").disabled = requeueing || !detailFresh;
     $("ut-d-stop").hidden = !U.can("edit") || !U.ACTIVE[job.state] || !!job.stop_requested;
 
     var decided = job.state === "approved" || job.state === "rejected";
@@ -1496,6 +1555,7 @@
     $("ut-d-title").textContent = "作业 #" + id + " · 加载中…";
     $("ut-d-gate-forms").hidden = true;
     $("ut-d-retry").hidden = true;
+    $("ut-d-requeue").hidden = true;
     $("ut-d-download").hidden = true;
     $("ut-d-sub").textContent = "";
     U.applyState($("ut-d-hstate"), null);
@@ -1528,9 +1588,9 @@
   }
 
   function setActionBusy(busy) {
-    ["ut-d-approve", "ut-d-reject", "ut-d-retry", "ut-d-import", "ut-d-edit-sheet",
+    ["ut-d-approve", "ut-d-reject", "ut-d-retry", "ut-d-requeue", "ut-d-import", "ut-d-edit-sheet",
      "ut-d-note", "ut-d-revision-note"].forEach(function (id) {
-      $(id).disabled = busy || !detailFresh;
+      $(id).disabled = busy || !detailFresh || (id === "ut-d-requeue" && requeueing);
     });
     if (!canRevise()) $("ut-d-edit-sheet").disabled = true;
     if (job && shownAttempt && shownAttempt !== job.current_attempt_id) {
@@ -1594,7 +1654,23 @@
   });
   $("ut-q").addEventListener("input", function () { query = this.value.trim(); syncUrl(); renderRows(); });
   $("ut-batch").addEventListener("change", function () { batchId = this.value; syncUrl(); refresh(); });
+  $("ut-rows").addEventListener("change", function (e) {
+    var id = Number(e.target.dataset.requeueTarget);
+    if (!jobs.some(function (j) { return (j.target || {}).id === id && requeueable(j); })) return;
+    if (e.target.checked) selected.add(id); else selected.delete(id);
+    renderRows();
+  });
+  $("ut-requeue-all").addEventListener("change", function () {
+    var on = this.checked;
+    jobs.filter(visible).filter(requeueable).forEach(function (j) {
+      if (on) selected.add(j.target.id); else selected.delete(j.target.id);
+    });
+    renderRows();
+  });
+  $("ut-requeue").addEventListener("click", function () { requeueTargets(Array.from(selected)); });
   $("ut-rows").addEventListener("click", function (e) {
+    var again = e.target.closest("[data-requeue]");
+    if (again && again.dataset.requeue) { requeueTargets([Number(again.dataset.requeue)]); return; }
     var r = e.target.closest("[data-retry]");
     if (r && r.dataset.retry) { retryFromList(Number(r.dataset.retry), r); return; }
     var s = e.target.closest("[data-stop]");
@@ -1736,6 +1812,9 @@
     if (!job || !U.can("edit")) return;
     var id = job.id;
     act(function () { return LMApi.utRetry(pid, id); }, "已重新开始");
+  });
+  $("ut-d-requeue").addEventListener("click", function () {
+    if (job && requeueable(job)) requeueTargets([job.target.id]);
   });
   $("ut-d-edit-sheet").addEventListener("click", function () {
     if (job && canRevise()) openSheet(job.current_attempt_id, true);
