@@ -873,21 +873,26 @@
         covMark(e.true > 0, "T") + covMark(e.false > 0, "F") + "</span>";
     }).join("");
   }
-  // MC/DC conditions are numbered as llvm-cov numbers them (C1, C2, ...),
-  // which is not always source order: a macro's operands can come before a
-  // later one. Hover lists every condition with its source text and
-  // independence pair, and the executed test vectors in llvm-cov's notation;
-  // the cell itself stays the ratio plus any still-unproven numbers.
+  // MC/DC conditions are numbered as llvm-cov numbers them (\u6761\u4ef61, \u6761\u4ef62, ...),
+  // which is not always source order. Hover gives one line per condition:
+  // the executed test vector of its independence pair in which it is true,
+  // written in the decision's own &&/|| structure ("-" = not evaluated), and
+  // the pair. The condition's source text is on the line's title.
   function tvState(v) { return v === true ? "T" : v === false ? "F" : "-"; }
+  function vectorText(e, v) {
+    var states = v.conditions || [];
+    var body = e.formula
+      ? e.formula.map(function (t) { return typeof t === "number" ? tvState(states[t - 1]) : t; }).join("")
+      : "{" + states.map(tvState).join(", ") + "}";
+    return body + " => " + tvState(v.result);
+  }
   function mcdcTip(e) {
     var missing = {};
     (e.uncovered || []).forEach(function (n) { missing[Number(n)] = true; });
     var total = Number(e.conditions) || 0;
     var details = e.condition_details || [];
-    // A long decision (comments included) is cut; its conditions follow in full.
-    var text = e.text && e.text.length > 120 ? e.text.slice(0, 119) + "\u2026" : e.text;
-    var rows = ['<span class="ut-mcdc-where">\u7b2c ' + esc(e.column) + " \u5217" +
-      (text ? " \u00b7 <code>" + esc(text) + "</code>" : "") + "</span>"];
+    var rows = ['<span class="ut-mcdc-where"' + (e.formula_reason ? ' title="' + esc(e.formula_reason) + '"' : "") +
+      ">\u7b2c " + esc(e.column) + " \u5217</span>"];
     if (!details.length) {
       for (var i = 1; i <= total; i++) {
         rows.push('<span class="' + (missing[i] ? "is-miss" : "is-full") + '">\u6761\u4ef6 ' + i + "\uff1a" +
@@ -895,22 +900,19 @@
       }
       return '<span class="ut-mcdc-tip" role="tooltip">' + rows.join("") + "</span>";
     }
+    var vectors = {};
+    (e.test_vectors || []).forEach(function (v) { vectors[v.number] = v; });
     details.forEach(function (c) {
       var ok = c.independent === true;
-      rows.push('<span class="' + (ok ? "is-full" : "is-miss") + '">C' + esc(c.number) + " " +
-        (c.text ? "<code>" + esc(c.text) + "</code>" : "\uff08\u4f4d\u7f6e\u672a\u77e5\uff09") +
-        (c.macro ? '<span class="submuted">\uff08\u5b8f\u5b9a\u4e49\u5185' +
-          (c.line != null ? "\u7b2c " + esc(c.line) + " \u884c" : "") + "\uff09</span>" : "") + "\uff1a" +
-        (ok ? "\u5df2\u8bc1\u660e\u72ec\u7acb\u5f71\u54cd" : "\u672a\u8bc1\u660e\u72ec\u7acb\u5f71\u54cd") +
-        (c.pair ? "\uff08\u5411\u91cf " + esc(c.pair[0]) + " \u2194 " + esc(c.pair[1]) + "\uff09" : "") + "</span>");
-    });
-    var vectors = e.test_vectors || [];
-    rows.push('<span class="ut-mcdc-where">\u5df2\u6267\u884c\u7684\u6d4b\u8bd5\u5411\u91cf\uff08' +
-      details.map(function (c) { return "C" + esc(c.number); }).join(", ") + " = \u7ed3\u679c\uff09" +
-      (vectors.length ? "" : "\uff1a\u65e0") + "</span>");
-    vectors.forEach(function (v) {
-      rows.push('<span class="ut-mcdc-tv">' + esc(v.number) + " { " +
-        (v.conditions || []).map(tvState).join(", ") + " = " + tvState(v.result) + " }</span>");
+      var shown = (c.pair || []).map(function (n) { return vectors[n]; }).filter(function (v) {
+        return v && (v.conditions || [])[c.number - 1] === true;
+      })[0];
+      var where = (c.text || "\u4f4d\u7f6e\u672a\u77e5") + (c.macro ? "\uff08\u5b8f\u5b9a\u4e49\u5185" +
+        (c.line != null ? "\u7b2c " + c.line + " \u884c" : "") + "\uff09" : "");
+      rows.push('<span class="ut-mcdc-tv ' + (ok ? "is-full" : "is-miss") + '" title="' + esc(where) + '">' +
+        "\u6761\u4ef6" + esc(c.number) + "\uff1a" +
+        (shown ? esc(vectorText(e, shown)) + "  " : "") + (ok ? "\u2713" : "\u2717 \u672a\u8bc1\u660e\u72ec\u7acb\u5f71\u54cd") +
+        (c.pair ? "  \u5411\u91cf " + esc(c.pair[0]) + "\u2194" + esc(c.pair[1]) : "") + "</span>");
     });
     if (e.detail_reason) rows.push('<span class="submuted">' + esc(e.detail_reason) + "</span>");
     return '<span class="ut-mcdc-tip" role="tooltip">' + rows.join("") + "</span>";
@@ -986,8 +988,9 @@
         esc(at.map(function (u) { return u.line; }).join(", ")) + " 行" + marks + "</p>" : "";
     }).join("");
     var legend = '<p class="submuted">C0：○ 已执行 × 未执行，空白为非代码行。C1：T/F 为判定取真／取假，' +
-      "多条件判定的次数是不同测试向量数。MC/DC：已证明独立影响的条件数 / 条件总数；悬停可看每个条件的源码、" +
-      "独立对和已执行的测试向量（T 真、F 假、- 未求值）。条件按 llvm-cov 编号（C1、C2…），宏内条件可能排在其后的操作数之前。</p>";
+      "多条件判定的次数是不同测试向量数。MC/DC：已证明独立影响的条件数 / 条件总数；悬停时每个条件一行：" +
+      "其独立对中该条件为真的向量（按判定结构写出，T 真、F 假、- 未求值）=> 判定结果，以及独立对的向量号；" +
+      "停在该行上可看条件源码。条件按 llvm-cov 编号，不一定是源码顺序。</p>";
     $("ut-d-coverage-body").innerHTML = head + gaps + views + listing + unplaced + legend;
   }
 
