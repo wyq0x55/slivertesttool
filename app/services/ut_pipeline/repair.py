@@ -28,9 +28,9 @@ from typing import Any, Optional
 
 from ..ai import config as ai_config
 from ..ai import provider
-from . import diagnostic, increment, repair_context, repair_exchange, repair_reply
+from . import diagnostic, increment, repair_context, repair_exchange, repair_reply, repair_source
 
-PROMPT_VERSION = "ut-repair/9.1"
+PROMPT_VERSION = "ut-repair/10"
 # Bound the prompt: issue details are already truncated by ut-agent.
 _MAX_DETAIL_CHARS = 6000
 _MAX_DECISION_CHARS = 200
@@ -185,8 +185,8 @@ def _gap_reason(reason: str) -> str:
 def _gaps_section(completeness: Optional[dict[str, Any]], open_gaps: list[dict[str, Any]]) -> str:
     if not completeness:
         return "## 待补缺口\n生成器未提供义务清单，按覆盖率与校验结果补行。"
-    head = (f"Baseline 义务 {completeness.get('obligations')} 个，生成 {completeness.get('csv_rows')} 行，"
-            f"按基准合并 {completeness.get('merged_by_baseline')} 个，"
+    head = (f"测试义务 {completeness.get('obligations')} 个，生成 {completeness.get('csv_rows')} 行，"
+            f"由已有行覆盖 {completeness.get('merged_by_baseline')} 个，"
             f"未解决 {completeness.get('unresolved_count')} 个。")
     others = (completeness.get("unresolved_count") or 0) - len(open_gaps)
     if others > 0:
@@ -258,11 +258,13 @@ def _columns_section(table: increment.Table, check: dict[str, Any]) -> str:
 
 
 def _function_prompt(target: dict[str, Any], table: increment.Table, check: dict[str, Any],
-                     *, context: Optional[repair_context.PromptContext] = None) -> str:
+                     *, context: Optional[repair_context.PromptContext] = None,
+                     source: Optional[dict[str, Any]] = None) -> str:
     if context is None:
         context = repair_context.pack((check.get("candidate_witnesses") or {}).get("repair_context") or [])
     return (
         f"被测函数：{target.get('function')}（{target.get('source_rel')}）\n\n"
+        f"{repair_source.section(source)}"
         f"## 输入列（{len(table.inputs)} 个；输出列 {len(table.outputs)} 个，不可改）\n"
         f"{_columns_section(table, check)}\n\n"
         "只修改上面列出的输入列；未列出的列保留参考行原值，不能用名称相似的列代替。\n\n"
@@ -280,13 +282,13 @@ def _function_prompt(target: dict[str, Any], table: increment.Table, check: dict
 
 
 def prompt_prefix(constraints: dict[str, Any], target: dict[str, Any], csv_bytes: bytes,
-                  check: dict[str, Any]) -> dict[str, Any]:
+                  check: dict[str, Any], source: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """Persist this snapshot on the job; no round state enters the prefix."""
     table = increment.parse(csv_bytes.decode("cp932"))
-    return _make_prefix(constraints, target, table, check)
+    return _make_prefix(constraints, target, table, check, source)
 
 
-def _make_prefix(constraints, target, table, check):
+def _make_prefix(constraints, target, table, check, source=None):
     # Hash complete evidence independently of bounded/compressed rendering.
     facts = {"constraints": constraints,
              "target": {k: target.get(k) for k in ("id", "project_id", "source_rel", "unit_rel", "function")},
@@ -294,12 +296,14 @@ def _make_prefix(constraints, target, table, check):
              "input_contract": (check.get("input_ranges") or {}).get("contract"),
              "repair_context_contract": (check.get("candidate_witnesses") or {}).get("repair_context_contract"),
              "input_scope_complete": (check.get("candidate_witnesses") or {}).get("input_scope_complete"),
+             "source_sha256": (source or {}).get("sha256"),
              "semantic_context": sorted((check.get("candidate_witnesses") or {}).get("repair_context") or [],
                                         key=lambda r: str(r.get("obligation_id", "")))}
     digest = hashlib.sha256(json.dumps(facts, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
     context = repair_context.pack(facts["semantic_context"])
     return {"version": PROMPT_VERSION, "system": _system_prompt(constraints),
-            "function": _function_prompt(target, table, check, context=context), "evidence_sha256": digest,
+            "function": _function_prompt(target, table, check, context=context, source=source),
+            "evidence_sha256": digest,
             "context_budget": context.budget()}
 
 
@@ -401,7 +405,7 @@ def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: by
            history: list[dict[str, Any]], open_gaps: list[dict[str, Any]], allowed: set[str],
            model: str = "", timeout: int = 900,
            prefix_snapshot: Optional[dict[str, Any]] = None, observe=None,
-           diagnostic_dir: Path | None = None) -> Revision:
+           diagnostic_dir: Path | None = None, source: Optional[dict[str, Any]] = None) -> Revision:
     """Ask the configured model for input rows and append the valid ones.
 
     Raises :class:`provider.ProviderError` when the model is unreachable so the
@@ -422,7 +426,7 @@ def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: by
     except (UnicodeDecodeError, increment.TableError) as exc:
         meta["error"] = f"当前 CSV 无法追加行：{exc}"
         return Revision(None, meta)
-    prefix = _make_prefix(constraints, target, table, check)
+    prefix = _make_prefix(constraints, target, table, check, source)
     # Drift is a change of evidence, not of rendering: the editable-column
     # scope follows the round's check (a coverage error widens it), so the
     # rendered prefix may differ round to round while the digest holds.
@@ -434,7 +438,8 @@ def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: by
     meta["context_budget"] = prefix["context_budget"]
     if not prefix["context_budget"]["complete"]:
         meta.update(code="PROMPT_BUDGET_EXCEEDED", model_contacted=False,
-                    error="Complete typed repair context exceeds the 16000-character budget; no tasks sent.",
+                    error=(f"Complete typed repair context exceeds the {repair_context.MAX_CONTEXT_CHARS}"
+                           "-character budget; no tasks sent."),
                     deferred_obligations=sorted(allowed | {gap["obligation_id"] for gap in open_gaps}))
         return Revision(None, meta)
     messages = [

@@ -52,7 +52,7 @@ from ..ai.provider import ProviderError
 from ..lanmatrix import audit
 from ..lanmatrix import notification_service as notify_svc
 from ..lanmatrix.errors import ServiceError, VersionConflict
-from . import binding, diagnostic, host, host_candidate, repair, timing
+from . import binding, diagnostic, host, host_candidate, repair, repair_source, timing
 from .bridge import BridgeError, BridgeSettings, UtAgentBridge
 
 # Shared extraction is serialised; LLVM executions and model calls can overlap.
@@ -980,13 +980,14 @@ def _repair_step(job: UtJob) -> None:
         return
     generation = dict(job.generation or {})
     constraints = {**(batch.constraints or {}), "execution_backend": "clang"}
+    source = repair_source.load(generation.get("ir_json"), job.target.to_dict().get("function"))
     # Freeze the cacheable prefix in durable job metadata, including restarts.
     # A changed prompt version starts a new snapshot; same-version drift is
     # rejected by revise rather than silently replacing semantic evidence.
     prefix = generation.get("repair_prompt_prefix")
     if not prefix or prefix.get("version") != repair.PROMPT_VERSION:
         try:
-            prefix = repair.prompt_prefix(constraints, job.target.to_dict(), csv_bytes, check)
+            prefix = repair.prompt_prefix(constraints, job.target.to_dict(), csv_bytes, check, source)
         except (UnicodeDecodeError, repair.increment.TableError):
             prefix = None
         if prefix is not None:
@@ -1007,6 +1008,7 @@ def _repair_step(job: UtJob) -> None:
             timeout=current_app.config["UT_REPAIR_TIMEOUT"],
             prefix_snapshot=prefix,
             diagnostic_dir=_fresh_model_dir(job, attempt),
+            source=source,
             observe=lambda step, **options: timing.stage(job, step, attempt=attempt,
                                                        round_number=job.repair_rounds + 1, **options),
         )
