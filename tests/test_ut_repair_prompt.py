@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from app.services.ai import config as ai_config
 from app.services.ut_pipeline import increment, repair
 
@@ -128,7 +130,7 @@ def test_system_prompt_asks_for_rows_not_a_csv():
     system = repair._system_prompt(CONSTRAINTS)
     assert '"rows"' in system and '"declined"' in system and "不要输出 CSV" in system
     assert "不能仅凭冲突认定缺少输入" in system
-    assert repair.PROMPT_VERSION == "ut-repair/8.0"
+    assert repair.PROMPT_VERSION == "ut-repair/9.0"
 
 
 def _revise(monkeypatch, reply, allowed=frozenset({"b6:boundary:1:above:2"})):
@@ -148,7 +150,7 @@ def test_reply_rows_are_appended_and_claims_recorded(monkeypatch):
     assert revision.csv_bytes.decode("cp932") == CSV + ";$L$,LLM add b6:boundary:1:above:2\r\n,0,2,\r\n"
     assert revision.meta["claimed"] == ["b6:boundary:1:above:2"]
     assert [item["index"] for item in revision.meta["rejected"]] == [1]
-    assert revision.meta["prompt_version"] == "ut-repair/8.0"
+    assert revision.meta["prompt_version"] == "ut-repair/9.0"
 
 
 def test_a_declining_reply_adds_nothing(monkeypatch):
@@ -255,12 +257,12 @@ def test_llvm_coverage_reaches_dynamic_prompt_without_changing_prefix():
 
 
 def test_evidence_beyond_render_budget_still_invalidates_prefix(monkeypatch):
-    context = [{"obligation_id": f"b{i:03d}:T", "path": [{"boundary": 1, "data": "x" * 500}]}
+    context = [{"obligation_id": f"b{i:03d}:T", "path": [{"boundary": 1, "data": f"{i:03d}" + "x" * 500}]}
                for i in range(100)]
     check = dict(CHECK, candidate_witnesses={"repair_context": context})
     target = {"function": "f"}
     prefix = repair.prompt_prefix(CONSTRAINTS, target, CSV.encode("cp932"), check)
-    context[-1]["path"][0]["boundary"] = 99
+    context[-1]["path"][0]["boundary"] = 9
     current = repair.prompt_prefix(CONSTRAINTS, target, CSV.encode("cp932"), check)
     assert current["function"] == prefix["function"]
     assert current["evidence_sha256"] != prefix["evidence_sha256"]
@@ -353,3 +355,73 @@ def test_explicit_policy_prompt_names_ruleset_hash_and_choices():
     assert "显式测试要求 universal-test-rules@1" in system
     assert "a" * 64 in system and "MC/DC 组合分组: True" in system
     assert "项目绑定的测试基准" not in system
+
+
+@pytest.mark.parametrize("reply,path", [
+    ([], "$"), (None, "$"), (1, "$"), ({}, "$"),
+    ({"rows": None}, "$.rows"),
+    ({"rows": 1}, "$.rows"),
+    ({"rows": {}}, "$.rows"),
+    ({"rows": ""}, "$.rows"),
+    ({"rows": [None]}, "$.rows[0]"),
+    ({"rows": ["row"]}, "$.rows[0]"),
+    ({"rows": [], "declined": 1}, "$.declined"),
+    ({"rows": [], "declined": None}, "$.declined"),
+    ({"rows": [], "declined": {}}, "$.declined"),
+    ({"rows": [], "declined": ""}, "$.declined"),
+    ({"declined": [1]}, "$.declined[0]"),
+    ({"declined": [GAP["obligation_id"]]}, "$.declined[0]"),
+    ({"declined": [{"obligation": []}]}, "$.declined[0].obligation"),
+    ({"declined": [{"obligation": GAP["obligation_id"], "reason": 2}]}, "$.declined[0].reason"),
+    ({"rows": [], "rationale": {}}, "$.rationale"),
+    ({"rows": [], "rationale": None}, "$.rationale"),
+    ({"rows": [], "unexpected": "field"}, "$.unexpected"),
+])
+def test_malformed_reply_fields_return_structured_revision(monkeypatch, reply, path):
+    result = _revise(monkeypatch, reply)
+    assert result.csv_bytes is None
+    assert result.meta["code"] == "INVALID_MODEL_RESPONSE"
+    assert path in [error["path"] for error in result.meta["schema_errors"]]
+    assert result.meta["reply_head"] == json.dumps(reply)[:2000]
+    assert "claimed" not in result.meta and "declined" not in result.meta
+
+
+@pytest.mark.parametrize("field,value,path", [
+    ("obligation", [], "obligation"), ("obligation", True, "obligation"),
+    ("obligation", "", "obligation"), ("base_row", "1", "base_row"),
+    ("base_row", True, "base_row"), ("base_row", 1.5, "base_row"),
+    ("base_row", None, "base_row"), ("inputs", [], "inputs"),
+    ("inputs", {}, "inputs"), ("inputs", {"I2": None}, "inputs.I2"),
+    ("inputs", {"I2": 2}, "inputs.I2"), ("inputs", {"I2": True}, "inputs.I2"),
+    ("inputs", {"I2": [2]}, "inputs.I2"), ("inputs", {"I2": {}}, "inputs.I2"),
+    ("inputs", {"I2": ""}, "inputs.I2"), ("reason", {}, "reason"),
+    ("reason", None, "reason"), ("extra", 1, "extra"),
+])
+def test_malformed_row_is_rejected_before_any_rows_are_applied(monkeypatch, field, value, path):
+    row = {"obligation": GAP["obligation_id"], "base_row": 1, "inputs": {"I2": "2"}, "reason": "typed"}
+    malformed = dict(row, **{field: value})
+    result = _revise(monkeypatch, {"rows": [row, malformed]})
+    assert result.csv_bytes is None
+    assert result.meta["code"] == "INVALID_MODEL_RESPONSE"
+    assert f"$.rows[1].{path}" in [error["path"] for error in result.meta["schema_errors"]]
+
+
+def test_invalid_reply_feedback_reaches_the_next_prompt(monkeypatch):
+    invalid = _revise(monkeypatch, {"rows": [], "declined": 1})
+    history = [{"seq": 2, "origin": "LLM", "verdict": "INVALID", "codes": [],
+                "error": invalid.meta["error"], "reply_head": invalid.meta["reply_head"]}]
+    prompt = _user(CSV, CHECK, history, [GAP])
+    assert "$.declined: must be an array" in prompt
+    feedback = json.loads(prompt.split("Model response validation feedback: ")[1])
+    assert json.loads(feedback["reply_head"])["declined"] == 1
+
+
+def test_history_feedback_remains_valid_bounded_json_with_escaped_text():
+    history = {"seq": 2, "origin": "LLM", "verdict": "INVALID", "codes": [],
+               "error": "\x00" * 2000, "reply_head": "\x01" * 2000,
+               "schema_errors": [{"path": "$.rows", "message": "must be an array"}] * 100}
+    line = repair._history_line(history)
+    rendered = line.split("Model response validation feedback: ")[1]
+    assert len(rendered) <= repair._MAX_DETAIL_CHARS
+    feedback = json.loads(rendered)
+    assert feedback["error"] and feedback["reply_head"] and feedback["schema_errors"]

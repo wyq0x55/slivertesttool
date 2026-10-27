@@ -23,13 +23,14 @@ import json
 import re
 from contextlib import nullcontext
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Optional
 
 from ..ai import config as ai_config
 from ..ai import provider
-from . import diagnostic, increment
+from . import diagnostic, increment, repair_context, repair_exchange, repair_reply
 
-PROMPT_VERSION = "ut-repair/8.0"
+PROMPT_VERSION = "ut-repair/9.0"
 # Bound the prompt: issue details are already truncated by ut-agent.
 _MAX_DETAIL_CHARS = 6000
 _MAX_DECISION_CHARS = 200
@@ -256,23 +257,27 @@ def _columns_section(table: increment.Table, check: dict[str, Any]) -> str:
             "\n".join(aliases + [line for i, line in enumerate(lines) if i in visible]))
 
 
-def _function_prompt(target: dict[str, Any], table: increment.Table, check: dict[str, Any]) -> str:
-    context = (check.get("candidate_witnesses") or {}).get("repair_context") or []
-    context = sorted(context, key=lambda r: str(r.get("obligation_id", "")))
-    semantic_context = _bounded_records(context, 16000)
-    omitted = len(context) - len(json.loads(semantic_context))
+def _function_prompt(target: dict[str, Any], table: increment.Table, check: dict[str, Any],
+                     *, context: Optional[repair_context.PromptContext] = None) -> str:
+    if context is None:
+        context = repair_context.pack((check.get("candidate_witnesses") or {}).get("repair_context") or [])
     return (
         f"被测函数：{target.get('function')}（{target.get('source_rel')}）\n\n"
         f"## 输入列（{len(table.inputs)} 个；输出列 {len(table.outputs)} 个，不可改）\n"
         f"{_columns_section(table, check)}\n\n"
         "只修改上面列出的输入列；未列出的列保留参考行原值，不能用名称相似的列代替。\n\n"
-        f"## 义务语义证据（同一函数固定，未列出的控制关系不能猜测）\n{semantic_context}\n"
-        f"未列出的语义记录：{omitted}；对应义务若缺证据请 declined。\n\n"
+        "## 义务语义证据（同一函数固定，未列出的控制关系不能猜测）\n"
+        "Shared context, when supplied: records[].record retains obligation fields; records[].path "
+        "indexes paths, each an ordered array of edges; each edge.decision indexes decisions "
+        "(all indexes zero-based). "
+        "Reconstruct each path edge from its decision plus its supplied required_outcome. "
+        "literal retains an unmodified path item. No field is inferred or omitted.\n"
+        f"{context.text}\n\n"
     )
 
 
 def prompt_prefix(constraints: dict[str, Any], target: dict[str, Any], csv_bytes: bytes,
-                  check: dict[str, Any]) -> dict[str, str]:
+                  check: dict[str, Any]) -> dict[str, Any]:
     """Persist this snapshot on the job; no round state enters the prefix."""
     table = increment.parse(csv_bytes.decode("cp932"))
     return _make_prefix(constraints, target, table, check)
@@ -289,8 +294,10 @@ def _make_prefix(constraints, target, table, check):
              "semantic_context": sorted((check.get("candidate_witnesses") or {}).get("repair_context") or [],
                                         key=lambda r: str(r.get("obligation_id", "")))}
     digest = hashlib.sha256(json.dumps(facts, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    context = repair_context.pack(facts["semantic_context"])
     return {"version": PROMPT_VERSION, "system": _system_prompt(constraints),
-            "function": _function_prompt(target, table, check), "evidence_sha256": digest}
+            "function": _function_prompt(target, table, check, context=context), "evidence_sha256": digest,
+            "context_budget": context.budget()}
 
 
 def _reference_rows(table: increment.Table, check: Optional[dict[str, Any]] = None) -> str:
@@ -344,6 +351,17 @@ def _history_line(item: dict[str, Any]) -> str:
         line += f"；新增 {item['added']} 行，声明无法补齐 {item.get('declined', 0)} 个"
     for error in item.get("rejected") or ():
         line += f"；被拒：{error}"
+    feedback: dict[str, Any] = {key: str(item[key])[:2000] for key in ("error", "reply_head") if item.get(key)}
+    if item.get("schema_errors"):
+        feedback["schema_errors"] = json.loads(_bounded_records(item["schema_errors"], 1500))
+    if feedback:
+        rendered = json.dumps(feedback, ensure_ascii=False, sort_keys=True)
+        while len(rendered) > _MAX_DETAIL_CHARS:
+            key = max((key for key in ("error", "reply_head") if feedback.get(key)),
+                      key=lambda key: len(json.dumps(feedback[key], ensure_ascii=False)))
+            feedback[key] = feedback[key][:len(feedback[key]) // 2]
+            rendered = json.dumps(feedback, ensure_ascii=False, sort_keys=True)
+        line += "\nModel response validation feedback: " + rendered
     if item.get("witness_feedback"):
         line += "\n程序检查：" + _bounded_records(item["witness_feedback"], _MAX_DETAIL_CHARS)
         line += "\n该轮提议：" + _bounded_records(item.get("proposed_inputs") or [], _MAX_DETAIL_CHARS)
@@ -379,13 +397,16 @@ def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: by
            check: dict[str, Any], execution: Optional[dict[str, Any]],
            history: list[dict[str, Any]], open_gaps: list[dict[str, Any]], allowed: set[str],
            model: str = "", timeout: int = 900,
-           prefix_snapshot: Optional[dict[str, str]] = None, observe=None) -> Revision:
+           prefix_snapshot: Optional[dict[str, Any]] = None, observe=None,
+           diagnostic_dir: Path | None = None) -> Revision:
     """Ask the configured model for input rows and append the valid ones.
 
     Raises :class:`provider.ProviderError` when the model is unreachable so the
     caller can stop without consuming a repair round.  A round without any
     accepted row comes back as ``Revision(csv_bytes=None)``; ``meta`` records
-    accepted, rejected and declined obligations either way.
+    accepted, rejected and declined obligations either way. diagnostic_dir, when
+    supplied, must be a new per-round directory beneath the owning job. It
+    retains actual messages and raw reply using the host artifact descriptors.
     """
     meta: dict[str, Any] = {"prompt_version": PROMPT_VERSION}
     errors = diagnostic.integrity_errors(check, hashlib.sha256(csv_bytes).hexdigest(), execution)
@@ -407,6 +428,12 @@ def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: by
             or prefix_snapshot.get("evidence_sha256") != prefix["evidence_sha256"]):
         meta.update(error="固定提示词的基准、列或语义证据已变化，需重新生成并审核", code="PROMPT_PREFIX_CHANGED")
         return Revision(None, meta)
+    meta["context_budget"] = prefix["context_budget"]
+    if not prefix["context_budget"]["complete"]:
+        meta.update(code="PROMPT_BUDGET_EXCEEDED", model_contacted=False,
+                    error="Complete typed repair context exceeds the 16000-character budget; no tasks sent.",
+                    deferred_obligations=sorted(allowed | {gap["obligation_id"] for gap in open_gaps}))
+        return Revision(None, meta)
     messages = [
         {"role": "system", "content": prefix["system"]},
         {"role": "user", "content": _user_prompt(target, table, check, execution, history,
@@ -422,28 +449,51 @@ def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: by
     editable = _editable_columns(table, check)
     meta["editable_input_columns"] = len(editable) if editable is not None else len(table.inputs)
     if meta["prompt_chars"] > _MAX_PROMPT_CHARS:
-        meta.update(error="修订上下文超出预算，需人工缩小处理范围", code="PROMPT_BUDGET_EXCEEDED")
+        meta.update(error="修订上下文超出预算，需人工缩小处理范围", code="PROMPT_BUDGET_EXCEEDED",
+                    model_contacted=False, deferred_obligations=sorted(allowed))
         return Revision(None, meta)
     meta["prompt_sha256"] = hashlib.sha256(
         json.dumps(messages, ensure_ascii=False).encode("utf-8")).hexdigest()
     usage: dict[str, int] = {}
     configured = ai_config.get_ai_config()[ai_config.KEY_MODEL]
     meta["model"] = model or configured
+    if diagnostic_dir is not None:
+        meta.update(artifact_root=str(diagnostic_dir), artifacts=[])
+        try:
+            diagnostic_dir.mkdir(parents=True, exist_ok=False)
+            repair_exchange.save(diagnostic_dir, "request-messages.json",
+                                 json.dumps(messages, ensure_ascii=False).encode("utf-8"), meta)
+        except OSError as exc:
+            meta.update(code="DIAGNOSTIC_WRITE_FAILED", error=f"Cannot retain model request: {exc}",
+                        model_contacted=False)
+            return Revision(None, meta)
     with observe("input_model") if observe is not None else nullcontext():
+        meta["model_contacted"] = True
         reply = provider.invoke_chat(messages, temperature=0.1, max_tokens=8192,
                                      json_mode=True, usage=usage, model=model or None,
                                      timeout=timeout, stream=True)
     meta["usage"] = usage
+    if diagnostic_dir is not None:
+        try:
+            repair_exchange.save(diagnostic_dir, "response.txt", reply.encode("utf-8"), meta)
+        except OSError as exc:
+            meta.update(code="DIAGNOSTIC_WRITE_FAILED", error=f"Cannot retain model response: {exc}")
+            return Revision(None, meta)
     try:
         parsed = provider.extract_json(reply)
-        if not isinstance(parsed, dict):
-            raise ValueError("reply is not a JSON object")
     except ValueError as exc:
-        meta["error"] = f"模型输出不可用：{exc}"
+        meta.update(code="INVALID_MODEL_RESPONSE", error=f"模型输出不可用：{exc}")
         meta["reply_head"] = (reply or "")[:2000]
         return Revision(None, meta)
-    meta["rationale"] = str(parsed.get("rationale") or "")
-    applied = increment.apply(table, parsed.get("rows") or [], allowed,
+    errors = repair_reply.schema_errors(parsed)
+    if errors:
+        meta.update(code="INVALID_MODEL_RESPONSE", schema_errors=errors,
+                    error="Invalid model response schema: " + "; ".join(
+                        f"{item['path']}: {item['message']}" for item in errors)[:1800],
+                    reply_head=reply[:2000])
+        return Revision(None, meta)
+    meta["rationale"] = parsed.get("rationale", "")
+    applied = increment.apply(table, parsed.get("rows", []), allowed,
                               (check.get("input_ranges") or {}).get("contract"), editable_columns=editable)
     claimed = [row["obligation"] for row in applied.accepted]
     meta.update(rows=applied.accepted, rejected=applied.rejected, claimed=claimed,
