@@ -117,7 +117,7 @@ def test_raw_context_prompt_describes_direct_records():
 def test_oversize_context_defers_all_tasks_before_model_contact(monkeypatch):
     # One oversized item precedes a smaller item: neither is silently omitted
     # from a request, and neither becomes a model decline or proof.
-    records = [{"obligation_id": "A", "path": [{"unique_fact": "x" * 17000}]},
+    records = [{"obligation_id": "A", "path": [{"unique_fact": "x" * (repair_context.MAX_CONTEXT_CHARS + 1000)}]},
                {"obligation_id": "B", "path": [{"input_tokens": ["I1"]}]}]
     check = dict(CHECK, candidate_witnesses={"repair_context": records})
     monkeypatch.setattr(repair.provider, "invoke_chat",
@@ -130,5 +130,5 @@ def test_oversize_context_defers_all_tasks_before_model_contact(monkeypatch):
     assert result.meta["code"] == "PROMPT_BUDGET_EXCEEDED"
     assert result.meta["model_contacted"] is False
     assert result.meta["deferred_obligations"] == ["A", "B"]
-    assert result.meta["context_budget"]["required_chars"] > 16000
+    assert result.meta["context_budget"]["required_chars"] > repair_context.MAX_CONTEXT_CHARS
     assert "claimed" not in result.meta and "declined" not in result.meta

@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from typing import Any
 
 CONTRACT = "ut-platform.shared-repair-context/1"
-MAX_CONTEXT_CHARS = 16000
+# Sized for the local model's window; the whole prompt stays under repair._MAX_PROMPT_CHARS.
+MAX_CONTEXT_CHARS = 32000
 
 
 def _json(value: Any) -> str:
