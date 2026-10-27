@@ -93,7 +93,7 @@ def test_a_running_job_finishes_its_call_then_stops_before_the_model(env, monkey
     status, body = env.call("post", f"/jobs/{job_id}/retry")
     assert status == 202
     job = _job(env, job_id)
-    assert job["state"] == "awaiting_review" and calls == [1]
+    assert job["state"] == "needs_human" and calls == [1]
     assert job["stop_requested"] is False
 
 
