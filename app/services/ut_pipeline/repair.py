@@ -30,7 +30,7 @@ from ..ai import config as ai_config
 from ..ai import provider
 from . import diagnostic, increment, repair_context, repair_exchange, repair_reply
 
-PROMPT_VERSION = "ut-repair/9.0"
+PROMPT_VERSION = "ut-repair/9.1"
 # Bound the prompt: issue details are already truncated by ut-agent.
 _MAX_DETAIL_CHARS = 6000
 _MAX_DECISION_CHARS = 200
@@ -267,7 +267,10 @@ def _function_prompt(target: dict[str, Any], table: increment.Table, check: dict
         f"{_columns_section(table, check)}\n\n"
         "只修改上面列出的输入列；未列出的列保留参考行原值，不能用名称相似的列代替。\n\n"
         "## 义务语义证据（同一函数固定，未列出的控制关系不能猜测）\n"
-        "Shared context, when supplied: records[].record retains obligation fields; records[].path "
+        "If the context below is a JSON array, each element is one complete obligation record "
+        "and its path is already an ordered array of branch evidence; use it directly. "
+        "If it is an object with contract ut-platform.shared-repair-context/1, "
+        "records[].record retains obligation fields; records[].path "
         "indexes paths, each an ordered array of edges; each edge.decision indexes decisions "
         "(all indexes zero-based). "
         "Reconstruct each path edge from its decision plus its supplied required_outcome. "

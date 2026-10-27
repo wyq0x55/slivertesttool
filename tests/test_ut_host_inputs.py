@@ -302,6 +302,30 @@ def test_model_history_retains_bounded_validation_feedback():
     assert entry["added"] == 0 and entry["codes"] == []
 
 
+def test_mixed_proof_gaps_allow_only_missing_case_work_and_still_block_review(lifecycle):
+    ctx, job = lifecycle, lifecycle.job
+    attempt = ctx.attempts[job.current_attempt_id]
+    attempt.execution = {"status": "HOST_PASS", "evidence_source": "HOST_EXECUTION"}
+    attempt.check = checked(REFERENCE, verdict="FAIL")
+    proof_gap = {"obligation_id": "B", "gap_class": "SEMANTIC_EVIDENCE"}
+    attempt.check["completeness"] = {"unresolved": [deepcopy(GAP), proof_gap], "unresolved_count": 2}
+    proof_issue = {"code": "INPUT_OBLIGATION_PROOF_GAP", "severity": "error",
+                   "repairable": False, "message": "B needs typed evidence"}
+    attempt.check["issues"] = [proof_issue, {
+        "code": "INPUT_OBLIGATION_UNRESOLVED", "severity": "error", "repairable": True}]
+    gaps = pipeline._host_gaps(job, attempt)
+    assert [gap["obligation_id"] for gap in gaps["open"]] == ["A"]
+    assert pipeline._host_next_state(job, attempt, gaps)[0] == UtJob.REPAIRING
+    attempt.check["candidate_witnesses"]["witnessed_obligation_ids"] = ["A"]
+    attempt.check["issues"] = [proof_issue]
+    gaps = pipeline._host_gaps(job, attempt)
+    assert gaps["open"] == [] and gaps["unproven"] == 0
+    state, reason, code = pipeline._host_next_state(job, attempt, gaps)
+    assert state == UtJob.NEEDS_HUMAN and code == GateCode.CHECK_BLOCKED
+    assert "B needs typed evidence" in reason
+    assert not ctx.revision.called
+
+
 def test_retry_keeps_failed_request_diagnostics(lifecycle):
     ctx, job = lifecycle, lifecycle.job
     parent = ctx.attempts[job.current_attempt_id]

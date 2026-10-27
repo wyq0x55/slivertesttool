@@ -768,7 +768,8 @@ def _host_case_context(attempt: UtAttempt, gaps: dict[str, Any]) -> bool:
             or check.get("verdict") not in {"PASS", "FAIL"}
             or (attempt.execution or {}).get("status") != "HOST_PASS"
             or set(_error_codes(check)) - {"HOST_COVERAGE_REQUIRED_NOT_COVERED",
-                                           "INPUT_OBLIGATION_UNRESOLVED"}
+                                           "INPUT_OBLIGATION_UNRESOLVED",
+                                           "INPUT_OBLIGATION_PROOF_GAP"}
             or any(issue.get("code") == "INPUT_OBLIGATION_UNRESOLVED"
                    and issue.get("severity") == "error" and issue.get("repairable") is not True
                    for issue in check.get("issues") or [])

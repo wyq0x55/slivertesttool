@@ -7,7 +7,7 @@ human review.
 
 ## Complete typed context
 
-Prompt version `ut-repair/9.0` preserves every supplied repair-context field.
+Prompt version `ut-repair/9.1` preserves every supplied repair-context field.
 Repeated decisions and paths may use the lossless
 `ut-platform.shared-repair-context/1` envelope:
 

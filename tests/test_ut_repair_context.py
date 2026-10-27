@@ -102,6 +102,18 @@ def test_shared_context_reaches_every_requested_obligation(monkeypatch):
     assert _unpack(evidence) == sorted(records, key=lambda record: record["obligation_id"])
 
 
+def test_raw_context_prompt_describes_direct_records():
+    records = [{"obligation_id": "A", "path": [{"branch_id": "b0", "required_outcome": True}]}]
+    packed = repair_context.pack(records)
+    assert isinstance(json.loads(packed.text), list)
+    prefix = repair.prompt_prefix(CONSTRAINTS, {"function": "f"}, CSV.encode("cp932"),
+                                 dict(CHECK, candidate_witnesses={"repair_context": records}))
+    assert "If the context below is a JSON array" in prefix["function"]
+    assert "use it directly" in prefix["function"]
+    assert "If it is an object with contract ut-platform.shared-repair-context/1" in prefix["function"]
+    assert _unpack(packed.text) == records
+
+
 def test_oversize_context_defers_all_tasks_before_model_contact(monkeypatch):
     # One oversized item precedes a smaller item: neither is silently omitted
     # from a request, and neither becomes a model decline or proof.
