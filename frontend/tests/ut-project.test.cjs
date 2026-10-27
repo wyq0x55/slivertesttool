@@ -555,6 +555,44 @@ test("the selected version's host coverage report shows each line's C0, C1 and M
   assert.equal(h.get("ut-d-coverage-body").innerHTML, gaps);
 });
 
+test("the MC/DC tip names each condition, its independence pair and the executed test vectors", async () => {
+  const h = harness();
+  const value = job();
+  value.attempts[0].execution = { evidence_source: "HOST_EXECUTION", status: "HOST_PASS",
+    has_coverage_report: true, coverage: { lines: { percent: 88.9, covered: 8, total: 9 } } };
+  await ready(h, value);
+  const data = coverageReport();
+  data.report.lines[1].mcdc = [{ column: 7, conditions: 3, shown: 2, uncovered: [3], state: "PARTIAL",
+    end: [4, 22], text: "BOTH(a, d) || b<x>",
+    condition_details: [
+      { number: 1, independent: true, pair: [1, 3], line: 1, column: 21, text: "(x)", macro: true },
+      { number: 2, independent: true, pair: [1, 2], line: 4, column: 21, text: "b", macro: false },
+      { number: 3, independent: false, pair: null, line: null, column: null, text: null, macro: false }],
+    test_vectors: [{ number: 1, conditions: [false, false, null], result: false },
+      { number: 2, conditions: [false, true, null], result: true },
+      { number: 3, conditions: [true, null, true], result: true }],
+    detail_reason: "condition C3 matches 0 branch regions" }];
+  data.report.unplaced[1].mcdc = [{ column: 19, conditions: 2, shown: 0, uncovered: [1, 2], state: "NONE",
+    text: "(x) > 0 || (y) > 0", condition_details: [
+      { number: 1, independent: false, pair: null, line: 2, column: 19, text: "(x) > 0", macro: true },
+      { number: 2, independent: false, pair: null, line: 2, column: 30, text: "(y) > 0", macro: true }],
+    test_vectors: [{ number: 1, conditions: [false, false], result: false }], detail_reason: "" }];
+  h.coverages[0].resolve(data);
+  await settle();
+  const html = h.get("ut-d-coverage-body").innerHTML;
+  assert.match(html, /第 7 列 · <code>BOTH\(a, d\) \|\| b&lt;x&gt;<\/code>/);
+  assert.match(html, /class="is-full">C1 <code>\(x\)<\/code><span class="submuted">（宏定义内第 1 行）<\/span>：已证明独立影响（向量 1 ↔ 3）/);
+  assert.match(html, /class="is-full">C2 <code>b<\/code>：已证明独立影响（向量 1 ↔ 2）/);
+  assert.match(html, /class="is-miss">C3 （位置未知）：未证明独立影响</);
+  assert.match(html, /已执行的测试向量（C1, C2, C3 = 结果）/);
+  assert.match(html, /<span class="ut-mcdc-tv">3 \{ T, -, T = T \}<\/span>/);
+  assert.match(html, /condition C3 matches 0 branch regions/);
+  assert.doesNotMatch(html, /条件 1：/);
+  // A decision expanded from a macro keeps the same details beside its line.
+  assert.match(html, /宏展开的判定（行号属于宏定义文件）：第 3 行 · 第 3 行 MC\/DC <span class="ut-cov-mark ut-mcdc is-miss"/);
+  assert.match(html, /C2 <code>\(y\) &gt; 0<\/code>/);
+});
+
 test("a version without a host report hides the coverage section and ignores late replies", async () => {
   const h = harness();
   const value = job(20);
