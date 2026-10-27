@@ -46,7 +46,7 @@ def prepare_manifest(project_id: int, document: object, *, bridge, workspace: Pa
             constraints = bridge.constraints(str(candidate))
         except BridgeError as exc:
             raise ServiceError(f"项目清单校验失败：{exc}", code="UT_MANIFEST_INVALID") from exc
-        result = {"sha256": digest, "baseline": constraints.get("baseline"),
+        result = {"sha256": digest,
                   "provenance": constraints.get("provenance"),
                   "test_policy": constraints.get("test_policy"),
                   "effective_test_policy": constraints.get("effective_test_policy"),

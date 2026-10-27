@@ -41,7 +41,7 @@ def test_approved_csvs_ship_with_a_manifest(env):
     [entry] = manifest["files"]
     assert entry["job_id"] == second and entry["origin"] == "GENERATOR"
     assert entry["csv_sha256"] == hashlib.sha256(GOOD).hexdigest()
-    assert entry["machine_verdict"] == "PASS" and entry["baseline_ref"] == "psd-rebuild@1.1"
+    assert entry["machine_verdict"] == "PASS" and entry["test_rules_ref"] == "universal-test-rules@1"
     assert entry["approved_by"] and entry["approved_at"]
     rows = list(csv.DictReader(io.StringIO(archive.read("manifest.csv").decode("utf-8-sig"))))
     assert [row["function"] for row in rows] == ["f"]

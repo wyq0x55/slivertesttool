@@ -233,7 +233,7 @@
       var n = Object.keys(b.states).reduce(function (s, k) { return s + b.states[k]; }, 0);
       var prov = b.provenance || {};
       return '<option value="' + b.id + '">#' + b.id + " · " + esc(BATCH_ZH[b.status] || b.status) +
-        " · " + n + " 个作业" + (prov.baseline_ref ? " · " + esc(prov.baseline_ref) : "") + "</option>";
+        " · " + n + " 个作业" + (prov.test_rules_ref ? " · " + esc(prov.test_rules_ref) : "") + "</option>";
     }).join("");
     sel.value = batchId;
     $("ut-batch-stop").hidden = !U.can("edit") || !selectedBatchActive();
@@ -250,7 +250,7 @@
     var states = Object.keys(b.states).sort(function (x, y) { return b.states[y] - b.states[x]; })
       .map(function (s) { return U.statePill(s) + " " + b.states[s]; }).join(" ");
     var facts = ["批次 #" + b.id + (b.label ? "「" + b.label + "」" : ""), BATCH_ZH[b.status] || b.status,
-      prov.baseline_ref, prov.generator_commit ? "生成器 " + String(prov.generator_commit).slice(0, 8) : "",
+      prov.test_rules_ref, prov.generator_commit ? "生成器 " + String(prov.generator_commit).slice(0, 8) : "",
       "创建 " + U.time(b.created_at), b.finished_at ? "结束 " + U.time(b.finished_at) : ""]
       .filter(Boolean).map(esc).join(" · ");
     box.innerHTML = '<span class="ut-batch-facts">' + facts + '</span><span class="ut-batch-states">' +
@@ -669,7 +669,7 @@
     var requirements = coverageRequirements(b.constraints || {});
     // Requirements have their own row; the batch row stays an identity.
     $("ut-d-batch").textContent = "#" + job.batch_id +
-      (prov.baseline_ref ? " · " + prov.baseline_ref : "") +
+      (prov.test_rules_ref ? " · " + prov.test_rules_ref : "") +
       (prov.generator_commit ? " · " + String(prov.generator_commit).slice(0, 8) : "");
     $("ut-d-requirements").textContent = requirements || "—";
     $("ut-d-gen").textContent = job.generation_status || "—";

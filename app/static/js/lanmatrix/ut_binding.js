@@ -10,8 +10,8 @@
     host_clang: "clang", host_llvm_cov: "llvm-cov", host_llvm_profdata: "llvm-profdata", max_repair_rounds: 5 };
   var MODEL = ["stub_model", "stub_max_rounds"];
   var POLICY = ["boundary_adjacent", "c1", "mcdc", "arithmetic", "combination_group"];
-  var FIELDS = ["project.id", "baseline.id", "baseline.version", "build.profile", "winams.profile",
-    "rules.project_pack", "build.exclude_directories", "profile.mcdc_enabled"]
+  var FIELDS = ["project.id", "build.profile", "winams.profile",
+    "rules.project_pack", "build.exclude_directories"]
     .concat(POLICY.map(function (key) { return "test_policy." + key; }));
   var LIMIT = 256 * 1024;
   var draft = {}, snapshots = {}, savedConfig = null, savedState = "", rawSnapshot = "";
@@ -161,7 +161,7 @@
     FIELDS.forEach(function (p) {
       var value = get(p);
       if (p === "build.exclude_directories") value = Array.isArray(value) ? value.join("\n") : "";
-      else if (p === "profile.mcdc_enabled" || p.indexOf("test_policy.") === 0) value = typeof value === "boolean" ? String(value) : "";
+      else if (p.indexOf("test_policy.") === 0) value = typeof value === "boolean" ? String(value) : "";
       else value = typeof value === "string" ? value : "";
       field(p).value = value;
       snapshots[p] = value;
@@ -170,12 +170,7 @@
     configurationDetails();
   }
   function policyView() {
-    var legacy = own(draft, "baseline"), explicit = own(draft, "test_policy");
-    $("ut-legacy-baseline").hidden = !legacy;
-    $("ut-policy-section").hidden = legacy && !explicit;
-    $("ut-policy-convert").disabled = busy || !LMUt.can("configure") || !legacy || explicit;
-    ["baseline.id", "baseline.version"].forEach(function (p) { field(p).required = legacy; });
-    POLICY.forEach(function (key) { field("test_policy." + key).required = !legacy || explicit; });
+    POLICY.forEach(function (key) { field("test_policy." + key).required = true; });
   }
   function renderRaw() {
     rawSnapshot = JSON.stringify(draft, null, 2);
@@ -220,7 +215,7 @@
         }
       } else {
         if (!own(draft, group)) Object.defineProperty(draft, group, { value: group === "test_policy" ? { version: "1" } : {}, writable: true, enumerable: true, configurable: true });
-        draft[group][key] = p === "profile.mcdc_enabled" || group === "test_policy" ? value === "true" :
+        draft[group][key] = group === "test_policy" ? value === "true" :
           p === "build.exclude_directories" ? value.split(/\r?\n/).map(function (v) { return v.trim(); }).filter(Boolean) : value;
       }
     });
@@ -233,12 +228,9 @@
   }
   function required() {
     if (!choices) throw error("可选配置尚未加载，请检查 ut-agent 后刷新页面。", $("ut-m-build-abi"));
-    var labels = { "project.id": "项目标识", "baseline.id": "测试基准 ID", "baseline.version": "基准版本" };
-    var legacy = own(draft, "baseline"), explicit = own(draft, "test_policy");
-    (legacy ? ["project.id", "baseline.id", "baseline.version"] : ["project.id"]).forEach(function (p) {
-      if (typeof get(p) !== "string" || !get(p).trim()) throw error("请填写" + labels[p] + "。", field(p));
-    });
-    if (legacy && explicit) throw error("清单只能包含 Baseline 或显式测试要求之一，请在完整 JSON 中修正。", $("ut-manifest-json"));
+    if (typeof get("project.id") !== "string" || !get("project.id").trim()) throw error("请填写项目标识。", field("project.id"));
+    if (own(draft, "baseline"))
+      throw error("已不再支持旧版 Baseline。请在完整 JSON 中删除 baseline，并逐项选择测试要求。", $("ut-manifest-json"));
     var abiValue = $("ut-m-build-abi").value, abi = pointerItem(abiValue);
     var profile = choices.build_profiles.find(function (item) { return item.id === get("build.profile"); });
     if (abiValue === "legacy") {
@@ -249,7 +241,6 @@
     } else if (profile && profile.pointer_size != null && profile.pointer_size !== abi.pointer_size) {
       throw error("指针宽度与编译器兼容配置不一致。请改成相同宽度，或改用默认编译上下文。", $("ut-m-build-abi"));
     }
-    if (legacy) return;
     POLICY.forEach(function (key) {
       if (typeof get("test_policy." + key) !== "boolean") throw error("请明确选择每项测试要求的是或否。", field("test_policy." + key));
     });
@@ -257,7 +248,7 @@
     if (get("test_policy.combination_group") && !get("test_policy.mcdc"))
       throw error("MC/DC 组合分组选择是时，MC/DC 也必须选择是。", field("test_policy.combination_group"));
     if (object(draft.profile) && own(draft.profile, "mcdc_enabled"))
-      throw error("显式测试要求不能同时包含旧 profile.mcdc_enabled，请在完整 JSON 中修正。", $("ut-manifest-json"));
+      throw error("已不再支持 profile.mcdc_enabled，请在完整 JSON 中删除，并改用 MC/DC 测试要求。", $("ut-manifest-json"));
   }
   function lock(locked) {
     busy = locked;
@@ -321,22 +312,6 @@
     changed();
   });
   $("ut-manifest-import").addEventListener("click", function () { if (editable()) $("ut-manifest-file").click(); });
-  $("ut-policy-convert").addEventListener("click", function () {
-    if (!editable()) return;
-    clearError();
-    try {
-      syncForm();
-      if (!own(draft, "baseline") || own(draft, "test_policy")) return;
-      delete draft.baseline;
-      if (object(draft.profile)) {
-        delete draft.profile.mcdc_enabled;
-        if (!Object.keys(draft.profile).length) delete draft.profile;
-      }
-      draft.test_policy = { version: "1" };
-      renderFields(); renderRaw(); changed();
-      field("test_policy.boundary_adjacent").focus();
-    } catch (e) { fail(e.message, e.node); }
-  });
   $("ut-manifest-file").addEventListener("change", async function () {
     if (!editable()) return;
     var file = this.files && this.files[0];

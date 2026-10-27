@@ -29,7 +29,7 @@ from ..lanmatrix.errors import ServiceError
 _MANIFEST_COLUMNS = (
     "function", "source_rel", "unit_rel", "file", "job_id", "batch_id", "attempt_seq",
     "origin", "csv_sha256", "machine_verdict", "repair_rounds", "approved_by", "approved_at",
-    "review_note", "baseline_ref", "generator_commit", "superseded_by",
+    "review_note", "test_rules_ref", "generator_commit", "superseded_by",
     "execution_backend", "evidence_source", "counts_as_target_evidence", "delivery_validated",
 )
 
@@ -101,7 +101,7 @@ def build_archive(project_id: int, user_id: int, batch_id: Optional[int] = None)
             "approved_by": (reviewer.display_name or reviewer.username) if reviewer else "",
             "approved_at": _iso(job.reviewed_at),
             "review_note": job.review_note or "",
-            "baseline_ref": provenance.get("baseline_ref") or "",
+            "test_rules_ref": provenance.get("test_rules_ref") or "",
             "generator_commit": provenance.get("generator_commit") or "",
             "superseded_by": job.superseded_by,
         }))
@@ -110,7 +110,7 @@ def build_archive(project_id: int, user_id: int, batch_id: Optional[int] = None)
                 execution_backend="clang", evidence_source="HOST_EXECUTION",
                 counts_as_target_evidence=False, delivery_validated=False,
                 host_coverage=(attempt.execution or {}).get("coverage"),
-                host_evidence_note="Host observation comparison only; not baseline coverage acceptance")
+                host_evidence_note="Host observation comparison only; not target coverage acceptance")
     if problems:
         raise ServiceError("导出中止，以下版本无法证明与审核时一致：" + "；".join(problems[:10]),
                            code="INTEGRITY_ERROR")

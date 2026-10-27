@@ -24,7 +24,7 @@ class UtPipelineConfig(db.Model):
         db.Integer, db.ForeignKey("lm_projects.id", ondelete="CASCADE"),
         nullable=False, unique=True,
     )
-    # ut-agent ProjectManifest (locks baseline / MC/DC / interface contract).
+    # ut-agent ProjectManifest (locks the explicit test policy / interface contract).
     manifest_path = db.Column(db.String(1024), nullable=False, default="")
     # Five-column project index (HOYU/<project>.csv) and the Soft/Product root.
     index_csv = db.Column(db.String(1024), nullable=False, default="")
@@ -128,11 +128,8 @@ class UtBatch(db.Model):
 
     def to_dict(self) -> dict:
         snapshot = self.constraints or {}
-        explicit = ((self.provenance or {}).get("policy_origin") == "explicit"
-                    or ("baseline" in snapshot and snapshot["baseline"] is None))
-        keys = {"baseline", "coverage_policy", "test_rules_ref"}
-        if explicit:
-            keys.update({"effective_test_policy", "test_policy", "test_policy_sha256"})
+        keys = {"coverage_policy", "test_rules_ref", "effective_test_policy", "test_policy",
+                "test_policy_sha256"}
         return {
             "id": self.id,
             "project_id": self.project_id,
