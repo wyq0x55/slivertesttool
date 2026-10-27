@@ -7,7 +7,8 @@ const { TextDecoder } = require("node:util");
 const settle = () => new Promise(resolve => setImmediate(resolve));
 const base = path.resolve(__dirname, "../..");
 const clone = value => JSON.parse(JSON.stringify(value));
-const manifest = () => ({ project: { id: "demo" }, baseline: { id: "baseline", version: "1" }, build: { profile: "default" } });
+const policy = () => ({ version: "1", boundary_adjacent: true, c1: true, mcdc: true, arithmetic: false, combination_group: false });
+const manifest = () => ({ project: { id: "demo" }, build: { profile: "default" }, test_policy: policy() });
 const catalog = () => ({
   contract: "ut-agent.configuration-options/2",
   pointer_sizes: [
@@ -38,7 +39,7 @@ function harness(configure = true, config = { manifest_document: manifest() }, s
     const attributes = {}, classes = new Set();
     return { id, value: "", disabled: false, hidden: false, readOnly: false, textContent: "", open: false,
       parentElement: { hidden: false }, listeners: {}, dataset: { project: "4" }, children: [],
-      replaceChildren() { this.children = []; }, appendChild(child) { this.children.push(child); },
+      replaceChildren() { this.children = []; }, appendChild(child) { child.parentElement = this; this.children.push(child); },
       classList: { toggle(k, on) { on ? classes.add(k) : classes.delete(k); }, contains(k) { return classes.has(k); } },
       addEventListener(type, fn) { this.listeners[type] = fn; },
       setAttribute(k, v) { attributes[k] = v; }, removeAttribute(k) { delete attributes[k]; },
@@ -85,7 +86,13 @@ function harness(configure = true, config = { manifest_document: manifest() }, s
   window.LMApi.setToken("csrf-test");
   function emit(id, type) { const n = get(id); return n.listeners[type].call(n); }
   function input(id, value, type = "input") { get(id).value = value; return emit(id, type); }
-  return { get, writes, validations, requests, downloads, events, input, emit,
+  function row(index) {
+    const n = get("ut-interface-entries").children[index];
+    const [fn, parameter, name, access] = n.children.slice(0, 4).map(wrap => wrap.children[1]);
+    const set = (control, value) => { control.value = value; control.listeners.change.call(control); };
+    return { node: n, fn, parameter, name, access, remove: n.children[4], set };
+  }
+  return { get, writes, validations, requests, downloads, events, input, emit, row,
     change: (key, value) => input("ut-c-" + key, value, "change"),
     save: () => emit("ut-config-save", "click"), focused: () => focused,
     reject: message => { apiError = { code: "INVALID_MANIFEST", message }; },
@@ -132,18 +139,97 @@ test("llvm execution controls stay visible and stub options follow the selected 
   assert.equal(h.get("ut-c-stub_model").disabled, false);
 });
 
-test("normal form exposes ABI and automatic stubs without a pointer direction editor", () => {
+test("every manifest setting has a form control before the raw JSON editor", () => {
   const html = fs.readFileSync(path.join(base, "app/templates/lanmatrix/ut_binding.html"), "utf8");
+  const raw = html.indexOf('id="ut-manifest-advanced"');
   assert.ok(html.indexOf('id="ut-m-build-abi"') < html.indexOf("<details"));
-  for (const id of ["ut-interface-entries", "ut-interface-add", "ut-m-interfaces-contract"]) {
-    assert.ok(!html.includes('id="' + id + '"'));
+  for (const id of ["ut-m-execution_contract-const_volatile_single_invocation_stable", "ut-m-build-config",
+    "ut-m-winams-stub_memory_limit_bytes", "ut-m-winams-stub_memory_headroom_ratio", "ut-m-profile-approved_exceptions",
+    "ut-m-interfaces-contract", "ut-interface-entries", "ut-interface-add", "ut-legacy-remove"]) {
+    const at = html.indexOf('id="' + id + '"');
+    assert.ok(at > 0 && at < raw, id + " must be a form control");
   }
   assert.match(html, /无需先填写接口契约或指针方向/);
   assert.match(html, /自动 Stub（默认，确定性）/);
   assert.match(html, /模型候选（可选，须验证）/);
   assert.match(html, /同一源码文件中的其他被调函数/);
-  assert.ok(html.indexOf("interfaces.entries") > html.indexOf('id="ut-manifest-advanced"'));
   assert.doesNotMatch(html, /rh850|psd049|phd038/);
+});
+
+test("the execution contract is declared and withdrawn from the form only", async () => {
+  const h = harness(); await settle();
+  const id = "ut-m-execution_contract-const_volatile_single_invocation_stable";
+  assert.equal(h.get(id).value, "");
+  h.input(id, "true", "change");
+  await h.save();
+  assert.deepEqual(h.writes[0].manifest_document.execution_contract,
+    { version: "1", const_volatile_single_invocation_stable: true });
+  h.input(id, "false", "change");
+  await h.save();
+  assert.equal(h.writes[1].manifest_document.execution_contract.const_volatile_single_invocation_stable, false);
+  h.input(id, "", "change");
+  await h.save();
+  assert.equal(Object.hasOwn(h.writes[2].manifest_document, "execution_contract"), false);
+});
+
+test("optional build, WinAMS, profile and interface settings are written from the form", async () => {
+  const h = harness(); await settle();
+  h.input("ut-m-build-config", "release");
+  h.input("ut-m-winams-stub_memory_limit_bytes", "32768");
+  h.input("ut-m-winams-stub_memory_headroom_ratio", "0.25");
+  h.input("ut-m-profile-approved_exceptions", "EX-1\n\n EX-2 ");
+  h.input("ut-m-interfaces-contract", "approved@2");
+  await h.emit("ut-interface-add", "click");
+  const r = h.row(0);
+  r.set(r.fn, " dep_write "); r.set(r.parameter, "1"); r.set(r.name, "out_value"); r.set(r.access, "1");
+  await h.emit("ut-interface-add", "click");
+  const second = h.row(1);
+  second.set(second.fn, "dep_both"); second.set(second.parameter, "0"); second.set(second.access, "3");
+  await h.save();
+  assert.deepEqual(h.writes[0].manifest_document, { ...manifest(),
+    build: { profile: "default", config: "release" },
+    winams: { stub_memory_limit_bytes: 32768, stub_memory_headroom_ratio: 0.25 },
+    profile: { approved_exceptions: ["EX-1", "EX-2"] },
+    interfaces: { contract: "approved@2", entries: [
+      { function: "dep_write", parameter_index: 1, parameter_name: "out_value", direction: "out" },
+      { function: "dep_both", parameter_index: 0, direction: "inout", pointee_access_order: "write_before_read" },
+    ] } });
+  h.row(1).remove.click();
+  h.row(0).remove.click();
+  h.input("ut-m-interfaces-contract", "");
+  await h.save();
+  assert.equal(Object.hasOwn(h.writes[1].manifest_document, "interfaces"), false);
+});
+
+test("invalid numeric manifest settings block save on the offending field", async () => {
+  for (const [id, value] of [["ut-m-winams-stub_memory_limit_bytes", "0"], ["ut-m-winams-stub_memory_limit_bytes", "1.5"],
+    ["ut-m-winams-stub_memory_headroom_ratio", "1.5"], ["ut-m-winams-stub_memory_headroom_ratio", "-0.1"]]) {
+    const h = harness(); await settle();
+    h.get(id).value = value; await h.save();
+    assert.equal(h.writes.length, 0, id + "=" + value);
+    assert.equal(h.focused(), id);
+  }
+});
+
+test("editing a pointer entry keeps its unknown keys and untouched entries stay verbatim", async () => {
+  const entries = [
+    { function: "dep", parameter_index: 0, direction: "in", custom: { retained: true } },
+    { function: "odd", parameter_index: 2, direction: "sideways" },
+    "raw-entry",
+  ];
+  const h = harness(true, { manifest_document: { ...manifest(), interfaces: { entries: clone(entries) } } }); await settle();
+  assert.equal(h.row(0).access.value, "0");
+  assert.equal(h.row(1).access.value, "custom");
+  const r = h.row(0);
+  r.set(r.access, "2");
+  await h.save();
+  assert.deepEqual(h.writes[0].manifest_document.interfaces.entries, [
+    { function: "dep", parameter_index: 0, direction: "inout", pointee_access_order: "read_before_write", custom: { retained: true } },
+    entries[1], entries[2],
+  ]);
+  const odd = h.row(1);
+  odd.set(odd.parameter, "-1");
+  assert.match(h.get("ut-binding-error").textContent, /参数序号/);
 });
 
 test("pointer width saves with default automated stubs and no interface declaration", async () => {
@@ -303,7 +389,7 @@ test("BOM UTF-8 import populates fields without persisting and roundtrips advanc
   await h.import("\uFEFF" + JSON.stringify(imported), "SOURCE.JSON");
   assert.equal(h.writes.length, 0); assert.equal(h.validations.length, 0);
   assert.equal(h.get("ut-m-build-profile").value, "build-id");
-  assert.equal(h.get("ut-m-profile-mcdc_enabled").value, "");
+  assert.equal(h.get("ut-m-profile-approved_exceptions").value, "");
   assert.equal(h.get("ut-draft-state").textContent, "有未保存的更改");
   h.input("ut-m-project-id", "renamed");
   h.input("ut-m-build-exclude_directories", "first\n");
@@ -318,7 +404,7 @@ test("BOM UTF-8 import populates fields without persisting and roundtrips advanc
 test("a new document keeps every policy choice unselected and omits optional fields", async () => {
   const h = harness(true, null); await settle();
   assert.equal(h.get("ut-policy-section").hidden, false);
-  assert.equal(h.get("ut-legacy-baseline").hidden, true);
+  assert.equal(h.get("ut-legacy-fields").hidden, true);
   for (const key of ["boundary_adjacent", "c1", "mcdc", "arithmetic", "combination_group"]) {
     assert.equal(h.get("ut-m-test_policy-" + key).value, "");
   }
@@ -339,34 +425,27 @@ test("a new document keeps every policy choice unselected and omits optional fie
   });
 });
 
-test("legacy import stays unchanged until conversion, which clears every policy choice", async () => {
+test("legacy fields block save until removed from the form, keeping other settings", async () => {
   const h = harness(true, null); await settle();
-  const imported = { ...manifest(), profile: { mcdc_enabled: true, approved_exceptions: ["keep"] }, custom: { retained: true } };
+  const imported = { ...manifest(), baseline: { id: "baseline", version: "1" },
+    profile: { mcdc_enabled: true, approved_exceptions: ["keep"] }, test_policy: { ...policy(), version: "0" }, custom: { retained: true } };
   await h.import(JSON.stringify(imported));
-  assert.equal(h.get("ut-legacy-baseline").hidden, false);
-  assert.equal(h.get("ut-policy-section").hidden, true);
-  assert.equal(h.get("ut-m-profile-mcdc_enabled").value, "true");
+  assert.equal(h.get("ut-legacy-fields").hidden, false);
+  assert.match(h.get("ut-legacy-list").textContent, /baseline.*profile\.mcdc_enabled.*test_policy\.version/);
   await h.save();
-  assert.deepEqual(h.writes[0].manifest_document, imported);
-  await h.emit("ut-policy-convert", "click");
-  for (const key of ["boundary_adjacent", "c1", "mcdc", "arithmetic", "combination_group"]) {
-    assert.equal(h.get("ut-m-test_policy-" + key).value, "");
-  }
+  assert.equal(h.writes.length, 0);
+  assert.equal(h.focused(), "ut-legacy-remove");
+  await h.emit("ut-legacy-remove", "click");
+  assert.equal(h.get("ut-legacy-fields").hidden, true);
   await h.save();
-  assert.equal(h.writes.length, 1);
-  for (const [key, value] of [["boundary_adjacent", "true"], ["c1", "true"], ["mcdc", "true"], ["arithmetic", "false"], ["combination_group", "true"]]) {
-    h.input("ut-m-test_policy-" + key, value, "change");
-  }
-  await h.save();
-  assert.deepEqual(h.writes[1].manifest_document, {
-    project: imported.project, custom: imported.custom, profile: { approved_exceptions: ["keep"] },
-    build: imported.build,
-    test_policy: { version: "1", boundary_adjacent: true, c1: true, mcdc: true, arithmetic: false, combination_group: true },
+  assert.deepEqual(h.writes[0].manifest_document, {
+    project: imported.project, build: imported.build, test_policy: policy(),
+    profile: { approved_exceptions: ["keep"] }, custom: imported.custom,
   });
-  assert.equal(Object.hasOwn(h.writes[1].manifest_document, "baseline"), false);
+  h.input("ut-m-test_policy-combination_group", "true", "change");
   h.input("ut-m-test_policy-mcdc", "false", "change");
   await h.save();
-  assert.equal(h.writes.length, 2);
+  assert.equal(h.writes.length, 1);
   assert.equal(h.focused(), "ut-m-test_policy-combination_group");
 });
 
@@ -396,10 +475,10 @@ test("invalid raw edits and missing required fields visibly block save with focu
 
 test("validation posts only the current document without config persistence", async () => {
   const h = harness(); await settle();
-  h.input("ut-m-baseline-version", "2");
+  h.input("ut-m-winams-profile", "standard");
   await h.emit("ut-manifest-validate", "click");
   assert.equal(h.writes.length, 0);
-  assert.deepEqual(h.validations, [{ manifest_document: { ...manifest(), baseline: { id: "baseline", version: "2" } } }]);
+  assert.deepEqual(h.validations, [{ manifest_document: { ...manifest(), winams: { profile: "standard" } } }]);
   assert.match(h.get("ut-manifest-validation").textContent, /validated-sha/);
   assert.equal(h.get("ut-draft-state").textContent, "有未保存的更改");
   h.reject("Baseline resource is missing"); await h.emit("ut-manifest-validate", "click");
