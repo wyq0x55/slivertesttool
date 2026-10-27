@@ -111,7 +111,7 @@ def test_startup_parks_jobs_the_dead_worker_owned(env, app_ctx, monkeypatch):
     job = _job(env, executing)
     assert (job["state"], job["gate_code"]) == ("error", "INTERRUPTED")
     assert "点「重试」继续" in job["reason"]
-    assert _job(env, generating_id)["reason"].endswith("请从实施一览重新入队")
+    assert _job(env, generating_id)["reason"].endswith("请在「任务/运行」重新入队")
     assert _job(env, stopping)["state"] == "stopped"
 
 

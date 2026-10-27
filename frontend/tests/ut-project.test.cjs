@@ -93,7 +93,7 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
       utRevise(...args) { const d = deferred(); revisions.push({ ...d, args }); return d.promise; },
       utStop(pid, id) { const d = deferred(); stops.push({ ...d, id }); return d.promise; },
     },
-    LMUI: { alert: async () => {} },
+    LMUI: { alert: async () => {}, confirm: async (options) => lists.confirm ? lists.confirm(options) : true },
     LMUrl: {
       get: () => "", set() {}, replace() {},
       onPop(listener) { onPop = listener; },
@@ -1080,6 +1080,133 @@ function listed(id, state, extra = {}) {
     target: { function: "f" + id, source_rel: "src/a.c", source_name: "a.c" }, ...extra };
 }
 
+function requeueRow(h, target) {
+  return h.get("ut-rows").listeners.click({
+    target: { closest: (selector) => selector === "[data-requeue]"
+      ? { dataset: { requeue: String(target) } } : null },
+  });
+}
+
+test("the task list requeues an indexed inactive function as a new batch", async () => {
+  const value = listed(1, "error", { target: { id: 7, in_index: true, function: "f" } });
+  const h = harness(undefined, "ut_tasks.js", { jobs: [value] });
+  await settle();
+  assert.match(h.get("ut-rows").innerHTML, /data-requeue="7"/);
+  assert.match(h.get("ut-rows").innerHTML, /data-retry="1"/);
+  requeueRow(h, 7);
+  await settle();
+  assert.equal(h.batches.length, 1);
+  assert.equal(JSON.stringify(h.batches[0].args), '[4,[7],""]');
+  h.batches[0].resolve({ id: 20 });
+  await settle();
+  assert.match(h.get("ut-status").textContent, /批次 #20 已入队/);
+  assert.equal(h.calls.jobs, 2);
+});
+
+test("job details can requeue without returning to the function index", async () => {
+  const h = harness();
+  await ready(h, { ...job(), target: { id: 8, in_index: true, function: "f" } });
+  assert.equal(h.get("ut-d-requeue").hidden, false);
+  h.click("ut-d-requeue");
+  await settle();
+  assert.equal(JSON.stringify(h.batches[0].args), '[4,[8],""]');
+  assert.equal(h.get("ut-d-requeue").disabled, true);
+  h.batches[0].resolve({ id: 21 });
+  await settle();
+  h.details.at(-1).resolve({ ...job(), superseded_by: 2,
+    target: { id: 8, in_index: true, function: "f" } });
+  await settle();
+  assert.equal(h.get("ut-d-requeue").hidden, true);
+});
+
+for (const [name, state, extra, capabilities] of [
+  ["active", "executing", {}, undefined],
+  ["superseded", "error", { superseded_by: 9 }, undefined],
+  ["removed", "error", { target: { id: 7, in_index: false } }, undefined],
+  ["viewer", "error", {}, { edit: false, review: true }],
+]) {
+  test(`${name} jobs do not offer or submit requeue`, async () => {
+    const value = { ...job(10, state), target: { id: 7, in_index: true }, ...extra };
+    const h = harness(capabilities, "ut_tasks.js", { jobs: [value] });
+    await ready(h, value);
+    assert.doesNotMatch(h.get("ut-rows").innerHTML, /data-requeue="/);
+    assert.equal(h.get("ut-d-requeue").hidden, true);
+    requeueRow(h, 7);
+    h.click("ut-d-requeue");
+    await settle();
+    assert.equal(h.batches.length, 0);
+  });
+}
+
+test("bulk requeue selects eligible functions only and deduplicates targets", async () => {
+  const h = harness(undefined, "ut_tasks.js", { jobs: [
+    listed(1, "error", { target: { id: 7, in_index: true } }),
+    listed(2, "approved", { target: { id: 8, in_index: true } }),
+    listed(3, "queued", { target: { id: 9, in_index: true } }),
+  ] });
+  await settle();
+  const all = h.get("ut-requeue-all");
+  all.checked = true;
+  all.listeners.change.call(all);
+  assert.equal(h.get("ut-requeue-label").textContent, "重新入队（2）");
+  h.click("ut-requeue");
+  await settle();
+  assert.equal(JSON.stringify(h.batches[0].args), '[4,[7,8],""]');
+  h.batches[0].resolve({ id: 22 });
+  await settle();
+  assert.equal(h.get("ut-requeue").disabled, true);
+});
+
+test("cancelled or concurrent confirmations never submit duplicate batches", async () => {
+  const confirmation = deferred();
+  let confirmations = 0;
+  const h = harness(undefined, "ut_tasks.js", {
+    jobs: [listed(1, "error", { target: { id: 7, in_index: true } })],
+    confirm: () => { confirmations += 1; return confirmation.promise; },
+  });
+  await settle();
+  requeueRow(h, 7);
+  requeueRow(h, 7);
+  await settle();
+  assert.equal(confirmations, 1);
+  confirmation.resolve(false);
+  await settle();
+  assert.equal(h.batches.length, 0);
+  requeueRow(h, 7);
+  await settle();
+  assert.equal(confirmations, 2);
+});
+
+test("a rejected requeue keeps selection and shows the server error", async () => {
+  const h = harness(undefined, "ut_tasks.js", {
+    jobs: [listed(1, "error", { target: { id: 7, in_index: true } })],
+  });
+  await settle();
+  h.get("ut-rows").listeners.change({ target: { dataset: { requeueTarget: "7" }, checked: true } });
+  h.click("ut-requeue");
+  await settle();
+  h.batches[0].reject(new Error("函数已在队列中"));
+  await settle();
+  assert.match(h.get("ut-status").textContent, /函数已在队列中/);
+  assert.equal(h.get("ut-requeue").disabled, false);
+  assert.equal(h.get("ut-requeue-label").textContent, "重新入队（1）");
+});
+
+test("refresh removes selections that are no longer eligible", async () => {
+  const lists = { jobs: [listed(1, "error", { target: { id: 7, in_index: true } })] };
+  const h = harness(undefined, "ut_tasks.js", lists);
+  await settle();
+  h.get("ut-rows").listeners.change({ target: { dataset: { requeueTarget: "7" }, checked: true } });
+  assert.equal(h.get("ut-requeue").disabled, false);
+  lists.jobs[0].state = "generating";
+  h.click("ut-refresh");
+  await settle();
+  assert.equal(h.get("ut-requeue").disabled, true);
+  h.click("ut-requeue");
+  await settle();
+  assert.equal(h.batches.length, 0);
+});
+
 test("superseded jobs leave the working list until asked for", async () => {
   const h = harness(undefined, "ut_tasks.js", { jobs: [
     listed(3, "awaiting_review"), listed(2, "stopped"), listed(1, "needs_human", { superseded_by: 3 }),
@@ -1096,7 +1223,7 @@ test("superseded jobs leave the working list until asked for", async () => {
   toggle.checked = true;
   toggle.listeners.change.call(toggle);
   rows = h.get("ut-rows").innerHTML;
-  assert.match(rows, /<tr class="is-stale"><td class="ut-num">#1</);
+  assert.match(rows, /<tr class="is-stale"><td class="ut-check">[\s\S]*?<\/td><td class="ut-num">#1</);
   assert.match(rows, /已被 #3 取代/);
   assert.doesNotMatch(rows, /data-retry="1"/);
 });
