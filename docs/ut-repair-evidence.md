@@ -281,3 +281,11 @@ all dependency callees, including those in the same translation unit. Recording
 and configurable writeback belong to ut-agent. Synthetic behavior and model
 proposals do not prove real dependency semantics or pointee extent. Platform
 diagnostics never promote this evidence to target validation or automatic approval.
+
+`HOST_PROFILE_RUNTIME_UNAVAILABLE` identifies a missing or rejected LLVM coverage
+runtime. When this and `HOST_TOOL_UNAVAILABLE` are the only errors, the job enters
+the retryable environment gate without consuming a model round. A semantic or
+artifact-binding error still requires separate review. Generic Windows i386
+execution can discover an approved installed runtime through ut-agent; explicit
+overrides never fall back after rejection. Historical job reasons and frozen
+manifests are retained unchanged.

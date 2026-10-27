@@ -1215,7 +1215,9 @@
       if (Array.isArray(d.locations)) {
         return '<p class="ut-issue-text">' + esc((d.metric || "") + " · " + (d.reason || "查看以下覆盖位置")) +
           '</p>' + (d.locations.length ? tableHtml(d.locations, "ut-location-table") :
-            '<p class="ut-issue-text">当前报告没有可唯一定位的覆盖点，请先补测量或位置证据。</p>');
+            '<p class="ut-issue-text">' + (d.reason_code === "HOST_PROFILE_RUNTIME_UNAVAILABLE"
+              ? '覆盖率运行库尚不可用，暂未取得覆盖点测量。请先按上方指引修复运行库后重试执行。'
+              : '当前报告没有可唯一定位的覆盖点，请先补测量或位置证据。') + '</p>');
       }
       if ("build" in d && Array.isArray(d.cases)) {
         var cells = [];
