@@ -334,6 +334,8 @@ def test_host_missing_case_creates_derived_version_then_reexecutes_before_review
         check.update(verdict="PASS", executed=True, evidence_source="HOST_EXECUTION",
                      counts_as_target_evidence=False, delivery_validated=False)
         check["candidate_witnesses"]["input_mapping_identified"] = True
+        check["candidate_witnesses"]["input_repair_readiness"] = {
+            "ready": True, "code": "READY", "reason": "", "blocked_columns": []}
         check["input_ranges"] = {"contract": {"contract": "ut-agent.input-domains/1", "columns": [
             {"index": 1, "column": "x", "status": "PROVEN", "min": 0, "max": 255}]}}
         execution = {"status": "HOST_PASS", "evidence_source": "HOST_EXECUTION",
@@ -464,6 +466,42 @@ def test_artifact_metadata_cannot_escape_job_root(configured, app_ctx):
         db.session.commit()
         aid, artifact_id = attempt.id, artifact["id"]
     assert env.client.get(env.base + f"/jobs/{job_id}/attempts/{aid}/artifacts/{artifact_id}").status_code == 400
+
+
+@pytest.mark.parametrize("case", ["valid", "changed", "outside"])
+def test_input_model_artifacts_use_owned_hashed_downloads(configured, app_ctx, tmp_path, case):
+    env, ids = configured
+    [job_id] = _enqueue(env, ids["f"])
+    payload = b'{"messages":[{"role":"user","content":"typed facts"}]}'
+    with app_ctx.app_context():
+        from app.extensions import db
+        from app.models import UtAttempt, UtJob
+
+        job = db.session.get(UtJob, job_id)
+        attempt = db.session.get(UtAttempt, job.current_attempt_id)
+        root = pipeline._job_dir(job) / "input-model"
+        if case == "outside":
+            root = tmp_path / "foreign-model"
+        root.mkdir(parents=True)
+        path = root / "request.json"
+        path.write_bytes(payload)
+        attempt.reviser = {"artifact_root": str(root), "artifacts": [
+            {"id": "input-request", "name": path.name, "sha256": hashlib.sha256(payload).hexdigest()}]}
+        db.session.commit()
+        aid = attempt.id
+        if case == "changed":
+            path.write_bytes(b"changed after capture")
+    url = env.base + f"/jobs/{job_id}/attempts/{aid}/artifacts/input-request"
+    response = env.client.get(url)
+    assert response.status_code == (200 if case == "valid" else 400)
+    if case == "valid":
+        assert response.data == payload
+        reader = _member(app_ctx, env.pid, "reader")
+        _as(env, reader)
+        assert env.client.get(url).status_code == 200
+        with env.client.session_transaction() as session:
+            session.pop("lm_user_id", None)
+        assert env.client.get(url).status_code == 401
 
 
 def test_stub_compile_retry_budget_is_independent_of_csv_rounds(configured, monkeypatch):

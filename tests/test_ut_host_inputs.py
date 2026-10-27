@@ -102,6 +102,7 @@ def checked(data, *, witnessed=False, verdict="PASS"):
             "completeness": {"unresolved": [deepcopy(GAP)], "unresolved_count": 1},
             "candidate_witnesses": {"contract": "ut-agent.candidate-witness/1", "candidate_sha256": sha(data),
                 "input_mapping_identified": True, "evidence": {"identified": True},
+                "input_repair_readiness": {"ready": True, "code": "READY", "reason": "", "blocked_columns": []},
                 "witnessed_obligation_ids": ["A"] if witnessed else []},
             "input_ranges": {"contract": {"contract": "ut-agent.input-domains/1", "columns": [
                 {"index": 1, "column": "a.c/x", "status": "PROVEN", "min": 0, "max": 255}]}}}
@@ -147,6 +148,7 @@ def lifecycle(tmp_path, monkeypatch):
         "ORIGIN_GENERATOR", "ORIGIN_LLM", "ORIGIN_HUMAN", "ORIGIN_HOST_DERIVED")},
         query=history, seq=object()))
     monkeypatch.setattr(pipeline, "_new_attempt", new_attempt)
+    monkeypatch.setattr(pipeline, "_job_dir", lambda job: tmp_path)
     monkeypatch.setattr(pipeline, "_fresh_exec_dir", lambda job, a: tmp_path / f"exec-{a.seq}")
     monkeypatch.setattr(pipeline, "_gate", lambda job, state, reason="", code="": (
         setattr(job, "state", state), setattr(job, "reason", reason), setattr(job, "gate_code", code)))
@@ -231,6 +233,122 @@ def test_host_cases_without_repair_authority_stay_human(lifecycle, case):
         attempt.origin = UtAttempt.ORIGIN_HUMAN
     pipeline._repair_step(job)
     assert job.state == UtJob.NEEDS_HUMAN and not ctx.revision.called
+
+
+def test_declining_required_cases_keeps_them_unproven(lifecycle):
+    ctx, job = lifecycle, lifecycle.job
+    pipeline._execute_step(job)
+    parent = ctx.attempts[job.current_attempt_id]
+    ctx.revision.return_value = repair.Revision(
+        None, {"rows": [], "declined": ["A"], "error": "No proven input mapping"})
+    pipeline._repair_step(job)
+    gaps = pipeline._job_gaps(job, parent)
+    assert gaps["open"] == [] and gaps["declined"] == 1
+    assert gaps["unproven"] == 1
+    assert job.state == UtJob.NEEDS_HUMAN and job.gate_code == GateCode.CHECK_BLOCKED
+    assert job.current_attempt_id == parent.id
+    assert parent.check["completeness"]["unresolved_count"] == 1
+
+
+@pytest.mark.parametrize("readiness", [
+    None,
+    {"ready": False, "code": "STUB_SLOT_UNBOUND", "reason": "Inherited slot has no typed binding",
+     "blocked_columns": ["stub@return[0]"]},
+])
+def test_unproven_input_repair_capability_stops_before_model(lifecycle, readiness):
+    ctx, job = lifecycle, lifecycle.job
+    parent = ctx.attempts[job.current_attempt_id]
+    parent.check, parent.execution = checked(REFERENCE), {"status": "HOST_PASS"}
+    witnesses = parent.check["candidate_witnesses"]
+    if readiness is None:
+        witnesses.pop("input_repair_readiness")
+    else:
+        witnesses["input_repair_readiness"] = readiness
+    pipeline._repair_step(job)
+    assert job.state == UtJob.NEEDS_HUMAN and job.gate_code == GateCode.CHECK_BLOCKED
+    assert job.repair_rounds == 0 and not ctx.revision.called
+    assert len(ctx.attempts) == 1
+    if readiness:
+        assert readiness["reason"] in job.reason
+
+
+def test_required_case_error_with_proven_repair_capability_can_repair(lifecycle):
+    ctx, job = lifecycle, lifecycle.job
+    parent = ctx.attempts[job.current_attempt_id]
+    parent.check, parent.execution = checked(REFERENCE, verdict="FAIL"), {"status": "HOST_PASS"}
+    parent.check["issues"] = [{"code": "INPUT_OBLIGATION_UNRESOLVED", "severity": "error",
+                               "repairable": True}]
+    state, _, _ = pipeline._host_next_state(job, parent, pipeline._job_gaps(job, parent))
+    assert state == UtJob.REPAIRING
+
+
+def test_human_pass_does_not_discharge_required_unproven_cases(lifecycle):
+    ctx, job = lifecycle, lifecycle.job
+    parent = ctx.attempts[job.current_attempt_id]
+    parent.check, parent.execution = checked(REFERENCE), {"status": "HOST_PASS"}
+    parent.origin = UtAttempt.ORIGIN_HUMAN
+    gaps = pipeline._job_gaps(job, parent)
+    assert pipeline._host_next_state(job, parent, gaps)[0] == UtJob.NEEDS_HUMAN
+    assert pipeline.next_state(parent.check, parent.origin, 0, 5, gaps)[0] == UtJob.NEEDS_HUMAN
+
+
+def test_model_history_retains_bounded_validation_feedback():
+    attempt = SimpleNamespace(seq=2, origin=UtAttempt.ORIGIN_LLM, verdict="INVALID", check={},
+                              reviser={"error": "declined must be a list",
+                                       "reply_head": "x" * 3000})
+    entry = pipeline._history_item(attempt)
+    assert entry["error"] == "declined must be a list"
+    assert entry["reply_head"] == "x" * 2000
+    assert entry["added"] == 0 and entry["codes"] == []
+
+
+def test_mixed_proof_gaps_allow_only_missing_case_work_and_still_block_review(lifecycle):
+    ctx, job = lifecycle, lifecycle.job
+    attempt = ctx.attempts[job.current_attempt_id]
+    attempt.execution = {"status": "HOST_PASS", "evidence_source": "HOST_EXECUTION"}
+    attempt.check = checked(REFERENCE, verdict="FAIL")
+    proof_gap = {"obligation_id": "B", "gap_class": "SEMANTIC_EVIDENCE"}
+    attempt.check["completeness"] = {"unresolved": [deepcopy(GAP), proof_gap], "unresolved_count": 2}
+    proof_issue = {"code": "INPUT_OBLIGATION_PROOF_GAP", "severity": "error",
+                   "repairable": False, "message": "B needs typed evidence"}
+    attempt.check["issues"] = [proof_issue, {
+        "code": "INPUT_OBLIGATION_UNRESOLVED", "severity": "error", "repairable": True}]
+    gaps = pipeline._host_gaps(job, attempt)
+    assert [gap["obligation_id"] for gap in gaps["open"]] == ["A"]
+    assert pipeline._host_next_state(job, attempt, gaps)[0] == UtJob.REPAIRING
+    attempt.check["candidate_witnesses"]["witnessed_obligation_ids"] = ["A"]
+    attempt.check["issues"] = [proof_issue]
+    gaps = pipeline._host_gaps(job, attempt)
+    assert gaps["open"] == [] and gaps["unproven"] == 0
+    state, reason, code = pipeline._host_next_state(job, attempt, gaps)
+    assert state == UtJob.NEEDS_HUMAN and code == GateCode.CHECK_BLOCKED
+    assert "B needs typed evidence" in reason
+    assert not ctx.revision.called
+
+
+def test_retry_keeps_failed_request_diagnostics(lifecycle):
+    ctx, job = lifecycle, lifecycle.job
+    parent = ctx.attempts[job.current_attempt_id]
+    first = pipeline._fresh_model_dir(job, parent)
+    first.mkdir(parents=True)
+    request = first / "request-messages.json"
+    request.write_bytes(b'{"failed":"request"}')
+    second = pipeline._fresh_model_dir(job, parent)
+    assert first != second and second.parent == first.parent
+    assert not second.exists() and request.read_bytes() == b'{"failed":"request"}'
+
+
+@pytest.mark.parametrize("contacted", [False, True])
+def test_diagnostic_failure_blocks_without_miscounting_model_rounds(lifecycle, contacted):
+    ctx, job = lifecycle, lifecycle.job
+    pipeline._execute_step(job)
+    original = job.current_attempt_id
+    ctx.revision.return_value = repair.Revision(
+        None, {"code": "DIAGNOSTIC_WRITE_FAILED", "error": "Cannot retain exchange",
+               "model_contacted": contacted})
+    pipeline._repair_step(job)
+    assert job.state == UtJob.NEEDS_HUMAN and job.gate_code == "DIAGNOSTIC_WRITE_FAILED"
+    assert job.repair_rounds == int(contacted) and job.current_attempt_id == original
 
 
 @pytest.mark.parametrize("other_code", ["HOST_POLICY_NOT_BOUND", "HOST_CSV_NOT_BOUND",
