@@ -591,6 +591,7 @@ def gap_status(check: dict[str, Any], revisers: list[dict[str, Any]],
         "missing": len(ids),
         "claimed": len(ids & claimed),
         "witnessed": len(ids & proven),
+        "unproven": len(ids - proven),
         "declined": len((ids & declined) - proven),
         "open": [item for item in missing
                  if item["obligation_id"] not in proven and item["obligation_id"] not in declined],
@@ -678,6 +679,14 @@ def _fresh_exec_dir(job: UtJob, attempt: UtAttempt) -> Path:
     return candidate
 
 
+def _fresh_model_dir(job: UtJob, attempt: UtAttempt) -> Path:
+    base = _job_dir(job) / f"a{attempt.seq:02d}-input-model-r{job.repair_rounds + 1:02d}"
+    run = 1
+    while (base / f"request-{run:02d}").exists():
+        run += 1
+    return base / f"request-{run:02d}"
+
+
 def _execute_step(job: UtJob) -> None:
     attempt = db.session.get(UtAttempt, job.current_attempt_id)
     config = db.session.get(UtBatch, job.batch_id).config_snapshot or {}
@@ -715,6 +724,9 @@ def next_state(check: dict[str, Any], origin: str, rounds: int, max_rounds: int,
                 return (UtJob.NEEDS_HUMAN, f"仍有 {len(gaps['open'])} 个输入义务未证明，已到修订上限 {max_rounds}"
                         + _gap_note(gaps), GateCode.OPEN_GAPS_EXHAUSTED)
             return UtJob.REPAIRING, "", ""
+        if gaps and gaps.get("unproven", gaps["missing"] - gaps.get("witnessed", 0)):
+            return (UtJob.NEEDS_HUMAN, "Required input obligations remain unproven" + _gap_note(gaps),
+                    GateCode.CHECK_BLOCKED)
         return UtJob.AWAITING_REVIEW, "机器校验通过，等待人工审核" + _gap_note(gaps), GateCode.MACHINE_PASS
     if verdict == "BLOCKED":
         environment_codes = {"HOST_TOOL_UNAVAILABLE", "HOST_PROFILE_RUNTIME_UNAVAILABLE"}
@@ -751,16 +763,22 @@ def _host_case_context(attempt: UtAttempt, gaps: dict[str, Any]) -> bool:
     """Only identified missing-case work can use the Host input-row model."""
     check = attempt.check or {}
     witnesses = check.get("candidate_witnesses") or {}
+    readiness = witnesses.get("input_repair_readiness") or {}
     if (not gaps["open"] or not gaps["report_complete"]
             or check.get("verdict") not in {"PASS", "FAIL"}
             or (attempt.execution or {}).get("status") != "HOST_PASS"
-            or set(_error_codes(check)) - {"HOST_COVERAGE_REQUIRED_NOT_COVERED"}
+            or set(_error_codes(check)) - {"HOST_COVERAGE_REQUIRED_NOT_COVERED",
+                                           "INPUT_OBLIGATION_UNRESOLVED"}
+            or any(issue.get("code") == "INPUT_OBLIGATION_UNRESOLVED"
+                   and issue.get("severity") == "error" and issue.get("repairable") is not True
+                   for issue in check.get("issues") or [])
             or any(issue.get("code") in {"HOST_COVERAGE_REQUIRED_UNKNOWN", "HOST_COVERAGE_UNAVAILABLE"}
                    for issue in check.get("issues") or [])
             or witnesses.get("contract") != "ut-agent.candidate-witness/1"
             or witnesses.get("candidate_sha256") != attempt.csv_sha256
             or check.get("candidate_sha256") != attempt.csv_sha256
             or witnesses.get("input_mapping_identified") is not True
+            or readiness.get("ready") is not True
             or (witnesses.get("evidence") or {}).get("identified") is not True):
         return False
     try:
@@ -782,7 +800,8 @@ def _host_next_state(job: UtJob, attempt: UtAttempt, gaps: dict[str, Any]) -> tu
             return UtJob.REPAIRING, "", ""
         return (UtJob.NEEDS_HUMAN, "Host missing cases remain; input repair budget exhausted" + _gap_note(gaps),
                 GateCode.OPEN_GAPS_EXHAUSTED)
-    if check.get("verdict") == "PASS" and not gaps["open"]:
+    if (check.get("verdict") == "PASS" and not gaps["open"]
+            and not gaps.get("unproven", gaps["missing"] - gaps.get("witnessed", 0))):
         return (UtJob.AWAITING_REVIEW,
                 "Clang/LLVM 校验通过，等待人工审核" + _gap_note(gaps),
                 GateCode.MACHINE_PASS)
@@ -793,6 +812,12 @@ def _host_next_state(job: UtJob, attempt: UtAttempt, gaps: dict[str, Any]) -> tu
         if detail and detail not in reason and code != GateCode.ENV_BLOCKED:
             reason = f"{reason}：{detail}" if reason else str(detail)
         return state, reason, code
+    readiness = ((check.get("candidate_witnesses") or {}).get("input_repair_readiness") or {})
+    if gaps["open"] and readiness.get("ready") is not True:
+        return (UtJob.NEEDS_HUMAN,
+                "Input repair capability is not proven: "
+                + str(readiness.get("reason") or "Recheck typed input and invocation-slot bindings")
+                + _gap_note(gaps), GateCode.CHECK_BLOCKED)
     reason = (attempt.execution or {}).get("reason") or "; ".join(
         str(issue.get("message", issue.get("code", ""))) for issue in check.get("issues", ()))
     return (UtJob.NEEDS_HUMAN, "Clang/LLVM 校验需人工处理：" + reason + _gap_note(gaps),
@@ -912,6 +937,11 @@ def _history_item(item: UtAttempt) -> dict[str, Any]:
         witnesses = (item.check or {}).get("candidate_witnesses") or {}
         entry["witness_feedback"] = [r for r in witnesses.get("results") or () if r.get("new")][:20]
         entry["proposed_inputs"] = item.reviser.get("rows") or []
+        for key in ("error", "reply_head"):
+            if item.reviser.get(key):
+                entry[key] = str(item.reviser[key])[:2000]
+        if item.reviser.get("schema_errors"):
+            entry["schema_errors"] = item.reviser["schema_errors"][:20]
     return entry
 
 
@@ -975,6 +1005,7 @@ def _repair_step(job: UtJob) -> None:
             model=(batch.config_snapshot or {}).get("repair_model", ""),
             timeout=current_app.config["UT_REPAIR_TIMEOUT"],
             prefix_snapshot=prefix,
+            diagnostic_dir=_fresh_model_dir(job, attempt),
             observe=lambda step, **options: timing.stage(job, step, attempt=attempt,
                                                        round_number=job.repair_rounds + 1, **options),
         )
@@ -991,9 +1022,13 @@ def _repair_step(job: UtJob) -> None:
         _integrity_gate(job, attempt, revision.meta["error"])
         db.session.commit()
         return
-    if revision.meta.get("code") in {"PROMPT_PREFIX_CHANGED", "PROMPT_BUDGET_EXCEEDED"}:
+    if revision.meta.get("code") in {"PROMPT_PREFIX_CHANGED", "PROMPT_BUDGET_EXCEEDED",
+                                   "DIAGNOSTIC_WRITE_FAILED"}:
+        contacted = revision.meta.get("model_contacted") is True
+        if contacted:
+            job.repair_rounds += 1
         new = _new_attempt(job, UtAttempt.ORIGIN_LLM, None,
-                           reviser={**revision.meta, "model_contacted": False},
+                           reviser={**revision.meta, "model_contacted": contacted},
                            note=revision.meta["error"], make_current=False)
         new.verdict = "BLOCKED"
         _gate(job, UtJob.NEEDS_HUMAN, new.note, revision.meta["code"])
@@ -1046,8 +1081,7 @@ def _repair_step(job: UtJob) -> None:
         db.session.commit()
         return
     new.verdict = "INVALID"
-    # No row was added: the checked attempt stays current. Declined gaps are
-    # closed for the model, so a PASS goes to review once nothing is open.
+    # Declines close only automatic work; required proof obligations remain.
     state, reason, code = _host_next_state(job, attempt, _job_gaps(job, attempt))
     if (state == UtJob.NEEDS_HUMAN and check.get("verdict") == "FAIL"
             and job.repair_rounds >= job.max_repair_rounds):
@@ -1560,8 +1594,12 @@ def attempt_artifact(project_id: int, job_id: int, attempt_id: int, artifact_id:
                        UtJob.project_id == project_id).first())
     if attempt is None:
         raise ServiceError("Artifact not found", code="NOT_FOUND")
-    metadata = (attempt.execution or {}).get("stub_generation") or {}
-    artifact = next((item for item in metadata.get("artifacts", ()) if item.get("id") == artifact_id), None)
+    sources = [(attempt.execution or {}).get("stub_generation") or {}, attempt.reviser or {}]
+    match = next(((metadata, item) for metadata in sources
+                  for item in metadata.get("artifacts", ()) if item.get("id") == artifact_id), None)
+    if match is None:
+        raise ServiceError("Artifact not found", code="NOT_FOUND")
+    metadata, artifact = match
     root = metadata.get("artifact_root")
     if artifact is None or not root:
         raise ServiceError("Artifact not found", code="NOT_FOUND")
