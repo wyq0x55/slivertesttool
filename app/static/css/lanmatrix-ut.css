@@ -260,6 +260,8 @@
 .ut-mcdc-pop .is-full{ color:var(--ok-text); }
 .ut-mcdc-pop .is-miss{ color:var(--danger-text); }
 .ut-mcdc-where{ color:var(--text-3); }
+.ut-mcdc-pop code{ overflow-wrap:anywhere; }
+.ut-mcdc-tv{ font-family:var(--mono); white-space:pre; }
 .ut-host-more{ margin-top:14px; }
 .ut-host-more summary{ cursor:pointer; color:var(--brand-text); font-size:12.5px; }
 /* Issues are read one type at a time; each tab shows its severity and count. */
