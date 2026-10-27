@@ -594,6 +594,21 @@ test("input-completeness gaps expose readable goals and full original evidence",
   assert.equal(h.get("ut-d-issues-sum").textContent, "· 1 个警告");
 });
 
+test("missing runtime asks for an environment retry instead of source location evidence", async () => {
+  const h = harness();
+  const value = job();
+  value.attempts[0].check = { verdict: "BLOCKED", issues: [
+    { code: "HOST_COVERAGE_REQUIRED_UNKNOWN", severity: "warning",
+      detail: { metric: "c1", reason: "runtime missing <unsafe>", locations: [],
+        reason_code: "HOST_PROFILE_RUNTIME_UNAVAILABLE" } },
+  ] };
+  await ready(h, value);
+  const html = h.get("ut-d-issues").innerHTML;
+  assert.match(html, /修复运行库后重试执行/);
+  assert.match(html, /runtime missing &lt;unsafe&gt;/);
+  assert.doesNotMatch(html, /请先补测量或位置证据/);
+});
+
 test("diagnostic guidance keeps actionable steps uncut, escapes evidence and downloads the selected version", async () => {
   const h = harness();
   const value = job(20);

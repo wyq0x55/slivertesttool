@@ -235,12 +235,13 @@ def test_host_cases_without_repair_authority_stay_human(lifecycle, case):
 
 @pytest.mark.parametrize("other_code", ["HOST_POLICY_NOT_BOUND", "HOST_CSV_NOT_BOUND",
                                        "ABI_POINTER_SIZE_MISMATCH", None])
-def test_missing_tool_does_not_make_semantic_or_binding_failures_retryable(lifecycle, other_code):
+@pytest.mark.parametrize("environment_code", ["HOST_TOOL_UNAVAILABLE", "HOST_PROFILE_RUNTIME_UNAVAILABLE"])
+def test_missing_tool_does_not_make_semantic_or_binding_failures_retryable(lifecycle, other_code, environment_code):
     ctx, job = lifecycle, lifecycle.job
     attempt = ctx.attempts[job.current_attempt_id]
     attempt.execution = {"status": "HOST_UNSUPPORTED"}
     attempt.check = checked(REFERENCE, verdict="BLOCKED")
-    attempt.check["issues"] = [{"code": "HOST_TOOL_UNAVAILABLE", "severity": "error",
+    attempt.check["issues"] = [{"code": environment_code, "severity": "error",
                                 "message": "tool unavailable: clang"}]
     if other_code:
         attempt.check["issues"].append({"code": other_code, "severity": "error"})
