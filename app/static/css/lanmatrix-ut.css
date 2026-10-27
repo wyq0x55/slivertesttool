@@ -255,7 +255,7 @@
 .ut-cov-mark.is-missing{ color:var(--text-3); }
 .ut-mcdc{ cursor:help; }
 .ut-mcdc-tip{ display:none; }
-.ut-mcdc-pop{ position:fixed; z-index:80; min-width:220px; max-width:420px; padding:8px 10px; background:var(--surface); color:var(--text); border:1px solid var(--border-strong); border-radius:var(--radius-sm); white-space:normal; font-size:12px; line-height:1.55; text-align:left; display:flex; flex-direction:column; gap:2px; }
+.ut-mcdc-pop{ position:fixed; z-index:80; min-width:220px; max-width:min(560px, 92vw); padding:8px 10px; background:var(--surface); color:var(--text); border:1px solid var(--border-strong); border-radius:var(--radius-sm); white-space:normal; font-size:12px; line-height:1.55; text-align:left; display:flex; flex-direction:column; gap:2px; }
 .ut-mcdc-pop[hidden]{ display:none; }
 .ut-mcdc-pop .is-full{ color:var(--ok-text); }
 .ut-mcdc-pop .is-miss{ color:var(--danger-text); }
