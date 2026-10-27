@@ -44,13 +44,22 @@ def test_typed_artifact_accepts_only_appended_blank_outputs(tmp_path):
     assert data == DERIVED and receipt == execution["typed_candidate"]
 
 
+def test_typed_artifact_may_label_and_place_added_rows_like_the_generator(tmp_path):
+    generated = REFERENCE.replace(b',0,0\r\n', b';$L$,label\r\n,5,1\r\n,0,0\r\n')
+    execution = artifact(tmp_path, data=generated)
+    data, _ = host_candidate.read_typed_candidate(execution, SOURCE, REFERENCE, tmp_path / "execution")
+    assert data == generated
+
+
 @pytest.mark.parametrize("case", ["contract", "source-sha", "sha", "source-kind", "outside", "sandbox",
                                    "relative", "bool-count", "count", "original", "input", "rows", "columns",
-                                   "malformed", "unclosed", "unchanged", "nonblank", "failed-execution",
+                                   "header", "malformed", "unclosed", "unchanged", "nonblank", "failed-execution",
                                    "foreign-evidence", "target-flag"])
 def test_untrusted_typed_artifact_is_rejected(tmp_path, case):
     source, data = SOURCE, DERIVED
-    if case == "original":
+    if case == "header":
+        data = DERIVED.replace(b'"f",1,1', b'"f",1,2')
+    elif case == "original":
         data = DERIVED.replace(b',0,0', b',0,9')
     elif case == "input":
         data = DERIVED.replace(b',5,1', b',6,1')

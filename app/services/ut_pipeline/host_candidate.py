@@ -27,7 +27,8 @@ def _table(data: bytes) -> tuple[increment.Table, list[list[str]]]:
 
 def read_typed_candidate(execution: dict[str, Any], source: bytes, reference: bytes,
                          execution_root: Path) -> tuple[bytes, dict[str, Any]]:
-    """Only blank appended outputs may change; every identity is mandatory."""
+    """Only blank added outputs may change, and rows may take the generator's
+    labels and order; every identity is mandatory."""
     receipt = execution.get("typed_candidate")
     if (execution.get("status") != "HOST_PASS" or execution.get("evidence_source") != "HOST_EXECUTION"
             or execution.get("counts_as_target_evidence") is not False
@@ -47,27 +48,48 @@ def read_typed_candidate(execution: dict[str, Any], source: bytes, reference: by
     data = artifact.read_bytes()
     if hashlib.sha256(data).hexdigest() != receipt.get("sha256"):
         raise ValueError("Typed candidate artifact SHA does not match")
-    before, metadata = _table(source)
-    after, derived_metadata = _table(data)
+    before, _ = _table(source)
+    after, _ = _table(data)
     original, _ = _table(reference)
     count = receipt.get("reference_rows")
     if (type(count) is not int or count != len(original.rows) or count < 0
             or count >= len(before.rows) or len(before.rows) != len(after.rows)
             or before.inputs != after.inputs or before.outputs != after.outputs
             or before.inputs != original.inputs or before.outputs != original.outputs
-            or metadata != derived_metadata
-            or before.rows[:count] != original.rows):
+            or _header(before) != _header(after)):
+        raise ValueError("Typed candidate changed columns, reference rows or row count")
+    # ut-agent writes the typed candidate in the generator's form: added rows
+    # are relabelled and placed among the reference rows, which stay unchanged
+    # and in order.
+    added_before, added_after = _added(before.rows, original.rows), _added(after.rows, original.rows)
+    if added_before is None or added_after is None:
         raise ValueError("Typed candidate changed columns, reference rows or row count")
     ni, changed = len(before.inputs), False
-    for index, (old, new) in enumerate(zip(before.rows, after.rows)):
+    for old, new in zip(sorted(added_before), sorted(added_after)):
         if old[:1 + ni] != new[:1 + ni]:
             raise ValueError("Typed candidate changed input rows")
         for previous, current in zip(old[1 + ni:], new[1 + ni:]):
             if previous == current:
                 continue
-            if index < count or previous.strip() or not current.strip():
+            if previous.strip() or not current.strip():
                 raise ValueError("Typed candidate changed an original/nonblank expected value")
             changed = True
     if not changed:
         raise ValueError("Typed candidate did not fill an appended output")
     return data, dict(receipt)
+
+
+def _header(table: increment.Table) -> list[str]:
+    """The mod, stub and column lines, through ``#COMMENT``."""
+    return table.lines[:next(i for i, line in enumerate(table.lines) if line.startswith("#COMMENT")) + 1]
+
+
+def _added(rows: list[list[str]], reference: list[list[str]]) -> list[list[str]] | None:
+    """Rows outside an order-preserving match of every reference row, or None."""
+    added, position = [], 0
+    for row in rows:
+        if position < len(reference) and row == reference[position]:
+            position += 1
+        else:
+            added.append(row)
+    return added if position == len(reference) else None
