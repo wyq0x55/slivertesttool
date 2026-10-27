@@ -334,6 +334,8 @@ def test_host_missing_case_creates_derived_version_then_reexecutes_before_review
         check.update(verdict="PASS", executed=True, evidence_source="HOST_EXECUTION",
                      counts_as_target_evidence=False, delivery_validated=False)
         check["candidate_witnesses"]["input_mapping_identified"] = True
+        check["candidate_witnesses"]["input_repair_readiness"] = {
+            "ready": True, "code": "READY", "reason": "", "blocked_columns": []}
         check["input_ranges"] = {"contract": {"contract": "ut-agent.input-domains/1", "columns": [
             {"index": 1, "column": "x", "status": "PROVEN", "min": 0, "max": 255}]}}
         execution = {"status": "HOST_PASS", "evidence_source": "HOST_EXECUTION",

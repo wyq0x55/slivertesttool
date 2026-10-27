@@ -147,6 +147,8 @@ class FakeBridge:
                 "candidate_witnesses": {"contract": "ut-agent.candidate-witness/1",
                     "evidence": {"identified": True}, "candidate_sha256": digest,
                     "input_mapping_identified": True,
+                    "input_repair_readiness": {
+                        "ready": True, "code": "READY", "reason": "", "blocked_columns": []},
                     "witnessed_obligation_ids": proved, "results": results}}
         if execution is None:
             if results and not proved:
@@ -734,7 +736,7 @@ def test_next_state_is_pure_and_total():
     gaps = {"missing": 1, "claimed": 0, "declined": 0, "open": [GAP]}
     assert pipeline.next_state(passed, "GENERATOR", 0, 5, gaps)[0] == "repairing"
     assert pipeline.next_state(passed, "LLM", 5, 5, gaps)[0] == "needs_human"
-    assert pipeline.next_state(passed, "HUMAN", 0, 5, gaps)[0] == "awaiting_review"
+    assert pipeline.next_state(passed, "HUMAN", 0, 5, gaps)[0] == "needs_human"
     assert pipeline.next_state(passed, "GENERATOR", 0, 5)[0] == "awaiting_review"
 
 
