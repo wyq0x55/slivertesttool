@@ -1,7 +1,7 @@
 """Local-LLM input rows for a TestCsv that the ut-agent check left incomplete.
 
 The model receives the constraint pack exported by ut-agent for the bound
-baseline (the same rules the checker enforces), the open missing-case gaps
+explicit test policy (the same rules the checker enforces), the open missing-case gaps
 of the target, the input columns and the existing rows, and the machine
 verdict.  It returns input rows only: an obligation, a reference row and the
 input cells to change.  The platform appends them with blank expected values
@@ -51,8 +51,6 @@ class Revision:
 
 
 def _system_prompt(constraints: dict[str, Any]) -> str:
-    baseline = constraints.get("baseline") or {}
-    source = baseline.get("source") or {}
     coverage = constraints.get("coverage_policy") or {}
     rules = "\n".join(
         f"- {rule.get('rule_id')}: {rule.get('meaning')}（{rule.get('source', '')}）"
@@ -60,20 +58,14 @@ def _system_prompt(constraints: dict[str, Any]) -> str:
     )
     revision_rules = "\n".join(f"- {rule}" for rule in constraints.get("revision_rules", ()))
     policies = json.dumps(constraints.get("policies", {}), ensure_ascii=False, sort_keys=True)
-    policy = constraints.get("effective_test_policy") or constraints.get("test_policy")
-    if policy:
-        identity = (
-            f"## 显式测试要求 {constraints.get('test_rules_ref') or ''}\n"
-            f"版本: {policy.get('version')} / SHA-256: {constraints.get('test_policy_sha256')}\n"
-            f"边界相邻值: {policy.get('boundary_adjacent')} / C1: {policy.get('c1')} / "
-            f"MC/DC: {policy.get('mcdc')} / 算术运算: {policy.get('arithmetic')} / "
-            f"MC/DC 组合分组: {policy.get('combination_group')}\n"
-        )
-    else:
-        identity = (
-            f"## 项目绑定的测试基准 {baseline.get('id')}@{baseline.get('version')}"
-            f"（{source.get('document', '')} / {source.get('sheet', '')}）\n"
-        )
+    policy = constraints.get("effective_test_policy") or constraints.get("test_policy") or {}
+    identity = (
+        f"## 显式测试要求 {constraints.get('test_rules_ref') or ''}\n"
+        f"版本: {policy.get('version')} / SHA-256: {constraints.get('test_policy_sha256')}\n"
+        f"边界相邻值: {policy.get('boundary_adjacent')} / C1: {policy.get('c1')} / "
+        f"MC/DC: {policy.get('mcdc')} / 算术运算: {policy.get('arithmetic')} / "
+        f"MC/DC 组合分组: {policy.get('combination_group')}\n"
+    )
     introduction = "You propose input rows for the primary Clang/LLVM execution workflow. "
     output_rule = "Output cells stay blank; only the typed implementation oracle may fill appended outputs."
     expectation_rule = "Existing expectations remain immutable; disagreements require human review."

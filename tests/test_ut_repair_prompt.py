@@ -10,8 +10,7 @@ from app.services.ai import config as ai_config
 from app.services.ut_pipeline import increment, repair
 
 CONSTRAINTS = {
-    "baseline": {"id": "base", "version": "1", "source": {"document": "doc", "sheet": "s"}},
-    "rules": [{"rule_id": "R1", "meaning": "rows follow the baseline", "source": "doc"}],
+    "rules": [{"rule_id": "R1", "meaning": "rows follow the rules", "source": "doc"}],
     "revision_rules": ["do not rename columns"],
     "policies": {"b": 2, "a": 1},
     "coverage_policy": {"c0": True, "c1": True, "mcdc": False},
@@ -347,7 +346,7 @@ def test_a_coverage_error_clearing_between_rounds_is_not_prefix_drift(monkeypatc
 
 
 def test_explicit_policy_prompt_names_ruleset_hash_and_choices():
-    explicit = dict(CONSTRAINTS, baseline={"id": "universal-test-rules", "version": "1", "source": {}},
+    explicit = dict(CONSTRAINTS,
                     effective_test_policy={"version": "1", "boundary_adjacent": False, "c1": True,
                                            "mcdc": True, "arithmetic": False, "combination_group": True},
                     test_policy_sha256="a" * 64, test_rules_ref="universal-test-rules@1")

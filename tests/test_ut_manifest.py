@@ -17,9 +17,10 @@ from app.services.ut_pipeline.bridge import BridgeError, BridgeSettings, UtAgent
 
 env = _shared_env
 
-DOCUMENT = {"project": {"id": "manifest-ui-fixture"}, "baseline": {"id": "psd-rebuild", "version": "1.1"},
+DOCUMENT = {"project": {"id": "manifest-ui-fixture"}, "test_policy": {"version": "1", "boundary_adjacent": True, "c1": True, "mcdc": True,
+                            "arithmetic": False, "combination_group": True},
             "build": {"profile": "rh850-ghs", "exclude_directories": []},
-            "winams": {"profile": "standard"}, "profile": {"mcdc_enabled": True}}
+            "winams": {"profile": "standard"}}
 
 
 def test_read_validation_and_exposed_document_use_the_same_snapshot(tmp_path):
@@ -101,12 +102,12 @@ def test_external_validation_failure_preserves_existing_binding(env, app_ctx, mo
     saved = _save(env, DOCUMENT)
 
     def rejected(manifest):
-        assert json.loads(Path(manifest).read_text(encoding="utf-8"))["baseline"]["version"] == "missing"
-        raise BridgeError("locked baseline version is unavailable")
+        assert json.loads(Path(manifest).read_text(encoding="utf-8"))["test_policy"]["version"] == "missing"
+        raise BridgeError("test policy version is unsupported")
 
     monkeypatch.setattr(env.bridge, "constraints", rejected)
     invalid = copy.deepcopy(DOCUMENT)
-    invalid["baseline"]["version"] = "missing"
+    invalid["test_policy"]["version"] = "missing"
     status, body = env.call("put", "/config", json={"manifest_document": invalid})
     assert status == 400 and body["error"]["code"] == "UT_MANIFEST_INVALID", body
     with app_ctx.app_context():
@@ -215,7 +216,6 @@ def test_validated_policy_fields_follow_the_bridge_response(env, app_ctx):
     policy = {"version": "1", "boundary_adjacent": False, "c1": True, "mcdc": True,
               "arithmetic": False, "combination_group": True}
     env.bridge.constraints = lambda manifest: {
-        "baseline": {"id": "universal-test-rules", "version": "1"},
         "effective_test_policy": policy, "test_policy_sha256": "c" * 64,
         "test_rules_ref": "universal-test-rules@1", "test_rules": {"version": "1"},
     }

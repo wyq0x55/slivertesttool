@@ -53,9 +53,7 @@ def real_workflow(request, app_ctx, monkeypatch, tmp_path):
     manifest_data["project"]["id"] = "llvm-workflow-fixture"
     manifest_data["build"]["exclude_directories"] = []
     manifest_data["interfaces"]["contract"] = None
-    if getattr(request, "param", "legacy") == "explicit":
-        manifest_data.pop("baseline")
-        manifest_data.get("profile", {}).pop("mcdc_enabled", None)
+    if "test_policy" not in manifest_data:
         manifest_data["test_policy"] = {
             "version": "1", "boundary_adjacent": True, "c1": True,
             "mcdc": True, "arithmetic": False, "combination_group": True,
@@ -83,7 +81,6 @@ def real_workflow(request, app_ctx, monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("stub_mode", ["deterministic", "llm"])
-@pytest.mark.parametrize("real_workflow", ["legacy", "explicit"], indirect=True)
 def test_real_index_generation_execution_review_and_export(real_workflow, monkeypatch, stub_mode, app_ctx):
     env, _bridge, calls, _config = real_workflow
     prompts = []
@@ -111,7 +108,6 @@ def test_real_index_generation_execution_review_and_export(real_workflow, monkey
         document = json.loads(Path(frozen.config_snapshot["manifest_path"]).read_text(encoding="utf-8"))
         if "test_policy" in document:
             constraints = frozen.constraints
-            assert constraints["baseline"] is None
             assert constraints["test_policy"] == document["test_policy"]
             assert len(constraints["test_policy_sha256"]) == 64
             assert constraints["test_rules_ref"] == "universal-test-rules@1"
