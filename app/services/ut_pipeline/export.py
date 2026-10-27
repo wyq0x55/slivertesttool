@@ -6,7 +6,9 @@ delivery decision outside the platform). Each function contributes the CSV of
 its most recently approved job. Every file is re-hashed against the digest
 recorded when its attempt was created, and one mismatch or missing file fails
 the whole export, so the archive never carries a CSV that changed after it was
-reviewed.
+reviewed. When ut-agent proved a presented form of the candidate (repair rows
+relabelled and placed by the generator's rules), that form is archived:
+``csv_sha256`` stays the reviewed candidate and ``file_sha256`` is the file.
 """
 
 from __future__ import annotations
@@ -25,10 +27,11 @@ from ...models import LMUser, UtAttempt, UtBatch, UtJob
 from ...models.lanmatrix import _iso, _utcnow
 from ..lanmatrix import audit
 from ..lanmatrix.errors import ServiceError
+from . import host_candidate
 
 _MANIFEST_COLUMNS = (
     "function", "source_rel", "unit_rel", "file", "job_id", "batch_id", "attempt_seq",
-    "origin", "csv_sha256", "machine_verdict", "repair_rounds", "approved_by", "approved_at",
+    "origin", "csv_sha256", "file_sha256", "machine_verdict", "repair_rounds", "approved_by", "approved_at",
     "review_note", "test_rules_ref", "generator_commit", "superseded_by",
     "execution_backend", "evidence_source", "counts_as_target_evidence", "delivery_validated",
 )
@@ -81,6 +84,11 @@ def build_archive(project_id: int, user_id: int, batch_id: Optional[int] = None)
             else:
                 if hashlib.sha256(data).hexdigest() != attempt.csv_sha256:
                     problems.append(f"{name}：CSV 在审核后被改动（摘要不一致）")
+                else:
+                    try:
+                        data = host_candidate.read_presented_candidate(attempt.execution, data) or data
+                    except (OSError, UnicodeError, ValueError, TypeError):
+                        problems.append(f"{name}：展示版 CSV 与执行版本不一致")
         if problems:
             continue
         provenance = (batches.get(job.batch_id).provenance or {}) if job.batch_id in batches else {}
@@ -96,6 +104,7 @@ def build_archive(project_id: int, user_id: int, batch_id: Optional[int] = None)
             "attempt_seq": attempt.seq,
             "origin": attempt.origin,
             "csv_sha256": attempt.csv_sha256,
+            "file_sha256": hashlib.sha256(data).hexdigest(),
             "machine_verdict": job.last_verdict or "",
             "repair_rounds": job.repair_rounds,
             "approved_by": (reviewer.display_name or reviewer.username) if reviewer else "",

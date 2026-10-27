@@ -25,6 +25,41 @@ def _table(data: bytes) -> tuple[increment.Table, list[list[str]]]:
     return table, metadata
 
 
+def read_presented_candidate(execution: dict[str, Any] | None, source: bytes) -> bytes | None:
+    """The display form of an executed candidate, or None when it has none.
+
+    ut-agent relabels and reorders witnessed appended rows with the generator's
+    rules. It is accepted only as a permutation of the executed candidate's
+    rows under the same header, so it never carries different test content.
+    """
+    receipt = (execution or {}).get("presented_candidate")
+    if receipt is None:
+        return None
+    if (execution.get("status") != "HOST_PASS" or not isinstance(receipt, dict)
+            or receipt.get("contract") != "ut-agent.host-presented-candidate/1"
+            or receipt.get("source_candidate_sha256") != hashlib.sha256(source).hexdigest()):
+        raise ValueError("Presented candidate contract/source identity does not match")
+    sandbox_value, artifact_value = execution.get("sandbox"), receipt.get("path")
+    if not isinstance(sandbox_value, str) or not isinstance(artifact_value, str):
+        raise TypeError("Presented candidate sandbox/path is missing")
+    sandbox, artifact = Path(sandbox_value), Path(artifact_value)
+    if (not sandbox.is_absolute() or not artifact.is_absolute() or artifact.is_symlink()
+            or not artifact.resolve().is_relative_to(sandbox.resolve()) or not artifact.is_file()):
+        raise ValueError("Presented candidate path escapes its execution sandbox")
+    data = artifact.read_bytes()
+    if hashlib.sha256(data).hexdigest() != receipt.get("sha256"):
+        raise ValueError("Presented candidate artifact SHA does not match")
+    before, _ = _table(source)
+    after, _ = _table(data)
+
+    def header(table: increment.Table) -> list[str]:
+        return table.lines[:next(i for i, line in enumerate(table.lines) if line.startswith("#COMMENT")) + 1]
+
+    if header(before) != header(after) or sorted(before.rows) != sorted(after.rows):
+        raise ValueError("Presented candidate changed the header or data rows")
+    return data
+
+
 def read_typed_candidate(execution: dict[str, Any], source: bytes, reference: bytes,
                          execution_root: Path) -> tuple[bytes, dict[str, Any]]:
     """Only blank appended outputs may change; every identity is mandatory."""

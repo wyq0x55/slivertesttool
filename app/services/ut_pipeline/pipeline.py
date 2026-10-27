@@ -1530,9 +1530,19 @@ def job_detail(project_id: int, job_id: int) -> dict[str, Any]:
     return entry
 
 
-def attempt_csv(project_id: int, job_id: int, attempt_id: int) -> tuple[bytes, str]:
+def attempt_csv(project_id: int, job_id: int, attempt_id: int, *, raw: bool = False) -> tuple[bytes, str]:
+    """The candidate as reviewed and delivered; ``raw`` is the executed form revisions extend."""
     attempt = _csv_attempt(project_id, job_id, attempt_id)
-    return _read_attempt_csv(attempt), Path(attempt.csv_path).name
+    data = _read_attempt_csv(attempt)
+    return (data if raw else presented_csv(attempt, data)), Path(attempt.csv_path).name
+
+
+def presented_csv(attempt: UtAttempt, data: bytes) -> bytes:
+    """Repair rows relabelled and placed by the generator's rules, when ut-agent proved them."""
+    try:
+        return host_candidate.read_presented_candidate(attempt.execution, data) or data
+    except (OSError, UnicodeError, ValueError, TypeError) as exc:
+        raise ServiceError("Presented candidate CSV rejected: " + str(exc), code="INTEGRITY_ERROR") from exc
 
 
 def _csv_attempt(project_id: int, job_id: int, attempt_id: int) -> UtAttempt:
