@@ -43,7 +43,10 @@ Environment settings are `UT_AGENT_ROOT`, `UT_AGENT_PYTHON`,
 The model endpoint and credentials use the existing global AI settings.
 
 The project configuration requires only the manifest, index and Product/source
-root. `execution_backend` is not a setting: the server records `clang` for
+root. Both paths are on the execution server; the binding page can type them or
+pick them through `GET /ut/server-paths` (project editors only), which lists
+directory and CSV names one directory at a time and never file contents.
+`execution_backend` is not a setting: the server records `clang` for
 every configuration and job, and ignores a submitted value. Configure `host_clang`,
 `host_llvm_cov`, `host_llvm_profdata` and, if the declared ABI requires it,
 `host_profile_runtime`. ut-agent checks the required tool/runtime identities.

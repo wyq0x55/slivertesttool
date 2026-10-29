@@ -20,6 +20,7 @@
   var draft = {}, snapshots = {}, savedConfig = null, savedState = "", rawSnapshot = "";
   var busy = true, loaded = false;
   var choices = null;
+  var pickers = Array.prototype.slice.call(root.querySelectorAll("[data-path-picker]"));
   function $(id) { return document.getElementById(id); }
   function field(path) { return $("ut-m-" + path.replace(".", "-")); }
   function object(value) { return value !== null && typeof value === "object" && !Array.isArray(value); }
@@ -38,6 +39,7 @@
     var dirty = loaded && state() !== savedState;
     $("ut-draft-state").textContent = !loaded ? "正在加载…" : !LMUt.can("configure") ? "只读" : dirty ? "有未保存的更改" : "已保存";
     $("ut-draft-state").classList.toggle("is-dirty", dirty);
+    $("ut-draft-state").classList.toggle("is-saved", loaded && !dirty && LMUt.can("configure"));
     $("ut-config-reset").disabled = busy || !LMUt.can("configure") || !dirty;
     $("ut-manifest-validation").textContent = "";
   }
@@ -322,6 +324,7 @@
       $(id).disabled = locked || readonly || (!choices && (id === "ut-config-save" || id === "ut-manifest-validate"));
     });
     $("ut-manifest-export").disabled = locked;
+    pickers.forEach(function (button) { button.disabled = locked || readonly; });
     policyView();
     changed();
   }
@@ -345,6 +348,19 @@
   KEYS.forEach(function (k) {
     ["input", "change"].forEach(function (event) {
       $("ut-c-" + k).addEventListener(event, function () { if (editable()) { lock(false); } });
+    });
+  });
+  // A picked path goes through the input's own events, so dirty tracking and
+  // saving treat it exactly like a typed one.
+  pickers.forEach(function (button) {
+    button.addEventListener("click", async function () {
+      if (!editable()) return;
+      var input = $(button.dataset.pathTarget);
+      var path = await LMUtPathPicker.open({ pid: pid, kind: button.dataset.pathPicker,
+        title: button.dataset.pathTitle, value: input.value });
+      if (path == null || !editable() || path === input.value) return;
+      input.value = path;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
     });
   });
   function edited() {

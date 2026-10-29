@@ -19,13 +19,21 @@
   <p id="ut-binding-error" class="ut-binding-error" role="alert" tabindex="-1" hidden></p>
   <div class="ut-form-grid">
     <section class="panel ut-settings-section" aria-labelledby="ut-manifest-heading">
-      <div class="ut-section-head"><div><h2 id="ut-manifest-heading">基本配置</h2><p>填写执行服务器上的项目与源码位置。</p></div><button class="btn" id="ut-manifest-import" type="button" disabled{% if not project_capabilities.configure %} hidden{% endif %}>导入 JSON</button></div>
+      <div class="ut-section-head">
+        <div class="ut-section-title"><span class="ut-section-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7a2 2 0 0 1 2-2h3.5l2 2H18a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M9 13h6"/></svg></span><div><h2 id="ut-manifest-heading">基本配置</h2><p>项目标识、目标平台与执行服务器上的源码位置。</p></div></div>
+        <button class="btn" id="ut-manifest-import" type="button" disabled{% if not project_capabilities.configure %} hidden{% endif %}>导入 JSON</button>
+      </div>
       <input id="ut-manifest-file" type="file" accept=".json,application/json" hidden disabled>
       <div class="ut-fields">
-        <div class="field"><label for="ut-m-project-id">项目标识 *</label><input id="ut-m-project-id" required autocomplete="off" placeholder="项目编号或唯一标识"></div>
-        <div class="field"><label for="ut-m-build-abi">指针宽度 *</label><select id="ut-m-build-abi" required aria-describedby="ut-build-abi-hint ut-build-abi-description"><option value="">请选择指针宽度</option></select><p class="ut-hint" id="ut-build-abi-hint">按目标平台选择 32 位或 64 位。仅无指针函数可选择不声明。</p><p class="ut-hint ut-choice-detail" id="ut-build-abi-description" aria-live="polite"></p></div>
-        <div class="field"><label for="ut-c-product_root">源码根目录</label><input id="ut-c-product_root" autocomplete="off" placeholder="执行服务器上的 Product / Soft 目录"></div>
-        <div class="field"><label for="ut-c-index_csv">函数索引 CSV</label><input id="ut-c-index_csv" autocomplete="off"><p class="ut-hint">从索引读取待测函数，运行前需填写。</p></div>
+        <div class="field"><label for="ut-m-project-id">项目标识 <span class="ut-required" aria-hidden="true">*</span></label><input id="ut-m-project-id" required autocomplete="off" placeholder="项目编号或唯一标识"></div>
+        <div class="field"><label for="ut-m-build-abi">指针宽度 <span class="ut-required" aria-hidden="true">*</span></label><select id="ut-m-build-abi" required aria-describedby="ut-build-abi-hint ut-build-abi-description"><option value="">请选择指针宽度</option></select><p class="ut-hint" id="ut-build-abi-hint">按目标平台选择 32 位或 64 位。仅无指针函数可选择不声明。</p><p class="ut-hint ut-choice-detail" id="ut-build-abi-description" aria-live="polite"></p></div>
+      </div>
+      <div class="ut-group">
+        <h3 class="ut-group-title">源码位置<span class="ut-hint">执行服务器上的绝对路径，可直接输入，也可点击「浏览」在服务器上选择。</span></h3>
+        <div class="ut-fields">
+          <div class="field ut-field-wide"><label for="ut-c-product_root">源码根目录</label><div class="ut-path-input"><input id="ut-c-product_root" autocomplete="off" spellcheck="false" placeholder="例如 D:\Project\Product" aria-describedby="ut-product-root-hint"><button class="btn" type="button" data-path-picker="directory" data-path-target="ut-c-product_root" data-path-title="选择源码根目录" disabled{% if not project_capabilities.configure %} hidden{% endif %}>浏览…</button></div><p class="ut-hint" id="ut-product-root-hint">Product / Soft 目录；函数索引中的源码路径以此为根。</p></div>
+          <div class="field ut-field-wide"><label for="ut-c-index_csv">函数索引 CSV</label><div class="ut-path-input"><input id="ut-c-index_csv" autocomplete="off" spellcheck="false" placeholder="例如 D:\Project\index.csv" aria-describedby="ut-index-csv-hint"><button class="btn" type="button" data-path-picker="csv" data-path-target="ut-c-index_csv" data-path-title="选择函数索引 CSV" disabled{% if not project_capabilities.configure %} hidden{% endif %}>浏览…</button></div><p class="ut-hint" id="ut-index-csv-hint">从索引读取待测函数，运行前需填写。</p></div>
+        </div>
       </div>
       <div id="ut-legacy-fields" class="ut-legacy" role="status" hidden>
         <p id="ut-legacy-description">清单含有已不再支持的字段：<span id="ut-legacy-list"></span>。移除后请复核原有要求，再保存为新批次配置。</p>
@@ -33,7 +41,7 @@
       </div>
     </section>
     <section id="ut-policy-section" class="panel ut-settings-section" aria-labelledby="ut-policy-heading">
-      <div class="ut-section-head"><div><h2 id="ut-policy-heading">测试要求</h2><p>勾选需要生成的测试观点。</p></div></div>
+      <div class="ut-section-head"><div class="ut-section-title"><span class="ut-section-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg></span><div><h2 id="ut-policy-heading">测试要求</h2><p>勾选需要生成的测试观点。</p></div></div></div>
       <p class="ut-policy-fixed">固定包含：最小值、最大值与边界值本身。</p>
       <div class="ut-policy-list">
         <label class="ut-check-option"><input id="ut-m-test_policy-boundary_adjacent" type="checkbox" aria-describedby="ut-policy-boundary-hint"><span><span class="ut-check-title">边界值 ±1</span><span class="ut-hint" id="ut-policy-boundary-hint">增加边界值 −1 和 +1 的用例。</span></span></label>
@@ -44,7 +52,7 @@
       </div>
     </section>
     <details id="ut-settings-advanced" class="panel ut-settings-section ut-settings-more">
-      <summary>高级设置<span class="ut-hint">编译兼容、环境保证、AI 辅助与执行工具</span></summary>
+      <summary><span class="ut-section-title"><span class="ut-section-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></span><span><span class="ut-more-title">高级设置</span><span class="ut-hint">编译兼容、环境保证、AI 辅助与执行工具</span></span></span></summary>
       <div class="ut-subsection">
         <h3>源码与编译</h3>
         <div class="ut-fields">
@@ -84,9 +92,28 @@
       <p id="ut-manifest-validation" class="ut-validation" role="status" aria-live="polite"></p>
     </details>
   </div>
+  <dialog id="ut-path-dialog" class="lmui ut-path-dialog" aria-labelledby="ut-path-title">
+    <form method="dialog" class="lmui-form">
+      <div class="lmui-head"><h2 class="lmui-title" id="ut-path-title">选择路径</h2></div>
+      <p class="lmui-body" id="ut-path-help">列出执行服务器上的目录。</p>
+      <div class="ut-path-bar">
+        <button class="btn small" id="ut-path-up" type="button" aria-label="上一级目录" title="上一级目录"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+        <label class="ut-visually-hidden" for="ut-path-location">当前位置</label>
+        <input id="ut-path-location" class="lmui-input" autocomplete="off" spellcheck="false" placeholder="输入绝对路径后按 Enter">
+        <button class="btn small" id="ut-path-go" type="button">前往</button>
+      </div>
+      <div class="ut-path-list" id="ut-path-list" role="listbox" aria-labelledby="ut-path-title" tabindex="-1"></div>
+      <p class="ut-path-status" id="ut-path-status" role="status" aria-live="polite"></p>
+      <menu class="lmui-foot">
+        <button class="btn" id="ut-path-cancel" type="button">取消</button>
+        <button class="btn primary" id="ut-path-choose" type="button" disabled>选择</button>
+      </menu>
+    </form>
+  </dialog>
 </div>
 {% endblock %}
 {% block scripts %}
 <script src="{{ static_asset_url('js/lanmatrix/ut_common.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/ut_path_picker.js') }}"></script>
 <script src="{{ static_asset_url('js/lanmatrix/ut_binding.js') }}"></script>
 {% endblock %}

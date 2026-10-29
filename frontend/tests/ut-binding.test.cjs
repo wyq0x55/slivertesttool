@@ -42,6 +42,7 @@ function harness(configure = true, config = { manifest_document: manifest() }, s
       replaceChildren() { this.children = []; }, appendChild(child) { child.parentElement = this; this.children.push(child); },
       classList: { toggle(k, on) { on ? classes.add(k) : classes.delete(k); }, contains(k) { return classes.has(k); } },
       addEventListener(type, fn) { this.listeners[type] = fn; },
+      dispatchEvent(event) { if (this.listeners[event.type]) this.listeners[event.type].call(this, event); },
       setAttribute(k, v) { attributes[k] = v; }, removeAttribute(k) { delete attributes[k]; },
       getAttribute(k) { return attributes[k]; }, focus() { focused = id; },
       click() { if (this.listeners.click) return this.listeners.click.call(this); } };
@@ -56,6 +57,11 @@ function harness(configure = true, config = { manifest_document: manifest() }, s
   nodes.get("ut-manifest-advanced").parentElement = nodes.get("ut-settings-advanced");
   nodes.get("ut-settings-advanced").tagName = "DETAILS";
   nodes.set("root", node("root"));
+  const pickers = [...template.matchAll(/data-path-picker="([^"]+)" data-path-target="([^"]+)" data-path-title="([^"]+)"/g)]
+    .map(([, kind, target, title]) => Object.assign(node("picker-" + kind), { dataset: { pathPicker: kind, pathTarget: target, pathTitle: title } }));
+  pickers.forEach(picker => nodes.set(picker.id, picker));
+  nodes.get("root").querySelectorAll = selector => selector === "[data-path-picker]" ? pickers : [];
+  const picked = [];
   function get(id) { assert.ok(nodes.has(id), `Missing template node: ${id}`); return nodes.get(id); }
   const window = { LMReady: Promise.resolve(), addEventListener(type, fn) { events[type] = fn; }, setTimeout(fn) { fn(); } };
   const context = vm.createContext({ window, TextDecoder, Blob, FormData, URLSearchParams,
@@ -73,6 +79,8 @@ function harness(configure = true, config = { manifest_document: manifest() }, s
       },
       createTextNode(text) { return { textContent: String(text) }; } },
     LMUt: { say() {}, time: value => value, can: () => configure },
+    LMUtPathPicker: { open: async options => { picked.push(options); return settings.pick === undefined ? null : settings.pick; } },
+    Event: class { constructor(type) { this.type = type; } },
     fetch: async (url, opts) => {
       const body = opts.body ? JSON.parse(opts.body) : null;
       requests.push({ url, ...opts, body });
@@ -99,7 +107,7 @@ function harness(configure = true, config = { manifest_document: manifest() }, s
     else el.value = value;
     return emit(id, type);
   }
-  return { get, writes, validations, requests, downloads, events, input, emit,
+  return { get, writes, validations, requests, downloads, events, input, emit, picked,
     change: (key, value) => input("ut-c-" + key, value, "change"),
     save: () => emit("ut-config-save", "click"), focused: () => focused,
     reject: message => { apiError = { code: "INVALID_MANIFEST", message }; },
@@ -566,4 +574,32 @@ test("server manifest errors are visible and legacy location is never sent as in
   await h.save(); assert.equal(h.writes.length, 0);
   await h.import(JSON.stringify(manifest())); await h.save();
   assert.equal(Object.hasOwn(h.writes[0], "manifest_path"), false);
+});
+
+test("server path pickers fill the bound paths like typed input", async () => {
+  const h = harness(true, { manifest_document: manifest(), product_root: "D:\\Old", index_csv: "D:\\Old\\i.csv" },
+    { pick: "D:\\Project\\Soft" });
+  await settle();
+  assert.equal(h.get("picker-directory").disabled, false);
+  await h.emit("picker-directory", "click");
+  assert.deepEqual(JSON.parse(JSON.stringify(h.picked)), [{ pid: 4, kind: "directory", title: "选择源码根目录", value: "D:\\Old" }]);
+  assert.equal(h.get("ut-c-product_root").value, "D:\\Project\\Soft");
+  assert.equal(h.get("ut-draft-state").textContent, "有未保存的更改");
+  await h.emit("picker-csv", "click");
+  assert.equal(h.picked[1].kind, "csv");
+  assert.equal(h.picked[1].value, "D:\\Old\\i.csv");
+  await h.save();
+  assert.equal(h.writes[0].product_root, "D:\\Project\\Soft");
+});
+
+test("a cancelled pick leaves the binding unchanged and read-only users get no picker", async () => {
+  const h = harness(true, { manifest_document: manifest(), product_root: "D:\\Old" });
+  await settle();
+  await h.emit("picker-directory", "click");
+  assert.equal(h.get("ut-c-product_root").value, "D:\\Old");
+  assert.equal(h.get("ut-draft-state").textContent, "已保存");
+  const reader = harness(false); await settle();
+  assert.equal(reader.get("picker-directory").disabled, true);
+  await reader.emit("picker-directory", "click");
+  assert.equal(reader.picked.length, 0);
 });
