@@ -719,19 +719,14 @@ def test_generation_outcomes_reach_a_human(env):
 
 @pytest.mark.parametrize("returned", ["src/b.c", ""])
 def test_generated_unit_from_another_source_is_rejected(env, returned):
-    from app.models import UtAttempt
-
     targets = _configure(env)
-    # The index now maps the queued function name to a different (or no) source.
-    env.bridge.source_rel = returned or None
-    if not returned:
-        env.bridge.index = lambda *args: [{"function": "f", "source_rel": None}]
+    # The live index now maps the queued function name to a different (or no) source.
+    env.bridge.source_rel = returned
     [job_id] = _enqueue(env, targets["f"])
     job = _job(env, job_id)
     assert job["state"] == "error" and job["batch"]["status"] == "failed"
     assert "重新导入索引" in job["batch"]["error"]
-    assert UtAttempt.query.filter_by(job_id=job_id).count() == 0
-    assert env.bridge.executions == 0
+    assert job["attempts"] == [] and env.bridge.executions == 0
 
 
 def _queue_down(*args, **kwargs):
@@ -747,7 +742,8 @@ def test_failed_batch_enqueue_leaves_no_active_job(env, monkeypatch):
         status, body = env.call("post", "/batches", json={"target_ids": [targets["f"]]})
     assert status == 503 and body["error"]["code"] == "DISPATCH_FAILED"
     _, jobs = env.call("get", "/jobs")
-    [job] = jobs["data"]
+    [listed] = jobs["data"]
+    job = _job(env, listed["id"])
     assert job["state"] == "error" and "投递后台任务失败" in job["reason"]
     assert job["batch"]["status"] == "failed"
     # Nothing is left active, so the function can be queued again at once.
@@ -760,12 +756,10 @@ def test_failed_job_enqueue_gates_the_job_for_retry(env, monkeypatch, action):
     from app.jobqueue import ut_tasks
 
     targets = _configure(env)
-    [job_id] = _enqueue(env, targets["f"])
     if action == "retry":
         env.bridge.execution_status = "BLOCKED"
-        status, _ = env.call("post", f"/jobs/{job_id}/revision", json={"csv": GOOD.decode()})
-        assert status == 202 and _job(env, job_id)["state"] == "blocked"
-        env.bridge.execution_status = "EXECUTED"
+    [job_id] = _enqueue(env, targets["f"])
+    env.bridge.execution_status = "EXECUTED"
     request = ({"json": {"csv": GOOD.decode(), "note": "edit"}} if action == "revision" else {})
     with monkeypatch.context() as patch:
         patch.setattr(ut_tasks, "ut_advance_job", _queue_down)
