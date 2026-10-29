@@ -514,11 +514,17 @@ function coverageReport() {
     ] } };
 }
 
-test("the selected version's host coverage report shows each line's C0, C1 and MC/DC", async () => {
-  const h = harness();
+function coverageJob(constraints = { coverage_policy: { c0: true, c1: true, mcdc: true } }) {
   const value = job();
+  value.batch = { constraints };
   value.attempts[0].execution = { evidence_source: "HOST_EXECUTION", status: "HOST_PASS",
     has_coverage_report: true, coverage: { lines: { percent: 88.9, covered: 8, total: 9 } } };
+  return value;
+}
+
+test("the selected version's host coverage report shows each line's C0, C1 and MC/DC", async () => {
+  const h = harness();
+  const value = coverageJob();
   await ready(h, value);
   assert.equal(h.get("ut-d-coverage").hidden, false);
   assert.equal(h.coverages.length, 1);
@@ -531,10 +537,14 @@ test("the selected version's host coverage report shows each line's C0, C1 and M
   assert.match(html, /C0（行）<\/b> 88.9%（8 \/ 9）/);
   assert.match(html, /C1（判定）<\/b> 75%（3 \/ 4）/);
   assert.match(html, /MC\/DC<\/b> 50%（1 \/ 2）/);
-  assert.match(html, /未执行的行：10 · 未完全覆盖的判定所在行：4, 7/);
+  assert.match(html, /未执行的行：10 · 未满足覆盖要求的判定所在行：4, 7/);
+  assert.match(html, /仅未满足/);
+  assert.match(html, /红色：未执行/);
+  assert.match(html, /橙色：C1 \/ MC\/DC 未满足/);
+  assert.match(html, /False 分支未执行/);
   // Columns stay on the source row. The MC/DC tip lists every llvm-cov condition.
   assert.match(html, /<tr class="is-miss"><td class="ut-num">10<\/td><td><span class="is-miss">\u00d7/);
-  assert.match(html, /1 \/ 2<span class="submuted"> 未证明条件 2/);
+  assert.match(html, /1 \/ 2<span class="ut-mcdc-tip"/);
   assert.match(html, /条件 1：已证明独立影响/);
   assert.match(html, /class="is-miss">条件 2：未证明独立影响/);
   assert.match(html, /T\u2713<\/span><span class="is-miss">F\u2717/);
@@ -555,11 +565,70 @@ test("the selected version's host coverage report shows each line's C0, C1 and M
   assert.equal(h.get("ut-d-coverage-body").innerHTML, gaps);
 });
 
+test("row highlights and the unmet filter follow the frozen batch requirements", async () => {
+  for (const [constraints, expected] of [
+    [{ coverage_policy: { c0: true, c1: true, mcdc: true } }, [4, 7, 10]],
+    [{ coverage_policy: { c0: true, c1: false, mcdc: false } }, [10]],
+    [{ coverage_policy: { c0: false, c1: true, mcdc: false } }, [7]],
+    [{ coverage_policy: { c0: false, c1: false, mcdc: true } }, [4]],
+    [{ coverage_policy: { c0: false, c1: false, mcdc: false } }, []],
+    [{ coverage_policy: { c0: true, c1: true, mcdc: true },
+      test_policy: { c1: true, mcdc: true }, effective_test_policy: { c1: false, mcdc: false } }, [10]],
+    [{ coverage_policy: { c0: true }, test_policy: { c1: false, mcdc: true } }, [4, 10]],
+    [{}, []],
+  ]) {
+    const h = harness();
+    await ready(h, coverageJob(constraints));
+    h.coverages[0].resolve(coverageReport());
+    await settle();
+    const html = h.get("ut-d-coverage-body").innerHTML;
+    const highlighted = [...html.matchAll(/<tr class="is-(?:miss|gap)"><td class="ut-num">(\d+)/g)]
+      .map((m) => Number(m[1]));
+    assert.deepEqual(highlighted, expected, JSON.stringify(constraints));
+    h.get("ut-d-coverage").listeners.click({ target: { closest: () => ({ dataset: { covView: "gaps" } }) } });
+    const filtered = h.get("ut-d-coverage-body").innerHTML;
+    const rows = [...filtered.matchAll(/<tr class="[^"]*"><td class="ut-num">(\d+)/g)].map((m) => Number(m[1]));
+    assert.deepEqual(rows, expected, "the filter and the row colors must identify the same gaps");
+    if (!expected.length) assert.match(filtered, /没有已测得的未满足行/);
+    if (!Object.keys(constraints).length) assert.match(html, /要求未绑定/);
+    if (constraints.effective_test_policy) {
+      assert.match(html, /MC\/DC<\/b> 50%（1 \/ 2） · 未要求/);
+      assert.match(html, /未满足覆盖要求的判定所在行：无/);
+    }
+  }
+});
+
+test("unexecuted rows take precedence while unknown, excluded and non-code rows stay neutral", async () => {
+  const h = harness();
+  await ready(h, coverageJob());
+  const data = coverageReport();
+  data.report.lines[3].c1 = [{ column: 2, kind: "DECISION", true: 0, false: 0, state: "NONE" }];
+  data.report.lines.push(
+    { line: 11, text: "return 1;", count: 2, c0: "COVERED", c1: [], mcdc: [] },
+    { line: 12, text: "macro();", count: 2, c0: "COVERED", c1: [],
+      mcdc: [{ column: 2, state: "EXCLUDED", reason: "unsupported <macro>" }] },
+    { line: 13, text: "decision();", count: null, c0: null,
+      c1: [{ column: 2, state: "UNKNOWN", reason: "missing <evidence>" }],
+      mcdc: [{ column: 2, state: "UNKNOWN", reason: "not instrumented" }] },
+    { line: 14, text: "// comment", count: null, c0: null, c1: [], mcdc: [] });
+  h.coverages[0].resolve(data);
+  await settle();
+  const html = h.get("ut-d-coverage-body").innerHTML;
+  assert.match(html, /<tr class="is-miss"><td class="ut-num">10/);
+  assert.match(html, /<tr class="is-gap"><td class="ut-num">4/);
+  assert.match(html, /<tr class="is-gap"><td class="ut-num">7/);
+  for (const line of [2, 11, 12, 13, 14]) {
+    assert.ok(html.includes('<tr class=""><td class="ut-num">' + line + '</td>'));
+  }
+  assert.match(html, /class="ut-cov-mark is-missing" title="unsupported &lt;macro&gt;">—/);
+  assert.match(html, /class="ut-cov-mark is-missing" title="missing &lt;evidence&gt;">—/);
+  assert.match(html, /class="ut-cov-mark is-missing" title="not instrumented">—/);
+  assert.doesNotMatch(html, /undefined/);
+});
+
 test("the MC/DC tip gives one line per condition: its true vector in the decision's structure and the pair", async () => {
   const h = harness();
-  const value = job();
-  value.attempts[0].execution = { evidence_source: "HOST_EXECUTION", status: "HOST_PASS",
-    has_coverage_report: true, coverage: { lines: { percent: 88.9, covered: 8, total: 9 } } };
+  const value = coverageJob();
   await ready(h, value);
   const data = coverageReport();
   data.report.lines[1].mcdc = [{ column: 7, conditions: 3, shown: 2, uncovered: [3], state: "PARTIAL",

@@ -853,9 +853,11 @@
     if (count.percent == null) return "无适用项（0 / 0）";
     return esc(count.percent) + "%（" + esc(count.covered) + " / " + esc(count.total) + "）";
   }
-  function covChip(label, count, missing) {
-    var tone = !count || count.percent == null ? "is-missing" : count.percent >= 100 ? "is-full" : "is-gap";
-    return '<span class="ut-cov-item ' + tone + '"><b>' + label + "</b> " + (missing || covCount(count)) + "</span>";
+  function covChip(label, count, missing, required) {
+    var tone = required !== true || !count || count.percent == null ? "is-missing" : count.percent >= 100 ? "is-full" : "is-gap";
+    var note = required === false ? "未要求" : required == null ? "要求未绑定" : "";
+    return '<span class="ut-cov-item ' + tone + '"><b>' + label + "</b> " + (missing || covCount(count)) +
+      (note ? " · " + note : "") + "</span>";
   }
   function covMark(ok, label) {
     return '<span class="' + (ok ? "is-full" : "is-miss") + '">' + label + (ok ? "\u2713" : "\u2717") + "</span>";
@@ -864,12 +866,17 @@
   // tooltip; an extra row would split the listing.
   function c1Cell(entries) {
     return entries.map(function (e) {
+      if (!COV_CLASS[e.state] || e.state === "EXCLUDED") {
+        return '<span class="ut-cov-mark is-missing" title="' + esc(e.reason || "无法判定") + '">—</span>';
+      }
       if (e.kind === "SWITCH_OUTCOME") {
         return '<span class="ut-cov-mark ' + COV_CLASS[e.state] + '" title="\u7b2c ' + esc(e.column) +
-          " \u5217 \u00b7 \u6267\u884c " + esc(e.count) + ' \u6b21">case ' + (e.count > 0 ? "\u2713" : "\u2717") + "</span>";
+          " \u5217 \u00b7 \u6267\u884c " + esc(e.count) + " \u6b21" + (e.count === 0 ? " · case 分支未执行" : "") +
+          '">case ' + (e.count > 0 ? "\u2713" : "\u2717") + "</span>";
       }
       return '<span class="ut-cov-mark ' + COV_CLASS[e.state] + '" title="\u7b2c ' + esc(e.column) + " \u5217 \u00b7 " +
-        (e.kind === "CONDITION" ? "\u6761\u4ef6" : "\u5224\u5b9a") + " \u00b7 \u771f " + esc(e.true) + " / \u5047 " + esc(e.false) + '">' +
+        (e.kind === "CONDITION" ? "\u6761\u4ef6" : "\u5224\u5b9a") + " \u00b7 \u771f " + esc(e.true) + " / \u5047 " + esc(e.false) +
+        (e.true === 0 ? " · True 分支未执行" : "") + (e.false === 0 ? " · False 分支未执行" : "") + '">' +
         covMark(e.true > 0, "T") + covMark(e.false > 0, "F") + "</span>";
     }).join("");
   }
@@ -919,18 +926,35 @@
   }
   function mcdcCell(entries) {
     return entries.map(function (e) {
-      if (e.state === "EXCLUDED") {
-        return '<span class="ut-cov-mark is-missing" title="' + esc(e.reason || "") + '">\u4e0d\u8ba1\u5165</span>';
+      if (!COV_CLASS[e.state] || e.state === "EXCLUDED") {
+        return '<span class="ut-cov-mark is-missing" title="' +
+          esc(e.reason || (e.state === "EXCLUDED" ? "不计入" : "无法判定")) + '">—</span>';
       }
       return '<span class="ut-cov-mark ut-mcdc ' + COV_CLASS[e.state] + '" tabindex="0">' +
         esc(e.shown) + " / " + esc(e.conditions) +
-        ((e.uncovered || []).length ? '<span class="submuted"> \u672a\u8bc1\u660e\u6761\u4ef6 ' + esc(e.uncovered.join(", ")) + "</span>" : "") +
         mcdcTip(e) + "</span>";
     }).join("");
   }
-  function lineGap(line) {
-    return line.c0 === "NOT_COVERED" ||
-      line.c1.concat(line.mcdc).some(function (e) { return e.state === "PARTIAL" || e.state === "NONE"; });
+  function coveragePolicy() {
+    var constraints = (job.batch || {}).constraints || {};
+    var policy = constraints.effective_test_policy || constraints.test_policy;
+    var coverage = constraints.coverage_policy || {};
+    var required = {};
+    ["c0", "c1", "mcdc"].forEach(function (metric) {
+      var value = policy && metric !== "c0" ? policy[metric] : coverage[metric];
+      required[metric] = typeof value === "boolean" ? value : null;
+    });
+    return required;
+  }
+  function decisionGap(line, required) {
+    return ["c1", "mcdc"].some(function (metric) {
+      return required[metric] === true && line[metric].some(function (e) {
+        return e.state === "PARTIAL" || e.state === "NONE";
+      });
+    });
+  }
+  function lineGap(line, required) {
+    return (required.c0 === true && line.c0 === "NOT_COVERED") || decisionGap(line, required);
   }
 
   // One row per source line. C0, the execution count, C1 and MC/DC stay in
@@ -939,41 +963,42 @@
     coverageShown = key;
     if (mcdcPop) mcdcPop.hidden = true;
     var data = coverageCache[key], r = data.report || {}, s = r.summary || {};
+    var required = coveragePolicy();
     var lines = r.lines || [];
     var c1Label = r.c1_basis === "DECISION" ? "C1（判定）" : "C1（条件）";
     var head = '<p class="ut-cov-note">Clang/LLVM 实测覆盖率（HOST_EXECUTION），按项目测试要求展示。' +
       "第 " + esc(data.attempt.seq) + " 版 · 用例 " + esc(r.cases) + " 条" +
       (r.source_sha256 ? ' · 源文件 <code>' + esc(String(r.source_sha256).slice(0, 12)) + "</code>" : "") + "</p>" +
-      '<div class="ut-cov">' + covChip("C0（行）", s.c0) +
-      covChip(c1Label, s.c1, s.c1 ? null : "未得出" + (r.c1_reason ? "：" + esc(r.c1_reason) : "")) +
-      covChip("MC/DC", s.mcdc, r.mcdc_reported ? null : "未插桩") + "</div>";
+      '<div class="ut-cov">' + covChip("C0（行）", s.c0, null, required.c0) +
+      covChip(c1Label, s.c1, s.c1 ? null : "未得出" + (r.c1_reason ? "：" + esc(r.c1_reason) : ""), required.c1) +
+      covChip("MC/DC", s.mcdc, r.mcdc_reported ? null : "未插桩", required.mcdc) + "</div>";
     var missed = lines.filter(function (l) { return l.c0 === "NOT_COVERED"; }).map(function (l) { return l.line; });
     var partial = lines.filter(function (l) {
-      return l.c1.concat(l.mcdc).some(function (e) { return e.state === "PARTIAL" || e.state === "NONE"; });
+      return decisionGap(l, required);
     }).map(function (l) { return l.line; });
     var gaps = '<p class="ut-cov-gaps">未执行的行：' + (missed.length ? esc(missed.join(", ")) : "无") +
-      " · 未完全覆盖的判定所在行：" + (partial.length ? esc(partial.join(", ")) : "无") + "</p>";
+      " · 未满足覆盖要求的判定所在行：" + (partial.length ? esc(partial.join(", ")) : "无") + "</p>";
     var views = '<div class="segmented ut-cov-views" role="group" aria-label="筛选覆盖率行">' +
-      [["all", "全部"], ["gaps", "仅未覆盖"], ["decisions", "仅判定"]].map(function (v) {
+      [["all", "全部"], ["gaps", "仅未满足"], ["decisions", "仅判定"]].map(function (v) {
         var on = coverageView === v[0];
         return '<button type="button" class="' + (on ? "on" : "") + '" aria-pressed="' + on +
           '" data-cov-view="' + v[0] + '">' + v[1] + "</button>";
       }).join("") + "</div>";
     var shown = lines.filter(function (l) {
-      return coverageView === "gaps" ? lineGap(l)
+      return coverageView === "gaps" ? lineGap(l, required)
         : coverageView === "decisions" ? l.c1.length || l.mcdc.length : true;
     });
     var listing = r.reason ? '<p class="ut-batch-err">' + esc(r.reason) + "</p>"
       : '<div class="ut-cov-wrap"><table class="ut-cov-lines" aria-label="\u9010\u884c\u8986\u76d6\u7387"><thead><tr>' +
         "<th>\u884c</th><th>C0</th><th>\u6b21\u6570</th><th>" + esc(c1Label) + "</th><th>MC/DC</th><th>\u6e90\u4ee3\u7801</th>" +
         "</tr></thead><tbody>" + (shown.map(function (l) {
-          return '<tr class="' + (l.c0 === "NOT_COVERED" ? "is-miss" : lineGap(l) ? "is-gap" : "") + '">' +
+          return '<tr class="' + (required.c0 === true && l.c0 === "NOT_COVERED" ? "is-miss" : decisionGap(l, required) ? "is-gap" : "") + '">' +
             '<td class="ut-num">' + esc(l.line) + "</td><td>" +
             (l.c0 === "COVERED" ? '<span class="is-full">\u25cb</span>' : l.c0 === "NOT_COVERED" ? '<span class="is-miss">\u00d7</span>' : "") +
             '</td><td class="ut-num">' + (l.count == null ? "" : esc(l.count)) + "</td><td>" + c1Cell(l.c1) +
             "</td><td>" + mcdcCell(l.mcdc) + '</td><td class="ut-cov-src"><code>' + esc(l.text) + "</code></td></tr>";
         }).join("") || '<tr><td colspan="6" class="muted">' +
-          (coverageView === "gaps" ? "\u6ca1\u6709\u672a\u8986\u76d6\u7684\u884c" : "\u6ca1\u6709\u7b26\u5408\u6761\u4ef6\u7684\u884c") + "</td></tr>") + "</tbody></table></div>";
+          (coverageView === "gaps" ? "没有已测得的未满足行；未测量或无法判定的项请在全部视图查看" : "\u6ca1\u6709\u7b26\u5408\u6761\u4ef6\u7684\u884c") + "</td></tr>") + "</tbody></table></div>";
     // Macro-expanded records carry a line of the macro's definition file.
     var unplaced = [["MACRO_EXPANSION", "宏展开的判定（行号属于宏定义文件）"],
                     ["OUTSIDE_SHOWN_LINES", "函数范围外的记录"]].map(function (kind) {
@@ -987,7 +1012,9 @@
       return at.length ? '<p class="submuted">' + kind[1] + "：第 " +
         esc(at.map(function (u) { return u.line; }).join(", ")) + " 行" + marks + "</p>" : "";
     }).join("");
-    var legend = '<p class="submuted">C0：○ 已执行 × 未执行，空白为非代码行。C1：T/F 为判定取真／取假，' +
+    var legend = '<p class="ut-cov-legend"><span class="is-miss">红色：未执行</span>' +
+      '<span class="is-gap">橙色：C1 / MC/DC 未满足</span><span>仅按批次冻结的覆盖要求标色；灰色 — 表示未测量、不计入或无法判定，空白表示无适用记录。</span></p>' +
+      '<p class="submuted">C0：○ 已执行 × 未执行。C1：T/F 为判定取真／取假，' +
       "多条件判定的次数是不同测试向量数。MC/DC：已证明独立影响的条件数 / 条件总数；悬停时每个条件一行：" +
       "其独立对中该条件为真的向量（按判定结构写出，T 真、F 假、- 未求值）=> 判定结果，以及独立对的向量号；" +
       "停在该行上可看条件源码。条件按 llvm-cov 编号，不一定是源码顺序。</p>";
