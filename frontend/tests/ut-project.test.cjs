@@ -1454,13 +1454,17 @@ test("实施一览 opens a job from the shared hover strip", async () => {
 
 
 
-test("job detail displays explicit policy requirements without replacing legacy baseline text", async () => {
+test("job detail identifies the batch by its test rules and lists policy requirements separately", async () => {
   const h = harness();
-  await ready(h, { ...job(), batch: { provenance: { baseline_ref: "psd-rebuild@1.1" }, constraints: {
+  await ready(h, { ...job(), batch: { provenance: {
+    test_rules_ref: "universal-test-rules@1", generator_commit: "0123456789abcdef", baseline_ref: "psd-rebuild@1.1",
+  }, constraints: {
     effective_test_policy: { version: "1", boundary_adjacent: true, c1: true, mcdc: true, arithmetic: false, combination_group: true },
     coverage_policy: { c0: true }, test_rules_ref: "universal-test-rules@1", test_policy_sha256: "d".repeat(64),
   } } });
-  assert.match(h.get("ut-d-batch").textContent, /psd-rebuild@1\.1/);
+  assert.equal(h.get("ut-d-batch").textContent, "#1 · universal-test-rules@1 · 01234567");
+  // Legacy Baseline provenance from batches created before its removal is no longer displayed.
+  assert.doesNotMatch(h.get("ut-d-batch").textContent, /psd-rebuild/);
   assert.match(h.get("ut-d-requirements").textContent, /测试要求 v1/);
   assert.match(h.get("ut-d-requirements").textContent, /C0 · C1 · MC\/DC · 边界值 ±1 · MC\/DC「組合せ」分组/);
   assert.match(h.get("ut-d-requirements").textContent, /universal-test-rules@1/);

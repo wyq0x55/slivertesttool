@@ -84,8 +84,10 @@ class FakeBridge:
             raise BridgeError(self.generate_error)
         out.mkdir(parents=True, exist_ok=True)
         units = []
+        sources = {row["function"]: row["source_rel"] for row in self.index(manifest, index_csv, product_root)}
         for name in functions:
-            unit = {"function": name, "status": "VALIDATED", "testcsv": None, "error": None}
+            unit = {"function": name, "source_rel": sources[name] if self.source_rel is None else self.source_rel,
+                    "status": "VALIDATED", "testcsv": None, "error": None}
             if self.generated is not None:
                 path = out / f"{name}.csv"
                 path.write_bytes(self.generated)
@@ -713,6 +715,62 @@ def test_generation_outcomes_reach_a_human(env):
     assert job["state"] == "error" and job["batch"]["status"] == "failed"
     status, body = env.call("post", f"/jobs/{job_id}/retry")
     assert status == 400 and body["error"]["code"] == "INVALID_STATE"
+
+
+@pytest.mark.parametrize("returned", ["src/b.c", ""])
+def test_generated_unit_from_another_source_is_rejected(env, returned):
+    targets = _configure(env)
+    # The live index now maps the queued function name to a different (or no) source.
+    env.bridge.source_rel = returned
+    [job_id] = _enqueue(env, targets["f"])
+    job = _job(env, job_id)
+    assert job["state"] == "error" and job["batch"]["status"] == "failed"
+    assert "重新导入索引" in job["batch"]["error"]
+    assert job["attempts"] == [] and env.bridge.executions == 0
+
+
+def _queue_down(*args, **kwargs):
+    raise ConnectionError("queue unavailable")
+
+
+def test_failed_batch_enqueue_leaves_no_active_job(env, monkeypatch):
+    from app.jobqueue import ut_tasks
+
+    targets = _configure(env)
+    with monkeypatch.context() as patch:
+        patch.setattr(ut_tasks, "ut_generate_batch", _queue_down)
+        status, body = env.call("post", "/batches", json={"target_ids": [targets["f"]]})
+    assert status == 503 and body["error"]["code"] == "DISPATCH_FAILED"
+    _, jobs = env.call("get", "/jobs")
+    [listed] = jobs["data"]
+    job = _job(env, listed["id"])
+    assert job["state"] == "error" and "投递后台任务失败" in job["reason"]
+    assert job["batch"]["status"] == "failed"
+    # Nothing is left active, so the function can be queued again at once.
+    [job_id] = _enqueue(env, targets["f"])
+    assert _job(env, job_id)["state"] == "awaiting_review"
+
+
+@pytest.mark.parametrize("action", ["revision", "retry"])
+def test_failed_job_enqueue_gates_the_job_for_retry(env, monkeypatch, action):
+    from app.jobqueue import ut_tasks
+
+    targets = _configure(env)
+    if action == "retry":
+        env.bridge.execution_status = "BLOCKED"
+    [job_id] = _enqueue(env, targets["f"])
+    env.bridge.execution_status = "EXECUTED"
+    request = ({"json": {"csv": GOOD.decode(), "note": "edit"}} if action == "revision" else {})
+    with monkeypatch.context() as patch:
+        patch.setattr(ut_tasks, "ut_advance_job", _queue_down)
+        status, body = env.call("post", f"/jobs/{job_id}/{action}", **request)
+    assert status == 503 and body["error"]["code"] == "DISPATCH_FAILED"
+    job = _job(env, job_id)
+    assert job["state"] == "error" and "投递后台任务失败" in job["reason"]
+    # The candidate survives, so an ordinary retry resumes once the queue is back.
+    status, body = env.call("post", f"/jobs/{job_id}/retry")
+    assert status == 202, body
+    assert _job(env, job_id)["state"] == "awaiting_review"
 
 
 def test_next_state_is_pure_and_total():
