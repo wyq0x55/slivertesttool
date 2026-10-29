@@ -399,7 +399,9 @@ export class UniverStepsView {
 
   private _bindStructureGuard(): void {
     if (this.structuralListener) return;
-    this.structuralListener = this.univerAPI.onCommandExecuted((command: any) => {
+    // merge() emits its completion asynchronously, after projection ends.
+    // Classify commands when they start so our own comment merges are ignored.
+    this.structuralListener = this.univerAPI.onBeforeCommandExecute((command: any) => {
       if (this.projecting || !this.layout.commentField) return;
       const unitId = command.params && command.params.unitId;
       if (unitId && unitId !== this.fWorkbook.getId()) return;
@@ -480,10 +482,10 @@ export class UniverStepsView {
     // Multi-line values must be written as rich text (cell.p) or the cell editor
     // opens blank on a value with an embedded newline — same conversion the main
     // grid uses (toCellData). setValues accepts ICellData[][], so this inlines.
-    // CellValueType.STRING (1) keeps a body value exactly as given.
+    // CellValueType.FORCE_STRING (4) prevents numeric / boolean inference.
     const cellMatrix = matrix.map((r, ri) => r.map((v) => {
       const cell = toCellData(v);
-      return asText && ri > 0 && cell === v && s(v) !== "" ? { v: s(v), t: 1 } : cell;
+      return asText && ri > 0 && cell === v && s(v) !== "" ? { v: s(v), t: 4 } : cell;
     }));
     try { sheet.getRange(0, 0, rows, cols).setValues(cellMatrix); } catch (e) {
       console.warn("[LMUniverSteps] write failed:", e);
@@ -565,12 +567,24 @@ export class UniverStepsView {
   setDoc(doc: StepDoc, opts?: StepViewOptions): void {
     this.projecting = true;
     try {
+      // A reused workbook may still be read-only from the previous document.
+      // Projection writes and formatting must finish before locking this one.
+      this._setEditable(true);
       this._setDoc(doc, opts);
       this.structureChanged = false;
       this._bindStructureGuard();
     } finally {
+      this._setEditable(!(opts && opts.readOnly));
       this.projecting = false;
     }
+  }
+
+  private _setEditable(editable: boolean): void {
+    try {
+      if (this.fWorkbook && typeof this.fWorkbook.setEditable === "function") {
+        this.fWorkbook.setEditable(editable);
+      }
+    } catch (_e) { /* older bundle: the host still withholds save */ }
   }
 
   private _setDoc(doc: StepDoc, opts?: StepViewOptions): void {
@@ -660,11 +674,6 @@ export class UniverStepsView {
     if (layout.commentField) this._styleCommentRows(shStep, header.length);
     this._paintMarks(shStep, opts && opts.marks);
     this.sheetShape = [shStep.getMaxRows(), shStep.getMaxColumns()];
-    try {
-      if (this.fWorkbook && typeof this.fWorkbook.setEditable === "function") {
-        this.fWorkbook.setEditable(!(opts && opts.readOnly));
-      }
-    } catch (_e) { /* older bundle: the host still withholds save */ }
 
     // Land on the 手順 sheet so a reused view never shows the previous item's
     // active sheet.

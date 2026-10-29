@@ -29,11 +29,11 @@ const CSV = [
   ",0,0",
 ].join("\r\n") + "\r\n";
 
-function sheet() {
+function sheet(permissions) {
   const sh = { data: [], merges: [], paints: [], heights: [], wraps: [], cols: 40, rows: 500 };
   sh.getRange = (row, col, rows = 1, cols = 1) => {
     const area = { startRow: row, endRow: row + rows - 1, startColumn: col, endColumn: col + cols - 1 };
-    return {
+    const range = {
       getRange: () => area,
       clearContent() {
         for (let r = row; r < row + rows; r++) {
@@ -55,6 +55,18 @@ function sheet() {
       setHorizontalAlignment() {},
       setWrapStrategy(strategy) { sh.wraps.push({ ...area, strategy }); },
     };
+    for (const method of ["clearContent", "setValues", "merge", "breakApart", "setBackgroundColor",
+      "setFontWeight", "setHorizontalAlignment", "setWrapStrategy"]) {
+      const mutate = range[method];
+      range[method] = function (...args) {
+        if (!permissions.editable) {
+          permissions.denied.push(method);
+          return this;
+        }
+        return mutate.apply(this, args);
+      };
+    }
+    return range;
   };
   sh.getMergedRanges = () => [...sh.merges];
   sh.getDataRange = () => ({
@@ -78,22 +90,28 @@ function sheet() {
   return sh;
 }
 
-function harness(text = CSV) {
+function harness(text = CSV, opts = {}) {
   const view = new exports_.UniverStepsView({}, {});
-  const sheets = new Map(["入力値", "期待値", "手順"].map(name => [name, sheet()]));
+  const permissions = { editable: true, denied: [] };
+  const sheets = new Map(["入力値", "期待値", "手順"].map(name => [name, sheet(permissions)]));
   let commandListener;
   view.univerAPI = {
     Enum: { WrapStrategy: { CLIP: 1 } },
-    onCommandExecuted(listener) { commandListener = listener; return { dispose() {} }; },
+    onBeforeCommandExecute(listener) { commandListener = listener; return { dispose() {} }; },
   };
-  view.fWorkbook = { getSheetByName: name => sheets.get(name), setEditable() {}, getId: () => "test-workbook" };
+  view.fWorkbook = {
+    getSheetByName: name => sheets.get(name),
+    setEditable(value) { permissions.editable = value; },
+    getId: () => "test-workbook",
+  };
   const model = csv.parse(text);
   view.setDoc(csv.toDoc(model), {
     layout: csv.LAYOUT,
     marks: csv.marks(model, { issues: [{ code: "ORACLE_MISMATCH",
       detail: [{ row: 1, column: "ret" }] }] }),
+    ...opts,
   });
-  return { view, model, sh: sheets.get("手順"),
+  return { view, model, sh: sheets.get("手順"), permissions,
     command: id => commandListener({ id, params: { unitId: "test-workbook" } }) };
 }
 
@@ -163,6 +181,89 @@ test("reusing the drawer clears old comment merges and restores the Silver layou
   assert.equal(doc.steps.length, 1);
   assert.equal(doc.steps[0].purpose, "purpose");
   assert.deepEqual(plain(doc.steps[0].expecteds), ["2"]);
+});
+
+test("switching from a read-only CSV rebuilds full-width comments before restoring permissions", () => {
+  const next = [
+    "mod,g,t,3,1",
+    "#COMMENT,a,b,c,ret",
+    ",1,2,3,4",
+    ";$L$,a long comment for another function",
+    ",5,6,7,8",
+  ].join("\r\n") + "\r\n";
+  for (const readOnly of [true, false]) {
+    const { view, model, sh, permissions } = harness(CSV, { readOnly: true });
+    assert.equal(permissions.editable, false);
+    const nextModel = csv.parse(next);
+    view.setDoc(csv.toDoc(nextModel), { layout: csv.LAYOUT, readOnly });
+    assert.deepEqual(permissions.denied, []);
+    assert.equal(permissions.editable, !readOnly);
+    assert.deepEqual(plain(sh.merges.map(range => range.getRange())), [
+      { startRow: 2, endRow: 2, startColumn: 0, endColumn: 3 },
+    ]);
+    assert.equal(csv.serialize(nextModel, view.getDoc()), next);
+    // Switch back to a narrower function with different comment positions.
+    view.setDoc(csv.toDoc(model), { layout: csv.LAYOUT, readOnly: true });
+    assert.deepEqual(permissions.denied, []);
+    assert.equal(permissions.editable, false);
+    assert.equal(sh.merges.length, 3);
+    assert(sh.merges.every(range => range.getRange().endColumn === 1));
+    assert.equal(csv.serialize(model, view.getDoc()), CSV);
+    // User edits must still be blocked after a read-only projection.
+    sh.getRange(1, 0).setValues([["forbidden edit"]]);
+    assert.deepEqual(permissions.denied, ["setValues"]);
+    assert.equal(csv.serialize(model, view.getDoc()), CSV);
+  }
+});
+
+test("a projection failure still restores the requested permissions", () => {
+  for (const readOnly of [true, false]) {
+    const { view, model, sh, permissions } = harness(CSV, { readOnly: !readOnly });
+    sh.getMergedRanges = () => { throw new Error("projection failed"); };
+    assert.throws(() => view.setDoc(csv.toDoc(model), {
+      layout: csv.LAYOUT, readOnly,
+    }), /projection failed/);
+    assert.equal(permissions.editable, !readOnly);
+    assert.equal(view.projecting, false);
+  }
+});
+
+test("actual Univer merge completions do not invalidate a projected CSV", async () => {
+  const bundled = require("esbuild").buildSync({
+    stdin: {
+      contents: `export { Univer } from "@univerjs/core";
+        export { UniverSheetsPlugin } from "@univerjs/sheets";
+        export { FUniver } from "@univerjs/core/facade";
+        import "@univerjs/sheets/facade";`,
+      resolveDir: path.join(root, "frontend"),
+    },
+    bundle: true, platform: "node", format: "cjs", write: false, logLevel: "silent",
+  });
+  const runtime = { exports: {} };
+  new Function("require", "module", "exports", bundled.outputFiles[0].text)(require, runtime, runtime.exports);
+  const { Univer, UniverSheetsPlugin, FUniver } = runtime.exports;
+  const univer = new Univer({ locale: "zhCN", locales: { zhCN: {} } });
+  try {
+    univer.registerPlugin(UniverSheetsPlugin);
+    const api = FUniver.newAPI(univer);
+    const view = new exports_.UniverStepsView({}, {});
+    view.univerAPI = api;
+    view.fWorkbook = api.createWorkbook({ name: "CSV projection regression" });
+    const model = csv.parse(CSV);
+    for (const readOnly of [true, false, true]) {
+      view.setDoc(csv.toDoc(model), { layout: csv.LAYOUT, readOnly });
+      // FRange.merge() returns before its command-completed event fires.
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(csv.serialize(model, view.getDoc()), CSV);
+      assert.equal(view.fWorkbook.getSheetByName("手順").getMergedRanges().length, 3);
+    }
+    view.setDoc(csv.toDoc(model), { layout: csv.LAYOUT });
+    await new Promise(resolve => setImmediate(resolve));
+    view.fWorkbook.getSheetByName("手順").getMergedRanges()[0].breakApart();
+    assert.throws(() => view.getDoc(), /表格行列结构已改变/);
+  } finally {
+    univer.dispose();
+  }
 });
 
 test("deleting a value row rejects saving instead of recreating phantom CSV cases", () => {
