@@ -1532,7 +1532,12 @@ def job_detail(project_id: int, job_id: int) -> dict[str, Any]:
 
 def attempt_csv(project_id: int, job_id: int, attempt_id: int) -> tuple[bytes, str]:
     attempt = _csv_attempt(project_id, job_id, attempt_id)
-    return _read_attempt_csv(attempt), Path(attempt.csv_path).name
+    data = _read_attempt_csv(attempt)
+    job = db.session.get(UtJob, job_id)
+    function = job.target.function
+    if not _C_IDENTIFIER.fullmatch(function):
+        raise ServiceError("Invalid target function name", code="INTEGRITY_ERROR")
+    return data, f"{function}.csv"
 
 
 def _csv_attempt(project_id: int, job_id: int, attempt_id: int) -> UtAttempt:
