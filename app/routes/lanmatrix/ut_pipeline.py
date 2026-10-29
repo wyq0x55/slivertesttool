@@ -2,6 +2,7 @@
 
     GET  /config                         project binding (project.view)
     PUT  /config                         update binding (project.edit)
+    GET  /server-paths                   ?kind=directory|csv&path; server listing (project.edit)
     POST /targets/import                 re-read the project index (item.edit)
     GET  /targets                        実施一覧 with each target's latest job
     POST /batches                        {target_ids, label} → queue (item.edit)
@@ -26,9 +27,9 @@ import logging
 from flask import Blueprint, Response, g, request
 
 from ...jobqueue import ut_tasks
-from ...services.lanmatrix.errors import ServiceError
+from ...services.lanmatrix.errors import RequestParamError, ServiceError
 from ...services.ut_pipeline import export as ut_export
-from ...services.ut_pipeline import pipeline
+from ...services.ut_pipeline import pipeline, server_paths
 from ...services.ut_pipeline.repair import normalize_csv
 from ._base import _project_and_role, arg_int, arg_str, err, login_required, ok, register_common
 
@@ -91,6 +92,16 @@ def validate_manifest(project_id: int):
 def manifest_options(project_id: int):
     _project_and_role(project_id, "project.view")
     return ok(pipeline.manifest_options())
+
+
+@bp.get("/server-paths")
+@login_required
+def browse_server_paths(project_id: int):
+    _project_and_role(project_id, "project.edit")
+    path = request.args.get("path", "")
+    if len(path) > 4096:
+        raise RequestParamError("参数 path 过长", param="path")
+    return ok(server_paths.browse(path, arg_str("kind", "directory", allowed=server_paths.KINDS)))
 
 
 @bp.post("/targets/import")

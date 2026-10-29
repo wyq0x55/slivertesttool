@@ -69,10 +69,71 @@
 .ut-validation{ margin:16px 0 0; font-size:12px; color:var(--text-2); overflow-wrap:anywhere; }
 .ut-validation:empty{ display:none; }
 .lm-ut-binding :is(#ut-c-index_csv,#ut-c-product_root,#ut-c-host_profile_runtime){ font-family:var(--mono); }
+/* Section heads carry an icon tile so the three blocks scan at a glance. */
+.ut-section-title{ display:flex; align-items:flex-start; gap:14px; min-width:0; }
+.ut-section-icon{ flex:0 0 36px; display:grid; place-items:center; width:36px; height:36px;
+  border-radius:var(--radius-sm); background:var(--brand-soft); color:var(--brand-text); }
+.ut-section-icon svg{ width:20px; height:20px; }
+.ut-required{ color:var(--danger-text); font-weight:600; }
+.ut-group{ margin-top:24px; padding:20px; border:1px solid var(--border); border-radius:var(--radius-sm);
+  background:var(--surface-2); }
+.ut-group-title{ margin:0 0 16px; font-size:14px; font-weight:600; color:var(--text); }
+.ut-group-title .ut-hint{ display:block; margin-top:4px; font-weight:400; }
+/* Path field + 浏览 button read as one control. */
+.ut-path-input{ display:flex; align-items:stretch; }
+.lm-ut-binding .ut-path-input input{ flex:1 1 auto; border-top-right-radius:0; border-bottom-right-radius:0; }
+.ut-path-input .btn{ flex:0 0 auto; height:auto; margin-left:-1px; border-color:var(--border-strong);
+  border-top-left-radius:0; border-bottom-left-radius:0; }
+.ut-path-input .btn[hidden] { display:none; }
+.lm-ut-binding .ut-path-input:has(.btn[hidden]) input{ border-radius:var(--radius-sm); }
+.ut-path-input input:focus-visible{ position:relative; z-index:1; }
+/* Policy options: each a bordered row; the checked ones pick up the brand tint. */
+.ut-policy-list{ gap:8px; margin-top:16px; }
+.lm-ut-binding .ut-policy-list .ut-check-option{ padding:12px 14px; border:1px solid var(--border);
+  border-radius:var(--radius-sm); background:var(--surface); transition:border-color .12s, background-color .12s; }
+.lm-ut-binding .ut-policy-list .ut-check-option:hover{ border-color:var(--border-strong); }
+.lm-ut-binding .ut-policy-list .ut-check-option:has(input:checked){ border-color:var(--brand); background:var(--brand-soft); }
+.lm-ut-binding .ut-policy-list .ut-check-option:has(input:disabled){ background:var(--surface-2); border-color:var(--border); }
+.ut-settings-more > summary{ display:flex; align-items:center; gap:12px; list-style:none; }
+.ut-settings-more > summary::-webkit-details-marker{ display:none; }
+.ut-settings-more > summary::after{ content:""; flex:0 0 auto; width:8px; height:8px; margin:0 6px 0 auto;
+  border-right:2px solid var(--text-3); border-bottom:2px solid var(--text-3); transform:rotate(45deg);
+  transition:transform .15s; }
+.ut-settings-more[open] > summary::after{ transform:rotate(-135deg); }
+.ut-settings-more > summary:focus-visible{ outline:2px solid var(--brand); outline-offset:4px; border-radius:var(--radius-sm); }
+.ut-more-title{ display:block; font-size:17px; font-weight:650; }
+.ut-draft-state{ display:inline-flex; align-items:center; gap:6px; }
+.ut-draft-state::before{ content:""; width:7px; height:7px; border-radius:50%; background:var(--border-strong); }
+.ut-draft-state.is-saved::before{ background:var(--ok); }
+.ut-draft-state.is-dirty::before{ background:var(--warn); }
+.ut-visually-hidden{ position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+/* Execution-server path picker (ut_path_picker.js). */
+.ut-path-dialog{ width:min(640px, calc(100vw - 32px)); }
+.ut-path-bar{ display:flex; align-items:center; gap:8px; }
+.ut-path-bar .lmui-input{ flex:1 1 auto; min-width:0; font-family:var(--mono); font-size:12.5px; }
+.ut-path-bar .btn{ flex:0 0 auto; }
+.ut-path-bar svg{ display:block; }
+.ut-path-list{ display:flex; flex-direction:column; height:min(360px, 50vh); overflow:auto; padding:4px;
+  border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface-2); }
+.ut-path-list[aria-busy="true"]{ opacity:.6; }
+.ut-path-entry{ display:flex; align-items:center; gap:10px; width:100%; padding:7px 10px; border:0;
+  border-radius:6px; background:transparent; color:var(--text); font:inherit; font-size:13px;
+  text-align:left; cursor:pointer; }
+.ut-path-entry span{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ut-path-entry svg{ flex:0 0 18px; width:18px; height:18px; color:var(--text-3); }
+.ut-path-entry.is-directory svg{ color:var(--brand-text); }
+.ut-path-entry:hover{ background:var(--surface); }
+.ut-path-entry:focus-visible{ outline:2px solid var(--brand); outline-offset:-2px; }
+.ut-path-entry[aria-selected="true"]{ background:var(--brand-soft); color:var(--brand-text); font-weight:600; }
+.ut-path-empty{ margin:auto; padding:24px; color:var(--text-3); font-size:12.5px; text-align:center; }
+.ut-path-status{ margin:0; min-height:1.5em; font-size:12px; line-height:1.5; color:var(--text-2); overflow-wrap:anywhere; }
+.ut-path-status.is-error{ color:var(--danger-text); }
 @media (max-width:720px){
   .ut-fields{ grid-template-columns:minmax(0, 1fr); gap:18px; }
   .lm-ut-binding .ut-settings-section{ padding:20px 16px; }
   .lm-ut-binding .page-head{ flex-wrap:wrap; gap:16px; }
+  .ut-group{ padding:16px; }
+  .ut-section-icon{ display:none; }
 }
 
 /* Shared by 实施一览 and 任务与运行 */
