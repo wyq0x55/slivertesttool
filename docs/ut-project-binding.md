@@ -2,8 +2,11 @@
 
 The binding page accepts an existing JSON ProjectManifest or a form-authored
 document. Import is a local draft operation; only saving updates the binding.
-The page preserves additional imported fields and exposes the full JSON for
-advanced editing. Server filesystem paths remain appropriate for the source
+The page shows project/source locations, pointer width and test requirements by
+default. Compiler compatibility, excluded directories, environment assumptions,
+AI assistance and tool paths live in a collapsed advanced section. Boolean
+options use native checkboxes. The page preserves additional imported fields and
+exposes the full JSON for advanced editing. Server filesystem paths remain appropriate for the source
 tree, function index and execution tools, but are no longer the primary way to
 author a ProjectManifest.
 
@@ -79,14 +82,29 @@ and a 390px viewport. No production projects were modified.
 ## Explicit test policy
 
 A new ProjectManifest uses `test_policy` instead of a Baseline ID and version.
-The form starts with all five choices unselected. `combination_group` remains an
-independent choice and is valid only when `mcdc` is true. Fixed minimum,
+New documents start with all five checkboxes unchecked and save explicit boolean
+values, including `false`; users do not need to open five yes/no menus.
+`combination_group` remains an independently enabled presentation option and is
+valid only when `mcdc` is true. Turning MC/DC off clears and disables its group
+checkbox; re-enabling MC/DC does not silently restore that choice. Fixed minimum,
 maximum and boundary values are always required and are not selectable.
 
-Imported documents that contain `baseline` stay on that legacy path, including
-`profile.mcdc_enabled`. Conversion is explicit: it removes `baseline` and the
-legacy MC/DC field, then requires all five choices before validation or saving.
+Imported documents that contain `baseline`, `profile.mcdc_enabled` or a non-null
+`rules.project_pack` cannot be saved until those removed fields are explicitly
+cleared. Users must review the original requirements before creating a new batch.
+Missing or malformed imported policy flags stay visibly indeterminate and block
+saving until explicitly confirmed; unrelated edits do not guess their values.
+An indeterminate grouping checkbox remains available to confirm it off when
+MC/DC is off, without requiring the user to temporarily enable extra coverage.
 Unknown imported fields and the JSON editor round trip are preserved.
+
+There are no form controls for removed project rule packs, unused `build.config`
+or provenance-only exception identifiers. WinAMS-specific memory/projection
+parameters and optional interface declarations remain available through imported
+or advanced JSON. Removing their duplicate controls never strips their values
+or existing delivery locks. When model Stub candidates are disabled, the page
+omits inactive candidate-model settings from updates; the backend retains saved
+values without validating hidden inputs as active candidate settings.
 
 The platform stores the bridge response fields `test_policy`,
 `effective_test_policy`, `test_policy_sha256`, `test_rules_ref` and `test_rules`
@@ -101,3 +119,16 @@ raw JSON numeric values it cannot preserve exactly; unsafe large numbers in a
 bound document also block the editor's read response. The original file remains
 available through the established server-path binding instead of being silently
 rounded by the editor.
+
+## Settings simplification verification (2026-10-29)
+
+The isolated settings change passes all 33 binding-component Node tests. The
+broader frontend run passes 225 of 226 tests; the remaining failure is the
+unchanged job-detail legacy Baseline text assertion in `ut-project.test.cjs`.
+It is outside this settings change and is not reported as a full-suite pass.
+
+Browser component checks used the actual template, settings script and shared
+design system with synthetic data only. They verified checkbox save behavior,
+MC/DC grouping dependencies, the single compiler-default option, collapsed
+advanced settings, 390px layout, dark mode, and automatic expansion/focus on a
+JSON error. No production bindings, queued batches or database rows were changed.

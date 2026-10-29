@@ -8,7 +8,7 @@
 <div class="content lm-ut-binding" data-project="{{ project_id }}">
   {{ settings_tabs(project_id, "binding") }}
   <div class="page-head">
-    <div class="ttl"><h1>项目绑定</h1><p>集中管理项目清单、源码路径与执行方式，保存后的更改仅影响新批次。</p></div>
+    <div class="ttl"><h1>项目绑定</h1><p>配置源码位置和测试要求。保存后的更改用于新批次。</p></div>
     <div class="head-actions">
       <span id="ut-draft-state" class="ut-draft-state" role="status" aria-live="polite">正在加载…</span>
       <button class="btn" id="ut-config-reset" type="button" disabled{% if not project_capabilities.configure %} hidden{% endif %}>放弃更改</button>
@@ -19,106 +19,70 @@
   <p id="ut-binding-error" class="ut-binding-error" role="alert" tabindex="-1" hidden></p>
   <div class="ut-form-grid">
     <section class="panel ut-settings-section" aria-labelledby="ut-manifest-heading">
-      <div class="ut-section-head"><span class="ut-section-number" aria-hidden="true">01</span><div><h2 id="ut-manifest-heading">项目清单 <span class="ut-section-code">ProjectManifest</span></h2><p>导入已有清单，或直接填写下方表单。标有 * 的字段为必填。</p></div></div>
-      <div class="ut-manifest-actions">
-        <button class="btn" id="ut-manifest-import" type="button" disabled{% if not project_capabilities.configure %} hidden{% endif %}>导入 JSON</button>
-        <input id="ut-manifest-file" type="file" accept=".json,application/json" hidden disabled>
-        <button class="btn" id="ut-manifest-export" type="button" disabled>导出草稿</button>
-        <button class="btn" id="ut-manifest-validate" type="button" disabled{% if not project_capabilities.configure %} hidden{% endif %}>检查清单</button>
-        <span class="ut-hint">UTF-8 · .json · 最大 256 KiB，导入后仍需保存。</span>
-      </div>
+      <div class="ut-section-head"><div><h2 id="ut-manifest-heading">基本配置</h2><p>填写执行服务器上的项目与源码位置。</p></div><button class="btn" id="ut-manifest-import" type="button" disabled{% if not project_capabilities.configure %} hidden{% endif %}>导入 JSON</button></div>
+      <input id="ut-manifest-file" type="file" accept=".json,application/json" hidden disabled>
       <div class="ut-fields">
         <div class="field"><label for="ut-m-project-id">项目标识 *</label><input id="ut-m-project-id" required autocomplete="off" placeholder="项目编号或唯一标识"></div>
+        <div class="field"><label for="ut-m-build-abi">指针宽度 *</label><select id="ut-m-build-abi" required aria-describedby="ut-build-abi-hint ut-build-abi-description"><option value="">请选择指针宽度</option></select><p class="ut-hint" id="ut-build-abi-hint">按目标平台选择 32 位或 64 位。仅无指针函数可选择不声明。</p><p class="ut-hint ut-choice-detail" id="ut-build-abi-description" aria-live="polite"></p></div>
+        <div class="field"><label for="ut-c-product_root">源码根目录</label><input id="ut-c-product_root" autocomplete="off" placeholder="执行服务器上的 Product / Soft 目录"></div>
+        <div class="field"><label for="ut-c-index_csv">函数索引 CSV</label><input id="ut-c-index_csv" autocomplete="off"><p class="ut-hint">从索引读取待测函数，运行前需填写。</p></div>
       </div>
       <div id="ut-legacy-fields" class="ut-legacy" role="status" hidden>
-        <p id="ut-legacy-description">清单含有已不再支持的旧版字段，保存前需要移除：<span id="ut-legacy-list"></span>。移除后请逐项确认测试要求。</p>
+        <p id="ut-legacy-description">清单含有已不再支持的字段：<span id="ut-legacy-list"></span>。移除后请复核原有要求，再保存为新批次配置。</p>
         <button class="btn" id="ut-legacy-remove" type="button" aria-describedby="ut-legacy-description" disabled>移除旧版字段</button>
       </div>
-      <div class="ut-subsection" aria-labelledby="ut-prerequisites-heading">
-        <h3 id="ut-prerequisites-heading">执行配置与自动 Stub</h3>
-        <p class="ut-hint">单元测试的依赖调用由工具自动生成受控 Stub，无需先填写接口契约或指针方向。按实际项目声明指针宽度；修改后需创建新批次。</p>
+    </section>
+    <section id="ut-policy-section" class="panel ut-settings-section" aria-labelledby="ut-policy-heading">
+      <div class="ut-section-head"><div><h2 id="ut-policy-heading">测试要求</h2><p>勾选需要生成的测试观点。</p></div></div>
+      <p class="ut-policy-fixed">固定包含：最小值、最大值与边界值本身。</p>
+      <div class="ut-policy-list">
+        <label class="ut-check-option"><input id="ut-m-test_policy-boundary_adjacent" type="checkbox" aria-describedby="ut-policy-boundary-hint"><span><span class="ut-check-title">边界值 ±1</span><span class="ut-hint" id="ut-policy-boundary-hint">增加边界值 −1 和 +1 的用例。</span></span></label>
+        <label class="ut-check-option"><input id="ut-m-test_policy-c1" type="checkbox" aria-describedby="ut-policy-c1-hint"><span><span class="ut-check-title">C1 分支覆盖</span><span class="ut-hint" id="ut-policy-c1-hint">覆盖分支的各个结果。</span></span></label>
+        <label class="ut-check-option"><input id="ut-m-test_policy-mcdc" type="checkbox" aria-describedby="ut-policy-mcdc-hint"><span><span class="ut-check-title">MC/DC</span><span class="ut-hint" id="ut-policy-mcdc-hint">验证每个条件对判定结果的独立影响。</span></span></label>
+        <label class="ut-check-option ut-check-child"><input id="ut-m-test_policy-combination_group" type="checkbox" aria-describedby="ut-policy-combination-hint"><span><span class="ut-check-title">用「組合せ」注释呈现 MC/DC 用例</span><span class="ut-hint" id="ut-policy-combination-hint">仅改变同组用例的呈现方式；需启用 MC/DC。</span></span></label>
+        <label class="ut-check-option"><input id="ut-m-test_policy-arithmetic" type="checkbox" aria-describedby="ut-policy-arithmetic-hint"><span><span class="ut-check-title">演算式专项</span><span class="ut-hint" id="ut-policy-arithmetic-hint">增加算术与按位运算的专项用例。</span></span></label>
+      </div>
+    </section>
+    <details id="ut-settings-advanced" class="panel ut-settings-section ut-settings-more">
+      <summary>高级设置<span class="ut-hint">编译兼容、环境保证、AI 辅助与执行工具</span></summary>
+      <div class="ut-subsection">
+        <h3>源码与编译</h3>
         <div class="ut-fields">
-          <div class="field"><label for="ut-m-build-abi">目标 ABI（指针宽度） *</label><select id="ut-m-build-abi" required aria-describedby="ut-build-abi-hint ut-build-abi-description"><option value="">请选择指针宽度</option></select><p class="ut-hint" id="ut-build-abi-hint">32 位或 64 位只声明指针宽度，不证明结构体布局、端序或其他整数宽度。仅无指针函数可以选择不声明。</p><p class="ut-hint ut-choice-detail" id="ut-build-abi-description" aria-live="polite"></p></div>
-          <div class="field"><label for="ut-m-build-profile">编译器兼容（可选）</label><select id="ut-m-build-profile" aria-describedby="ut-build-profile-hint ut-build-profile-description"><option value="">默认编译上下文</option></select><p class="ut-hint" id="ut-build-profile-hint">只有源码依赖特定编译器的宏或语法时才选择。它不是目标 ABI；与指针宽度冲突时不能保存。</p><p class="ut-hint ut-choice-detail" id="ut-build-profile-description" aria-live="polite"></p></div>
-        </div>
-      </div>
-      <div id="ut-policy-section" class="ut-subsection" aria-labelledby="ut-policy-heading">
-        <h3 id="ut-policy-heading">测试要求</h3>
-        <p class="ut-policy-fixed">固定包含：最小值、最大值与边界值本身。</p>
-        <p class="ut-hint">请逐项明确选择是或否，五项均为必填。</p>
-        <div class="ut-policy-list">
-          <div class="field ut-policy-row"><div><label for="ut-m-test_policy-boundary_adjacent">边界值 ±1 *</label><p class="ut-hint" id="ut-policy-boundary-hint">是否包含边界值 −1 和 +1 的测试观点。</p></div><select id="ut-m-test_policy-boundary_adjacent" required aria-describedby="ut-policy-boundary-hint"><option value="">请选择</option><option value="true">是</option><option value="false">否</option></select></div>
-          <div class="field ut-policy-row"><div><label for="ut-m-test_policy-c1">C1 分支覆盖 *</label><p class="ut-hint" id="ut-policy-c1-hint">是否要求分支覆盖。</p></div><select id="ut-m-test_policy-c1" required aria-describedby="ut-policy-c1-hint"><option value="">请选择</option><option value="true">是</option><option value="false">否</option></select></div>
-          <div class="field ut-policy-row"><div><label for="ut-m-test_policy-mcdc">MC/DC *</label><p class="ut-hint" id="ut-policy-mcdc-hint">是否要求修正条件／判定覆盖。</p></div><select id="ut-m-test_policy-mcdc" required aria-describedby="ut-policy-mcdc-hint"><option value="">请选择</option><option value="true">是</option><option value="false">否</option></select></div>
-          <div class="field ut-policy-row"><div><label for="ut-m-test_policy-arithmetic">演算式专项 *</label><p class="ut-hint" id="ut-policy-arithmetic-hint">是否包含 +、−、×、÷ 和按位运算的专项用例。</p></div><select id="ut-m-test_policy-arithmetic" required aria-describedby="ut-policy-arithmetic-hint"><option value="">请选择</option><option value="true">是</option><option value="false">否</option></select></div>
-          <div class="field ut-policy-row"><div><label for="ut-m-test_policy-combination_group">MC/DC「組合せ」分组 *</label><p class="ut-hint" id="ut-policy-combination-hint">为同一组 MC/DC 用例写出「組合せ」注释；关闭时归入对应分支。选择是时须启用 MC/DC。</p></div><select id="ut-m-test_policy-combination_group" required aria-describedby="ut-policy-combination-hint"><option value="">请选择</option><option value="true">是</option><option value="false">否</option></select></div>
-        </div>
-      </div>
-      <div class="ut-subsection" aria-labelledby="ut-contract-heading">
-        <h3 id="ut-contract-heading">执行环境契约</h3>
-        <p class="ut-hint">声明测试环境对被测函数单次调用期间的保证。开启是测试环境假设的变更，已有项目需重新验收。</p>
-        <div class="ut-policy-list">
-          <div class="field ut-policy-row"><div><label for="ut-m-execution_contract-const_volatile_single_invocation_stable">const volatile 单次调用内读取稳定</label><p class="ut-hint" id="ut-contract-volatile-hint">选择是：未被写入的 const volatile 标量全局对象在一次调用内多次读取得到同一值（无外部硬件或中断改变它）。未声明等同于否，此时这类重复读取相关的义务保持 UNKNOWN，需要人工处理。</p></div><select id="ut-m-execution_contract-const_volatile_single_invocation_stable" aria-describedby="ut-contract-volatile-hint"><option value="">未声明（等同于否）</option><option value="false">否</option><option value="true">是</option></select></div>
-        </div>
-      </div>
-      <details class="ut-advanced">
-        <summary>更多清单设置</summary>
-        <div class="ut-fields">
-          <div class="field"><label for="ut-m-winams-profile">CSV 投影 Profile</label><input id="ut-m-winams-profile" autocomplete="off" placeholder="例如 standard"></div>
-          <div class="field"><label for="ut-m-rules-project_pack">项目规则包</label><input id="ut-m-rules-project_pack" autocomplete="off" placeholder="规则包 ID@版本，可留空"></div>
-          <div class="field"><label for="ut-m-build-config">编译配置</label><input id="ut-m-build-config" autocomplete="off" placeholder="编译配置标识，可留空"></div>
-          <div class="field"><label for="ut-m-winams-stub_memory_limit_bytes">Stub 内存上限（字节）</label><input id="ut-m-winams-stub_memory_limit_bytes" type="number" min="1" step="1" autocomplete="off" placeholder="例如 32768，可留空"></div>
-          <div class="field"><label for="ut-m-winams-stub_memory_headroom_ratio">Stub 内存余量比例</label><input id="ut-m-winams-stub_memory_headroom_ratio" type="number" min="0" max="1" step="0.01" autocomplete="off" placeholder="0 至 1，留空为 0.1"></div>
+          <div class="field ut-field-wide"><label for="ut-m-build-profile">编译器兼容</label><select id="ut-m-build-profile" aria-describedby="ut-build-profile-description"><option value="">默认编译上下文</option></select><p class="ut-hint" id="ut-build-profile-description" aria-live="polite"></p></div>
           <div class="field ut-field-wide"><label for="ut-m-build-exclude_directories">排除目录</label><textarea id="ut-m-build-exclude_directories" rows="3" wrap="off" autocomplete="off" spellcheck="false" placeholder="每行一个源码根目录下的相对目录"></textarea></div>
-          <div class="field ut-field-wide"><label for="ut-m-profile-approved_exceptions">已审批的例外</label><textarea id="ut-m-profile-approved_exceptions" rows="3" wrap="off" autocomplete="off" spellcheck="false" placeholder="每行一个已审批的例外标识"></textarea></div>
         </div>
-        <div class="ut-subsection" aria-labelledby="ut-interface-heading">
-          <h3 id="ut-interface-heading">接口契约（可选）</h3>
-          <p class="ut-hint">自动 Stub 不需要这些声明。只有需要以已审批的证据声明指针参数的读写方向时才填写，由 ut-agent 校验。</p>
-          <div class="ut-fields">
-            <div class="field ut-field-wide"><label for="ut-m-interfaces-contract">接口契约</label><input id="ut-m-interfaces-contract" autocomplete="off" placeholder="契约 ID@版本，可留空"></div>
-          </div>
-          <div id="ut-interface-entries" class="ut-entry-list" role="list" aria-label="指针参数声明"></div>
-          <button class="btn" id="ut-interface-add" type="button" disabled>添加指针参数声明</button>
-        </div>
-        <p class="ut-hint">未填写的选项沿用清单默认规则。导入清单中的其他字段会原样保留。</p>
-      </details>
-      <details id="ut-manifest-advanced" class="ut-advanced">
-        <summary>完整 JSON 与保存信息</summary>
-        <div class="field"><label for="ut-manifest-json">清单 JSON</label><textarea id="ut-manifest-json" rows="16" wrap="off" spellcheck="false" aria-describedby="ut-manifest-json-hint"></textarea><p class="ut-hint" id="ut-manifest-json-hint">清单的全部设置都可以在上方表单中完成，这里仅用于核对、导入后检查或排查。targets 字段 ut-agent 当前不读取，导入时原样保留。有效 JSON 会同步到表单，保存时采用最新编辑内容。</p></div>
-        <div class="field"><label for="ut-c-manifest_path">服务器保存位置</label><textarea id="ut-c-manifest_path" rows="2" readonly wrap="soft" spellcheck="false"></textarea></div>
-        <div class="field"><label for="ut-manifest-sha256">已保存版本 · SHA-256</label><output id="ut-manifest-sha256" class="ut-manifest-hash">—</output></div>
-      </details>
-      <p id="ut-manifest-validation" class="ut-validation" role="status" aria-live="polite"></p>
-    </section>
-    <section class="panel ut-settings-section" aria-labelledby="ut-source-heading">
-      <div class="ut-section-head"><span class="ut-section-number" aria-hidden="true">02</span><div><h2 id="ut-source-heading">源码与索引</h2><p>填写执行服务器上的文件位置。</p></div></div>
-      <div class="ut-fields">
-        <div class="field ut-field-wide"><label for="ut-c-index_csv">函数索引 CSV</label><input id="ut-c-index_csv" autocomplete="off"><p class="ut-hint">实施一览从此索引读取待测函数。</p></div>
-        <div class="field ut-field-wide"><label for="ut-c-product_root">Product / Soft 根目录</label><input id="ut-c-product_root" autocomplete="off"></div>
       </div>
-    </section>
-    <section class="panel ut-settings-section" aria-labelledby="ut-executor-heading">
-      <div class="ut-section-head"><span class="ut-section-number" aria-hidden="true">03</span><div><h2 id="ut-executor-heading">Clang/LLVM 执行与 Stub</h2><p>使用 LLVM 编译执行、采集覆盖率并校验用例。</p></div></div>
-      <div id="ut-host-controls" class="ut-subsection">
-        <p class="ut-hint">执行与生成意图绑定的 CSV；新增输入先通过证明检查，派生期望值的新版本需重新执行后审核。</p>
+      <div class="ut-subsection">
+        <h3>执行环境保证</h3>
+        <label class="ut-check-option"><input id="ut-m-execution_contract-const_volatile_single_invocation_stable" type="checkbox" aria-describedby="ut-contract-volatile-hint"><span><span class="ut-check-title">const volatile 在单次调用内读取稳定</span><span class="ut-hint" id="ut-contract-volatile-hint">仅当环境保证无硬件或中断改变这些输入时勾选。未勾选不作此假设；更改后需重新验收。</span></span></label>
+      </div>
+      <div class="ut-subsection">
+        <h3>AI 辅助</h3>
+        <label class="ut-check-option"><input id="ut-c-stub_mode" type="checkbox" aria-describedby="ut-stub-mode-hint"><span><span class="ut-check-title">使用模型提议 Stub 候选</span><span class="ut-hint" id="ut-stub-mode-hint">默认自动生成确定性 Stub。启用后，模型候选仍须校验和人工审核。</span></span></label>
+        <div id="ut-stub-llm-controls" hidden>
+          <div class="ut-fields"><div class="field"><label for="ut-c-stub_model">Stub 模型</label><input id="ut-c-stub_model" autocomplete="off" placeholder="留空使用全局 AI 模型"></div><div class="field"><label for="ut-c-stub_max_rounds">候选轮数</label><input id="ut-c-stub_max_rounds" type="number" min="1" max="5" step="1" value="2"></div></div>
+        </div>
+        <div class="ut-fields ut-repair-fields"><div class="field"><label for="ut-c-max_repair_rounds">自动补用例上限（次）</label><input id="ut-c-max_repair_rounds" type="number" min="0" max="20" step="1"><p class="ut-hint">0 为不自动补用例；达到上限后转人工处理。</p></div><div class="field"><label for="ut-c-repair_model">补用例模型</label><input id="ut-c-repair_model" autocomplete="off" placeholder="留空使用全局 AI 模型"></div></div>
+      </div>
+      <details id="ut-host-controls" class="ut-advanced">
+        <summary>Clang/LLVM 工具路径</summary>
+        <p class="ut-hint">通常使用服务器默认命令，仅在工具安装位置不同时修改。</p>
         <div class="ut-fields">
           <div class="field"><label for="ut-c-host_clang">Clang</label><input id="ut-c-host_clang" value="clang" autocomplete="off"></div>
           <div class="field"><label for="ut-c-host_llvm_cov">llvm-cov</label><input id="ut-c-host_llvm_cov" value="llvm-cov" autocomplete="off"></div>
           <div class="field"><label for="ut-c-host_llvm_profdata">llvm-profdata</label><input id="ut-c-host_llvm_profdata" value="llvm-profdata" autocomplete="off"></div>
           <div class="field"><label for="ut-c-host_profile_runtime">Profile runtime（可选路径）</label><input id="ut-c-host_profile_runtime" autocomplete="off"></div>
-          <div class="field"><label for="ut-c-stub_mode">Stub 模式</label><select id="ut-c-stub_mode" aria-describedby="ut-stub-mode-hint"><option value="deterministic">自动 Stub（默认，确定性）</option><option value="llm">模型候选（可选，须验证）</option></select><p class="ut-hint" id="ut-stub-mode-hint">默认自动生成受控 Stub，隔离依赖调用；同一源码文件中的其他被调函数也属于隔离边界。Stub 行为是测试控制，不代表真实依赖的实现语义。</p></div>
         </div>
-        <div id="ut-stub-llm-controls" hidden>
-          <div class="ut-fields"><div class="field"><label for="ut-c-stub_model">Stub 模型</label><input id="ut-c-stub_model" autocomplete="off" placeholder="留空使用全局 AI 模型"></div><div class="field"><label for="ut-c-stub_max_rounds">Stub 候选轮数</label><input id="ut-c-stub_max_rounds" type="number" min="1" max="5" step="1" value="2"></div></div>
-          <p class="ut-hint">可选功能，复用全局 AI 网关。模型仅提议 Stub 函数体，由 ut-agent 校验、编译执行并与确定性结果比较，再交人工审核；无 Stub 时不调用模型。模型候选不能作为真实接口语义的证明。</p>
-        </div>
-      </div>
-      <div class="ut-subsection">
-        <h3 id="ut-csv-repair-heading">补用例模型</h3>
-        <div class="ut-fields"><div class="field"><label for="ut-c-max_repair_rounds">修正上限（次）</label><input id="ut-c-max_repair_rounds" type="number" min="0" max="20" step="1"><p class="ut-hint">达到上限仍未通过时转入人工处理。</p></div><div class="field"><label for="ut-c-repair_model">修正模型</label><input id="ut-c-repair_model" autocomplete="off" placeholder="留空使用全局 AI 模型"></div></div>
-      </div>
-    </section>
+      </details>
+      <details id="ut-manifest-advanced" class="ut-advanced">
+        <summary>完整 JSON 与保存信息</summary>
+        <div class="ut-manifest-actions"><button class="btn" id="ut-manifest-export" type="button" disabled>导出草稿</button><button class="btn" id="ut-manifest-validate" type="button" disabled{% if not project_capabilities.configure %} hidden{% endif %}>检查清单</button></div>
+        <div class="field"><label for="ut-manifest-json">清单 JSON</label><textarea id="ut-manifest-json" rows="16" wrap="off" spellcheck="false" aria-describedby="ut-manifest-json-hint"></textarea><p class="ut-hint" id="ut-manifest-json-hint">导入的接口契约、CSV 投影等高级配置原样保留，可在此核对或编辑。JSON 文件须为 UTF-8，最大 256 KiB。保存时由 ut-agent 校验。</p></div>
+        <div class="field"><label for="ut-c-manifest_path">服务器保存位置</label><textarea id="ut-c-manifest_path" rows="2" readonly wrap="soft" spellcheck="false"></textarea></div>
+        <div class="field"><label for="ut-manifest-sha256">已保存版本 · SHA-256</label><output id="ut-manifest-sha256" class="ut-manifest-hash">—</output></div>
+      </details>
+      <p id="ut-manifest-validation" class="ut-validation" role="status" aria-live="polite"></p>
+    </details>
   </div>
 </div>
 {% endblock %}

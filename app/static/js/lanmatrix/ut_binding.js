@@ -11,21 +11,15 @@
   var MODEL = ["stub_model", "stub_max_rounds"];
   var POLICY = ["boundary_adjacent", "c1", "mcdc", "arithmetic", "combination_group"];
   var CONTRACT_FLAG = "execution_contract.const_volatile_single_invocation_stable";
-  var FIELDS = ["project.id", "build.profile", "build.config", "winams.profile",
-    "winams.stub_memory_limit_bytes", "winams.stub_memory_headroom_ratio", "rules.project_pack",
-    "interfaces.contract", "build.exclude_directories", "profile.approved_exceptions", CONTRACT_FLAG]
+  var FIELDS = ["project.id", "build.profile", "build.exclude_directories", CONTRACT_FLAG]
     .concat(POLICY.map(function (key) { return "test_policy." + key; }));
-  var LINES = ["build.exclude_directories", "profile.approved_exceptions"];
+  var LINES = ["build.exclude_directories"];
   // Groups whose document carries a schema version next to the form-owned keys.
   var VERSIONED = { test_policy: true, execution_contract: true };
-  // The only direction/access-order pairs ut-agent accepts for a pointer parameter.
-  var ACCESS = [["in", "read_only", "输入 · 只读"], ["out", "write_only", "输出 · 只写"],
-    ["inout", "read_before_write", "输入输出 · 先读后写"], ["inout", "write_before_read", "输入输出 · 先写后读"]];
   var LIMIT = 256 * 1024;
   var draft = {}, snapshots = {}, savedConfig = null, savedState = "", rawSnapshot = "";
   var busy = true, loaded = false;
   var choices = null;
-  var rows = [], entriesSnapshot = "", rowSeq = 0;
   function $(id) { return document.getElementById(id); }
   function field(path) { return $("ut-m-" + path.replace(".", "-")); }
   function object(value) { return value !== null && typeof value === "object" && !Array.isArray(value); }
@@ -34,7 +28,12 @@
     var parts = path.split(".");
     return object(draft[parts[0]]) && own(draft[parts[0]], parts[1]) ? draft[parts[0]][parts[1]] : undefined;
   }
-  function state() { return JSON.stringify([$("ut-manifest-json").value, KEYS.map(function (k) { return $("ut-c-" + k).value; })]); }
+  function configValue(key) {
+    var node = $("ut-c-" + key);
+    return key === "stub_mode" ? (node.checked ? "llm" : "deterministic") : node.value;
+  }
+  function formValue(path) { return kind(path) === "boolean" ? field(path).checked : field(path).value; }
+  function state() { return JSON.stringify([$("ut-manifest-json").value, KEYS.map(configValue)]); }
   function changed() {
     var dirty = loaded && state() !== savedState;
     $("ut-draft-state").textContent = !loaded ? "正在加载…" : !LMUt.can("configure") ? "只读" : dirty ? "有未保存的更改" : "已保存";
@@ -45,7 +44,6 @@
   function clearError() {
     $("ut-binding-error").hidden = true;
     FIELDS.forEach(function (p) { field(p).removeAttribute("aria-invalid"); });
-    rows.forEach(function (row) { row.index.removeAttribute("aria-invalid"); });
     $("ut-manifest-json").removeAttribute("aria-invalid");
   }
   function fail(message, node, focus) {
@@ -54,7 +52,9 @@
     box.hidden = false;
     if (node) {
       node.setAttribute("aria-invalid", "true");
-      if (node === $("ut-manifest-json")) $("ut-manifest-advanced").open = true;
+      for (var parent = node.parentElement; parent; parent = parent.parentElement) {
+        if (parent.tagName === "DETAILS") parent.open = true;
+      }
     }
     if (focus !== false) (node || box).focus();
   }
@@ -110,7 +110,7 @@
       node.value = value; node.textContent = label; node.disabled = !!unavailable;
       select.appendChild(node);
     }
-    option("", emptyLabel);
+    if (!items.some(function (item) { return item.id === "default"; })) option("", emptyLabel);
     items.forEach(function (item) {
       var label = path === "build.profile" && item.id === "default" ? "默认编译上下文" : item.label;
       if (path === "build.profile" && Number.isInteger(item.pointer_size) && item.pointer_size > 0)
@@ -168,134 +168,27 @@
   function kind(p) {
     if (LINES.indexOf(p) >= 0) return "lines";
     if (p === CONTRACT_FLAG || p.indexOf("test_policy.") === 0) return "boolean";
-    if (p === "winams.stub_memory_limit_bytes") return "bytes";
-    if (p === "winams.stub_memory_headroom_ratio") return "ratio";
     return "string";
   }
   function display(p, value) {
     var k = kind(p);
     if (k === "lines") return Array.isArray(value) ? value.join("\n") : "";
-    if (k === "boolean") return typeof value === "boolean" ? String(value) : "";
-    if (k === "bytes" || k === "ratio") return typeof value === "number" ? String(value) : "";
+    if (p === "build.profile" && value === undefined && choices &&
+        choices.build_profiles.some(function (item) { return item.id === "default"; })) return "default";
     return typeof value === "string" ? value : "";
   }
   function convert(p, value) {
-    var k = kind(p), number = Number(value);
-    if (k === "boolean") return value === "true";
-    if (k === "lines") return value.split(/\r?\n/).map(function (v) { return v.trim(); }).filter(Boolean);
-    if (k === "bytes") {
-      if (!/^\d+$/.test(value) || !Number.isSafeInteger(number) || number < 1)
-        throw error("Stub 内存上限必须是大于 0 的整数（字节）。", field(p));
-      return number;
-    }
-    if (k === "ratio") {
-      if (!/^\d+(\.\d+)?$/.test(value) || number > 1)
-        throw error("Stub 内存余量比例必须是 0 至 1 之间的数。", field(p));
-      return number;
-    }
+    if (kind(p) === "lines") return value.split(/\r?\n/).map(function (v) { return v.trim(); }).filter(Boolean);
     return value;
   }
   function ensure(container, key) {
     if (!own(container, key)) Object.defineProperty(container, key, { value: VERSIONED[key] ? { version: "1" } : {}, writable: true, enumerable: true, configurable: true });
     return container[key];
   }
-  function entryList() {
-    return object(draft.interfaces) && Array.isArray(draft.interfaces.entries) ? draft.interfaces.entries : null;
-  }
-  function accessValue(entry) {
-    if (!object(entry) || (!own(entry, "direction") && !own(entry, "pointee_access_order"))) return "";
-    var order = own(entry, "pointee_access_order") ? entry.pointee_access_order :
-      entry.direction === "in" ? "read_only" : entry.direction === "out" ? "write_only" : null;
-    var index = ACCESS.findIndex(function (a) { return a[0] === entry.direction && a[1] === order; });
-    return index >= 0 ? String(index) : "custom";
-  }
-  function rowState(row) { return [row.fn.value, row.index.value, row.name.value, row.access.value]; }
-  function entryState() { return JSON.stringify(rows.map(rowState)); }
-  function entryControl(row, key, label, tag) {
-    var wrap = document.createElement("div"), caption = document.createElement("label"), input = document.createElement(tag);
-    wrap.className = "field";
-    input.id = "ut-entry-" + row.id + "-" + key;
-    caption.htmlFor = input.id; caption.textContent = label;
-    input.autocomplete = "off";
-    wrap.appendChild(caption); wrap.appendChild(input); row.node.appendChild(wrap);
-    return input;
-  }
-  function addRow(entry, fresh) {
-    var row = { id: ++rowSeq, source: entry, node: document.createElement("div") };
-    var values = object(entry) ? entry : {};
-    row.node.className = "ut-entry-row"; row.node.setAttribute("role", "listitem");
-    row.fn = entryControl(row, "function", "函数名", "input");
-    row.fn.value = typeof values.function === "string" ? values.function : "";
-    row.index = entryControl(row, "index", "参数序号", "input");
-    row.index.type = "number"; row.index.min = "0"; row.index.step = "1";
-    row.index.value = Number.isInteger(values.parameter_index) ? String(values.parameter_index) : "";
-    row.name = entryControl(row, "name", "参数名（可选）", "input");
-    row.name.value = typeof values.parameter_name === "string" ? values.parameter_name : "";
-    row.access = entryControl(row, "access", "读写方向", "select");
-    [["", "请选择"]].concat(ACCESS.map(function (a, i) { return [String(i), a[2]]; })).forEach(function (pair) {
-      var option = document.createElement("option");
-      option.value = pair[0]; option.textContent = pair[1];
-      row.access.appendChild(option);
-    });
-    var access = accessValue(entry);
-    if (access === "custom") {
-      var kept = document.createElement("option");
-      kept.value = "custom"; kept.disabled = true;
-      kept.textContent = "当前值不受支持：" + String(values.direction) + " / " + String(values.pointee_access_order);
-      row.access.appendChild(kept);
-    }
-    row.access.value = access;
-    row.remove = document.createElement("button");
-    row.remove.type = "button"; row.remove.className = "btn"; row.remove.textContent = "删除";
-    row.remove.setAttribute("aria-label", "删除这条指针参数声明");
-    row.node.appendChild(row.remove);
-    // A fresh row has no saved form, so it is always projected.
-    row.snapshot = fresh ? null : JSON.stringify(rowState(row));
-    [row.fn, row.index, row.name, row.access].forEach(function (control) {
-      ["input", "change"].forEach(function (event) { control.addEventListener(event, edited); });
-    });
-    row.remove.addEventListener("click", function () {
-      if (!editable()) return;
-      row.node.remove();
-      rows = rows.filter(function (other) { return other !== row; });
-      edited();
-    });
-    [row.fn, row.index, row.name, row.access, row.remove].forEach(function (control) {
-      control.disabled = busy || !LMUt.can("configure");
-    });
-    $("ut-interface-entries").appendChild(row.node);
-    rows.push(row);
-    return row;
-  }
-  // Untouched rows keep their original value; edited rows merge onto it so unknown keys survive.
-  function rowValue(row) {
-    if (row.snapshot !== null && JSON.stringify(rowState(row)) === row.snapshot) return row.source;
-    var out = object(row.source) ? Object.assign({}, row.source) : {};
-    var fn = row.fn.value.trim(), index = row.index.value.trim(), name = row.name.value.trim(), access = row.access.value;
-    if (fn) out.function = fn; else delete out.function;
-    if (!index) delete out.parameter_index;
-    else if (!/^\d+$/.test(index) || !Number.isSafeInteger(Number(index)))
-      throw error("参数序号必须是 0 或更大的整数。", row.index);
-    else out.parameter_index = Number(index);
-    if (name) out.parameter_name = name; else delete out.parameter_name;
-    if (access && access !== "custom") {
-      var pair = ACCESS[Number(access)];
-      out.direction = pair[0];
-      if (pair[0] === "inout" || own(out, "pointee_access_order")) out.pointee_access_order = pair[1];
-    } else if (!access) {
-      delete out.direction; delete out.pointee_access_order;
-    }
-    return out;
-  }
-  function renderEntries() {
-    $("ut-interface-entries").replaceChildren();
-    rows = [];
-    (entryList() || []).forEach(function (entry) { addRow(entry, false); });
-    entriesSnapshot = entryState();
-  }
   function legacyFields() {
     var found = [];
     if (own(draft, "baseline")) found.push("baseline");
+    if (object(draft.rules) && own(draft.rules, "project_pack") && draft.rules.project_pack !== null) found.push("rules.project_pack");
     if (object(draft.profile) && own(draft.profile, "mcdc_enabled")) found.push("profile.mcdc_enabled");
     if (object(draft.test_policy) && draft.test_policy.version !== "1") found.push("test_policy.version（须为 1）");
     return found;
@@ -309,17 +202,22 @@
     renderAbi();
     renderSelect("build.profile", choices ? choices.build_profiles : [], "默认编译上下文");
     FIELDS.forEach(function (p) {
-      var value = display(p, get(p));
-      field(p).value = value;
-      snapshots[p] = value;
+      var node = field(p), value = get(p);
+      if (kind(p) === "boolean") {
+        node.checked = value === true;
+        node.indeterminate = p.indexOf("test_policy.") === 0 && typeof value !== "boolean";
+      } else node.value = display(p, value);
+      snapshots[p] = formValue(p);
     });
-    renderEntries();
     legacyView();
     policyView();
     configurationDetails();
   }
   function policyView() {
-    POLICY.forEach(function (key) { field("test_policy." + key).required = true; });
+    var combination = field("test_policy.combination_group"), mcdc = field("test_policy.mcdc").checked;
+    combination.disabled = busy || !LMUt.can("configure") || (!mcdc && !combination.indeterminate);
+    $("ut-policy-combination-hint").textContent = combination.indeterminate && !mcdc ?
+      "此项尚未明确；点击确认不启用，或先启用 MC/DC。" : "仅改变同组用例的呈现方式；需启用 MC/DC。";
   }
   function renderRaw() {
     rawSnapshot = JSON.stringify(draft, null, 2);
@@ -349,9 +247,12 @@
   }
   // Only changed fields are projected, preserving unknown keys, explicit nulls and absence.
   function syncForm(refreshFields) {
-    var edits = FIELDS.filter(function (p) { return field(p).value !== snapshots[p]; })
-      .map(function (p) { var value = field(p).value.trim(); return [p, value ? convert(p, value) : null]; });
-    var entries = entryState() !== entriesSnapshot ? rows.map(rowValue) : null;
+    var edits = FIELDS.filter(function (p) { return formValue(p) !== snapshots[p]; })
+      .map(function (p) {
+        if (kind(p) === "boolean") return [p, field(p).checked];
+        var value = field(p).value.trim();
+        return [p, value ? convert(p, value) : null];
+      });
     parseRaw();
     function group(name) {
       if (own(draft, name) && !object(draft[name]))
@@ -371,20 +272,10 @@
         ensure(draft, name)[key] = edit[1];
       }
     });
-    if (entries) {
-      group("interfaces");
-      if (entries.length) ensure(draft, "interfaces").entries = entries;
-      else if (own(draft, "interfaces")) {
-        delete draft.interfaces.entries;
-        if (!Object.keys(draft.interfaces).length) delete draft.interfaces;
-      }
-    }
     applyAbi();
     if (refreshFields !== false) renderFields();
     else {
-      FIELDS.forEach(function (p) { snapshots[p] = field(p).value; });
-      if (entries) rows.forEach(function (row, i) { row.source = entries[i]; row.snapshot = JSON.stringify(rowState(row)); });
-      entriesSnapshot = entryState();
+      FIELDS.forEach(function (p) { snapshots[p] = formValue(p); });
       legacyView();
     }
     renderRaw();
@@ -407,15 +298,15 @@
       throw error("指针宽度与编译器兼容配置不一致。请改成相同宽度，或改用默认编译上下文。", $("ut-m-build-abi"));
     }
     POLICY.forEach(function (key) {
-      if (typeof get("test_policy." + key) !== "boolean") throw error("请明确选择每项测试要求的是或否。", field("test_policy." + key));
+      if (typeof get("test_policy." + key) !== "boolean") throw error("存在未声明或无效的测试要求，请勾选或取消该项后保存。", field("test_policy." + key));
     });
     if (get("test_policy.combination_group") && !get("test_policy.mcdc"))
-      throw error("MC/DC 组合分组选择是时，MC/DC 也必须选择是。", field("test_policy.combination_group"));
+      throw error("「組合せ」呈现需要启用 MC/DC。", field("test_policy.mcdc"));
   }
   function lock(locked) {
     busy = locked;
     var readonly = !LMUt.can("configure");
-    var llm = $("ut-c-stub_mode").value === "llm";
+    var llm = $("ut-c-stub_mode").checked;
     $("ut-stub-llm-controls").hidden = !llm;
     KEYS.forEach(function (k) {
       $("ut-c-" + k).disabled = locked || readonly ||
@@ -424,10 +315,7 @@
     FIELDS.forEach(function (p) { field(p).disabled = locked || readonly ||
       (!choices && p === "build.profile"); });
     $("ut-m-build-abi").disabled = locked || readonly || !choices;
-    rows.forEach(function (row) {
-      [row.fn, row.index, row.name, row.access, row.remove].forEach(function (control) { control.disabled = locked || readonly; });
-    });
-    ["ut-interface-add", "ut-legacy-remove"].forEach(function (id) { $(id).disabled = locked || readonly; });
+    $("ut-legacy-remove").disabled = locked || readonly;
     $("ut-manifest-json").readOnly = readonly;
     $("ut-manifest-json").disabled = locked;
     ["ut-config-save", "ut-manifest-import", "ut-manifest-file", "ut-manifest-validate"].forEach(function (id) {
@@ -439,8 +327,14 @@
   }
   function populate(c) {
     c = c || {};
-    KEYS.forEach(function (k) { $("ut-c-" + k).value = String(c[k] != null ? c[k] : DEFAULTS[k] != null ? DEFAULTS[k] : ""); });
-    draft = object(c.manifest_document) ? JSON.parse(JSON.stringify(c.manifest_document)) : { test_policy: { version: "1" } };
+    KEYS.forEach(function (k) {
+      var value = c[k] != null ? c[k] : DEFAULTS[k] != null ? DEFAULTS[k] : "";
+      if (k === "stub_mode") $("ut-c-" + k).checked = value === "llm";
+      else $("ut-c-" + k).value = String(value);
+    });
+    draft = object(c.manifest_document) ? JSON.parse(JSON.stringify(c.manifest_document)) : {
+      test_policy: POLICY.reduce(function (policy, key) { policy[key] = false; return policy; }, { version: "1" })
+    };
     $("ut-c-manifest_path").value = c.manifest_path || "";
     $("ut-manifest-sha256").textContent = c.manifest_sha256 || "—";
     renderFields(); renderRaw(); clearError();
@@ -456,17 +350,23 @@
   function edited() {
     if (!editable()) return;
     clearError();
+    if (this && this.type === "checkbox") {
+      this.indeterminate = false;
+      var path = FIELDS.find(function (p) { return field(p) === this; }, this);
+      if (path && typeof get(path) !== "boolean") snapshots[path] = null;
+      if (path === "test_policy.combination_group" && !field("test_policy.mcdc").checked) this.checked = false;
+      if (this === field("test_policy.mcdc") && !this.checked) {
+        var combination = field("test_policy.combination_group");
+        combination.checked = false;
+        combination.indeterminate = false;
+        if (typeof get("test_policy.combination_group") !== "boolean") snapshots["test_policy.combination_group"] = null;
+      }
+    }
     try { syncForm(false); } catch (e) { fail(e.message, e.node); }
     changed();
   }
   FIELDS.map(field).concat([$("ut-m-build-abi")]).forEach(function (node) {
     ["input", "change"].forEach(function (event) { node.addEventListener(event, edited); });
-  });
-  $("ut-interface-add").addEventListener("click", function () {
-    if (!editable()) return;
-    var row = addRow(null, true);
-    edited();
-    row.fn.focus();
   });
   $("ut-legacy-remove").addEventListener("click", function () {
     if (!editable()) return;
@@ -474,6 +374,10 @@
     try {
       syncForm();
       delete draft.baseline;
+      if (object(draft.rules)) {
+        delete draft.rules.project_pack;
+        if (!Object.keys(draft.rules).length) delete draft.rules;
+      }
       if (object(draft.profile)) {
         delete draft.profile.mcdc_enabled;
         if (!Object.keys(draft.profile).length) delete draft.profile;
@@ -544,11 +448,16 @@
     try {
       syncForm(); required();
       var values = { manifest_document: draft };
-      KEYS.forEach(function (k) { values[k] = $("ut-c-" + k).value.trim(); });
+      KEYS.forEach(function (k) { values[k] = String(configValue(k)).trim(); });
       values.max_repair_rounds = Number(values.max_repair_rounds);
-      values.stub_max_rounds = Number(values.stub_max_rounds);
-      if (!Number.isInteger(values.stub_max_rounds) || values.stub_max_rounds < 1 || values.stub_max_rounds > 5)
-        throw error("Stub 候选轮数必须是 1 至 5 之间的整数。", $("ut-c-stub_max_rounds"));
+      if (values.stub_mode === "llm") {
+        values.stub_max_rounds = Number(values.stub_max_rounds);
+        if (!Number.isInteger(values.stub_max_rounds) || values.stub_max_rounds < 1 || values.stub_max_rounds > 5)
+          throw error("Stub 候选轮数必须是 1 至 5 之间的整数。", $("ut-c-stub_max_rounds"));
+      } else {
+        delete values.stub_model;
+        delete values.stub_max_rounds;
+      }
       if (!Number.isInteger(values.max_repair_rounds) || values.max_repair_rounds < 0 || values.max_repair_rounds > 20)
         throw error("修正上限必须是 0 至 20 之间的整数。", $("ut-c-max_repair_rounds"));
       lock(true);
