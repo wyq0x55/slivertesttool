@@ -21,6 +21,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from flask import Blueprint, Response, g, request
 
 from ...jobqueue import ut_tasks
@@ -29,6 +31,8 @@ from ...services.ut_pipeline import export as ut_export
 from ...services.ut_pipeline import pipeline
 from ...services.ut_pipeline.repair import normalize_csv
 from ._base import _project_and_role, arg_int, arg_str, err, login_required, ok, register_common
+
+logger = logging.getLogger(__name__)
 
 bp = Blueprint("lanmatrix_ut", __name__, url_prefix="/api/v1/projects/<int:project_id>/ut")
 register_common(bp)
@@ -42,6 +46,21 @@ def _body() -> dict:
     if not isinstance(body, dict):
         raise ServiceError("请求必须是 JSON 对象", code="BAD_REQUEST")
     return body
+
+
+def _dispatch_failed(project_id: int, exc: Exception, **owner):
+    logger.exception("UT pipeline task could not be enqueued")
+    pipeline.dispatch_failed(project_id, exc, **owner)
+    return err("DISPATCH_FAILED", "后台任务投递失败，作业已转为异常，请稍后重试", status=503)
+
+
+def _advance(project_id: int, job):
+    """Enqueue the driver for a job the service just made active."""
+    try:
+        ut_tasks.ut_advance_job(job.id)
+    except Exception as exc:  # noqa: BLE001 - any queue failure leaves the job without a worker
+        return _dispatch_failed(project_id, exc, job_id=job.id)
+    return ok(job.to_dict(), status=202)
 
 
 @bp.get("/config")
@@ -95,7 +114,10 @@ def create_batch(project_id: int):
     body = _body()
     batch = pipeline.create_batch(project_id, body.get("target_ids"), g.user.id,
                                   str(body.get("label") or ""))
-    ut_tasks.ut_generate_batch(batch.id)
+    try:
+        ut_tasks.ut_generate_batch(batch.id)
+    except Exception as exc:  # noqa: BLE001 - any queue failure leaves the batch without a worker
+        return _dispatch_failed(project_id, exc, batch_id=batch.id)
     return ok(batch.to_dict(), status=202)
 
 
@@ -169,8 +191,7 @@ def submit_revision(project_id: int, job_id: int):
             return err("VALIDATION_ERROR", "CSV 含有 CP932 无法表示的字符", status=400)
         note = str(body.get("note") or "")
     job = pipeline.submit_revision(project_id, job_id, data, g.user.id, note)
-    ut_tasks.ut_advance_job(job.id)
-    return ok(job.to_dict(), status=202)
+    return _advance(project_id, job)
 
 
 @bp.post("/jobs/<int:job_id>/review")
@@ -193,8 +214,7 @@ def review(project_id: int, job_id: int):
 def retry(project_id: int, job_id: int):
     _project_and_role(project_id, "item.edit")
     job = pipeline.retry(project_id, job_id, g.user.id)
-    ut_tasks.ut_advance_job(job.id)
-    return ok(job.to_dict(), status=202)
+    return _advance(project_id, job)
 
 
 @bp.post("/jobs/<int:job_id>/stop")

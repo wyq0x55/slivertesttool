@@ -433,6 +433,9 @@ def _run_generation(batch_id: int, on_ready: Callable[[int], None] | None) -> li
     config = batch.config_snapshot or {}
     bridge = get_bridge()
     by_function = {job.target.function: job.id for job in jobs}
+    # The bridge selects by function name from the live index, so the source the
+    # unit was generated from must still be the source this target was queued for.
+    sources = {job.target.function: job.target.source_rel for job in jobs}
     handed: dict[str, dict] = {}
     ready = []
 
@@ -440,6 +443,10 @@ def _run_generation(batch_id: int, on_ready: Callable[[int], None] | None) -> li
         name = unit.get("function")
         if name not in by_function:
             raise BridgeError("Completed unit is outside the requested batch")
+        if unit.get("source_rel") != sources[name]:
+            raise BridgeError(
+                f"生成单元的源文件 {unit.get('source_rel')!r} 与排队目标 {sources[name]!r} 不一致，"
+                "索引已变化，请重新导入索引后再生成")
         active_batch = db.session.get(UtBatch, batch_id, populate_existing=True)
         if active_batch.provenance is not None and active_batch.provenance != provenance:
             raise BridgeError("Completed units disagree on generation provenance")
@@ -1370,6 +1377,36 @@ def retry(project_id: int, job_id: int, user_id: Optional[int] = None) -> UtJob:
     _gate(job, UtJob.REPAIRING if host_repair else UtJob.EXECUTING)
     db.session.commit()
     return job
+
+
+def dispatch_failed(project_id: int, exc: Exception, *, job_id: int | None = None,
+                    batch_id: int | None = None) -> None:
+    """Gate work whose background task could not be enqueued.
+
+    The state commit and the queue write are separate transactions. Without a
+    task nothing advances the active job, and retry/requeue refuse active jobs,
+    so the work would stay active until the next worker restart.
+    """
+    db.session.rollback()
+    reason = "投递后台任务失败：" + str(exc)
+    if batch_id is not None:
+        batch = (UtBatch.query.filter_by(id=batch_id, project_id=project_id)
+                 .with_for_update().populate_existing().one())
+        jobs = (UtJob.query.filter_by(batch_id=batch_id, state=UtJob.QUEUED)
+                .with_for_update(of=UtJob).populate_existing().all())
+        if batch.status == UtBatch.STATUS_GENERATING:
+            batch.status = UtBatch.STATUS_FAILED
+            batch.error = reason
+            batch.finished_at = _utcnow()
+    else:
+        job = _row_lock(project_id, job_id)
+        jobs = [job] if job.state in (UtJob.EXECUTING, UtJob.REPAIRING) else []
+    for job in jobs:
+        if job.stop_requested_at is not None:
+            _halt(job)
+        else:
+            _gate(job, UtJob.ERROR, reason, GateCode.INTERNAL_ERROR)
+    db.session.commit()
 
 
 # --------------------------------------------------------------------------- #
