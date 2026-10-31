@@ -1,7 +1,5 @@
 # Repository Agent Contract
 
-Codex orchestration adaptation based on `main` at `97ba659b7b1e` on 2026-10-02.
-
 This file defines repository-specific engineering constraints. Prefer the
 current code and tests over historical design notes when they disagree.
 
@@ -104,8 +102,9 @@ file remains authoritative if orchestration guidance conflicts with it.
 - Keep architecture and cross-component decisions in the root session.
 - Use read-only exploration before implementation when the ownership boundary is
   not already clear.
-- Routine subagents default to `deepseek-v4.1-flash`; the independent code
-  reviewer is intentionally a different model.
+- Subagent models are configured in `.codex/config.toml` and
+  `.codex/agents/*.toml`; the independent code reviewer intentionally runs on a
+  different model from the execution roles.
 - Keep at most three subagents active concurrently. Parallelize only independent
   workstreams.
 - Give every writable subagent an explicit file/subsystem ownership boundary;
