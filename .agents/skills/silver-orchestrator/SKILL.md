@@ -1,6 +1,6 @@
 ---
 name: silver-orchestrator
-description: Orchestrate non-trivial Test Platform coding work with a high-quality root, DeepSeek execution subagents, and an independent Astra reviewer. Use for cross-component work, repository exploration, debugging, parallel workstreams, or changes where independent verification materially helps. Do not use for trivial localized edits.
+description: Orchestrate non-trivial Test Platform coding work with a root session, bounded execution subagents, and an independent reviewer on a different model. Use for cross-component work, repository exploration, debugging, parallel workstreams, or changes where independent verification materially helps. Do not use for trivial localized edits.
 ---
 
 # Test Platform Orchestrator
@@ -26,10 +26,10 @@ Do not spawn roles mechanically. Use only the roles that improve the task.
 - `researcher`: current external/version-specific facts.
 - `reviewer`: independent post-change code review.
 
-Routine execution roles use the repository-configured DeepSeek model. The
-reviewer intentionally uses Astra. The root keeps the model selected by the
-current Codex session and owns architecture, decomposition, integration, and the
-final claim.
+Role models are set in `.codex/agents/*.toml`; the reviewer intentionally runs
+on a different model from the execution roles. The root keeps the model
+selected by the current session and owns architecture, decomposition,
+integration, and the final claim.
 
 Useful repository decomposition:
 
@@ -64,17 +64,13 @@ when their ownership surfaces do not overlap. Do not repeatedly poll agents.
 Continue root integration work while independent lanes run, and collect results
 only when they are needed for the next decision or final synthesis.
 
-## Default non-trivial flow
+## Done means
 
-1. Explore only the unclear ownership/path.
-2. Root chooses the implementation direction.
-3. Delegate bounded implementation surfaces.
-4. Run targeted verification for changed behavior.
-5. Use the independent reviewer when the diff is non-obvious, cross-component,
-   security/data/concurrency-sensitive, or otherwise high-risk.
-6. Root inspects the final diff and verifies material subagent claims.
-7. Rely on repository CI for the full reproducible integration gate; keep real
-   Silver/license behavior explicitly outside claims not validated internally.
+The root has inspected the final diff and verified any subagent claim it relies
+on, the changed behavior has targeted verification, and the independent
+reviewer has seen any diff that is non-obvious, cross-component, or
+security/data/concurrency-sensitive. Repository CI is the full integration gate;
+real Silver/license behavior stays outside any claim not validated internally.
 
 Keep reports concise: conclusions, exact paths/symbols, commands/results, and
 remaining risks rather than large raw logs.
