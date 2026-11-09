@@ -61,9 +61,90 @@ python -m silver_cli call projects.create_project --json '@project.json' --confi
   授予、审批证明或风险豁免。AI 审核、删除、清空、管理员 SQL 等动作应由调用器
   另行实施明确的人类授权策略，不能把 `--confirm` 当成自动批准。
 
-`items.patch_item` 仍需正文 `version` + `changes`。版本冲突返回 409，CLI 不替你
+低层 `call items.patch_item` 仍需正文 `version` + `changes`。版本冲突返回 409，此命令不替你
 读取最新版本后强行覆盖。协同编辑活跃时原有 `COLLAB_ACTIVE` 写保护仍生效，
 CLI 不绕过 CRDT 的单写者约束。用户角色也不会因为使用 CLI 而提升。
+
+## High-level commands for agents
+
+Use these task-oriented commands for common workflows. They use the same
+transport, login, CSRF protection, permissions, and JSON envelope as `call`.
+Discover arguments and examples with `python -m silver_cli --help` and
+`python -m silver_cli steps set --help`. IDs below are examples; task IDs are
+task keys such as `T000001`, rather than database integer IDs.
+
+```sh
+python -m silver_cli project list
+python -m silver_cli project show 7
+python -m silver_cli project create --json @project.json --dry-run
+python -m silver_cli project create --json @project.json --confirm
+python -m silver_cli item list 7 --sheet test --page 1 --page-size 100
+python -m silver_cli item show 7 42
+python -m silver_cli steps show 7 42
+python -m silver_cli steps set 7 42 --json @steps.json --dry-run
+python -m silver_cli steps set 7 42 --json @steps.json --confirm
+python -m silver_cli steps edit 7 42 --step 1 --set description=Updated --dry-run
+python -m silver_cli task list 7 --status failed
+python -m silver_cli task show 7 T000001
+python -m silver_cli task failures 7
+python -m silver_cli task failures 7 --task T000001
+python -m silver_cli task log 7 T000001 --tail 50
+python -m silver_cli task rerun 7 T000001 --dry-run
+python -m silver_cli task rerun 7 T000001 --confirm
+```
+
+| Command | Behavior and API operations |
+|---|---|
+| `project list` | `projects.list_projects` |
+| `project show PID` | Aggregate `projects.get_project`, `fields.list_fields`, `models.list_project_models`, and `dashboard.project_dashboard_data` |
+| `project create --json @FILE` | `projects.create_project` |
+| `item list PID` | `items.list_items`; optional sheet and explicit pagination |
+| `item show PID IID` | Find the item through `items.list_items`; there is no single-item GET endpoint |
+| `steps show PID IID` | Extract the item's steps document |
+| `steps set PID IID --json @FILE` | Read current item version, then `items.patch_item` with `version` and `changes.steps` |
+| `steps edit PID IID --step N --set KEY=VALUE` | Read the document, edit one step (1-based index), and patch with the current version; repeat `--set` or give multiple pairs |
+| `task list PID --status STATUS` | Read `tasks.list_project_tasks` and filter locally; the endpoint has no status query filter |
+| `task show PID TID` | `tasks.project_task_detail`, including review data and events |
+| `task failures PID [--task TID]` | Failed/error cases with judge result (`tasks.project_task_jdgrslt`) and error information |
+| `task log PID TID --tail N` | Runtime events and errors from `tasks.project_task_detail`; limit displayed log lines within the first 5000 events |
+| `task rerun PID TID` | `tasks.rerun_selected_tasks` with `{"task_keys":["T000001"]}` |
+
+The input to `steps set` is the steps document itself, for example:
+
+```json
+{"input_signals":[],"expected_signals":[],"steps":[]}
+```
+
+For `steps edit`, values parse as JSON when valid, otherwise as text; keys are
+literal field names rather than dotted paths. For example, `--set enabled=true`
+sets a boolean. Each field may be assigned only once in a command.
+
+Inspect the actual document with `steps show` before editing it. Preserve signal
+definitions, step fields, and ordering required by that project. The high-level
+commands do not replace server validation or real Silver execution.
+
+Every write supports mutually exclusive `--dry-run` and `--confirm` flags and
+requires `--confirm` before any network request, including the preliminary
+item/version read. Dry runs validate local
+input and describe the planned workflow without logging in or reading remote
+state; they cannot validate the remote version or step index against live data.
+For a confirmed steps write, the CLI reads the current version and submits one
+PATCH. A stale version returns `VERSION_CONFLICT` (exit 5); inspect the latest
+document, reconcile the change, and retry only within the authorized scope. The
+CLI does not silently rebase or retry the write. `COLLAB_ACTIVE` and project
+locks remain server-enforced.
+
+Task listing reads the newest 2000 runs and can be truncated by the server's
+growing-window limit; inspect `total`, `truncated`, and returned counts before
+treating a failure report as exhaustive.
+Failure reports also include runs with a failing/error judge verdict, even when
+their execution status is not failed. Log output includes log, warning, and
+error events, with task error details preserved separately from the tailed lines.
+The detail endpoint returns at most the first 5000 events; `--tail` selects lines
+within that window, and `possibly_truncated` warns when the window is full.
+`task rerun` reuses the original model and regenerates runner input from current
+project rows. Inspect `created`, `skipped`, `missing`, and `errors`, then query
+status and judge results. A successful HTTP response does not prove a test PASS.
 
 ## 3. 文件、模型和异步任务
 
@@ -182,6 +263,6 @@ Windows 旧终端也可无损解析。保留业务 data 和 request_id；密码�
 `wait` 失败终态保留服务器成功查询的 envelope，因此其 `success` 可能仍为 true，
 **同时检查进程退出码与业务内容**。请求失败后的远端写入状态可能未知，不自动重试。
 
-校验入口：`python -m pytest tests/test_cli_catalog.py tests/test_cli_runner.py
+校验入口：`python -m pytest tests/test_cli_catalog.py tests/test_cli_runner.py tests/test_cli_commands.py
 tests/test_cli_transport.py tests/test_cli_integration.py`。最后一项依赖专用可清空测试库；
 不得指向生产库。实际结果和已知限制见 [验证记录](verification/cli-coverage-2026-10-03.md)。

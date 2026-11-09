@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from .catalog import get_operation, operations
+from .commands import execute, register
 from .transport import CliError, Client
 
 
@@ -29,35 +30,51 @@ def _positive(value):
 
 
 def _parser():
-    parser = Parser(description="Silver platform CLI. JSON stdout; no interactive prompts.")
+    parser = Parser(description="Silver platform CLI. JSON stdout; no interactive prompts. "
+                    "Set SILVER_CLI_USERNAME and SILVER_CLI_PASSWORD together for session login.",
+                    epilog="Task commands: project list/show/create; item list/show; steps show/set/edit; "
+                    "task list/show/failures/log/rerun. "
+                    "Examples: python3 -m silver_cli project list; python3 -m silver_cli steps show 1 2; "
+                    "python3 -m silver_cli describe items.patch_item")
     commands = parser.add_subparsers(dest="command", required=True)
-    listing = commands.add_parser("list", help="Discover all operations offline")
-    listing.add_argument("--group")
-    describe = commands.add_parser("describe", help="Inspect request field hints offline")
-    describe.add_argument("operation")
+    listing = commands.add_parser("list", help="Discover all operations offline",
+                                  description="List HTTP operations derived from route source, without connecting to a server.",
+                                  epilog="Example: python3 -m silver_cli list --group items")
+    listing.add_argument("--group", help="Restrict operations to a module, for example items or tasks.")
+    describe = commands.add_parser("describe", help="Inspect request field hints offline",
+                                   description="Inspect one operation's endpoint, method and request hints offline.",
+                                   epilog="Example: python3 -m silver_cli describe items.patch_item")
+    describe.add_argument("operation", help="Operation name returned by list.")
     for command in ("call", "wait"):
-        sub = commands.add_parser(command)
-        sub.add_argument("operation")
-        sub.add_argument("--param", action="append", default=[], metavar="NAME=VALUE")
-        sub.add_argument("--query", action="append", default=[], metavar="NAME=VALUE")
-        sub.add_argument("--url", default=os.environ.get("SILVER_CLI_URL"))
-        sub.add_argument("--timeout", type=_positive, default=30.0)
-        sub.add_argument("--allow-http", action="store_true")
-        sub.add_argument("--dry-run", action="store_true")
+        description = ("Call a discovered HTTP operation; writes require --confirm." if command == "call"
+                       else "Poll a read-only JSON operation until it reaches a declared terminal state.")
+        example = ("call projects.list_projects" if command == "call" else
+                   "wait tasks.project_task_status --param project_id=1 --param task_key=TASK_KEY "
+                   "--status-path data.task.status --success passed --pending queued --pending running --failure failed --failure cancelled")
+        sub = commands.add_parser(command, help=description, description=description,
+                                  epilog=f"Example: python3 -m silver_cli {example}")
+        sub.add_argument("operation", help="Operation name returned by list.")
+        sub.add_argument("--param", action="append", default=[], metavar="NAME=VALUE", help="Path parameter; repeat for each declared parameter.")
+        sub.add_argument("--query", action="append", default=[], metavar="NAME=VALUE", help="Query parameter; repeat as needed.")
+        sub.add_argument("--url", default=os.environ.get("SILVER_CLI_URL"), help="Server base URL; defaults to SILVER_CLI_URL.")
+        sub.add_argument("--timeout", type=_positive, default=30.0, help="Per-request timeout in seconds (default: 30).")
+        sub.add_argument("--allow-http", action="store_true", help="Allow plain HTTP to a trusted server.")
+        sub.add_argument("--dry-run", action="store_true", help="Print an offline request preview without sending requests.")
         if command == "call":
-            sub.add_argument("--json", dest="json_input", metavar="JSON|@FILE|@-")
-            sub.add_argument("--form", action="append", default=[], metavar="NAME=VALUE")
-            sub.add_argument("--file", action="append", default=[], metavar="FIELD=PATH")
-            sub.add_argument("--output", type=Path)
-            sub.add_argument("--confirm", action="store_true")
-            sub.add_argument("--max-events", type=int, default=1000)
+            sub.add_argument("--json", dest="json_input", metavar="JSON|@FILE|@-", help="JSON object, UTF-8 file or standard input.")
+            sub.add_argument("--form", action="append", default=[], metavar="NAME=VALUE", help="Form field; repeat as needed.")
+            sub.add_argument("--file", action="append", default=[], metavar="FIELD=PATH", help="Upload a local file under this form field.")
+            sub.add_argument("--output", type=Path, help="New local path required for download operations; never overwritten.")
+            sub.add_argument("--confirm", action="store_true", help="Authorize a mutating request.")
+            sub.add_argument("--max-events", type=int, default=1000, help="Maximum stream events before stopping (default: 1000).")
         else:
-            sub.add_argument("--status-path", required=True)
-            sub.add_argument("--success", action="append", required=True)
-            sub.add_argument("--pending", action="append", required=True)
-            sub.add_argument("--failure", action="append", default=[])
-            sub.add_argument("--interval", type=_positive, default=1.0)
-            sub.add_argument("--max-wait", type=_positive, default=300.0)
+            sub.add_argument("--status-path", required=True, help="Dotted response path containing the status, for example data.task.status.")
+            sub.add_argument("--success", action="append", required=True, help="Successful terminal state; repeat as needed.")
+            sub.add_argument("--pending", action="append", required=True, help="State that permits continued polling; repeat as needed.")
+            sub.add_argument("--failure", action="append", default=[], help="Failed terminal state (exit 8); repeat as needed.")
+            sub.add_argument("--interval", type=_positive, default=1.0, help="Polling interval in seconds (default: 1).")
+            sub.add_argument("--max-wait", type=_positive, default=300.0, help="Maximum polling duration in seconds (default: 300).")
+    register(commands)
     return parser
 
 
@@ -216,10 +233,26 @@ def _wait(client, operation, path, kwargs, args, secrets):
     raise CliError("WAIT_TIMEOUT", "Wait expired; the remote job was not cancelled.", 9, details=last)
 
 
+def _client(args, operation=None):
+    if not args.url:
+        raise CliError("URL_REQUIRED", "Set SILVER_CLI_URL or pass --url for the intended server.", 2)
+    username = os.environ.get("SILVER_CLI_USERNAME")
+    password = os.environ.get("SILVER_CLI_PASSWORD")
+    if bool(username) != bool(password):
+        raise CliError("CREDENTIALS", "Set both SILVER_CLI_USERNAME and SILVER_CLI_PASSWORD, or neither.", 2)
+    client = Client(args.url, timeout=args.timeout, allow_http=args.allow_http)
+    if username and (operation is None or operation.name not in {"auth.login", "auth.register"}):
+        client.login(username, password)
+    return client
+
+
 def main(argv=None):
     secrets = {os.environ.get("SILVER_CLI_PASSWORD", "")}
     try:
         args = _parser().parse_args(argv)
+        if getattr(args, "high_level", False):
+            _emit(execute(args, secrets), secrets)
+            return 0
         if args.command == "list":
             rows = [operation.to_dict() for operation in operations()
                     if args.group is None or operation.name.startswith(args.group + ".")]
@@ -243,15 +276,7 @@ def main(argv=None):
             return 0
         if operation.mutating and not getattr(args, "confirm", False):
             raise CliError("CONFIRM_REQUIRED", "Mutating operations require --confirm; inspect --dry-run first.", 2)
-        if not args.url:
-            raise CliError("URL_REQUIRED", "Set SILVER_CLI_URL or pass --url for the intended server.", 2)
-        username = os.environ.get("SILVER_CLI_USERNAME")
-        password = os.environ.get("SILVER_CLI_PASSWORD")
-        if bool(username) != bool(password):
-            raise CliError("CREDENTIALS", "Set both SILVER_CLI_USERNAME and SILVER_CLI_PASSWORD, or neither.", 2)
-        client = Client(args.url, timeout=args.timeout, allow_http=args.allow_http)
-        if username and operation.name not in {"auth.login", "auth.register"}:
-            client.login(username, password)
+        client = _client(args, operation)
         if args.command == "wait":
             return _wait(client, operation, path, kwargs, args, secrets)
         if operation.response_kind == "stream":
