@@ -1,0 +1,100 @@
+---
+name: silver-cli
+description: Use the Silver Test Platform CLI for project and item inspection, failed tests, task logs, steps editing, and reruns. Trigger on silver_cli, Silver CLI, failed test investigation, jdgrslt, 手顺, 失败测试, 查看日志, or 重跑 when the request concerns this platform. Does not cover server deployment or direct database administration.
+---
+
+# Silver CLI
+
+Run `python -m silver_cli` from the repository root with Python 3.10+. The CLI
+uses only the standard library and calls an already running web service. Read
+[the CLI guide](../../../docs/cli.md) for the full command and exit-code contract.
+Use `--help` for current arguments and examples. Discover lower-level operations
+offline with `list`, `list --group tasks`, and `describe OPERATION`; use the same
+repository version as the server.
+
+## Connection
+
+- `SILVER_CLI_URL`: explicit target web URL; `--url` overrides it.
+- `SILVER_CLI_USERNAME` and `SILVER_CLI_PASSWORD`: inject both through the caller
+  or secret manager. Never print, persist, or put real passwords in arguments.
+- Each invocation logs in and keeps cookies/CSRF only in memory. The CLI does
+  not read `.env`, guess a URL, or connect to PostgreSQL directly.
+- Prefer HTTPS. Loopback HTTP is allowed; use `--allow-http` for other trusted
+  HTTP targets only when the user has accepted the plaintext transport risk.
+
+## Inspect and repair a failed test
+
+1. Establish the target project with `project list` and `project show PID`.
+   Run `task list PID --status failed` and `task failures PID`; inspect failed
+   and error results, `jdgrslt`, and error messages. Check truncation metadata
+   before claiming all failures were examined.
+2. For a selected task key, run `task show PID TID`,
+   `task failures PID --task TID`, and `task log PID TID --tail 100`.
+   A task key looks like `T000001`. Execution status and judge verdict differ.
+3. Find the matching matrix row using `item list PID --sheet test --page 1
+   --page-size 100`; continue pages as needed. Match the task's `test_id` to the
+   item's case identity, then inspect `item show PID IID` and `steps show PID
+   IID`. Item IDs and task keys are different identifiers.
+4. Save a candidate steps document in a local UTF-8 JSON file; preserve
+   `input_signals`, `expected_signals`, `steps`, and existing project-specific
+   fields. Run `steps set PID IID --json @steps.json --dry-run`. For one field,
+   use `steps edit PID IID --step N --set KEY=VALUE --dry-run`; repeat `--set`
+   for multiple fields. Step positions start at 1. Values parse as JSON when
+   valid, otherwise as text; keys are literal fields rather than dotted paths.
+5. Review the proposed changes under the user's authorized scope. Replace
+   `--dry-run` with `--confirm`, then read `steps show` again. These flags are
+   mutually exclusive. The CLI reads
+   the current item version and PATCHes `{version, changes:{steps:document}}`.
+6. Preview `task rerun PID TID --dry-run`, then use `--confirm` when authorized.
+   Rerun regenerates input from current rows and uses the original model.
+   Check `created`, `skipped`, `missing`, and `errors`; query status, logs, and
+   judge results after execution. Report observed evidence and remaining
+   real-Silver/license validation boundaries.
+
+## Write safety
+
+All writes require `--confirm`, including project creation, steps writes, and
+reruns. First use `--dry-run`: it makes zero network requests, including no
+login and no version read. It validates local input and displays the plan;
+it cannot prove remote business validity. Confirmation permits a request; it
+does not grant permissions or authorize broader changes. Follow the user's
+existing authorization; ask only when the required mutation exceeds it.
+
+Never bypass server permissions, project locks, `COLLAB_ACTIVE`, or the human
+review/apply boundary for generated AI content. On `VERSION_CONFLICT`, stop,
+fetch the latest document, and reconcile; never overwrite by guessing a version
+or retrying automatically. After a network failure during a write, inspect
+remote state before deciding whether another request is necessary. Do not
+automatically repeat reruns, project creation, approval, deletion, or uploads.
+
+## Output and failures
+
+Except for `--help`, stdout is JSON (`success`, `data`, `error`, `request_id`);
+streams use JSON Lines. Inspect both exit status and business data. Never infer
+test PASS from a successful HTTP request, completed task, or finished stream.
+
+| Exit | Action |
+|---|---|
+| 0 | Inspect business payload and verdict; successful request is not test acceptance |
+| 2 | Fix arguments, JSON/file input, missing URL/credentials, or `CONFIRM_REQUIRED`; HTTP 4xx may also use this code |
+| 3 | Fix authentication or invalid login response |
+| 4 | Report insufficient permission; do not elevate or bypass |
+| 5 | Inspect `error.code`: `VERSION_CONFLICT`, another HTTP 409 lock/conflict, or account lock; reconcile before retrying |
+| 6 | Network, redirect, or broken stream; verify whether a write took effect |
+| 7 | Server/protocol failure; preserve `request_id` for diagnosis |
+| 8 | `wait` reached an explicitly configured failure state |
+| 9 | Wait deadline or stream limit; remote work may continue |
+| 130 | Client interrupted; remote work may continue |
+
+For exit 2, `INVALID_JSON` and `INVALID_STEPS` require repairing the local
+document; `INVALID_PAIR` requires valid, unique `KEY=VALUE` assignments.
+`STEP_NOT_FOUND` means the one-based position exceeds the remote document;
+`NOT_FOUND` means the item is absent from this project's live rows. For exit 7,
+`INVALID_RESPONSE` may mean that the remote item has no valid integer version;
+the CLI refuses the write. Preserve the specific code instead of treating all
+failures as a transient connection issue.
+
+Keep server error codes and request IDs in reports. An unavailable `jdgrslt`
+report is missing evidence, not proof of success. Use low-level `wait` only
+after inspecting the server's actual status vocabulary and supplying explicit
+success, failure, and pending states; never invent those states.
