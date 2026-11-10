@@ -32,12 +32,13 @@
         </div>
       </div>
       <div>
-        <div class="mform-cap">上传 dll + sbs + pdb（自动生成 .sil）</div>
+        <div class="mform-cap">上传 dll + sbs + pdb（自动生成 .sil，可选上传子模块 dll/pdb）</div>
         <div class="row wrap">
           <input id="lm-bundle-name" class="ipt" placeholder="名称（可留空，用 dll 文件名）" autocomplete="off">
           <label class="filepick">dll<input type="file" id="lm-bundle-dll" accept=".dll"></label>
           <label class="filepick">sbs<input type="file" id="lm-bundle-sbs" accept=".sbs"></label>
           <label class="filepick">pdb<input type="file" id="lm-bundle-pdb" accept=".pdb"></label>
+          <label class="filepick">子模块 dll/pdb（可选）<input type="file" id="lm-bundle-extra" accept=".dll,.pdb" multiple></label>
           <input id="lm-bundle-version" class="ipt lm-ipt-ver" placeholder="版本号（可留空）" autocomplete="off">
           <button type="button" class="btn btn-primary btn-sm" id="lm-bundle-add">上传并生成 .sil</button>
         </div>

@@ -168,7 +168,7 @@ def _pin_model(task, source, root, workspace):
         text = execution_text.decode("utf-8")
     except UnicodeError as exc:
         raise EvidenceError("Only text saved .sil configurations can be pinned safely") from exc
-    from .project_model_service import ModelError, rewrite_model_module_paths
+    from .project_model_service import ModelError, rewrite_model_module_paths, submodule_refs
     from ..config import BASE_DIR
 
     def replace(match):
@@ -196,6 +196,32 @@ def _pin_model(task, source, root, workspace):
     except ModelError as exc:
         raise EvidenceError(str(exc)) from exc
     executable.write_bytes(execution.encode("utf-8"))
+
+    # Silver sub_module() references inside a copied .sbs are invisible to the
+    # .sil module line, so the replace() loop above never copies them. Scan
+    # every pinned .sbs for sub_module(<name>.dll) and copy that dependency
+    # (plus its .pdb) from the model directory, keeping the attempt
+    # self-contained for MCU+DSP coupled bundles (host.dll + dsp.dll).
+    for sbs_file in sorted(target_root.glob("*.sbs")):
+        for raw in submodule_refs(sbs_file):
+            dep_ref = Path(raw.replace("\\", "/"))
+            if dep_ref.is_absolute() or dep_ref.drive:
+                raise EvidenceError(f"Saved model sub_module path must be relative: {raw}")
+            dep_path = checked_path(model_root, model_root / dep_ref)
+            if not dep_path.is_file():
+                raise EvidenceError(
+                    f"Saved model sub_module dependency is missing: {raw}")
+            dep_destination = checked_path(target_root, target_root / dep_ref)
+            if dep_destination.exists() and dep_destination.read_bytes() != dep_path.read_bytes():
+                raise EvidenceError("Saved model sub_module dependency name collision")
+            dep_destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(dep_path, dep_destination)
+            dep_symbols = dep_path.with_suffix(".pdb")
+            if dep_symbols.is_file():
+                checked_path(model_root, dep_symbols, exists=True)
+                symbols_destination = checked_path(target_root, dep_destination.with_suffix(".pdb"))
+                shutil.copy2(dep_symbols, symbols_destination)
+
     return {"id": getattr(task, "sil_model_id", None), "name": task.sil_name or "",
             "version": task.sil_version or "", "source_path": source_path,
             "sha256": hashlib.sha256(original).hexdigest(),

@@ -140,7 +140,7 @@ def _steps_list(body: dict) -> list:
 # Value cells encode ``和名(識別子)`` (full- or half-width parens); an expected /
 # input cell of ``-`` or blank means "no check / no input on this step".
 # --------------------------------------------------------------------------- #
-_PAREN_RE = re.compile(r"^(?P<jname>.*?)[（(]\s*(?P<ident>[^（）()]+?)\s*[)）]\s*$")
+_PAREN_RE = re.compile(r"^(?P<jname>[^（）()]+?)[（(]\s*(?P<ident>.+)\s*[)）]\s*$", re.DOTALL)
 # An interval / range cell such as "[0,50)" or "(0,50]" — optionally carrying a
 # 和名 prefix like "カウント開始[0,65535)" — is detected here so the paren-splitter
 # above neither strips its brackets nor mistakes "(lo,hi)" for a single

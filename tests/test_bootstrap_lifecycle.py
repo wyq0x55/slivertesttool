@@ -47,3 +47,74 @@ def test_bootstrap_app_is_idempotent(app_ctx):
 
     with app_ctx.app_context():
         assert LMUser.query.filter_by(is_system_admin=True).count() == 1
+
+
+def test_migrate_data_job_status_check(app_ctx):
+    import pytest
+    from sqlalchemy import text
+    from sqlalchemy.exc import IntegrityError
+    from app.bootstrap import reconcile_schema
+    from app.extensions import db
+    from app.models import DataJob, Project
+
+    with app_ctx.app_context():
+        if db.engine.dialect.name != "postgresql":
+            pytest.skip("PostgreSQL check constraint migration requires PostgreSQL")
+
+        # Simulate legacy constraint
+        with db.engine.begin() as conn:
+            conn.execute(text("""
+                ALTER TABLE lm_data_jobs
+                DROP CONSTRAINT IF EXISTS lm_data_jobs_status_check;
+
+                ALTER TABLE lm_data_jobs
+                ADD CONSTRAINT lm_data_jobs_status_check
+                CHECK (status IN ('pending', 'running', 'success', 'failed', 'cancelled'));
+            """))
+
+        # Reconcile schema should upgrade the constraint
+        reconcile_schema()
+
+        with db.engine.connect() as conn:
+            definition = conn.execute(text("""
+                SELECT pg_get_constraintdef(oid)
+                FROM pg_constraint
+                WHERE conrelid = 'lm_data_jobs'::regclass
+                  AND conname = 'lm_data_jobs_status_check'
+            """)).scalar()
+
+        assert definition is not None
+        assert "'previewed'" in definition
+        assert "'completed'" in definition
+
+        project = Project.query.first()
+        if not project:
+            project = Project(code="PTEST_MIGRATE", name="Migrate Test")
+            db.session.add(project)
+            db.session.commit()
+
+        job = DataJob(
+            project_id=project.id,
+            job_type="import",
+            status="previewed",
+        )
+        db.session.add(job)
+        db.session.commit()
+
+        job.status = "completed"
+        db.session.commit()
+
+        db.session.delete(job)
+        db.session.commit()
+
+        # Invalid status should still be rejected by the constraint
+        bad_job = DataJob(
+            project_id=project.id,
+            job_type="import",
+            status="invalid_status",
+        )
+        db.session.add(bad_job)
+        with pytest.raises(IntegrityError):
+            db.session.commit()
+        db.session.rollback()
+

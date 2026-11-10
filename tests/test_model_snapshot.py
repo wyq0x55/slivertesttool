@@ -265,14 +265,14 @@ def test_default_resolution_uses_the_selected_default_row(app, tmp_path):
     db.session.commit()
     sil = _remote_model(tmp_path)
     first = pms.add_path_model(project.id, "engine", str(sil), version="v1")
-    pms.add_path_model(project.id, "engine", str(sil), version="v2")
+    second = pms.add_path_model(project.id, "engine", str(sil), version="v2")
     db.session.get(ProjectModel, first["id"]).is_current = False
     db.session.commit()
 
     model_id, _, version, _ = pms.resolve_ref(project.id, "")
 
-    assert model_id == first["id"]
-    assert version == "v1"
+    assert model_id == second["id"]
+    assert version == "v2"
 
 
 def test_writeback_uses_the_task_snapshot_not_the_registry(app):

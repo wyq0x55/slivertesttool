@@ -222,6 +222,8 @@ def execute(args, secrets):
         document = None
         if action != "set":
             document = item.get("steps")
+            if isinstance(document, str):
+                document = json.loads(document)
             if document is None:
                 document = {"input_signals": [], "expected_signals": [], "steps": []}
             document = _document(document)

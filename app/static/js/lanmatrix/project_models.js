@@ -170,12 +170,16 @@
     fd.append("dll", dll, dll.name);
     fd.append("sbs", sbs, sbs.name);
     fd.append("pdb", pdb, pdb.name);
+    for (const file of $("lm-bundle-extra").files) {
+      fd.append("extra", file, file.name);
+    }
     const btn = $("lm-bundle-add");
     btn.disabled = true;
     try {
       const data = await LMApi.uploadProjectModel(pid, fd);
       $("lm-bundle-name").value = "";
       $("lm-bundle-dll").value = ""; $("lm-bundle-sbs").value = ""; $("lm-bundle-pdb").value = "";
+      $("lm-bundle-extra").value = "";
       if (bVerEl) { bVerEl.value = ""; }
       render(data.models || []);
       toast("已上传并生成 .sil", true);

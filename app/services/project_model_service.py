@@ -202,12 +202,15 @@ def default_model(project_id: int) -> Optional[dict]:
     """The model a project runs tests with by default.
 
     The user-selected *current* model wins; if none is flagged (older data), the
-    oldest model is used so a project with any model always resolves a default.
+    newest non-deprecated model wins, or the newest model if all are deprecated.
     """
     row = (_query(project_id).filter_by(is_current=True)
-           .order_by(ProjectModel.id.asc()).first())
+           .order_by(ProjectModel.id.desc()).first())
     if row is None:
-        row = _query(project_id).order_by(ProjectModel.id.asc()).first()
+        row = (_query(project_id).filter_by(deprecated_at=None)
+               .order_by(ProjectModel.id.desc()).first())
+    if row is None:
+        row = _query(project_id).order_by(ProjectModel.id.desc()).first()
     if row is None:
         return None
     return {
@@ -244,6 +247,47 @@ _MODULE_PATH_RE = re.compile(
     r"(?P<path>(?:[A-Za-z]:[\\/]|\\\\)?[^\s\"'<>]+\.(?:dll|sbs|pdb))",
     re.IGNORECASE,
 )
+
+
+def submodule_refs(sbs_path: Path):
+    """Read child DLL references, ignoring whole-line SBS comments."""
+    pattern = re.compile(
+        r"\bsub_module\(\s*(?:\"([^\"]+\.dll)\"|'([^']+\.dll)'|([^\s()]+\.dll))\s*\)",
+        re.IGNORECASE,
+    )
+    for line in sbs_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if line.lstrip().startswith(("//", "#", "*")):
+            continue
+        for match in pattern.finditer(line):
+            yield next(group for group in match.groups() if group is not None)
+
+
+def _submodule_path(root: Path, raw: str) -> Path:
+    """Resolve a child dependency strictly within its model directory."""
+    ref = Path(raw.replace("\\", "/"))
+    candidate = (root / ref).resolve()
+    try:
+        candidate.relative_to(root.resolve())
+        if ref.is_absolute() or ref.drive:
+            raise ValueError(raw)
+    except ValueError as exc:
+        raise ModelError(f"子模块文件路径不能超出模型目录：{raw}") from exc
+    return candidate
+
+
+def _copy_submodules(source_root: Path, dest_root: Path) -> None:
+    for sbs in sorted(dest_root.glob("*.sbs")):
+        for raw in submodule_refs(sbs):
+            source = _submodule_path(source_root, raw)
+            if not source.is_file():
+                raise ModelError(f"找不到子模块文件：{raw}")
+            target = _submodule_path(dest_root, raw)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            symbols = source.with_suffix(".pdb")
+            if symbols.is_file():
+                _submodule_path(source_root, str(symbols.relative_to(source_root.resolve())))
+                shutil.copy2(symbols, target.with_suffix(".pdb"))
 
 
 def rewrite_model_module_paths(original: str, replace) -> str:
@@ -387,6 +431,11 @@ def _materialise_saved_model(config, project_id: int, name: str, version: str,
 
         sil_dest = dest_root / source_sil.name
         sil_dest.write_bytes(rewrite_model_module_paths(original, _replace).encode("utf-8"))
+        try:
+            _copy_submodules(source_sil.parent, dest_root)
+        except Exception:
+            shutil.rmtree(dest_root, ignore_errors=True)
+            raise
         return sil_dest
 
     sil_dest = dest_root / source_sil.name
@@ -395,6 +444,11 @@ def _materialise_saved_model(config, project_id: int, name: str, version: str,
         companion = source_sil.with_name(source_sil.stem + ext)
         if companion.is_file():
             shutil.copy2(companion, dest_root / companion.name)
+    try:
+        _copy_submodules(source_sil.parent, dest_root)
+    except Exception:
+        shutil.rmtree(dest_root, ignore_errors=True)
+        raise
     return sil_dest
 
 
@@ -593,6 +647,11 @@ def set_deprecated(project_id: int, name: str, deprecated: bool,
     if deprecated and target.is_current:
         # A deprecated model must not stay the default anyone runs against.
         target.is_current = False
+        replacement = (_query(project_id).filter(
+            ProjectModel.id != target.id, ProjectModel.deprecated_at.is_(None))
+            .order_by(ProjectModel.id.desc()).first())
+        for row in _query(project_id).all():
+            row.is_current = replacement is not None and row.id == replacement.id
     db.session.commit()
     return target.to_dict(include_path=True)
 
@@ -639,12 +698,16 @@ def add_path_model(project_id: int, name: str, path: str,
     from flask import current_app
     saved = _materialise_saved_model(
         current_app.config_obj, project_id, name, version, source)
-    first = not has_models(project_id)
+    for previous in _query(project_id).all():
+        previous.is_current = False
     row = ProjectModel(project_id=project_id, name=name, kind="path",
                        sil_path=str(saved), created_by=created_by,
-                       is_current=first, version=version or None,
+                       is_current=True, version=version or None,
                        version_note=(version_note or "").strip())
     db.session.add(row)
+    db.session.flush()
+    _query(project_id).filter(ProjectModel.id != row.id).update(
+        {ProjectModel.is_current: False}, synchronize_session="fetch")
     db.session.commit()
     return row.to_dict(include_path=True)
 
@@ -654,7 +717,8 @@ def add_bundle_model(project_id: int, name: str, dll: FileStorage,
                      pdb: Optional[FileStorage] = None,
                      created_by: Optional[int] = None,
                      version: Optional[str] = None,
-                     version_note: Optional[str] = None) -> dict:
+                     version_note: Optional[str] = None,
+                     extra: Optional[List[FileStorage]] = None) -> dict:
     """Store an uploaded ``dll`` + ``sbs`` (+ ``pdb``) set and generate the ``.sil``.
 
     A per-project model directory is created and all uploaded files are saved
@@ -689,6 +753,17 @@ def add_bundle_model(project_id: int, name: str, dll: FileStorage,
         name = Path(dll_name).stem or "model"
     _validate_identity(project_id, name, version)
 
+    extra_files = []
+    filenames = {dll_name.lower(), sbs_name.lower(), pdb_name.lower()}
+    for upload in extra or []:
+        filename = _safe_filename(upload.filename, "extra")
+        if Path(filename).suffix.lower() not in (".dll", ".pdb"):
+            raise ModelError(f"子模块附件必须是 .dll 或 .pdb：{filename}")
+        if filename.lower() in filenames:
+            raise ModelError(f"上传文件名重复：{filename}")
+        filenames.add(filename.lower())
+        extra_files.append((upload, filename))
+
     seg = _version_dir_name(name, version)
     model_dir = _new_model_dir(config, project_id, name, version)
 
@@ -696,6 +771,32 @@ def add_bundle_model(project_id: int, name: str, dll: FileStorage,
         dll.save(str(model_dir / dll_name))
         sbs.save(str(model_dir / sbs_name))
         pdb.save(str(model_dir / pdb_name))
+        for upload, filename in extra_files:
+            upload.save(str(model_dir / filename))
+        destinations = {}
+        for raw in submodule_refs(model_dir / sbs_name):
+            destination = _submodule_path(model_dir, raw)
+            key = destination.name.lower()
+            if key in destinations and destinations[key] != destination:
+                raise ModelError(f"子模块文件名不能用于多个目录：{raw}")
+            destinations[key] = destination
+        for key, destination in destinations.items():
+            if destination.is_file():
+                continue
+            matches = [model_dir / filename for _, filename in extra_files
+                       if Path(filename).suffix.lower() == ".dll"
+                       and filename.lower() == key]
+            if len(matches) != 1 or not matches[0].is_file():
+                raw = destination.relative_to(model_dir.resolve()).as_posix()
+                raise ModelError(f"缺少子模块文件 {raw}，请上传该 dll 及其 pdb 文件。")
+            child = matches[0]
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            child.rename(destination)
+            for _, filename in extra_files:
+                if filename.lower() == child.with_suffix(".pdb").name.lower():
+                    symbols_destination = _submodule_path(
+                        model_dir, str(destination.with_suffix(".pdb").relative_to(model_dir.resolve())))
+                    (model_dir / filename).rename(symbols_destination)
         sil_path = model_dir / f"{seg}.sil"
         dll_ref = _module_ref(model_dir / dll_name)
         sbs_ref = _module_ref(model_dir / sbs_name)
@@ -704,13 +805,17 @@ def add_bundle_model(project_id: int, name: str, dll: FileStorage,
         shutil.rmtree(model_dir, ignore_errors=True)
         raise
 
-    first = not has_models(project_id)
+    for previous in _query(project_id).all():
+        previous.is_current = False
     row = ProjectModel(project_id=project_id, name=name, kind="bundle",
                        sil_path=str(sil_path), bundle_dir=str(model_dir),
-                       created_by=created_by, is_current=first,
+                       created_by=created_by, is_current=True,
                        version=version or None,
                        version_note=(version_note or "").strip())
     db.session.add(row)
+    db.session.flush()
+    _query(project_id).filter(ProjectModel.id != row.id).update(
+        {ProjectModel.is_current: False}, synchronize_session="fetch")
     db.session.commit()
     return row.to_dict(include_path=True)
 
@@ -726,12 +831,13 @@ def remove_model(project_id: int, name: str,
         shutil.rmtree(row.bundle_dir, ignore_errors=True)
     db.session.delete(row)
     db.session.flush()
-    # Deleting the current model promotes the oldest survivor so the project
+    # Deleting the current model promotes the newest active survivor so the project
     # keeps a well-defined model to run tests with.
     if was_current:
-        nxt = _query(project_id).order_by(ProjectModel.id.asc()).first()
-        if nxt is not None:
-            nxt.is_current = True
+        nxt = (_query(project_id).filter_by(deprecated_at=None)
+               .order_by(ProjectModel.id.desc()).first())
+        for survivor in _query(project_id).all():
+            survivor.is_current = nxt is not None and survivor.id == nxt.id
     db.session.commit()
     return True
 

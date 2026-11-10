@@ -1006,8 +1006,10 @@
     catch (ex) { toast(ex.message, false); }
   });
 
+  let modelManuallyChanged = false;
   function renderModels(models) {
     const sel = $("lm-model");
+    if (modelManuallyChanged) return;
     if (!models.length) {
       sel.innerHTML = '<option value="">（无已注册模型）</option>';
       return;
@@ -1016,17 +1018,20 @@
     // whatever is registered right now", so a build that lands between opening
     // the page and pressing 提交 is attributed to the commit the user thought
     // they picked. The pinned ref makes that a 409 instead of wrong evidence.
+    const current = models.filter((m) => m.is_current);
+    const active = models.filter((m) => m.deprecated !== true);
+    const candidates = current.length ? current : (active.length ? active : models);
+    const chosen = candidates.reduce((newest, m) => Number(m.id) > Number(newest.id) ? m : newest);
     sel.innerHTML = models.map((m) => {
       const value = m.ref || m.name;
       const label = m.ref_short || m.version_short
         ? (m.ref_short || `${m.name}@${m.version_short}`)
         : m.name;
-      return `<option value="${esc(value)}"${m.is_current ? " selected" : ""}>` +
+      return `<option value="${esc(value)}"${m === chosen ? " selected" : ""}>` +
         `${esc(label)}${m.is_current ? "（当前模型）" : ""}` +
         `${m.exists === false ? "（服务器缺失）" : ""}</option>`;
     }).join("");
-    const cur = models.find((m) => m.is_current);
-    if (cur) sel.value = cur.ref || cur.name;
+    sel.value = chosen.ref || chosen.name;
   }
   function renderLicense(lic) {
     if (!lic) { $("lm-license").textContent = ""; return; }
@@ -1135,7 +1140,19 @@
     stdlibEntries = scanAux($("lm-stdlib").files); rescanAndRender();
   });
   const pfModelSel = $("lm-model");
-  if (pfModelSel) pfModelSel.addEventListener("change", refreshPreflight);
+  if (pfModelSel) pfModelSel.addEventListener("change", () => {
+    modelManuallyChanged = true;
+    refreshPreflight();
+  });
+  document.addEventListener("visibilitychange", async () => {
+    if (document.visibilityState !== "visible" || modelManuallyChanged) return;
+    try {
+      const data = await LMApi.listProjectModels(pid);
+      lastModels = data.models || [];
+      renderModels(lastModels);
+      refreshPreflight();
+    } catch (ex) { toast(ex.message, false); }
+  });
   if (window.LMApi && typeof LMApi.taskPreflight === "function") {
     LMApi.taskPreflight(pid).then((d) => {
       pfVocab = { stdlib: d.stdlib || [], silver_roots: d.silver_roots || [] };

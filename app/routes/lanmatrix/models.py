@@ -79,7 +79,8 @@ def upload_project_model(project_id):
     try:
         entry = project_model_service.add_bundle_model(
             project_id, request.form.get("name", ""), dll, sbs,
-            current_app.config_obj, pdb=pdb, created_by=g.user.id,
+            current_app.config_obj, pdb=pdb, extra=request.files.getlist("extra"),
+            created_by=g.user.id,
             version=request.form.get("version"),
             version_note=request.form.get("version_note"))
     except project_model_service.ModelError as exc:

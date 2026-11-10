@@ -898,6 +898,16 @@ class AuditLog(db.Model):
 # --------------------------------------------------------------------------- #
 class DataJob(db.Model):
     __tablename__ = "lm_data_jobs"
+    __table_args__ = (
+        db.CheckConstraint(
+            "job_type IN ('import', 'export')",
+            name="lm_data_jobs_job_type_check",
+        ),
+        db.CheckConstraint(
+            "status IN ('pending', 'running', 'previewed', 'completed', 'success', 'failed', 'cancelled')",
+            name="lm_data_jobs_status_check",
+        ),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     project_id = db.Column(db.Integer, db.ForeignKey("lm_projects.id", ondelete="CASCADE"),

@@ -138,6 +138,12 @@ def test_split_cell_recognises_prefixed_and_bare_intervals():
     # A plain 和名(識別子) cell (no comma) is NOT an interval.
     assert split("速度(V_MAX)") == ("速度", "V_MAX")
     assert split("V_MAX") == ("", "V_MAX")
+    # Nested parentheses in expression are preserved as identifier.
+    assert split("右侧座席域X-150mm((SILS_CABIN_X_MAX - 600)*10)") == \
+        ("右侧座席域X-150mm", "(SILS_CABIN_X_MAX - 600)*10")
+    assert split("OFF(0)") == ("OFF", "0")
+    assert split("((SILS_CABIN_X_MAX - 600)*10)") == \
+        ("", "((SILS_CABIN_X_MAX - 600)*10)")
 
 
 def test_runner_resolves_const_bounds_and_bracket_inclusivity():
@@ -166,8 +172,37 @@ def test_end_to_end_prefixed_interval():
     assert run._parse_interval(ident, consts) == (0, 65535, True, False)
 
 
+def test_runner_resolves_labeled_and_nested_expressions():
+    import pytest
+    run = _load_runner_defs()
+    consts = {"SILS_CABIN_X_MAX": 1080, "V_MAX": 120}
+
+    # Direct resolution of labeled expression
+    cell = "右侧座席域X-150mm((SILS_CABIN_X_MAX - 600)*10)"
+    assert run._resolve_single(cell, consts) == 4800
+    assert run._resolve_value(cell, consts) == 4800
+
+    # Full-width parens
+    cell_fw = "右侧座席域X-150mm（(SILS_CABIN_X_MAX - 600)*10）"
+    assert run._resolve_single(cell_fw, consts) == 4800
+
+    # Simple label with literal or const
+    assert run._resolve_single("OFF(0)", consts) == 0
+    assert run._resolve_single("速度(V_MAX)", consts) == 120
+
+    # Pure expressions
+    assert run._resolve_single("((SILS_CABIN_X_MAX - 600)*10)", consts) == 4800
+
+    # Unknown identifiers still raise KeyError
+    with pytest.raises(KeyError):
+        run._resolve_single("UNKNOWN_CONST", consts)
+    with pytest.raises(KeyError):
+        run._resolve_single("说明(UNKNOWN_CONST + 1)", consts)
+
+
 if __name__ == "__main__":
     test_split_cell_recognises_prefixed_and_bare_intervals()
     test_runner_resolves_const_bounds_and_bracket_inclusivity()
     test_end_to_end_prefixed_interval()
+    test_runner_resolves_labeled_and_nested_expressions()
     print("all silver_json interval regression tests passed")

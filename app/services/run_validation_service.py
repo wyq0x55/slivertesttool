@@ -44,7 +44,7 @@ def _parser():
         "_resolve_value", "_resolve_arg", "build_steps", "_param_names",
     }
     assignments = {"_BIN_OPS", "_UNARY_OPS", "_OP_PREFIXES", "_INTERVAL_RE",
-                   "_INF_LO", "_INF_HI"}
+                   "_INF_LO", "_INF_HI", "_LABEL_EXPR_RE"}
     namespace = {"ast": ast, "_operator": operator, "re": re,
                  "unicodedata": unicodedata,
                  **{name: getattr(framework, name)

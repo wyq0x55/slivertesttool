@@ -240,6 +240,7 @@ def _migrate_schema() -> None:
     _migrate_widen_testitem_uuid(existing_tables, inspector)
     _migrate_user_fk_ondelete(inspector)
     _migrate_testitem_field_keys(existing_tables)
+    _migrate_data_job_status_check(existing_tables)
 
 
 def _migrate_model_version_identity(existing_tables) -> None:
@@ -262,6 +263,43 @@ def _migrate_model_version_identity(existing_tables) -> None:
         conn.execute(text(
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_model_project_name_version_norm "
             "ON lm_project_models (project_id, name, COALESCE(version, ''))"))
+
+
+def _migrate_data_job_status_check(existing_tables) -> None:
+    """Widen lm_data_jobs_status_check to accept previewed and completed states.
+
+    Legacy schema initialisation restricted lm_data_jobs.status to
+    ('pending', 'running', 'success', 'failed', 'cancelled'). Importing
+    spreadsheets creates preview jobs with status 'previewed' and finalises them
+    with 'completed', which failed with CheckViolation on existing databases.
+    """
+    if "lm_data_jobs" not in existing_tables:
+        return
+    if db.engine.dialect.name != "postgresql":
+        return
+    from sqlalchemy import text
+
+    with db.engine.connect() as conn:
+        current_def = conn.execute(text("""
+            SELECT pg_get_constraintdef(oid)
+            FROM pg_constraint
+            WHERE conrelid = 'lm_data_jobs'::regclass
+              AND conname = 'lm_data_jobs_status_check'
+        """)).scalar()
+
+    if current_def and "'previewed'" in current_def and "'completed'" in current_def:
+        return
+
+    with db.engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE lm_data_jobs "
+            "DROP CONSTRAINT IF EXISTS lm_data_jobs_status_check"
+        ))
+        conn.execute(text(
+            "ALTER TABLE lm_data_jobs "
+            "ADD CONSTRAINT lm_data_jobs_status_check "
+            "CHECK (status IN ('pending', 'running', 'previewed', 'completed', 'success', 'failed', 'cancelled'))"
+        ))
 
 
 def _migrate_widen_testitem_uuid(existing_tables, inspector) -> None:

@@ -281,6 +281,10 @@ _INTERVAL_RE = re.compile(
 _INF_LO = ('', '-inf', '-\u221e', '\u221e-')            # empty, -inf, -∞
 _INF_HI = ('', 'inf', '+inf', '\u221e', '+\u221e')      # empty, inf, +∞
 
+# A human-readable label with a bracketed expression/value, e.g.
+# "右侧座席域X-150mm((SILS_CABIN_X_MAX - 600)*10)", "OFF(0)", "正常(0x00)".
+_LABEL_EXPR_RE = re.compile(r'^[^\(\)（）]+[\(（](.+)[\)）]$', re.DOTALL)
+
 
 def _looks_like_interval(text):
     """True when ``text`` (as-is) is bracketed like an interval cell."""
@@ -339,10 +343,22 @@ def _resolve_single(s, consts):
         return _const_value(consts[s])
     try:
         return _eval_expr(s, consts)
-    except KeyError:
-        raise
     except Exception:
-        raise KeyError('Unknown constant name in JSON: %r' % s)
+        pass
+
+    # Fallback: a human-readable label with a bracketed expression or value,
+    # e.g. "右侧座席域X-150mm((SILS_CABIN_X_MAX - 600)*10)" or "OFF(0)".
+    m = _LABEL_EXPR_RE.match(s)
+    if m:
+        inner = unicodedata.normalize('NFKC', m.group(1).strip())
+        if inner in consts:
+            return _const_value(consts[inner])
+        try:
+            return _eval_expr(inner, consts)
+        except Exception:
+            pass
+
+    raise KeyError('Unknown constant name in JSON: %r' % s)
 
 
 def _resolve_value(raw, consts):
