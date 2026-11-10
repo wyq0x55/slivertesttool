@@ -187,13 +187,36 @@ def _staging_token(test_id: str) -> str:
     return os.path.normcase(safe_tid(test_id))
 
 
-def active_submission(project_id: Optional[int], test_id: str) -> Optional[Task]:
+class TaskStillActive(ValueError):
+    """A live attempt owns the task's staging directory."""
+
+
+def task_is_executing(task: Task) -> bool:
+    from .run_recovery_service import is_run_pending
+
+    return (task.status == TaskStatus.RUNNING.value
+            or (task.status == TaskStatus.QUEUED.value
+                and is_run_pending(task.id, task.run_count or 1)))
+
+
+def active_submission(project_id: Optional[int], test_id: str, *, require_live=False,
+                      resetting_task_id: Optional[int] = None) -> Optional[Task]:
     candidates = (live(Task.query).filter(
         Task.project_id == project_id,
         Task.status.in_([TaskStatus.QUEUED.value, TaskStatus.RUNNING.value]))
-        .populate_existing().order_by(Task.id.desc()).all())
+        .populate_existing().order_by(Task.id.desc()))
+    if require_live:
+        candidates = candidates.with_for_update()
     token = _staging_token(test_id)
-    return next((task for task in candidates if _staging_token(task.test_id) == token), None)
+    candidates = candidates.all()
+    if require_live:
+        # Only resetting the same row fences a dequeued worker via run_count.
+        # Other queued rows may already be waiting for a license off-queue.
+        candidates.sort(key=lambda task: task.id == resetting_task_id)
+    return next((task for task in candidates
+                 if _staging_token(task.test_id) == token
+                 and (not require_live or task.id != resetting_task_id
+                      or task_is_executing(task))), None)
 
 
 def fail_submission(task_id: int, run_count: int, message: str) -> None:
@@ -263,13 +286,14 @@ def requeue_task(
     a *different* row. The user then watches an untouched task and concludes the
     button is broken.
 
-    Raises :class:`ValueError` if the task is still queued or running; a live
+    Raises :class:`TaskStillActive` if an attempt is still queued or running; a live
     run must not be reset underneath the worker executing it.
     """
     lock_submission(task.project_id, task.test_id)
     db.session.refresh(task)
-    if active_submission(task.project_id, task.test_id) is not None:
-        raise ValueError("任务仍在队列或执行中，无需重新测试。")
+    if active_submission(task.project_id, task.test_id, require_live=True,
+                         resetting_task_id=task.id) is not None:
+        raise TaskStillActive("任务仍在队列或执行中，无需重新测试。")
     _reset_for_run(
         task,
         task_name=task_name or task.task_name or task.test_id,
@@ -295,6 +319,7 @@ def upsert_task(
     project_id: Optional[int] = None,
     submitter_id: Optional[int] = None,
     commit: bool = True,
+    recover_stale: bool = False,
 ) -> tuple[Task, bool]:
     """Create or re-queue the task for ``(project_id, test_id)``.
 
@@ -305,12 +330,15 @@ def upsert_task(
     not clobbered mid-flight. When no task exists yet a fresh one is created.
     """
     lock_submission(project_id, test_id)
-    active = active_submission(project_id, test_id)
+    existing = find_task_by_test_id(test_id, project_id=project_id) if recover_stale else None
+    active = active_submission(project_id, test_id, require_live=recover_stale,
+                               resetting_task_id=existing.id if existing else None)
     if active is not None:
         if commit:
             db.session.commit()
         return active, False
-    existing = find_task_by_test_id(test_id, project_id=project_id)
+    if not recover_stale:
+        existing = find_task_by_test_id(test_id, project_id=project_id)
     if existing is None:
         return create_task(
             task_name=task_name, file_name=file_name, submitter=submitter,
@@ -319,7 +347,7 @@ def upsert_task(
             workspace=workspace, project_id=project_id, submitter_id=submitter_id,
             commit=commit), True
 
-    if TaskStatus(existing.status) in (TaskStatus.QUEUED, TaskStatus.RUNNING):
+    if not recover_stale and TaskStatus(existing.status) in (TaskStatus.QUEUED, TaskStatus.RUNNING):
         return existing, False
 
     _reset_for_run(

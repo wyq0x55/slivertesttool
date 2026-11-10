@@ -11,6 +11,24 @@ from ..models import RunEvidence, Setting, Task, TaskStatus
 from . import run_evidence_service as evidence
 
 
+def is_run_pending(task_id, run_count):
+    """Check Huey's published jobs using the recovery attempt identity.
+
+    Include scheduled license retries as well as pending jobs. MemoryHuey is
+    safe for isolated tests; never query PostgreSQL storage from SQLite tests.
+    Queue read failures propagate rather than declaring a live attempt stale.
+    """
+    from ..jobqueue import huey
+    from ..jobqueue.tasks import run_task
+    from huey.storage import MemoryStorage
+
+    if db.engine.dialect.name != "postgresql" and not isinstance(huey.storage, MemoryStorage):
+        raise RuntimeError("Queue liveness requires PostgreSQL or MemoryHuey")
+    return any(isinstance(job, run_task.task_class)
+               and tuple(job.args) == (task_id, run_count)
+               for job in (*huey.pending(), *huey.scheduled()))
+
+
 def _validate_limit(limit):
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
         raise ValueError("Recovery limit must be between 1 and 1000")

@@ -292,7 +292,8 @@ def run_selected_tasks(project_id):
                 submitter=submitter, test_id=test_id,
                 sil_relpath=sil_ref, sil_name=model_name,
                 sil_version=model_version, sil_model_id=model_id, workspace="",
-                project_id=project.id, submitter_id=g.user.id, commit=False)
+                project_id=project.id, submitter_id=g.user.id, commit=False,
+                recover_stale=True)
             if not started:
                 duplicates.append({"test_id": test_id, "task_id": task.task_key})
                 db.session.rollback()
@@ -327,8 +328,8 @@ def rerun_selected_tasks(project_id):
     Each chosen task is re-run with the model it was originally submitted with:
     the JSON-runner inputs are regenerated from the current project ``test`` /
     ``lib`` / ``const`` sheet rows and the task row is reset to QUEUED and
-    enqueued (the stored result is overwritten). Tasks already QUEUED/RUNNING
-    are skipped (they are still in the queue), and tasks whose ``test_id`` no
+    enqueued (the stored result is overwritten). Live attempts are skipped,
+    stale queued rows can be retried, and tasks whose ``test_id`` no
     longer exists in the project sheets are reported as missing.
     """
     import shutil
@@ -373,9 +374,6 @@ def rerun_selected_tasks(project_id):
         if task is None:
             missing.append({"task_id": key, "error": "任务不存在"})
             continue
-        if TaskStatus(task.status) in (TaskStatus.QUEUED, TaskStatus.RUNNING):
-            skipped.append({"task_id": key, "test_id": task.test_id})
-            continue
         test_id = task.test_id
         row = by_test_id.get(test_id)
         if row is None:
@@ -389,11 +387,6 @@ def rerun_selected_tasks(project_id):
         model_version = (task.sil_version or "").strip()
         model_id = task.sil_model_id
         sil_ref = (task.sil_relpath or "").strip()
-        if not sil_ref or not Path(sil_ref).is_file():
-            errors.append({"task_id": key, "test_id": test_id,
-                           "error": "保存的模型副本不存在"})
-            continue
-
         committed_attempt = None
         try:
             # requeue_task (not upsert_task): upsert resolves its target by
@@ -405,6 +398,8 @@ def rerun_selected_tasks(project_id):
                 sil_version=model_version, sil_model_id=model_id,
                 workspace=str(proj_root), task_name=test_id,
                 submitter=submitter, submitter_id=g.user.id, commit=False)
+            if not sil_ref or not Path(sil_ref).is_file():
+                raise ValueError("保存的模型副本不存在")
             case_dir = run_layout.staging_dir(proj_root, test_id) / test_id
             run_evidence_service.validate_segment(test_id)
             run_evidence_service.checked_path(proj_root, case_dir)
@@ -416,7 +411,7 @@ def rerun_selected_tasks(project_id):
             _enqueue_task(task)
             created.append({"test_id": test_id, "task_id": task.task_key,
                             "run_count": task.run_count})
-        except ValueError as exc:
+        except task_service.TaskStillActive as exc:
             db.session.rollback()
             if committed_attempt is not None:
                 task_service.fail_submission(*committed_attempt, str(exc))

@@ -401,14 +401,17 @@
     try {
       const data = await LMApi.rerunSelectedTasks(pid, eligible);
       const n = (data.created || []).length;
-      const skipped = (data.skipped || []).length;
+      const skipped = (data.skipped || []);
       const missing = (data.missing || []).length;
       const errs = (data.errors || []).length;
       let msg = `已重新加入队列 ${n} 个任务`;
       const extra = [];
-      if (skipped) extra.push(`跳过 ${skipped} 个（已在队列）`);
+      if (skipped.length) {
+        const reasons = [...new Set(skipped.map((entry) => entry.error || "已在队列"))];
+        extra.push(`跳过 ${skipped.length} 个（${reasons.join("；")}）`);
+      }
       if (missing) extra.push(`${missing} 个 test id 已失效`);
-      if (errs) extra.push(`${errs} 个失败`);
+      if (errs) extra.push(`${errs} 个失败：${(data.errors || []).map((entry) => entry.error || "未知错误").join("；")}`);
       if (extra.length) msg += `，${extra.join("，")}`;
       toast(msg, n > 0);
       load();
@@ -953,6 +956,9 @@
           const missing = (res.missing || []);
           if (errors.length) throw new Error(errors[0].error || "入队失败");
           if (missing.length) throw new Error("未找到该 test_id 对应的测试行");
+          if (!(res.created || []).length) {
+            throw new Error((res.duplicates || [])[0]?.error || "任务仍在队列或执行中，无需重复入队");
+          }
           toast(`已入队测试 ${id}`, true);
           load();
           return res;

@@ -86,6 +86,7 @@ def test_run_selected_keeps_the_active_staging_directory(app, monkeypatch):
     from app.runners import run_layout
 
     user, project, task = _seed(app)
+    monkeypatch.setattr("app.services.run_recovery_service.is_run_pending", lambda *_: True)
     staging = run_layout.staging_dir(task.workspace, task.test_id) / task.test_id
     staging.mkdir(parents=True)
     marker = staging / "marker.txt"
