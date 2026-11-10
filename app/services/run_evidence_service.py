@@ -161,6 +161,14 @@ def _pin_model(task, source, root, workspace):
     target_root = root / "model"
     target_root.mkdir()
     (target_root / "approved.sil").write_bytes(original)
+    # Dependencies must be read from the ORIGINAL registered model directory.
+    # On a rerun ``model_root`` is the previous attempt's ``.evidence/N/model``
+    # directory, so resolving from it freezes every build artifact at the
+    # version captured by the first pin: rebuilding dsp.dll then had no effect
+    # (runs 5-9 all reused the identical dsp.dll).
+    dependency_root = Path(source_path).parent
+    if not dependency_root.is_dir():
+        dependency_root = model_root
     executable = target_root / model.name
     if executable.name == "approved.sil":
         executable = target_root / "execution.sil"
@@ -174,11 +182,12 @@ def _pin_model(task, source, root, workspace):
     def replace(match):
         raw = match.group("path")
         ref = Path(raw)
-        candidates = [ref] if ref.is_absolute() else [Path(BASE_DIR) / ref, model_root / ref]
+        candidates = [ref] if ref.is_absolute() else [
+            Path(BASE_DIR) / ref, dependency_root / ref, model_root / ref]
         original_path = next((candidate for candidate in candidates if candidate.is_file()), None)
         if original_path is None:
             raise EvidenceError(f"Saved model dependency is missing: {raw}")
-        original_path = checked_path(model_root, original_path, exists=True)
+        original_path = checked_path(dependency_root, original_path, exists=True)
         destination = target_root / validate_segment(original_path.name)
         content = original_path.read_bytes()
         if destination.exists() and destination.read_bytes() != content:
@@ -187,7 +196,7 @@ def _pin_model(task, source, root, workspace):
         if original_path.suffix.lower() == ".dll":
             symbols = original_path.with_suffix(".pdb")
             if symbols.is_file():
-                checked_path(model_root, symbols, exists=True)
+                checked_path(dependency_root, symbols, exists=True)
                 shutil.copy2(symbols, target_root / symbols.name)
         return destination.resolve().as_posix()
 
@@ -207,7 +216,7 @@ def _pin_model(task, source, root, workspace):
             dep_ref = Path(raw.replace("\\", "/"))
             if dep_ref.is_absolute() or dep_ref.drive:
                 raise EvidenceError(f"Saved model sub_module path must be relative: {raw}")
-            dep_path = checked_path(model_root, model_root / dep_ref)
+            dep_path = checked_path(dependency_root, dependency_root / dep_ref)
             if not dep_path.is_file():
                 raise EvidenceError(
                     f"Saved model sub_module dependency is missing: {raw}")
@@ -218,7 +227,7 @@ def _pin_model(task, source, root, workspace):
             shutil.copy2(dep_path, dep_destination)
             dep_symbols = dep_path.with_suffix(".pdb")
             if dep_symbols.is_file():
-                checked_path(model_root, dep_symbols, exists=True)
+                checked_path(dependency_root, dep_symbols, exists=True)
                 symbols_destination = checked_path(target_root, dep_destination.with_suffix(".pdb"))
                 shutil.copy2(dep_symbols, symbols_destination)
 
