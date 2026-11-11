@@ -118,6 +118,20 @@ def logout():
 def me():
     return ok({"user": g.user.to_dict(), "csrf_token": session.get("csrf_token")})
 
+@bp.get("/cli/silver-cli.pyz")
+def download_cli():
+    """Download the standalone CLI that matches this server's API.
+
+    A single-file Python 3.10+ zipapp using only the standard library; run it
+    with ``python silver-cli.pyz --help``. It holds no credentials or server
+    data, so it is public like ``/health``.
+    """
+    from silver_cli.bundle import build
+    return Response(build(), mimetype="application/zip",
+                    headers={"Content-Disposition": 'attachment; filename="silver-cli.pyz"',
+                             "X-Content-Type-Options": "nosniff"})
+
+
 @bp.get("/health")
 def health():
     db_ok = True

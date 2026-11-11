@@ -1,0 +1,2665 @@
+{
+ "operations": [
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "admin_console.admin_cancel_task",
+   "path": "/api/v1/admin/tasks/<task_key>/cancel",
+   "path_params": {
+    "task_key": "string"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "admin cancel task"
+  },
+  {
+   "body_fields": [
+    "display_name",
+    "email",
+    "is_system_admin",
+    "password",
+    "status",
+    "username"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "admin_console.admin_create_user",
+   "path": "/api/v1/admin/users",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "admin create user"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "DELETE",
+   "mutating": true,
+   "name": "admin_console.admin_delete_task",
+   "path": "/api/v1/admin/tasks/<task_key>",
+   "path_params": {
+    "task_key": "string"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "admin delete task"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "DELETE",
+   "mutating": true,
+   "name": "admin_console.admin_delete_user",
+   "path": "/api/v1/admin/users/<int:user_id>",
+   "path_params": {
+    "user_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "admin delete user"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "admin_console.admin_get_license",
+   "path": "/api/v1/admin/license",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "admin get license"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "admin_console.admin_get_runtime_config",
+   "path": "/api/v1/admin/runtime-config",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Hot-reloadable configuration overrides (「授权 / 并发」panel)."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "admin_console.admin_list_tasks",
+   "path": "/api/v1/admin/tasks",
+   "path_params": {},
+   "query_params": [
+    "limit"
+   ],
+   "response_kind": "json",
+   "summary": "admin list tasks"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "admin_console.admin_list_users",
+   "path": "/api/v1/admin/users",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "admin list users"
+  },
+  {
+   "body_fields": [
+    "keep_last"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "admin_console.admin_prune_task_events",
+   "path": "/api/v1/admin/tasks/prune-events",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Trim every terminal task's event history to the retention limit.\n\nManual counterpart of the daily ``prune_task_events_job`` sweep. ``keep_last``\ndefaults to the hot-reloadable ``task_event_retention`` runtime-config value;\na request may override it (clamped to the same 100..1_000_000 bounds)."
+  },
+  {
+   "body_fields": [
+    "count"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "admin_console.admin_set_license",
+   "path": "/api/v1/admin/license",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "admin set license"
+  },
+  {
+   "body_fields": [
+    "changes"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "admin_console.admin_set_runtime_config",
+   "path": "/api/v1/admin/runtime-config",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "admin set runtime config"
+  },
+  {
+   "body_fields": [
+    "changes"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "PATCH",
+   "mutating": true,
+   "name": "admin_console.admin_update_user",
+   "path": "/api/v1/admin/users/<int:user_id>",
+   "path_params": {
+    "user_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "admin update user"
+  },
+  {
+   "body_fields": [
+    "pk"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "DELETE",
+   "mutating": true,
+   "name": "admin_db.admin_db_delete_row",
+   "path": "/api/v1/admin/db/tables/<table>/rows",
+   "path_params": {
+    "table": "string"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "admin db delete row"
+  },
+  {
+   "body_fields": [
+    "values"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "admin_db.admin_db_insert_row",
+   "path": "/api/v1/admin/db/tables/<table>/rows",
+   "path_params": {
+    "table": "string"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "admin db insert row"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "admin_db.admin_db_overview",
+   "path": "/api/v1/admin/db/overview",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "admin db overview"
+  },
+  {
+   "body_fields": [
+    "read_only",
+    "sql"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "admin_db.admin_db_query",
+   "path": "/api/v1/admin/db/query",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "admin db query"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "admin_db.admin_db_table_rows",
+   "path": "/api/v1/admin/db/tables/<table>/rows",
+   "path_params": {
+    "table": "string"
+   },
+   "query_params": [
+    "desc",
+    "order_by",
+    "page",
+    "page_size"
+   ],
+   "response_kind": "json",
+   "summary": "admin db table rows"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "admin_db.admin_db_table_schema",
+   "path": "/api/v1/admin/db/tables/<table>/schema",
+   "path_params": {
+    "table": "string"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "admin db table schema"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "admin_db.admin_db_tables",
+   "path": "/api/v1/admin/db/tables",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "admin db tables"
+  },
+  {
+   "body_fields": [
+    "changes",
+    "pk"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "PATCH",
+   "mutating": true,
+   "name": "admin_db.admin_db_update_row",
+   "path": "/api/v1/admin/db/tables/<table>/rows",
+   "path_params": {
+    "table": "string"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "admin db update row"
+  },
+  {
+   "body_fields": [
+    "refs"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "ai.approve_draft",
+   "path": "/api/v1/ai/drafts/<int:draft_id>/approve",
+   "path_params": {
+    "draft_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "approve draft"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "ai.cancel_draft",
+   "path": "/api/v1/ai/drafts/<int:draft_id>/cancel",
+   "path_params": {
+    "draft_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "cancel draft"
+  },
+  {
+   "body_fields": [
+    "payload",
+    "project_id",
+    "scenario"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "ai.create_draft",
+   "path": "/api/v1/ai/drafts",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "create draft"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "ai.get_draft",
+   "path": "/api/v1/ai/drafts/<int:draft_id>",
+   "path_params": {
+    "draft_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "get draft"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "ai.get_settings",
+   "path": "/api/v1/ai/settings",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "get settings"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "ai.list_drafts",
+   "path": "/api/v1/ai/drafts",
+   "path_params": {},
+   "query_params": [
+    "project_id",
+    "scenario",
+    "status"
+   ],
+   "response_kind": "json",
+   "summary": "list drafts"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "ai.list_scenarios",
+   "path": "/api/v1/ai/scenarios",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "list scenarios"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "ai.list_signals",
+   "path": "/api/v1/ai/signals",
+   "path_params": {},
+   "query_params": [
+    "project_id"
+   ],
+   "response_kind": "json",
+   "summary": "list signals"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "PUT",
+   "mutating": true,
+   "name": "ai.put_settings",
+   "path": "/api/v1/ai/settings",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "put settings"
+  },
+  {
+   "body_fields": [
+    "entries",
+    "project_id"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "PUT",
+   "mutating": true,
+   "name": "ai.put_signals",
+   "path": "/api/v1/ai/signals",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "put signals"
+  },
+  {
+   "body_fields": [
+    "note"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "ai.reject_draft",
+   "path": "/api/v1/ai/drafts/<int:draft_id>/reject",
+   "path_params": {
+    "draft_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "reject draft"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "ai.retry_draft",
+   "path": "/api/v1/ai/drafts/<int:draft_id>/retry",
+   "path_params": {
+    "draft_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "retry draft"
+  },
+  {
+   "body_fields": [
+    "output"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "PUT",
+   "mutating": true,
+   "name": "ai.update_draft",
+   "path": "/api/v1/ai/drafts/<int:draft_id>",
+   "path_params": {
+    "draft_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Inline edit: fix the last 5% of an output, then approve as a whole."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "ai.usage_stats",
+   "path": "/api/v1/ai/usage",
+   "path_params": {},
+   "query_params": [
+    "months",
+    "project_id"
+   ],
+   "response_kind": "json",
+   "summary": "Token usage per project — aggregated from each draft's meta.usage."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "audit_trash.audit_log_actions",
+   "path": "/api/v1/projects/<int:project_id>/audit-logs/actions",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Distinct actions and actors, so the filter dropdowns reflect real data."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "audit_trash.audit_logs",
+   "path": "/api/v1/projects/<int:project_id>/audit-logs",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [
+    "action",
+    "actor_id",
+    "date_from",
+    "date_to",
+    "object_type",
+    "page",
+    "page_size",
+    "q",
+    "result"
+   ],
+   "response_kind": "json",
+   "summary": "audit logs"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "audit_trash.audit_logs_csv",
+   "path": "/api/v1/projects/<int:project_id>/audit-logs.csv",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [
+    "action",
+    "actor_id",
+    "date_from",
+    "date_to",
+    "object_type",
+    "q",
+    "result"
+   ],
+   "response_kind": "download",
+   "summary": "Download the *filtered* audit log as CSV.\n\nDeliberately server-side rather than exporting the rows the browser happens\nto have loaded: the table pages 50 at a time, so a client-side export would\nhand the reviewer a file that looks complete and covers the first page only."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "audit_trash.list_trash",
+   "path": "/api/v1/projects/<int:project_id>/trash",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [
+    "kind",
+    "limit"
+   ],
+   "response_kind": "json",
+   "summary": "Everything the project has deleted, with its remaining retention."
+  },
+  {
+   "body_fields": [
+    "id",
+    "kind"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "audit_trash.purge_from_trash",
+   "path": "/api/v1/projects/<int:project_id>/trash/purge",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Delete one entry for real, ahead of its retention date."
+  },
+  {
+   "body_fields": [
+    "id",
+    "kind"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "audit_trash.restore_from_trash",
+   "path": "/api/v1/projects/<int:project_id>/trash/restore",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "restore from trash"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "auth.config",
+   "path": "/api/v1/config",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Canonical editor/collab protocol config (single source of truth).\n\nServes the sheet catalogue (keys + labels), the default sheet, the per-sheet\nsteps field map and the CRDT/room naming prefixes so the frontend consumes\none schema instead of re-declaring it in ``editor.js`` / ``collab.js``."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "auth.download_cli",
+   "path": "/api/v1/cli/silver-cli.pyz",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "download",
+   "summary": "Download the standalone CLI that matches this server's API.\n\nA single-file Python 3.10+ zipapp using only the standard library; run it\nwith ``python silver-cli.pyz --help``. It holds no credentials or server\ndata, so it is public like ``/health``."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "auth.health",
+   "path": "/api/v1/health",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "health"
+  },
+  {
+   "body_fields": [
+    "password",
+    "username"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "auth.login",
+   "path": "/api/v1/auth/login",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "login"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "auth.logout",
+   "path": "/api/v1/auth/logout",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "logout"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "auth.me",
+   "path": "/api/v1/auth/me",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "me"
+  },
+  {
+   "body_fields": [
+    "display_name",
+    "email",
+    "password",
+    "username"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "auth.register",
+   "path": "/api/v1/auth/register",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Self-service registration for LAN users.\n\nDisabled unless ``LM_ALLOW_REGISTRATION`` is on. On success, an ``active``\naccount is logged in immediately (session + CSRF token established, mirroring\nlogin); a ``disabled`` account (approval mode) is created in a pending state\nand the client is told to wait for an administrator."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "dashboard.list_project_categories",
+   "path": "/api/v1/projects/<int:project_id>/categories",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Distinct テスト区分 in this project, with names and case counts.\n\nExists so the routing editor can offer the 区分 that actually exist instead\nof making an admin type them from memory: a mistyped 区分 produces a rule\nthat never matches, and nothing in the UI would ever say so."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "dashboard.project_dashboard_data",
+   "path": "/api/v1/projects/<int:project_id>/dashboard",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Progress, trend, per-version and review aggregates for one project.\n\nServed as a single bundle rather than four endpoints so the page cannot\nrender a progress ring and a review funnel computed seconds apart.\n\nGated on ``project.view``: this is a read-only summary of data the member\ncan already see row by row, so requiring a stronger capability would only\npush people back to counting cells by hand."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "dashboard.test_run_history",
+   "path": "/api/v1/projects/<int:project_id>/test-run-history",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [
+    "page",
+    "page_size",
+    "test_id"
+   ],
+   "response_kind": "json",
+   "summary": "Return paged matrix-backed run summaries for one exact test id."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "dashboard.test_run_history_csv",
+   "path": "/api/v1/projects/<int:project_id>/test-run-history.csv",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "download",
+   "summary": "Stream the complete project-scoped run history as a safe CSV."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "dashboard.version_compare",
+   "path": "/api/v1/projects/<int:project_id>/version-compare",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [
+    "left",
+    "page",
+    "page_size",
+    "right"
+   ],
+   "response_kind": "json",
+   "summary": "Compare latest non-cancelled results for two model identities.\n\n``project.view`` is enough, so a reader can open it. ``left`` and ``right``\nare ``name@version``; a model with no version is the bare name. Detail rows\ncarry ``row_uuid`` for the matrix, not a task key."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "fields.add_field",
+   "path": "/api/v1/projects/<int:project_id>/fields",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "add field"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "DELETE",
+   "mutating": true,
+   "name": "fields.delete_field",
+   "path": "/api/v1/projects/<int:project_id>/fields/<int:field_id>",
+   "path_params": {
+    "field_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "delete field"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "fields.list_fields",
+   "path": "/api/v1/projects/<int:project_id>/fields",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [
+    "sheet"
+   ],
+   "response_kind": "json",
+   "summary": "list fields"
+  },
+  {
+   "body_fields": [
+    "changes"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "PATCH",
+   "mutating": true,
+   "name": "fields.patch_field",
+   "path": "/api/v1/projects/<int:project_id>/fields/<int:field_id>",
+   "path_params": {
+    "field_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "patch field"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "imports_exports.commit_import",
+   "path": "/api/v1/imports/<int:job_id>/commit",
+   "path_params": {
+    "job_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "commit import"
+  },
+  {
+   "body_fields": [
+    "columns",
+    "item_ids"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "imports_exports.create_export",
+   "path": "/api/v1/projects/<int:project_id>/exports",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "download",
+   "summary": "create export"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [
+    "file"
+   ],
+   "form_fields": [
+    "mode"
+   ],
+   "method": "POST",
+   "mutating": true,
+   "name": "imports_exports.create_import",
+   "path": "/api/v1/projects/<int:project_id>/imports",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "create import"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "imports_exports.excel_template",
+   "path": "/api/v1/projects/<int:project_id>/excel/template",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "download",
+   "summary": "excel template"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "imports_exports.export_const",
+   "path": "/api/v1/projects/<int:project_id>/const/export",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "download",
+   "summary": "Export the project's Const rows as a flat-table .xlsx."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "imports_exports.export_io",
+   "path": "/api/v1/projects/<int:project_id>/io/export",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "download",
+   "summary": "Export the project's 入出力 pool rows as a flat-table .xlsx."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "imports_exports.export_libfunc",
+   "path": "/api/v1/projects/<int:project_id>/libfunc/export",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "download",
+   "summary": "Export the project's Lib(Func) rows as a block-structured .xlsx."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "imports_exports.export_test_matrix",
+   "path": "/api/v1/projects/<int:project_id>/testmatrix/export",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "download",
+   "summary": "Export the editor's items as a byte-compatible Japanese Test-Matrix\nworkbook (summary sheet + per-category detail sheets)."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [
+    "mode",
+    "sheets"
+   ],
+   "method": "POST",
+   "mutating": true,
+   "name": "imports_exports.extract_io",
+   "path": "/api/v1/projects/<int:project_id>/io/extract",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Harvest I/O signal declarations from step procedures into the 入出力 pool.\n\nScans the ``input_signals`` / ``expected_signals`` of the requested sheets'\nstep docs (``lib`` by default; ``test`` optionally), de-duplicates on\nname+path, and merges the result into the pool with the same uniqueness and\nper-row error reporting as an Excel import."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "imports_exports.get_import",
+   "path": "/api/v1/imports/<int:job_id>",
+   "path_params": {
+    "job_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "get import"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [
+    "file"
+   ],
+   "form_fields": [
+    "mode"
+   ],
+   "method": "POST",
+   "mutating": true,
+   "name": "imports_exports.import_const",
+   "path": "/api/v1/projects/<int:project_id>/const/import",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Import a Const workbook: one constant definition -> one editor row\n(const_* fields)."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [
+    "file"
+   ],
+   "form_fields": [
+    "mode"
+   ],
+   "method": "POST",
+   "mutating": true,
+   "name": "imports_exports.import_io",
+   "path": "/api/v1/projects/<int:project_id>/io/import",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Import an 入出力 (I/O signal pool) workbook: one signal -> one editor row\n(io_name / io_path / io_note), keeping name AND path unique."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [
+    "file"
+   ],
+   "form_fields": [
+    "mode"
+   ],
+   "method": "POST",
+   "mutating": true,
+   "name": "imports_exports.import_libfunc",
+   "path": "/api/v1/projects/<int:project_id>/libfunc/import",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Import a Lib(Func) workbook: one function block -> one editor row\n(lib_* fields + shared step-detail JSON)."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [
+    "file"
+   ],
+   "form_fields": [
+    "mode"
+   ],
+   "method": "POST",
+   "mutating": true,
+   "name": "imports_exports.import_test_matrix",
+   "path": "/api/v1/projects/<int:project_id>/testmatrix/import",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Create a validated preview job for the Japanese Test-Matrix workbook."
+  },
+  {
+   "body_fields": [
+    "content",
+    "field_key"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "items.add_comment",
+   "path": "/api/v1/projects/<int:project_id>/items/<int:item_id>/comments",
+   "path_params": {
+    "item_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "add comment"
+  },
+  {
+   "body_fields": [
+    "values"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "items.add_pool_entry",
+   "path": "/api/v1/projects/<int:project_id>/pool/<sheet>/entries",
+   "path_params": {
+    "project_id": "int",
+    "sheet": "string"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Add one reference-pool row (``io`` / ``const``) from the step editor.\n\nREST path only: when collaboration is live the client inserts through the\nshared Y.Doc instead (this endpoint is then collab-blocked). Provisions the\npool's field set on demand and enforces its uniqueness contract server-side."
+  },
+  {
+   "body_fields": [
+    "field_key",
+    "operation",
+    "scope"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "items.batch_preview",
+   "path": "/api/v1/projects/<int:project_id>/items/batch-preview",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "batch preview"
+  },
+  {
+   "body_fields": [
+    "batch_id"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "items.batch_undo",
+   "path": "/api/v1/projects/<int:project_id>/items/batch-undo",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "batch undo"
+  },
+  {
+   "body_fields": [
+    "field_key",
+    "operation",
+    "scope"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "items.batch_update",
+   "path": "/api/v1/projects/<int:project_id>/items/batch-update",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "batch update"
+  },
+  {
+   "body_fields": [
+    "ids"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "items.bulk_delete_items",
+   "path": "/api/v1/projects/<int:project_id>/items/bulk-delete",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "bulk delete items"
+  },
+  {
+   "body_fields": [
+    "ids"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "items.bulk_duplicate_items",
+   "path": "/api/v1/projects/<int:project_id>/items/bulk-duplicate",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "bulk duplicate items"
+  },
+  {
+   "body_fields": [
+    "anchor_id",
+    "draft",
+    "place",
+    "sheet",
+    "values"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "items.create_item",
+   "path": "/api/v1/projects/<int:project_id>/items",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "create item"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "DELETE",
+   "mutating": true,
+   "name": "items.delete_item",
+   "path": "/api/v1/projects/<int:project_id>/items/<int:item_id>",
+   "path_params": {
+    "item_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "delete item"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "items.duplicate_item",
+   "path": "/api/v1/projects/<int:project_id>/items/<int:item_id>/duplicate",
+   "path_params": {
+    "item_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "duplicate item"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "items.ensure_pool_fields",
+   "path": "/api/v1/projects/<int:project_id>/pool/<sheet>/fields",
+   "path_params": {
+    "project_id": "int",
+    "sheet": "string"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Provision a reference pool's field set (``io`` / ``const``) so its columns\nrender. Idempotent; used by the collaboration path, where rows are inserted\nthrough the Y.Doc but the field definitions still live in the DB."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "items.list_comments",
+   "path": "/api/v1/projects/<int:project_id>/items/<int:item_id>/comments",
+   "path_params": {
+    "item_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "list comments"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "items.list_items",
+   "path": "/api/v1/projects/<int:project_id>/items",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [
+    "combinator",
+    "filter",
+    "page",
+    "page_size",
+    "q",
+    "sheet",
+    "sort"
+   ],
+   "response_kind": "json",
+   "summary": "list items"
+  },
+  {
+   "body_fields": [
+    "direction",
+    "ids"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "items.move_items",
+   "path": "/api/v1/projects/<int:project_id>/items/move",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "move items"
+  },
+  {
+   "body_fields": [
+    "changes",
+    "version"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "PATCH",
+   "mutating": true,
+   "name": "items.patch_item",
+   "path": "/api/v1/projects/<int:project_id>/items/<int:item_id>",
+   "path_params": {
+    "item_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "patch item"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "items.restore_item",
+   "path": "/api/v1/projects/<int:project_id>/items/<int:item_id>/restore",
+   "path_params": {
+    "item_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "restore item"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "me.me_notifications",
+   "path": "/api/v1/me/notifications",
+   "path_params": {},
+   "query_params": [
+    "limit",
+    "scope"
+   ],
+   "response_kind": "json",
+   "summary": "List notifications for one scope (``unread`` | ``history`` | ``all``).\n\nThe legacy ``?unread=1`` flag still works so an older cached page keeps\nfunctioning after a deploy."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "me.me_notifications_archive",
+   "path": "/api/v1/me/notifications/archive",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "File notifications away into history.\n\nArchiving is not deleting: \"I have dealt with this\" and \"this never\nhappened\" are different statements, and only the first one is safe to make\non the user's behalf. Archived rows also stop being revived by the\ncollapsing window, which is what made dismissed items reappear."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "me.me_notifications_clear_history",
+   "path": "/api/v1/me/notifications/clear_history",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Drop read/archived rows only. Unread rows are outstanding work and stay."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "me.me_notifications_read",
+   "path": "/api/v1/me/notifications/read",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "me notifications read"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "me.me_notifications_unread_count",
+   "path": "/api/v1/me/notifications/unread_count",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Cheap endpoint for the 30s badge poll -- one COUNT, no row payload."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "me.me_overview",
+   "path": "/api/v1/me/overview",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "KPI band + the user's projects with their task mix."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "me.me_reviews",
+   "path": "/api/v1/me/reviews",
+   "path_params": {},
+   "query_params": [
+    "limit",
+    "project_id",
+    "role",
+    "status"
+   ],
+   "response_kind": "json",
+   "summary": "me reviews"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "me.me_tasks",
+   "path": "/api/v1/me/tasks",
+   "path_params": {},
+   "query_params": [
+    "limit",
+    "mine",
+    "project_id",
+    "q",
+    "status"
+   ],
+   "response_kind": "json",
+   "summary": "Tasks across every project the user can see.\n\nQuery params: ``status``, ``mine=1``, ``project_id``, ``q``, ``limit``."
+  },
+  {
+   "body_fields": [
+    "role",
+    "user_id",
+    "username"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "members.add_member",
+   "path": "/api/v1/projects/<int:project_id>/members",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "add member"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "members.list_members",
+   "path": "/api/v1/projects/<int:project_id>/members",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "list members"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "members.member_candidates",
+   "path": "/api/v1/projects/<int:project_id>/members/candidates",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [
+    "q"
+   ],
+   "response_kind": "json",
+   "summary": "member candidates"
+  },
+  {
+   "body_fields": [
+    "role"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "PATCH",
+   "mutating": true,
+   "name": "members.patch_member",
+   "path": "/api/v1/projects/<int:project_id>/members/<int:member_id>",
+   "path_params": {
+    "member_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "patch member"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "DELETE",
+   "mutating": true,
+   "name": "members.remove_member",
+   "path": "/api/v1/projects/<int:project_id>/members/<int:member_id>",
+   "path_params": {
+    "member_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "remove member"
+  },
+  {
+   "body_fields": [
+    "name",
+    "path",
+    "version",
+    "version_note"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "models.add_project_model",
+   "path": "/api/v1/projects/<int:project_id>/models",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "add project model"
+  },
+  {
+   "body_fields": [
+    "deprecated",
+    "model_id",
+    "name"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "models.deprecate_project_model",
+   "path": "/api/v1/projects/<int:project_id>/models/deprecate",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Hide a superseded model from the pickers without deleting its history."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "models.get_model_sbs",
+   "path": "/api/v1/projects/<int:project_id>/models/sbs",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [
+    "model_id",
+    "name"
+   ],
+   "response_kind": "json",
+   "summary": "get model sbs"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "models.get_model_sbs_revision",
+   "path": "/api/v1/projects/<int:project_id>/models/sbs/revisions/<int:revision_id>",
+   "path_params": {
+    "project_id": "int",
+    "revision_id": "int"
+   },
+   "query_params": [
+    "model_id",
+    "name"
+   ],
+   "response_kind": "json",
+   "summary": "get model sbs revision"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "models.list_model_sbs_revisions",
+   "path": "/api/v1/projects/<int:project_id>/models/sbs/revisions",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [
+    "model_id",
+    "name"
+   ],
+   "response_kind": "json",
+   "summary": "list model sbs revisions"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "models.list_project_models",
+   "path": "/api/v1/projects/<int:project_id>/models",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "list project models"
+  },
+  {
+   "body_fields": [
+    "model_id",
+    "name"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "DELETE",
+   "mutating": true,
+   "name": "models.remove_project_model",
+   "path": "/api/v1/projects/<int:project_id>/models",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "remove project model"
+  },
+  {
+   "body_fields": [
+    "model_id",
+    "name"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "models.restore_model_sbs_revision",
+   "path": "/api/v1/projects/<int:project_id>/models/sbs/revisions/<int:revision_id>/restore",
+   "path_params": {
+    "project_id": "int",
+    "revision_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "restore model sbs revision"
+  },
+  {
+   "body_fields": [
+    "base_version",
+    "content",
+    "model_id",
+    "name"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "PUT",
+   "mutating": true,
+   "name": "models.save_model_sbs",
+   "path": "/api/v1/projects/<int:project_id>/models/sbs",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "save model sbs"
+  },
+  {
+   "body_fields": [
+    "model_id",
+    "name"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "models.set_current_project_model",
+   "path": "/api/v1/projects/<int:project_id>/models/current",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "set current project model"
+  },
+  {
+   "body_fields": [
+    "model_id",
+    "name",
+    "version",
+    "version_note"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "PATCH",
+   "mutating": true,
+   "name": "models.update_project_model_version",
+   "path": "/api/v1/projects/<int:project_id>/models/version",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Relabel a registered model (version + release note).\n\nSeparate from model creation on purpose: a version label is usually decided\n*after* the model has been uploaded and smoke-tested, and re-labelling\nchanges how future test evidence is grouped, so it is an audited operation\nof its own rather than a silent field edit."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [
+    "dll",
+    "extra",
+    "pdb",
+    "sbs"
+   ],
+   "form_fields": [
+    "name",
+    "version",
+    "version_note"
+   ],
+   "method": "POST",
+   "mutating": true,
+   "name": "models.upload_project_model",
+   "path": "/api/v1/projects/<int:project_id>/models/upload",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "upload project model"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "projects.collab_token",
+   "path": "/api/v1/projects/<int:project_id>/collab-token",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Mint a short-lived signed token for the real-time collaboration socket.\n\nRequires ``item.edit`` (only editors join the CRDT room; readers keep using\nthe REST read path). The separate collab server verifies this token — signed\nwith the shared ``SECRET_KEY`` — on connect. See design doc §8."
+  },
+  {
+   "body_fields": [
+    "code",
+    "description",
+    "name",
+    "project_type"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "projects.create_project",
+   "path": "/api/v1/projects",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "create project"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "DELETE",
+   "mutating": true,
+   "name": "projects.delete_project",
+   "path": "/api/v1/projects/<int:project_id>",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "delete project"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "projects.get_project",
+   "path": "/api/v1/projects/<int:project_id>",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "get project"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "projects.list_projects",
+   "path": "/api/v1/projects",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "list projects"
+  },
+  {
+   "body_fields": [
+    "changes"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "PATCH",
+   "mutating": true,
+   "name": "projects.patch_project",
+   "path": "/api/v1/projects/<int:project_id>",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "patch project"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "reviews.assign_item_reviewer",
+   "path": "/api/v1/projects/<int:project_id>/items/<row_uuid>/reviewer",
+   "path_params": {
+    "project_id": "int",
+    "row_uuid": "string"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Assign or clear the reviewer of a row."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "reviews.decide_exemptions_bulk",
+   "path": "/api/v1/projects/<int:project_id>/exemptions/bulk",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Approve/reject many 不要 claims at once, with one shared reason.\n\nBulk is allowed (unlike ``Untestable``) because 不要 is normally decided per\nfeature area, but the note is still required and is written onto every row,\nso no approval is left without a justification."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "reviews.decide_item_exemption",
+   "path": "/api/v1/projects/<int:project_id>/items/<row_uuid>/exemption",
+   "path_params": {
+    "project_id": "int",
+    "row_uuid": "string"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Approve or reject one 不要 claim. A note is mandatory either way."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "reviews.list_project_exemptions",
+   "path": "/api/v1/projects/<int:project_id>/exemptions",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [
+    "mine",
+    "status"
+   ],
+   "response_kind": "json",
+   "summary": "Cases claiming 項目作成 = 不要, by decision state.\n\nListing also routes freshly-typed claims (:func:`sync_pending`). Pending is\nderived, so this only stamps a reviewer and rings a bell -- a claim is in\nthe queue whether or not this endpoint is ever called."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "reviews.list_project_reviews",
+   "path": "/api/v1/projects/<int:project_id>/reviews",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [
+    "mine",
+    "status"
+   ],
+   "response_kind": "json",
+   "summary": "Pending reviews in one project, optionally only the caller's own queue."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "reviews.review_item",
+   "path": "/api/v1/projects/<int:project_id>/items/<row_uuid>/review",
+   "path_params": {
+    "project_id": "int",
+    "row_uuid": "string"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Approve or reject a single pending review."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "reviews.review_items_bulk",
+   "path": "/api/v1/projects/<int:project_id>/reviews/bulk",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Approve/reject many rows at once.\n\nOnly verdicts declared bulk-approvable are accepted; ``Untestable`` rows are\nreported back in ``skipped`` so the reviewer sees exactly what still needs an\nindividual decision instead of silently believing the queue is empty."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "PUT",
+   "mutating": true,
+   "name": "reviews.set_review_policy",
+   "path": "/api/v1/projects/<int:project_id>/review_policy",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Set which verdicts require sign-off in this project.\n\nProject-level because it is a team policy, not a product decision: a\nsafety-critical project reviews every PASS, an exploratory one reviews\nnothing."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "tasks.cancel_project_task",
+   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/cancel",
+   "path_params": {
+    "project_id": "int",
+    "task_key": "string"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "cancel project task"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "DELETE",
+   "mutating": true,
+   "name": "tasks.delete_project_task",
+   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>",
+   "path_params": {
+    "project_id": "int",
+    "task_key": "string"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "delete project task"
+  },
+  {
+   "body_fields": [
+    "keys"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "tasks.delete_project_tasks_batch",
+   "path": "/api/v1/projects/<int:project_id>/tasks/delete_batch",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Delete several of a project's tasks (and their workspaces) at once.\n\nBody: ``{\"keys\": [\"T000001\", ...]}``. Requires ``task.delete``; each key is\nresolved within the project so cross-project deletion is impossible."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "tasks.download_project_task",
+   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/download",
+   "path_params": {
+    "project_id": "int",
+    "task_key": "string"
+   },
+   "query_params": [],
+   "response_kind": "download",
+   "summary": "download project task"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "tasks.download_project_tasks_batch",
+   "path": "/api/v1/projects/<int:project_id>/tasks/download_batch",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [
+    "keys"
+   ],
+   "response_kind": "download",
+   "summary": "Bundle the reports of several of a project's tasks into one zip.\n\nQuery: ``?keys=T000001,T000002`` (or repeated ``keys`` params). Requires\n``task.download``; keys are resolved within the project."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "tasks.list_project_tasks",
+   "path": "/api/v1/projects/<int:project_id>/tasks",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [
+    "limit"
+   ],
+   "response_kind": "json",
+   "summary": "list project tasks"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "tasks.project_task_detail",
+   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/detail",
+   "path_params": {
+    "project_id": "int",
+    "task_key": "string"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "project task detail"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "tasks.project_task_jdgrslt",
+   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/jdgrslt",
+   "path_params": {
+    "project_id": "int",
+    "task_key": "string"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "project task jdgrslt"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "tasks.project_task_status",
+   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>",
+   "path_params": {
+    "project_id": "int",
+    "task_key": "string"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "project task status"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "tasks.project_task_stream",
+   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/stream",
+   "path_params": {
+    "project_id": "int",
+    "task_key": "string"
+   },
+   "query_params": [
+    "last_id"
+   ],
+   "response_kind": "stream",
+   "summary": "project task stream"
+  },
+  {
+   "body_fields": [
+    "task_keys"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "tasks.rerun_selected_tasks",
+   "path": "/api/v1/projects/<int:project_id>/tasks/rerun-selected",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Re-queue existing tasks by ``task_key`` (\"重新测试\" / retest).\n\nEach chosen task is re-run with the model it was originally submitted with:\nthe JSON-runner inputs are regenerated from the current project ``test`` /\n``lib`` / ``const`` sheet rows and the task row is reset to QUEUED and\nenqueued (the stored result is overwritten). Live attempts are skipped,\nstale queued rows can be retried, and tasks whose ``test_id`` no\nlonger exists in the project sheets are reported as missing."
+  },
+  {
+   "body_fields": [
+    "model",
+    "test_ids"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "tasks.run_selected_tasks",
+   "path": "/api/v1/projects/<int:project_id>/tasks/run-selected",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Queue the chosen ``test`` rows for JSON-runner execution (no upload).\n\nThe three runner inputs (``testcase_<id>.json`` / ``lib.json`` /\n``constants.json``) are generated straight from the project's ``test`` /\n``lib`` / ``const`` sheet rows, then the task is upserted by ``test_id``\n(a re-run overwrites the stored result) and enqueued."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "tasks.task_preflight",
+   "path": "/api/v1/projects/<int:project_id>/tasks/preflight",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Reference data the submit form needs to warn *before* an upload.\n\nOnly the module-name vocabulary lives here. The counts the preflight bar\nalso shows (models, licence) already ride along on ``list_project_tasks``,\nso this endpoint deliberately adds no queries.\n\n``stdlib`` is served rather than hard-coded in JavaScript on purpose:\nthe authoritative set is ``sys.stdlib_module_names``, a *runtime* value that\ndiffers between Python versions. A copy pinned in the front end would drift\nfrom the interpreter that actually runs the judges, and the failure mode of\na stale copy is the worst kind -- a confident warning about a module that is\nperfectly fine, which teaches people to ignore the warnings."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [
+    "files",
+    "lib_files",
+    "stdlib_files"
+   ],
+   "form_fields": [
+    "folder_name",
+    "lib_paths",
+    "model",
+    "paths",
+    "stdlib_paths",
+    "test_ids"
+   ],
+   "method": "POST",
+   "mutating": true,
+   "name": "tasks.upload_project_tree",
+   "path": "/api/v1/projects/<int:project_id>/tasks/upload-tree",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Upload a test-case folder tree and queue the chosen test ids for a\nproject. Only project members reach this (``task.upload``)."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "ut_pipeline.attempt_artifact",
+   "path": "/api/v1/projects/<int:project_id>/ut/jobs/<int:job_id>/attempts/<int:attempt_id>/artifacts/<artifact_id>",
+   "path_params": {
+    "artifact_id": "string",
+    "attempt_id": "int",
+    "job_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "download",
+   "summary": "attempt artifact"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "ut_pipeline.attempt_coverage",
+   "path": "/api/v1/projects/<int:project_id>/ut/jobs/<int:job_id>/attempts/<int:attempt_id>/coverage",
+   "path_params": {
+    "attempt_id": "int",
+    "job_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "attempt coverage"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "ut_pipeline.attempt_csv",
+   "path": "/api/v1/projects/<int:project_id>/ut/jobs/<int:job_id>/attempts/<int:attempt_id>/csv",
+   "path_params": {
+    "attempt_id": "int",
+    "job_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [
+    "format"
+   ],
+   "response_kind": "download",
+   "summary": "attempt csv"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "ut_pipeline.browse_server_paths",
+   "path": "/api/v1/projects/<int:project_id>/ut/server-paths",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [
+    "kind",
+    "path"
+   ],
+   "response_kind": "json",
+   "summary": "browse server paths"
+  },
+  {
+   "body_fields": [
+    "label",
+    "target_ids"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "ut_pipeline.create_batch",
+   "path": "/api/v1/projects/<int:project_id>/ut/batches",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "create batch"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "ut_pipeline.export_approved",
+   "path": "/api/v1/projects/<int:project_id>/ut/approved/export",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [
+    "batch_id"
+   ],
+   "response_kind": "download",
+   "summary": "export approved"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "ut_pipeline.get_config",
+   "path": "/api/v1/projects/<int:project_id>/ut/config",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "get config"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "ut_pipeline.import_targets",
+   "path": "/api/v1/projects/<int:project_id>/ut/targets/import",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "import targets"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "ut_pipeline.job_detail",
+   "path": "/api/v1/projects/<int:project_id>/ut/jobs/<int:job_id>",
+   "path_params": {
+    "job_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "job detail"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "ut_pipeline.list_batches",
+   "path": "/api/v1/projects/<int:project_id>/ut/batches",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "list batches"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "ut_pipeline.list_jobs",
+   "path": "/api/v1/projects/<int:project_id>/ut/jobs",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [
+    "batch_id",
+    "state"
+   ],
+   "response_kind": "json",
+   "summary": "list jobs"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "ut_pipeline.list_targets",
+   "path": "/api/v1/projects/<int:project_id>/ut/targets",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "list targets"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "ut_pipeline.manifest_options",
+   "path": "/api/v1/projects/<int:project_id>/ut/manifest/options",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "manifest options"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "PUT",
+   "mutating": true,
+   "name": "ut_pipeline.put_config",
+   "path": "/api/v1/projects/<int:project_id>/ut/config",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "put config"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "ut_pipeline.repair_stats",
+   "path": "/api/v1/projects/<int:project_id>/ut/repair-stats",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "repair stats"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "ut_pipeline.retry",
+   "path": "/api/v1/projects/<int:project_id>/ut/jobs/<int:job_id>/retry",
+   "path_params": {
+    "job_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "retry"
+  },
+  {
+   "body_fields": [
+    "decision",
+    "expected_attempt_id",
+    "note"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "ut_pipeline.review",
+   "path": "/api/v1/projects/<int:project_id>/ut/jobs/<int:job_id>/review",
+   "path_params": {
+    "job_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "review"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "ut_pipeline.stop_batch",
+   "path": "/api/v1/projects/<int:project_id>/ut/batches/<int:batch_id>/stop",
+   "path_params": {
+    "batch_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "stop batch"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "ut_pipeline.stop_job",
+   "path": "/api/v1/projects/<int:project_id>/ut/jobs/<int:job_id>/stop",
+   "path_params": {
+    "job_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "stop job"
+  },
+  {
+   "body_fields": [
+    "csv",
+    "note"
+   ],
+   "file_fields": [
+    "file"
+   ],
+   "form_fields": [
+    "note"
+   ],
+   "method": "POST",
+   "mutating": true,
+   "name": "ut_pipeline.submit_revision",
+   "path": "/api/v1/projects/<int:project_id>/ut/jobs/<int:job_id>/revision",
+   "path_params": {
+    "job_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "submit revision"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "ut_pipeline.validate_manifest",
+   "path": "/api/v1/projects/<int:project_id>/ut/manifest/validate",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "validate manifest"
+  }
+ ]
+}
