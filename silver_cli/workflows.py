@@ -100,9 +100,16 @@ def register(command, group):
                        help="Only cases whose latest run has this status (not_run: never run).")
     cases.add_argument("--failed", action="store_true",
                        help="Only cases whose latest run failed, was cancelled, or has a FAIL/ERROR result.")
-    show = command("case", "show", "Show one case's steps with its latest run, judge verdict, jdgrslt and errors.",
-                   "show 1 TC-1", handler=case_show)
+    show = command("case", "show", "Show one case: every filled test-row field with its display name (purpose etc.), "
+                   "steps, and the latest run with verdict, jdgrslt and errors.",
+                   "show 1 TC-1 --context", handler=case_show)
     show.add_argument("test_id", help="Test id from case list.")
+    show.add_argument("--context", action="store_true",
+                      help="Also include every row of the project's const, io and lib sheets used to generate the run.")
+    context = command("project", "context", "List every row of the project's const, io and lib sheets with field display names.",
+                      "context 1 --sheet const", handler=project_context)
+    context.add_argument("--sheet", action="append", choices=CONTEXT_SHEETS,
+                         help="Only this sheet; repeat as needed (default: const, io and lib).")
 
     group("model", "List, upload, register or select project models.", "model list 1")
     command("model", "list", "List the project's saved models and versions.", "list 1",
@@ -447,17 +454,68 @@ def task_report(args):
     return _ok(data)
 
 
+CONTEXT_SHEETS = ("const", "io", "lib")
+
+
+def _empty(value):
+    return value is None or value == "" or value == [] or value == {}
+
+
+def _labelled(item, fields, sheet, exclude=()):
+    """The item's non-empty values for the sheet's fields, in field order, with display names."""
+    return [{"field": field["field_key"], "name": field.get("display_name"), "value": item.get(field["field_key"])}
+            for field in fields
+            if (field.get("sheet") or "test") == sheet and field["field_key"] not in exclude
+            and not _empty(item.get(field["field_key"]))]
+
+
+def _context(client, pid, fields, sheets):
+    """Every row of the project's shared sheets (const, io, lib) that each Silver run is generated from."""
+    result = {}
+    for sheet in sheets:
+        keys = [field for field in fields if (field.get("sheet") or "test") == sheet]
+        rows = []
+        for item in _items(client, pid, sheet):
+            values = {field["field_key"]: item.get(field["field_key"]) for field in keys
+                      if not _empty(item.get(field["field_key"]))}
+            rows.append({"item_id": item["id"], **values})
+        result[sheet] = {"fields": {field["field_key"]: field.get("display_name") for field in keys},
+                         "rows": rows, "returned": len(rows)}
+    return result
+
+
 def case_show(args):
+    from .commands import _test_id
     from .runner import _ok
 
-    args.test_ids, args.status, args.no_steps, args.output = [args.test_id], None, False, None
-    data = task_report(args)["data"]
-    if not data["cases"]:
+    client = _client(args)
+    fields = _call(client, "fields.list_fields", _params(args))["data"]["fields"]
+    matches = [item for item in _items(client, args.pid, "test") if _test_id(item) == args.test_id]
+    if not matches:
         raise CliError("NOT_FOUND", "No test-sheet case has this test id; see case list.", 2, status=404)
-    if len(data["cases"]) > 1:
+    if len(matches) > 1:
         raise CliError("AMBIGUOUS_TEST_ID", "Several test rows share this test id.", 2,
-                       details=[{"item_id": case["item_id"]} for case in data["cases"]])
-    return _ok({**data["cases"][0], "runs_truncated": data["runs_truncated"]})
+                       details=[{"item_id": item["id"]} for item in matches])
+    item = matches[0]
+    listing = _call(client, "tasks.list_project_tasks", _params(args), query=[("limit", "2000")])["data"]
+    task = next((row for row in listing["tasks"] if row.get("test_id") == args.test_id), None)  # newest first
+    data = {"test_id": args.test_id, "item_id": item["id"], "version": item.get("version"),
+            "title": item.get("title") or item.get("test_name"),
+            "info": _labelled(item, fields, "test", exclude={"steps"}),
+            "steps": _steps(item),
+            "latest_run": _outcomes(client, args.pid, [task["task_id"]])[0] if task else None,
+            "runs_truncated": listing.get("truncated", False)}
+    if args.context:
+        data["context"] = _context(client, args.pid, fields, CONTEXT_SHEETS)
+    return _ok(data)
+
+
+def project_context(args):
+    from .runner import _ok
+
+    client = _client(args)
+    fields = _call(client, "fields.list_fields", _params(args))["data"]["fields"]
+    return _ok(_context(client, args.pid, fields, args.sheet or CONTEXT_SHEETS))
 
 
 def _case_failed(run):

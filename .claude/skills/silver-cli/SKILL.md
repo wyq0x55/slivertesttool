@@ -59,7 +59,8 @@ tasks`, and `describe OPERATION`; the server's own `.pyz` always matches its API
 ## Find, run and report Silver tests
 
 Default flow: `project list [--search TEXT]` -> `case list PID [--failed]` ->
-`case show PID TEST_ID` -> edit with `steps ... --test-id TEST_ID` -> `task run
+`case show PID TEST_ID [--context]` (purpose and other fields, steps, latest
+verdict; `--context` adds the project's const, io and lib rows) -> edit with `steps ... --test-id TEST_ID` -> `task run
 PID --test-id TEST_ID --wait --confirm`. `PID` may be the project code (for
 example `BRK`) or its numeric ID. Use the test id everywhere; item ids and task
 keys are only needed for low-level calls.

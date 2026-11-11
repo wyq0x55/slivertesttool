@@ -286,17 +286,55 @@ def test_case_list_gives_test_ids_with_latest_result(cli, arguments, expected):
     assert all(method == "GET" for method, *_ in calls) and len(calls) == 2
 
 
-def test_case_show_returns_steps_and_latest_verdict(cli):
+FIELDS = {"fields": [
+    {"field_key": "test_id", "display_name": "テストID", "sheet": "test"},
+    {"field_key": "purpose", "display_name": "テスト目的", "sheet": "test"},
+    {"field_key": "steps", "display_name": "手順", "sheet": "test"},
+    {"field_key": "const_name", "display_name": "识别子名", "sheet": "const"},
+    {"field_key": "const_value", "display_name": "值", "sheet": "const"},
+    {"field_key": "io_name", "display_name": "名称", "sheet": "io"},
+    {"field_key": "lib_func", "display_name": "函数标识", "sheet": "lib"},
+    {"field_key": "lib_value", "display_name": "目的", "sheet": "lib"},
+]}
+PURPOSE_ITEMS = items_page(row(1, "TC-1"), {**row(2, "TC-2"), "purpose": "brake check"}, row(3, "TC-3"))
+
+
+def test_case_show_returns_info_steps_and_latest_verdict(cli):
     code, out, _ = cli("case", "show", "7", "TC-2",
-                       responses=[CASE_ITEMS, CASE_RUNS, {"task": task("T3", "failed", "TC-2")},
+                       responses=[FIELDS, PURPOSE_ITEMS, CASE_RUNS, {"task": task("T3", "failed", "TC-2")},
                                   {"verdict": "FAIL", "failed_steps": 1, "content": "NG"}])
     assert code == 0
-    assert out["data"]["test_id"] == "TC-2" and out["data"]["steps"] == STEP_DOC
-    assert out["data"]["latest_run"]["task_id"] == "T3" and out["data"]["latest_run"]["verdict"] == "FAIL"
+    data = out["data"]
+    assert data["test_id"] == "TC-2" and data["steps"] == STEP_DOC and data["version"] == 4
+    assert data["info"] == [{"field": "test_id", "name": "テストID", "value": "TC-2"},
+                            {"field": "purpose", "name": "テスト目的", "value": "brake check"}]
+    assert data["latest_run"]["task_id"] == "T3" and data["latest_run"]["verdict"] == "FAIL"
+    assert "context" not in data
+
+
+def test_case_show_context_lists_const_io_and_lib(cli):
+    const = items_page({"id": 50, "const_name": "SPEED_MAX", "const_value": "120"})
+    io = items_page({"id": 60, "io_name": "speed", "io_note": "unlisted field is dropped"})
+    lib = items_page({"id": 70, "lib_func": "Init", "lib_value": ""})
+    code, out, calls = cli("case", "show", "7", "TC-1", "--context",
+                           responses=[FIELDS, PURPOSE_ITEMS, {"tasks": [], "total": 0}, const, io, lib])
+    assert code == 0
+    context = out["data"]["context"]
+    assert context["const"]["rows"] == [{"item_id": 50, "const_name": "SPEED_MAX", "const_value": "120"}]
+    assert context["const"]["fields"] == {"const_name": "识别子名", "const_value": "值"}
+    assert context["io"]["rows"] == [{"item_id": 60, "io_name": "speed"}]
+    assert context["lib"]["rows"] == [{"item_id": 70, "lib_func": "Init"}]
+    assert [call[2]["query"][0] for call in calls[3:]] == [("sheet", "const"), ("sheet", "io"), ("sheet", "lib")]
+
+
+def test_project_context_selects_sheets(cli):
+    code, out, _ = cli("project", "context", "7", "--sheet", "lib",
+                       responses=[FIELDS, items_page({"id": 70, "lib_func": "Init"})])
+    assert code == 0 and list(out["data"]) == ["lib"]
 
 
 def test_case_show_unknown_test_id(cli):
-    code, out, _ = cli("case", "show", "7", "TC-9", responses=[CASE_ITEMS, CASE_RUNS])
+    code, out, _ = cli("case", "show", "7", "TC-9", responses=[FIELDS, CASE_ITEMS])
     assert code == 2 and out["error"]["code"] == "NOT_FOUND"
 
 
@@ -305,11 +343,11 @@ PROJECTS = {"projects": [{"id": 7, "code": "BRK"}, {"id": 8, "code": "door"}, {"
 
 def test_project_code_resolves_once_and_routes_by_id(cli):
     code, out, calls = cli("case", "show", "brk", "TC-2",
-                           responses=[PROJECTS, CASE_ITEMS, CASE_RUNS, {"task": task("T3", "failed", "TC-2")},
+                           responses=[PROJECTS, FIELDS, CASE_ITEMS, CASE_RUNS, {"task": task("T3", "failed", "TC-2")},
                                       {"verdict": "FAIL", "content": ""}])
     assert code == 0
     assert calls[0][1] == "/api/v1/projects"
-    assert [path for _, path, _ in calls[1:]] == [P + "/items", P + "/tasks", P + "/tasks/T3/detail",
+    assert [path for _, path, _ in calls[1:]] == [P + "/fields", P + "/items", P + "/tasks", P + "/tasks/T3/detail",
                                                   P + "/tasks/T3/jdgrslt"]
 
 

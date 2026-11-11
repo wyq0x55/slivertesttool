@@ -86,7 +86,8 @@ CLI 不绕过 CRDT 的单写者约束。用户角色也不会因为使用 CLI �
 python -m silver_cli project list --search brake          # 1. all projects -> code (BRK) or id
 python -m silver_cli case list BRK                       # 2. every test id with its latest result
 python -m silver_cli case list BRK --failed              #    or only the failing ones
-python -m silver_cli case show BRK TC-1                  # 3. steps + latest verdict, jdgrslt, errors
+python -m silver_cli case show BRK TC-1                  # 3. purpose and other fields, steps, latest verdict
+python -m silver_cli case show BRK TC-1 --context        #    plus every const, io and lib row of the project
 python -m silver_cli steps edit BRK --test-id TC-1 --step 2 --set timing=20 --confirm
 python -m silver_cli steps add BRK --test-id TC-1 --json @step.json --at 3 --confirm
 python -m silver_cli task run BRK --test-id TC-1 --wait --confirm   # 4. rerun and wait for the verdict
@@ -145,7 +146,8 @@ python -m silver_cli task rerun 7 T000001 --confirm
 | `task log PID TID --tail N` | Runtime events and errors from `tasks.project_task_detail`; limit displayed log lines within the first 5000 events |
 | `task rerun PID TID` | `tasks.rerun_selected_tasks` with `{"task_keys":["T000001"]}` |
 | `case list PID [--failed] [--status S\|not_run]` | Test-sheet items joined with the latest run: test id, item id, title, status, result, task key (two requests) |
-| `case show PID TEST_ID` | One case's steps with its latest run, verdict, jdgrslt and errors |
+| `case show PID TEST_ID [--context]` | One case: every filled test-row field with its display name (目的 etc.), steps, version, latest run with verdict, jdgrslt and errors; `--context` adds all const, io and lib rows |
+| `project context PID [--sheet const\|io\|lib]` | Every row of the project's const, io and lib sheets with field display names |
 | `project list --search TEXT` | `projects.list_projects`, filtered locally by code, name and description |
 | `task search [--project PID] [--q TEXT] [--status S] [--mine]` | `me.me_tasks`: runs across every visible project |
 | `task run PID --test-id ID... [--model NAME@VERSION] [--wait]` | `tasks.run_selected_tasks`; `--wait` then behaves like `task wait` |
