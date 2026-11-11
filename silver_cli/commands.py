@@ -33,7 +33,7 @@ def register(commands):
     from .runner import _positive
 
     groups = {
-        "project": ("List, inspect or create projects.", "project show 1"),
+        "project": ("List, search, inspect or create projects, or show their const, io and lib rows.", "project list --search brake"),
         "item": ("List or inspect matrix items, including their current version.", "item list 1 --sheet test"),
         "steps": ("Read or update an item's steps document with optimistic version locking.", "steps show 1 2"),
         "task": ("Search, run, wait for, report on, inspect or rerun Silver test runs.", "task failures 1"),

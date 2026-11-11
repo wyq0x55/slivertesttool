@@ -30,7 +30,7 @@ def _positive(value):
 
 
 def _parser():
-    parser = Parser(description="Silver platform CLI. JSON stdout; no interactive prompts. "
+    parser = Parser(prog="silver_cli", description="Silver platform CLI. JSON stdout; no interactive prompts. "
                     "Set SILVER_CLI_USERNAME and SILVER_CLI_PASSWORD together for session login.",
                     epilog="Task commands: project list/show/create; item list/show; steps show/set/edit; "
                     "case list/show; task search/list/show/run/wait/report/failures/log/rerun/cancel/download; "
