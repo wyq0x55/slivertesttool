@@ -349,7 +349,7 @@ def test_project_code_resolves_once_and_routes_by_id(cli):
                                       {"verdict": "FAIL", "content": ""}])
     assert code == 0
     assert calls[0][1] == "/api/v1/projects"
-    assert [path for _, path, _ in calls[1:]] == [P + "/fields", P + "/items", P + "/tasks", P + "/tasks/T3/detail",
+    assert [path for _, path, _ in calls[1:]] == [P + "/fields", P + "/items", P + "/tasks/latest", P + "/tasks/T3/detail",
                                                   P + "/tasks/T3/jdgrslt"]
 
 

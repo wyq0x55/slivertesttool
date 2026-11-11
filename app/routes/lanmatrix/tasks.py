@@ -426,6 +426,14 @@ def rerun_selected_tasks(project_id):
     return ok({"created": created, "skipped": skipped,
                "missing": missing, "errors": errors}, status=201)
 
+@bp.get("/projects/<int:project_id>/tasks/latest")
+@login_required
+def project_latest_tasks(project_id):
+    """The newest run of every test id, with no recent-window truncation."""
+    _project_and_role(project_id, "task.view")
+    tasks = task_service.latest_per_test(project_id)
+    return ok({"tasks": [task.to_dict() for task in tasks], "total": len(tasks)})
+
 @bp.get("/projects/<int:project_id>/tasks/<task_key>")
 @login_required
 def project_task_status(project_id, task_key):

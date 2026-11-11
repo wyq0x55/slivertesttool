@@ -2173,6 +2173,21 @@
    "form_fields": [],
    "method": "GET",
    "mutating": false,
+   "name": "tasks.project_latest_tasks",
+   "path": "/api/v1/projects/<int:project_id>/tasks/latest",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "The newest run of every test id, with no recent-window truncation."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
    "name": "tasks.project_task_detail",
    "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/detail",
    "path_params": {

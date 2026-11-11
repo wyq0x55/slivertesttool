@@ -436,6 +436,14 @@ def _items(client, pid, sheet):
         page += 1
 
 
+def _latest_runs(client, pid):
+    """test id -> its newest run, across the project's whole history."""
+    latest = {}
+    for task in _call(client, "tasks.project_latest_tasks", {"project_id": pid})["data"]["tasks"]:
+        latest.setdefault(task.get("test_id"), task)  # newest first
+    return latest
+
+
 def _steps(item):
     document = item.get("steps")
     if isinstance(document, str):
@@ -478,10 +486,7 @@ def task_report(args):
         _new_output(args.output)
     client = _client(args)
     items = _items(client, args.pid, "test")
-    listing = _call(client, "tasks.list_project_tasks", _params(args), query=[("limit", "2000")])["data"]
-    latest = {}
-    for task in listing["tasks"]:  # newest first
-        latest.setdefault(task.get("test_id"), task)
+    latest = _latest_runs(client, args.pid)
     wanted = set(args.test_ids or [])
     cases = []
     for item in items:
@@ -498,7 +503,7 @@ def task_report(args):
         case["latest_run"] = _outcomes(client, args.pid, [task["task_id"]])[0] if task else None
         cases.append(case)
     data = {"cases": cases, "returned": len(cases), "missing": sorted(wanted - {case["test_id"] for case in cases}),
-            "runs_scanned": len(listing["tasks"]), "runs_truncated": listing.get("truncated", False)}
+            "runs": len(latest)}
     if args.output is not None:
         text = (_markdown(cases) if args.output.suffix.lower() == ".md"
                 else json.dumps(data, ensure_ascii=False, indent=1))
@@ -562,14 +567,12 @@ def case_show(args):
         raise CliError("AMBIGUOUS_TEST_ID", "Several test rows share this test id.", 2,
                        details=[{"item_id": item["id"]} for item in matches])
     item = matches[0]
-    listing = _call(client, "tasks.list_project_tasks", _params(args), query=[("limit", "2000")])["data"]
-    task = next((row for row in listing["tasks"] if row.get("test_id") == args.test_id), None)  # newest first
+    task = _latest_runs(client, args.pid).get(args.test_id)
     data = {"test_id": args.test_id, "item_id": item["id"], "version": item.get("version"),
             "title": item.get("title") or item.get("test_name"),
             "info": _labelled(item, fields, "test", exclude={"steps"}),
             "steps": _steps(item),
-            "latest_run": _outcomes(client, args.pid, [task["task_id"]])[0] if task else None,
-            "runs_truncated": listing.get("truncated", False)}
+            "latest_run": _outcomes(client, args.pid, [task["task_id"]])[0] if task else None}
     if args.context:
         data["context"] = _context(client, args.pid, fields, CONTEXT_SHEETS)
     return _ok(data)
@@ -600,10 +603,7 @@ def _case_rows(client, pid, *, status=None, failed=False):
     from .commands import _test_id
 
     items = _items(client, pid, "test")
-    listing = _call(client, "tasks.list_project_tasks", {"project_id": pid}, query=[("limit", "2000")])["data"]
-    latest = {}
-    for task in listing["tasks"]:  # newest first
-        latest.setdefault(task.get("test_id"), task)
+    latest = _latest_runs(client, pid)
     rows, counts = [], {}
     for item in items:
         test_id = _test_id(item)
@@ -620,7 +620,7 @@ def _case_rows(client, pid, *, status=None, failed=False):
                      "task_id": task.get("task_id") if task else None,
                      "finished_at": task.get("finished_at") if task else None})
     return {"cases": rows, "returned": len(rows), "statuses": counts,
-            "runs_scanned": len(listing["tasks"]), "runs_truncated": listing.get("truncated", False)}
+            "runs": len(latest)}
 
 
 # Execution results and row identity are never copied onto a new case.

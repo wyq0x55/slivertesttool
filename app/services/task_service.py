@@ -92,6 +92,18 @@ def list_tasks(limit: int = DEFAULT_LIST_LIMIT, submitter: Optional[str] = None,
             .order_by(Task.id.desc()).limit(limit).all())
 
 
+def latest_per_test(project_id: int) -> List[Task]:
+    """The newest live run of every test id in the project, however old.
+
+    Unlike ``list_tasks`` this is not a recent-window view: a case last run
+    long ago still reports that run instead of looking as if it never ran.
+    """
+    newest = (live(db.session.query(db.func.max(Task.id)))
+              .filter(Task.project_id == project_id, Task.test_id.isnot(None), Task.test_id != "")
+              .group_by(Task.test_id))
+    return Task.query.filter(Task.id.in_(newest)).order_by(Task.id.desc()).all()
+
+
 def count_tasks(submitter: Optional[str] = None,
                 project_id: Optional[int] = None) -> int:
     """Total matching rows, ignoring any limit.
