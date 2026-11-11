@@ -91,6 +91,17 @@ python -m silver_cli case show BRK TC-1 --context        #    plus every const, 
 python -m silver_cli steps edit BRK --test-id TC-1 --step 2 --set timing=20 --confirm
 python -m silver_cli steps add BRK --test-id TC-1 --json @step.json --at 3 --confirm
 python -m silver_cli task run BRK --test-id TC-1 --wait --confirm   # 4. rerun and wait for the verdict
+python -m silver_cli task run BRK --failed --wait --confirm         #    or every failing case at once
+```
+
+Edit cases and shared rows by business keys:
+
+```sh
+python -m silver_cli case set BRK TC-1 --set purpose="..." environment=SILVER --confirm
+python -m silver_cli case add BRK --json @case.json --after TC-1 --confirm
+python -m silver_cli case copy BRK TC-1 --as TC-9 --confirm
+python -m silver_cli case delete BRK TC-9 --confirm          # recycle bin, restorable
+python -m silver_cli row set BRK --sheet const --key SPEED_MAX --set const_value=130 --confirm
 ```
 
 Every `PID` argument (and `task search --project`) accepts the numeric project
@@ -148,6 +159,13 @@ python -m silver_cli task rerun 7 T000001 --confirm
 | `case list PID [--failed] [--status S\|not_run]` | Test-sheet items joined with the latest run: test id, item id, title, status, result, task key (two requests) |
 | `case show PID TEST_ID [--context]` | One case: every filled test-row field with its display name (目的 etc.), steps, version, latest run with verdict, jdgrslt and errors; `--context` adds all const, io and lib rows |
 | `project context PID [--sheet const\|io\|lib]` | Every row of the project's const, io and lib sheets with field display names |
+| `case set PID TEST_ID --set FIELD=VALUE` | Patch case fields (not steps) with the current item version |
+| `case add PID --json @FILE [--after TEST_ID]` | `items.create_item` on the test sheet; refuses an existing test_id |
+| `case copy PID TEST_ID --as NEW_ID` | Create a copy below the source without run results (result, exec_date, executor, log) |
+| `case delete PID TEST_ID` | `items.delete_item` (soft delete to the recycle bin) |
+| `row set PID --sheet const\|io\|lib --key NAME --set FIELD=VALUE` | Find the row by const_name, io_name or lib_func (must be unique) and patch it |
+| `task run PID --failed\|--not-run\|--all` | Select cases as `case list` does, then submit them in one request |
+| Run outcomes (`task wait`, `task report`, `case show`) | Include `step_results` (per step: result, time, description, checks with target/expected/observed/timing) and `failed_checks` when the server provides structured jdgrslt |
 | `project list --search TEXT` | `projects.list_projects`, filtered locally by code, name and description |
 | `task search [--project PID] [--q TEXT] [--status S] [--mine]` | `me.me_tasks`: runs across every visible project |
 | `task run PID --test-id ID... [--model NAME@VERSION] [--wait]` | `tasks.run_selected_tasks`; `--wait` then behaves like `task wait` |

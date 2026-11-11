@@ -130,6 +130,72 @@ def count_failed_steps(text: str, test_id: str = "") -> int:
     return sum(1 for ln in section.splitlines() if _STEP_FAIL_RE.search(ln))
 
 
+_LOG_TAG_RE = re.compile(r"^[A-Z]+:[^:]*:")
+_HEADING_RE = re.compile(r"^-{5,}\s*(?:Subroutine\((?P<sub>.+?)\)\s*)?(?P<name>Step(?P<no>\d+)|\w+)\s*-{5,}$")
+_RESULT_RE = re.compile(r"^(?:(?P<sub>\S+)\s+)?Step\.(?P<no>\d+)\s+is\s+(?P<result>passed|failed)"
+                        r"(?:\s+at\s+(?P<at>[\d.]+s))?", re.IGNORECASE)
+_SUB_START_RE = re.compile(r"^Subroutine\(.+?\) is started!$")
+_CHECK_FIELDS = {"Monitoring target:": "target", "Expected Value:": "expected",
+                 "Observed Value:": "observed", "確認タイミング：": "timing"}
+
+
+def parse_step_results(section: str) -> list[dict[str, Any]]:
+    """Structure one case's jdgrslt section into its top-level steps.
+
+    Each entry carries the step number (or phase name such as ``pre_init``),
+    its PASS/FAIL marker and time, the description lines, and every judged
+    check (``●`` passed, ``▲`` failed) with target, expected, observed and
+    timing. Checks emitted inside a subroutine stay with the calling step and
+    name the subroutine and its step.
+    """
+    steps: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    sub: tuple[str, int] | None = None
+    check: dict[str, Any] | None = None
+    for raw in section.splitlines():
+        line = _LOG_TAG_RE.sub("", raw).strip()
+        heading = _HEADING_RE.match(line)
+        if heading:
+            check = None
+            if heading.group("sub"):
+                sub = (heading.group("sub"), int(heading.group("no") or 0))
+                continue
+            sub = None
+            name = heading.group("name")
+            current = {"step": int(heading.group("no")) if heading.group("no") else name,
+                       "result": None, "at": None, "description": [], "checks": []}
+            steps.append(current)
+            continue
+        if current is None:
+            continue
+        result = _RESULT_RE.match(line)
+        if result:
+            # Any marker closes the open subroutine step: each subroutine step
+            # opens with its own heading, so a later check belongs to the caller.
+            check, sub = None, None
+            if result.group("sub") is None:  # the calling step's own marker
+                if not isinstance(current["step"], int):  # e.g. pre_init is step 1
+                    current["phase"], current["step"] = current["step"], int(result.group("no"))
+                current["result"] = "PASS" if result.group("result").lower() == "passed" else "FAIL"
+                current["at"] = result.group("at")
+            continue
+        if _SUB_START_RE.match(line):
+            continue
+        if line in ("●", "▲"):
+            check = {"ok": line == "●", "target": None, "expected": None, "observed": None, "timing": None}
+            if sub is not None:
+                check.update(subroutine=sub[0], subroutine_step=sub[1])
+            current["checks"].append(check)
+            continue
+        prefix = next((key for key in _CHECK_FIELDS if line.startswith(key)), None)
+        if check is not None and prefix is not None:
+            check[_CHECK_FIELDS[prefix]] = line[len(prefix):].strip()
+            continue
+        if sub is None and check is None and line and not _TEST_FAIL_RE.search(line) and not _TEST_PASS_RE.search(line):
+            current["description"].append(line)
+    return steps
+
+
 def parse_verdict_text(text: str, test_id: str = "") -> str:
     """Derive the judge verdict for ``test_id`` from a ``jdgrslt.log`` body.
 

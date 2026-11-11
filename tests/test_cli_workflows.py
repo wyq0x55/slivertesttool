@@ -373,3 +373,116 @@ def test_project_code_dry_run_stays_offline(cli):
 def test_task_search_accepts_project_code(cli):
     code, _, calls = cli("task", "search", "--project", "BRK", responses=[PROJECTS, {"tasks": []}])
     assert code == 0 and calls[1][2]["query"] == [("project_id", "7")]
+
+
+def test_case_set_patches_fields_with_current_version(cli):
+    code, _, calls = cli("case", "set", "7", "TC-2", "--set", "purpose=new purpose", "priority=1", "--confirm",
+                         responses=[CASE_ITEMS, {"item": {"id": 2}}])
+    assert code == 0
+    assert calls[1][:2] == ("PATCH", P + "/items/2")
+    assert calls[1][2]["json_body"] == {"version": 4, "changes": {"purpose": "new purpose", "priority": 1}}
+
+
+def test_case_set_refuses_steps(cli):
+    code, out, calls = cli("case", "set", "7", "TC-2", "--set", "steps={}", "--confirm")
+    assert code == 2 and out["error"]["code"] == "FIELD_NOT_ALLOWED" and calls == []
+
+
+def test_case_add_inserts_below_anchor_and_refuses_duplicates(cli):
+    code, _, calls = cli("case", "add", "7", "--json", '{"test_id": "TC-9", "purpose": "p"}', "--after", "TC-1",
+                         "--confirm", responses=[CASE_ITEMS, CASE_RUNS, CASE_ITEMS, {"item": {"id": 99}}])
+    assert code == 0
+    assert calls[3][:2] == ("POST", P + "/items")
+    assert calls[3][2]["json_body"] == {"sheet": "test", "values": {"test_id": "TC-9", "purpose": "p"},
+                                        "anchor_id": 1, "place": "below"}
+    code, out, calls = cli("case", "add", "7", "--json", '{"test_id": "TC-1"}', "--confirm",
+                           responses=[CASE_ITEMS, CASE_RUNS])
+    assert code == 2 and out["error"]["code"] == "DUPLICATE" and all(m == "GET" for m, *_ in calls[-2:])
+
+
+def test_case_copy_drops_results_and_sets_new_id(cli):
+    source = {**row(2, "TC-2"), "purpose": "p", "result": "PASS", "exec_date": "2026-01-01", "log": "T3"}
+    page = items_page(row(1, "TC-1"), source)
+    code, _, calls = cli("case", "copy", "7", "TC-2", "--as", "TC-9", "--confirm",
+                         responses=[page, page, {"item": {"id": 99}}])
+    assert code == 0
+    body = calls[2][2]["json_body"]
+    assert body["anchor_id"] == 2 and body["place"] == "below"
+    values = body["values"]
+    assert values["test_id"] == values["case_id"] == "TC-9" and values["purpose"] == "p"
+    assert values["steps"] == STEP_DOC
+    assert not {"result", "exec_date", "log", "id", "version"} & set(values)
+
+
+def test_case_copy_refuses_existing_new_id(cli):
+    code, out, calls = cli("case", "copy", "7", "TC-2", "--as", "TC-1", "--confirm", responses=[CASE_ITEMS])
+    assert code == 2 and out["error"]["code"] == "DUPLICATE" and len(calls) == 1
+
+
+def test_case_delete_soft_deletes_resolved_item(cli):
+    code, out, calls = cli("case", "delete", "7", "TC-3", "--confirm", responses=[CASE_ITEMS, {"deleted": True}])
+    assert code == 0 and calls[1][:2] == ("DELETE", P + "/items/3")
+    assert out["data"]["test_id"] == "TC-3"
+
+
+@pytest.mark.parametrize(("sheet", "key", "rows", "expected"), [
+    ("const", "SPEED_MAX", [{"id": 50, "const_name": "SPEED_MAX", "version": 2}], 50),
+    ("io", "speed", [{"id": 60, "io_name": "speed", "version": 2}], 60),
+    ("lib", "Init", [{"id": 70, "lib_func": "Init", "version": 2}, {"id": 71, "lib_func": "Wait", "version": 2}], 70),
+])
+def test_row_set_finds_row_by_business_key(cli, sheet, key, rows, expected):
+    code, _, calls = cli("row", "set", "7", "--sheet", sheet, "--key", key, "--set", "x=1", "--confirm",
+                         responses=[items_page(*rows), {"item": {}}])
+    assert code == 0
+    assert calls[0][2]["query"][0] == ("sheet", sheet)
+    assert calls[1][:2] == ("PATCH", f"{P}/items/{expected}")
+    assert calls[1][2]["json_body"] == {"version": 2, "changes": {"x": 1}}
+
+
+def test_row_set_refuses_duplicate_keys(cli):
+    rows = [{"id": 50, "const_name": "A", "version": 1}, {"id": 51, "const_name": "A", "version": 1}]
+    code, out, calls = cli("row", "set", "7", "--sheet", "const", "--key", "A", "--set", "x=1", "--confirm",
+                           responses=[items_page(*rows)])
+    assert code == 2 and out["error"]["code"] == "AMBIGUOUS_KEY" and len(calls) == 1
+
+
+@pytest.mark.parametrize(("flag", "expected"), [("--failed", ["TC-2"]), ("--not-run", ["TC-3"]),
+                                                ("--all", ["TC-1", "TC-2", "TC-3"])])
+def test_task_run_batch_selection(cli, flag, expected):
+    code, _, calls = cli("task", "run", "7", flag, "--confirm",
+                         responses=[CASE_ITEMS, CASE_RUNS, {"created": [], "missing": [], "errors": [], "duplicates": []}])
+    assert code == 0 and calls[2][2]["json_body"]["test_ids"] == expected
+
+
+def test_task_run_needs_exactly_one_selection(cli):
+    for arguments in ([], ["--test-id", "TC-1", "--failed"]):
+        code, out, calls = cli("task", "run", "7", *arguments, "--confirm")
+        assert code == 2 and out["error"]["code"] == "ARGUMENT_ERROR" and calls == []
+
+
+def test_run_outcomes_expose_failed_checks_from_structured_jdgrslt(cli):
+    steps = [{"step": 1, "result": "PASS", "checks": [{"ok": True, "target": "a"}]},
+             {"step": 2, "result": "FAIL", "checks": [{"ok": True, "target": "b"},
+                                                      {"ok": False, "target": "c", "expected": "1", "observed": "0"}]}]
+    code, out, _ = cli("task", "wait", "7", "T1",
+                       responses=[{"task": task("T1", "failed")}, {"task": task("T1", "failed")},
+                                  {"verdict": "FAIL", "content": "", "steps": steps}])
+    assert code == 8
+    run = out["data"]["tasks"][0]
+    assert run["step_results"] == steps
+    assert run["failed_checks"] == [{"step": 2, "ok": False, "target": "c", "expected": "1", "observed": "0"}]
+
+
+@pytest.mark.parametrize("arguments", [
+    ["case", "set", "7", "TC-1", "--set", "purpose=x"],
+    ["case", "add", "7", "--json", '{"test_id": "TC-9"}'],
+    ["case", "copy", "7", "TC-1", "--as", "TC-9"],
+    ["case", "delete", "7", "TC-1"],
+    ["row", "set", "7", "--sheet", "const", "--key", "A", "--set", "x=1"],
+    ["task", "run", "7", "--failed"],
+])
+def test_edit_commands_need_confirm_and_dry_run_offline(cli, arguments):
+    code, out, calls = cli(*arguments)
+    assert code == 2 and out["error"]["code"] == "CONFIRM_REQUIRED" and calls == []
+    code, out, calls = cli(*arguments, "--dry-run")
+    assert code == 0 and out["data"]["dry_run"] is True and calls == []

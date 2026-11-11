@@ -71,6 +71,11 @@ keys are only needed for low-level calls.
   [--test-id ...] [--model NAME@VERSION] --dry-run`, then `--confirm --wait`.
   `task wait PID TID...` waits for existing runs. Both exit 8 when any run did
   not pass and report status, verdict, jdgrslt and errors per run.
+- Edit: `case set PID TEST_ID --set purpose=...`, `case add/copy/delete`,
+  and `row set PID --sheet const|io|lib --key NAME --set FIELD=VALUE`. All use
+  the item version check; never retry a `VERSION_CONFLICT` blindly.
+- Batch: `task run PID --failed|--not-run|--all --confirm`. Inspect
+  `failed_checks` (step, target, expected, observed) before editing steps.
 - Report: `task report PID [--test-id ...] [--status failed|not_run]
   [--output report.md]` lists each case's steps with its latest run, verdict
   and errors. Read results from the platform; do not rerun only to learn them.

@@ -7,6 +7,7 @@ contract: ``--dry-run`` sends nothing, ``--confirm`` is required otherwise.
 
 from __future__ import annotations
 
+import copy
 import json
 import time
 from pathlib import Path
@@ -68,8 +69,13 @@ def register(command, group):
 
     run = command("task", "run", "Queue test rows for Silver execution with a saved model; runner inputs are generated from the project's test/lib/const rows.",
                   "run 1 --test-id TC-1 --test-id TC-2 --model plant@v1 --confirm", write=True, handler=task_run)
-    run.add_argument("--test-id", dest="test_ids", action="append", required=True,
+    run.add_argument("--test-id", dest="test_ids", action="append",
                      help="Test id of a test-sheet row (its test_id, else case_id); repeat as needed.")
+    selection = run.add_mutually_exclusive_group()
+    selection.add_argument("--failed", action="store_true",
+                           help="Every case whose latest run failed, was cancelled, or has a FAIL/ERROR result.")
+    selection.add_argument("--not-run", action="store_true", help="Every case that has never run.")
+    selection.add_argument("--all", action="store_true", help="Every test-sheet case.")
     run.add_argument("--model", default="", help="Model reference NAME@VERSION; default: the project's current model.")
     run.add_argument("--wait", action="store_true", help="Wait for the queued runs and report status and verdicts.")
     waiting(run, 1800.0)
@@ -111,6 +117,34 @@ def register(command, group):
                       "context 1 --sheet const", handler=project_context)
     context.add_argument("--sheet", action="append", choices=CONTEXT_SHEETS,
                          help="Only this sheet; repeat as needed (default: const, io and lib).")
+
+    setting = command("case", "set", "Change fields of one case (purpose, environment, parameter ...) under the item version check. "
+                      "Use the steps commands for steps.", "set 1 TC-1 --set purpose=New --confirm",
+                      write=True, handler=case_set)
+    setting.add_argument("test_id", help="Test id from case list.")
+    setting.add_argument("--set", dest="assignments", action="append", nargs="+", required=True, metavar="FIELD=VALUE",
+                         help="Field keys as shown by case show; values parse as JSON when valid, otherwise as text.")
+    adding = command("case", "add", "Create a test-sheet case from a JSON object of field values (test_id, test_name, purpose, steps ...).",
+                     "add 1 --json @case.json --after TC-1 --confirm", write=True, handler=case_add)
+    adding.add_argument("--json", dest="json_input", required=True, metavar="JSON|@FILE|@-",
+                        help="Field values; include test_id. See case show for field keys.")
+    adding.add_argument("--after", help="Insert below the case with this test id (default: at the end).")
+    copying = command("case", "copy", "Copy a case under a new test id, directly below it; run results are not copied.",
+                      "copy 1 TC-1 --as TC-9 --confirm", write=True, handler=case_copy)
+    copying.add_argument("test_id", help="Source test id.")
+    copying.add_argument("--as", dest="new_id", required=True, help="Test id of the copy; must not exist yet.")
+    deleting = command("case", "delete", "Move a case to the recycle bin (restorable).", "delete 1 TC-9 --confirm",
+                       write=True, handler=case_delete)
+    deleting.add_argument("test_id", help="Test id from case list.")
+
+    group("row", "Change a const, io or lib row found by its name.", "row set 1 --sheet const --key SPEED_MAX --set const_value=130")
+    row = command("row", "set", "Change fields of one const, io or lib row found by const_name, io_name or lib_func, "
+                  "under the item version check.", "set 1 --sheet const --key SPEED_MAX --set const_value=130 --confirm",
+                  write=True, handler=row_set)
+    row.add_argument("--sheet", choices=CONTEXT_SHEETS, required=True)
+    row.add_argument("--key", required=True, help="const_name, io_name or lib_func of the row (see project context).")
+    row.add_argument("--set", dest="assignments", action="append", nargs="+", required=True, metavar="FIELD=VALUE",
+                     help="Field keys as shown by project context; values parse as JSON when valid, otherwise as text.")
 
     group("model", "List, upload, register or select project models.", "model list 1")
     command("model", "list", "List the project's saved models and versions.", "list 1",
@@ -323,6 +357,11 @@ def _outcomes(client, pid, keys):
             verdict = _call(client, "tasks.project_task_jdgrslt", params)["data"]
             entry.update(verdict=verdict.get("verdict"), failed_steps=verdict.get("failed_steps"),
                          jdgrslt=verdict.get("content", ""))
+            if "steps" in verdict:  # servers that structure jdgrslt per step
+                entry["step_results"] = verdict["steps"]
+                entry["failed_checks"] = [
+                    {"step": step["step"], **check} for step in verdict["steps"]
+                    for check in step.get("checks", []) if not check.get("ok")]
         entry["error_events"] = [event for event in task.get("events", []) if event.get("event_type") == "error"]
         results.append(entry)
     return results
@@ -345,12 +384,23 @@ def _await_tasks(client, args, keys):
 
 
 def task_run(args):
-    body = {"model": args.model, "test_ids": args.test_ids}
+    selection = next((name for name in ("failed", "not_run", "all") if getattr(args, name)), None)
+    if bool(args.test_ids) == bool(selection):
+        raise CliError("ARGUMENT_ERROR", "Give --test-id, or one of --failed, --not-run or --all.", 2)
+    body = {"model": args.model, "test_ids": args.test_ids or [f"<every {selection} case from case list>"]}
     gated = _gate(args, [("tasks.run_selected_tasks", _params(args), None, body)],
-                  wait=args.wait)
+                  wait=args.wait, selection=selection)
     if gated:
         return gated
     client = _client(args)
+    if selection:
+        rows = _case_rows(client, args.pid, status="not_run" if selection == "not_run" else None,
+                          failed=selection == "failed")["cases"]
+        if not rows:
+            from .runner import _ok
+            return _ok({"created": [], "missing": [], "errors": [], "duplicates": [], "selection": selection,
+                        "message": "No case matches this selection."})
+        body["test_ids"] = [row["test_id"] for row in rows]
     response = _call(client, "tasks.run_selected_tasks", _params(args), body=body)
     data = response["data"]
     if not args.wait:
@@ -540,12 +590,17 @@ def _case_failed(run):
 
 def case_list(args):
     """One compact row per test case: the test id other commands take, plus its latest run."""
-    from .commands import _test_id
     from .runner import _ok
 
-    client = _client(args)
-    items = _items(client, args.pid, "test")
-    listing = _call(client, "tasks.list_project_tasks", _params(args), query=[("limit", "2000")])["data"]
+    data = _case_rows(_client(args), args.pid, status=args.status, failed=args.failed)
+    return _ok({**data, "next": "Use the test_id with case show, steps show/edit/add/remove/move --test-id, or task run --test-id."})
+
+
+def _case_rows(client, pid, *, status=None, failed=False):
+    from .commands import _test_id
+
+    items = _items(client, pid, "test")
+    listing = _call(client, "tasks.list_project_tasks", {"project_id": pid}, query=[("limit", "2000")])["data"]
     latest = {}
     for task in listing["tasks"]:  # newest first
         latest.setdefault(task.get("test_id"), task)
@@ -555,18 +610,135 @@ def case_list(args):
         if not test_id:
             continue
         task = latest.get(test_id)
-        status = task.get("status") if task else "not_run"
-        if (args.status and status != args.status) or (args.failed and not _case_failed(task)):
+        state = task.get("status") if task else "not_run"
+        if (status and state != status) or (failed and not _case_failed(task)):
             continue
-        counts[status] = counts.get(status, 0) + 1
+        counts[state] = counts.get(state, 0) + 1
         rows.append({"test_id": test_id, "item_id": item["id"],
                      "title": item.get("title") or item.get("test_name"),
-                     "status": status, "result": task.get("result") if task else None,
+                     "status": state, "result": task.get("result") if task else None,
                      "task_id": task.get("task_id") if task else None,
                      "finished_at": task.get("finished_at") if task else None})
-    return _ok({"cases": rows, "returned": len(rows), "statuses": counts,
-                "runs_scanned": len(listing["tasks"]), "runs_truncated": listing.get("truncated", False),
-                "next": "Use the test_id with case show, steps show/edit/add/remove/move --test-id, or task run --test-id."})
+    return {"cases": rows, "returned": len(rows), "statuses": counts,
+            "runs_scanned": len(listing["tasks"]), "runs_truncated": listing.get("truncated", False)}
+
+
+# Execution results and row identity are never copied onto a new case.
+_NOT_COPIED = {"id", "uuid", "version", "row_order", "updated_at", "updated_by", "case_id", "test_id",
+               "result", "actual_result", "exec_date", "executor", "log", "workflow_status"}
+_ROW_KEYS = {"const": "const_name", "io": "io_name", "lib": "lib_func"}
+
+
+def _patch(client, pid, item, changes):
+    version = item.get("version")
+    if not isinstance(version, int) or isinstance(version, bool):
+        raise CliError("INVALID_RESPONSE", "Current item has no valid version; refusing to update.", 7)
+    return _call(client, "items.patch_item", {"project_id": pid, "item_id": item["id"]},
+                 body={"version": version, "changes": changes})
+
+
+def _changes(args, forbidden=()):
+    from .commands import _assignments
+
+    changes = _assignments(args.assignments)
+    blocked = sorted(set(changes) & set(forbidden))
+    if blocked:
+        raise CliError("FIELD_NOT_ALLOWED", "Use the steps commands to change steps: " + ", ".join(blocked), 2)
+    return changes
+
+
+def _write_plan(args, name, params, body, **details):
+    """Dry-run plan for "find the row, then write it"; the row's ID is only known online."""
+    gated = _gate(args, [("items.list_items", _params(args), None, None), (name, params, None, body)], **details)
+    if gated:
+        write = gated["data"]["requests"][1]
+        write["path"] = write["path"].rsplit("/", 1)[0] + "/<item found by the list read>"
+    return gated
+
+
+def case_set(args):
+    from .commands import _item
+
+    changes = _changes(args, forbidden={"steps"})
+    params = _params(args, item_id=1)
+    gated = _write_plan(args, "items.patch_item", params, {"version": "<current>", "changes": changes},
+                        test_id=args.test_id)
+    if gated:
+        return gated
+    client = _client(args)
+    _, item = _item(client, _params(args), test_id=args.test_id)
+    return _patch(client, args.pid, item, changes)
+
+
+def case_add(args):
+    from .commands import _item
+    from .runner import _json_input
+
+    values = _json_input(args.json_input)
+    if not str(values.get("test_id") or "").strip():
+        raise CliError("INVALID_CASE", "The case needs a test_id.", 2)
+    body = {"sheet": "test", "values": values}
+    gated = _gate(args, [("items.create_item", _params(args), None, body)], after=args.after)
+    if gated:
+        return gated
+    client = _client(args)
+    existing = [row for row in _case_rows(client, args.pid)["cases"] if row["test_id"] == values["test_id"].strip()]
+    if existing:
+        raise CliError("DUPLICATE", "A case with this test_id already exists.", 2, details=existing)
+    if args.after:
+        _, anchor = _item(client, _params(args), test_id=args.after)
+        body.update(anchor_id=anchor["id"], place="below")
+    return _call(client, "items.create_item", _params(args), body=body)
+
+
+def case_copy(args):
+    from .commands import _item, _test_id
+
+    body = {"sheet": "test", "values": "<source fields without results>", "anchor_id": "<source>", "place": "below"}
+    gated = _gate(args, [("items.create_item", _params(args), None, body)], source=args.test_id, new_id=args.new_id)
+    if gated:
+        return gated
+    client = _client(args)
+    items = _items(client, args.pid, "test")
+    if any(_test_id(item) == args.new_id for item in items):
+        raise CliError("DUPLICATE", "A case with the new test id already exists.", 2)
+    _, source = _item(client, _params(args), test_id=args.test_id)
+    values = {key: copy.deepcopy(value) for key, value in source.items() if key not in _NOT_COPIED}
+    values.update(test_id=args.new_id, case_id=args.new_id)
+    body = {"sheet": "test", "values": values, "anchor_id": source["id"], "place": "below"}
+    return _call(client, "items.create_item", _params(args), body=body)
+
+
+def case_delete(args):
+    from .commands import _item
+
+    gated = _write_plan(args, "items.delete_item", _params(args, item_id=1), None, test_id=args.test_id,
+                        note="Soft delete: the case goes to the recycle bin and can be restored.")
+    if gated:
+        return gated
+    client = _client(args)
+    _, item = _item(client, _params(args), test_id=args.test_id)
+    response = _call(client, "items.delete_item", _params(args, item_id=item["id"]))
+    response["data"] = {**(response.get("data") or {}), "item_id": item["id"], "test_id": args.test_id}
+    return response
+
+
+def row_set(args):
+    changes = _changes(args)
+    key_field = _ROW_KEYS[args.sheet]
+    gated = _write_plan(args, "items.patch_item", _params(args, item_id=1), {"version": "<current>", "changes": changes},
+                        sheet=args.sheet, key={key_field: args.key})
+    if gated:
+        return gated
+    client = _client(args)
+    matches = [item for item in _items(client, args.pid, args.sheet)
+               if str(item.get(key_field) or "").strip() == args.key]
+    if len(matches) != 1:
+        raise CliError("NOT_FOUND" if not matches else "AMBIGUOUS_KEY",
+                       f"No {args.sheet} row has this {key_field}." if not matches
+                       else f"Several {args.sheet} rows share this {key_field}.", 2,
+                       details=[{"item_id": item["id"]} for item in matches])
+    return _patch(client, args.pid, matches[0], changes)
 
 
 # --------------------------------------------------------------------------- #
