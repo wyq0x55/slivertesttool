@@ -7,6 +7,7 @@ import copy
 import json
 import os
 
+from . import workflows
 from .catalog import get_operation
 from .transport import CliError
 
@@ -25,29 +26,35 @@ def register(commands):
         "project": ("List, inspect or create projects.", "project show 1"),
         "item": ("List or inspect matrix items, including their current version.", "item list 1 --sheet test"),
         "steps": ("Read or update an item's steps document with optimistic version locking.", "steps show 1 2"),
-        "task": ("Inspect test runs, failures and logs, or rerun a saved task.", "task failures 1"),
+        "task": ("Search, run, wait for, report on, inspect or rerun Silver test runs.", "task failures 1"),
     }
     actions = {}
-    for name, (description, example) in groups.items():
-        group = commands.add_parser(
+
+    def group(name, description, example):
+        parser = commands.add_parser(
             name, help=description, description=description,
             epilog=f"Example: python3 -m silver_cli {example}",
         )
-        actions[name] = group.add_subparsers(dest="action", required=True)
+        actions[name] = parser.add_subparsers(dest="action", required=True)
+
+    for name, (description, example) in groups.items():
+        group(name, description, example)
 
     def command(group, name, description, example, *, project=True, item=False,
-                task=False, write=False):
+                task=False, job=False, write=False, handler=None):
         parser = actions[group].add_parser(
             name, help=description, description=description,
             epilog=f"Example: python3 -m silver_cli {group} {example}",
         )
-        parser.set_defaults(high_level=True)
+        parser.set_defaults(high_level=True, handler=handler)
         if project:
             parser.add_argument("pid", type=_positive_int, help="Numeric project ID.")
         if item:
             parser.add_argument("iid", type=_positive_int, help="Numeric matrix item ID (not case_id).")
         if task:
             parser.add_argument("tid", help="Task key returned as task_id by the API (not the database ID).")
+        if job:
+            parser.add_argument("job_id", type=_positive_int, help="Numeric unit-test job ID.")
         parser.add_argument("--url", default=os.environ.get("SILVER_CLI_URL"),
                             help="Server base URL; defaults to SILVER_CLI_URL.")
         parser.add_argument("--timeout", type=_positive, default=30.0,
@@ -62,7 +69,9 @@ def register(commands):
                                help="Authorize this write, including any required preceding reads.")
         return parser
 
-    command("project", "list", "List accessible projects and their card statistics.", "list", project=False)
+    projects = command("project", "list", "List accessible projects and their card statistics.",
+                       "list --search brake", project=False)
+    projects.add_argument("--search", help="Keep projects whose code, name or description contains this text (case-insensitive).")
     command("project", "show", "Combine project details, fields, project models and dashboard statistics.", "show 1")
     create = command("project", "create", "Create a project; requires --confirm to send the POST.",
                      "create --json @project.json --dry-run", project=False, write=True)
@@ -102,6 +111,7 @@ def register(commands):
     log.add_argument("--tail", type=_positive_int, help="Keep the last N lines of the available log; errors remain included separately.")
     command("task", "rerun", "Rerun one saved task via rerun-selected using its original model and current matrix inputs. Existing results are overwritten; queued/running tasks are skipped. Inspect created/skipped/missing/errors in the response.",
             "rerun 1 TASK_KEY --confirm", task=True, write=True)
+    workflows.register(command, group)
 
 
 def _request_spec(name, params=None, *, query=None, body=None):
@@ -169,6 +179,8 @@ def _errors(task):
 def execute(args, secrets):
     from .runner import _client, _collect_secrets, _json_input, _ok
 
+    if args.handler is not None:
+        return args.handler(args)
     group, action = args.command, args.action
     params = {"project_id": args.pid} if hasattr(args, "pid") else {}
     write = (group, action) in {("project", "create"), ("steps", "set"),
@@ -202,7 +214,15 @@ def execute(args, secrets):
     client = _client(args)
     if group == "project":
         if action == "list":
-            return _request(client, "projects.list_projects")
+            response = _request(client, "projects.list_projects")
+            if args.search:
+                needle = args.search.casefold()
+                data = dict(response["data"])
+                data["projects"] = [project for project in data["projects"]
+                                    if any(needle in str(project.get(key) or "").casefold()
+                                           for key in ("code", "name", "description"))]
+                return {**response, "data": data}
+            return response
         if action == "create":
             return _request(client, "projects.create_project", body=body)
         response = _request(client, "projects.get_project", params)

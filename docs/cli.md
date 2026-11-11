@@ -4,6 +4,21 @@
 标准库，不导入 Flask、不连接数据库、不启动 worker。它向已经运行的 Web
 服务发送 HTTP 请求，复用浏览器使用的权限、校验、版本冲突及执行链路。
 
+### 在其他电脑上使用（服务器部署后）
+
+平台提供与自身 API 完全对应的单文件 CLI，无需平台源码或额外依赖：
+
+```powershell
+curl.exe -o silver-cli.pyz https://silver.example.internal/api/v1/cli/silver-cli.pyz
+$env:SILVER_CLI_URL = 'https://silver.example.internal'
+$env:SILVER_CLI_USERNAME = 'your-account'
+python silver-cli.pyz --help
+```
+
+每个用户使用自己的账号，权限与浏览器完全相同。服务器升级后重新下载即可
+保持命令目录一致。命令目录由 `scripts/export_cli_catalog.py` 从路由源码生成
+到 `silver_cli/catalog.json`；修改路由后重新生成，测试会检查是否过期。
+
 ## 1. 发现命令和连接目标
 
 ```powershell
@@ -108,6 +123,25 @@ python -m silver_cli task rerun 7 T000001 --confirm
 | `task failures PID [--task TID]` | Failed/error cases with judge result (`tasks.project_task_jdgrslt`) and error information |
 | `task log PID TID --tail N` | Runtime events and errors from `tasks.project_task_detail`; limit displayed log lines within the first 5000 events |
 | `task rerun PID TID` | `tasks.rerun_selected_tasks` with `{"task_keys":["T000001"]}` |
+| `project list --search TEXT` | `projects.list_projects`, filtered locally by code, name and description |
+| `task search [--project PID] [--q TEXT] [--status S] [--mine]` | `me.me_tasks`: runs across every visible project |
+| `task run PID --test-id ID... [--model NAME@VERSION] [--wait]` | `tasks.run_selected_tasks`; `--wait` then behaves like `task wait` |
+| `task wait PID TID...` | Poll `tasks.project_task_status`, then report detail and jdgrslt per run; exit 8 if any run did not pass, 9 on timeout |
+| `task report PID [--test-id ...] [--status S\|not_run] [--output FILE]` | Test-sheet items joined with each case's latest run, verdict, jdgrslt and errors; `.md` output writes Markdown |
+| `task cancel PID TID` / `task download PID TID --output FILE` | `tasks.cancel_project_task` / `tasks.download_project_task` |
+| `model list/upload/use PID` | `models.list_project_models` / `upload_project_model` (multipart dll, sbs, pdb, extra) / `set_current_project_model` |
+| `ut options/config PID` | `ut_pipeline.manifest_options` / `get_config` |
+| `ut configure PID --json @FILE` | `ut_pipeline.put_config`; fields are listed in `--help` |
+| `ut validate-manifest PID --json @FILE` / `ut paths PID --path DIR` | `validate_manifest` (persists nothing, no `--confirm`) / `browse_server_paths` |
+| `ut import-targets PID` / `ut targets PID [--function F]` | `import_targets` / `list_targets` |
+| `ut run PID --function F... [--source S] [--wait]` | Resolve each function to exactly one indexed target, then `create_batch`; `--wait` polls `list_jobs` |
+| `ut wait PID --batch B\|--job J...` | Poll until no job is queued, generating, executing or repairing |
+| `ut jobs/batches/job/stats PID` | `list_jobs` / `list_batches` / `job_detail` / `repair_stats` |
+| `ut evidence PID JID [--attempt A]` | `job_detail` plus `attempt_csv?format=text`, `format=diagnostic` and `attempt_coverage`; a missing section is reported, not fatal |
+| `ut revise PID JID --csv FILE [--note]` | `submit_revision` with the file uploaded byte for byte |
+| `ut retry/stop PID JID`, `ut stop-batch PID B` | `retry` / `stop_job` / `stop_batch` |
+| `ut review PID JID --decision approve\|reject [--note]` | Read `current_attempt_id`, then `review` with `expected_attempt_id`; never approve without a person's consent |
+| `ut export PID [--batch B] --output FILE` | `export_approved` zip |
 
 The input to `steps set` is the steps document itself, for example:
 

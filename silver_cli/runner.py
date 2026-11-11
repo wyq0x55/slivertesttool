@@ -33,7 +33,9 @@ def _parser():
     parser = Parser(description="Silver platform CLI. JSON stdout; no interactive prompts. "
                     "Set SILVER_CLI_USERNAME and SILVER_CLI_PASSWORD together for session login.",
                     epilog="Task commands: project list/show/create; item list/show; steps show/set/edit; "
-                    "task list/show/failures/log/rerun. "
+                    "task search/list/show/run/wait/report/failures/log/rerun/cancel/download; "
+                    "model list/upload/use; ut options/config/configure/validate-manifest/paths/import-targets/"
+                    "targets/run/wait/jobs/batches/job/evidence/revise/retry/stop/stop-batch/review/export/stats. "
                     "Examples: python3 -m silver_cli project list; python3 -m silver_cli steps show 1 2; "
                     "python3 -m silver_cli describe items.patch_item")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -251,8 +253,11 @@ def main(argv=None):
     try:
         args = _parser().parse_args(argv)
         if getattr(args, "high_level", False):
-            _emit(execute(args, secrets), secrets)
-            return 0
+            result, code = execute(args, secrets), 0
+            if isinstance(result, tuple):
+                result, code = result
+            _emit(result, secrets)
+            return code
         if args.command == "list":
             rows = [operation.to_dict() for operation in operations()
                     if args.group is None or operation.name.startswith(args.group + ".")]

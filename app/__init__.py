@@ -221,6 +221,7 @@ def _install_auth_gate(app: Flask) -> None:
         "lanmatrix_auth.logout",
         "lanmatrix_auth.me",
         "lanmatrix_auth.health",
+        "lanmatrix_auth.download_cli",
     }
 
     @app.before_request

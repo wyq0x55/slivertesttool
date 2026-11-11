@@ -59,3 +59,16 @@ def test_catalog_transitive_hints_and_kinds():
     assert get_operation("projects.list_projects").mutating is False
     with pytest.raises(ValueError):
         get_operation("not_a_real_command")
+
+
+def test_server_serves_the_zipapp_it_would_build():
+    from flask import Flask
+    from app.routes.lanmatrix import auth_bp
+    from silver_cli.bundle import build
+
+    app = Flask(__name__)
+    app.register_blueprint(auth_bp)
+    response = app.test_client().get("/api/v1/cli/silver-cli.pyz")
+    assert response.status_code == 200
+    assert response.headers["Content-Disposition"] == 'attachment; filename="silver-cli.pyz"'
+    assert response.data == build()
