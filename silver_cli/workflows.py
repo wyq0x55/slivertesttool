@@ -31,6 +31,7 @@ UT_CONFIG_FIELDS = (
     "stub_max_rounds: integer 1-5 (llm stub mode)",
     "stub_model, repair_model: model names, at most 128 characters",
     "host_clang, host_llvm_cov, host_llvm_profdata: host tool paths; must not be empty when given",
+    "host_profile_runtime: host profile runtime path",
 )
 
 
@@ -57,7 +58,7 @@ def register(command, group):
         parser.add_argument("--max-wait", type=_positive, default=default,
                             help=f"Maximum wait in seconds (default: {default:g}); the remote work is never cancelled.")
 
-    search = command("task", "search", "Search runs across every visible project by task key, test id or name (me.me_tasks).",
+    search = command("task", "search", "Search runs across every visible project by task key, test id or name (me.me_tasks). Unit-test jobs matching the same filters are returned in ut_jobs; --limit applies to runs and jobs together, newest first.",
                      "search --q TC-1 --status failed", project=False, handler=task_search)
     search.add_argument("--project", type=_project_ref, help="Limit to one project ID or project code.")
     search.add_argument("--q", help="Substring of task key, test id or task name.")
@@ -305,21 +306,24 @@ def _passed(entry):
     return entry.get("status") == "passed" and str(entry.get("verdict") or "").upper() == "PASS"
 
 
-def _outcomes(client, pid, keys):
-    from .commands import _errors
+def _model(task):
+    name, version = task.get("sil_name") or "", task.get("sil_version") or ""
+    return f"{name}@{version}" if version else name
 
+
+def _outcomes(client, pid, keys):
     results = []
     for key in keys:
         params = {"project_id": pid, "task_key": key}
         task = _call(client, "tasks.project_task_detail", params)["data"]["task"]
         entry = {"task_id": key, "test_id": task.get("test_id"), "status": task.get("status"),
-                 "result": task.get("result"), "model": f"{task.get('sil_name')}@{task.get('sil_version')}",
-                 "finished_at": task.get("finished_at")}
+                 "result": task.get("result"), "model": _model(task),
+                 "finished_at": task.get("finished_at"), "message": task.get("message", "")}
         if task.get("status") in TASK_DONE:
             verdict = _call(client, "tasks.project_task_jdgrslt", params)["data"]
             entry.update(verdict=verdict.get("verdict"), failed_steps=verdict.get("failed_steps"),
                          jdgrslt=verdict.get("content", ""))
-        entry["errors"] = _errors(task)
+        entry["error_events"] = [event for event in task.get("events", []) if event.get("event_type") == "error"]
         results.append(entry)
     return results
 
@@ -407,10 +411,10 @@ def _markdown(cases):
             for number, step in enumerate(steps, 1):
                 text = json.dumps(step, ensure_ascii=False).replace("|", "\\|")
                 lines.append(f"| {number} | {text} |")
-        errors = (run.get("errors") or {})
-        if errors.get("message") or errors.get("events"):
-            lines += ["", "Errors:", "", "```", errors.get("message") or "",
-                      *[event.get("message", "") for event in errors.get("events", [])], "```"]
+        if run.get("message"):
+            lines.append(f"- Message: {run['message']}")
+        if run.get("error_events"):
+            lines += ["", "Errors:", "", "```", *[event.get("message", "") for event in run["error_events"]], "```"]
         if run.get("jdgrslt"):
             lines += ["", "jdgrslt:", "", "```", run["jdgrslt"].rstrip(), "```"]
         lines.append("")
@@ -461,9 +465,20 @@ def _empty(value):
     return value is None or value == "" or value == [] or value == {}
 
 
+def _value(item, field):
+    """A field's value; steps-typed fields stored as JSON text are returned as objects."""
+    value = item.get(field["field_key"])
+    if field.get("data_type") == "steps" and isinstance(value, str):
+        try:
+            return json.loads(value)
+        except ValueError:
+            return value
+    return value
+
+
 def _labelled(item, fields, sheet, exclude=()):
     """The item's non-empty values for the sheet's fields, in field order, with display names."""
-    return [{"field": field["field_key"], "name": field.get("display_name"), "value": item.get(field["field_key"])}
+    return [{"field": field["field_key"], "name": field.get("display_name"), "value": _value(item, field)}
             for field in fields
             if (field.get("sheet") or "test") == sheet and field["field_key"] not in exclude
             and not _empty(item.get(field["field_key"]))]
@@ -476,7 +491,7 @@ def _context(client, pid, fields, sheets):
         keys = [field for field in fields if (field.get("sheet") or "test") == sheet]
         rows = []
         for item in _items(client, pid, sheet):
-            values = {field["field_key"]: item.get(field["field_key"]) for field in keys
+            values = {field["field_key"]: _value(item, field) for field in keys
                       if not _empty(item.get(field["field_key"]))}
             rows.append({"item_id": item["id"], **values})
         result[sheet] = {"fields": {field["field_key"]: field.get("display_name") for field in keys},

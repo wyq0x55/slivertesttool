@@ -85,6 +85,7 @@ def test_task_run_wait_reports_status_and_verdict(cli, final, verdict, expected)
     assert calls[0][2]["json_body"] == {"model": "plant@v1", "test_ids": ["TC-1"]}
     run = out["data"]["tasks"][0]
     assert (run["status"], run["verdict"], run["jdgrslt"]) == (final, verdict, "case TC-1")
+    assert run["model"] == "plant@v1" and run["error_events"] == []
     assert out["data"]["all_passed"] is (expected == 0)
 
 
@@ -295,6 +296,7 @@ FIELDS = {"fields": [
     {"field_key": "io_name", "display_name": "名称", "sheet": "io"},
     {"field_key": "lib_func", "display_name": "函数标识", "sheet": "lib"},
     {"field_key": "lib_value", "display_name": "目的", "sheet": "lib"},
+    {"field_key": "lib_stb", "display_name": "测试手顺", "sheet": "lib", "data_type": "steps"},
 ]}
 PURPOSE_ITEMS = items_page(row(1, "TC-1"), {**row(2, "TC-2"), "purpose": "brake check"}, row(3, "TC-3"))
 
@@ -315,7 +317,7 @@ def test_case_show_returns_info_steps_and_latest_verdict(cli):
 def test_case_show_context_lists_const_io_and_lib(cli):
     const = items_page({"id": 50, "const_name": "SPEED_MAX", "const_value": "120"})
     io = items_page({"id": 60, "io_name": "speed", "io_note": "unlisted field is dropped"})
-    lib = items_page({"id": 70, "lib_func": "Init", "lib_value": ""})
+    lib = items_page({"id": 70, "lib_func": "Init", "lib_value": "", "lib_stb": json.dumps(STEP_DOC)})
     code, out, calls = cli("case", "show", "7", "TC-1", "--context",
                            responses=[FIELDS, PURPOSE_ITEMS, {"tasks": [], "total": 0}, const, io, lib])
     assert code == 0
@@ -323,7 +325,7 @@ def test_case_show_context_lists_const_io_and_lib(cli):
     assert context["const"]["rows"] == [{"item_id": 50, "const_name": "SPEED_MAX", "const_value": "120"}]
     assert context["const"]["fields"] == {"const_name": "识别子名", "const_value": "值"}
     assert context["io"]["rows"] == [{"item_id": 60, "io_name": "speed"}]
-    assert context["lib"]["rows"] == [{"item_id": 70, "lib_func": "Init"}]
+    assert context["lib"]["rows"] == [{"item_id": 70, "lib_func": "Init", "lib_stb": STEP_DOC}]
     assert [call[2]["query"][0] for call in calls[3:]] == [("sheet", "const"), ("sheet", "io"), ("sheet", "lib")]
 
 
