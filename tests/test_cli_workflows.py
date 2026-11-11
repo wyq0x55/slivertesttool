@@ -203,3 +203,67 @@ def test_new_writes_need_confirm_and_dry_run_is_offline(cli, arguments):
     assert code == 2 and out["error"]["code"] == "CONFIRM_REQUIRED" and calls == []
     code, out, calls = cli(*arguments, "--dry-run")
     assert code == 0 and out["data"]["dry_run"] is True and calls == []
+
+
+STEP_DOC = {"input_signals": [{"name": "speed"}], "expected_signals": [{"name": "ready"}],
+            "steps": [{"description": "a"}, {"description": "b"}, {"description": "c"}]}
+
+
+def items_page(*rows):
+    return {"items": list(rows), "page": 1, "page_size": 500, "total": len(rows)}
+
+
+def row(item_id, test_id, steps=STEP_DOC):
+    return {"id": item_id, "case_id": "C" + str(item_id), "test_id": test_id, "version": 4, "steps": steps}
+
+
+@pytest.mark.parametrize(("arguments", "expected"), [
+    (["add", "--json", '{"description": "new"}', "--at", "2"], ["a", "new", "b", "c"]),
+    (["add", "--json", '{"description": "new"}'], ["a", "b", "c", "new"]),
+    (["remove", "--step", "2"], ["a", "c"]),
+    (["move", "--step", "3", "--to", "1"], ["c", "a", "b"]),
+])
+def test_steps_structure_edits_by_test_id_keep_signals_and_pin_version(cli, arguments, expected):
+    code, _, calls = cli("steps", arguments[0], "7", "--test-id", "TC-2", *arguments[1:], "--confirm",
+                         responses=[items_page(row(41, "TC-1"), row(42, "TC-2")), {"item": {"id": 42}}])
+    assert code == 0
+    assert calls[0][2]["query"][0] == ("sheet", "test")
+    method, path, kwargs = calls[1]
+    assert (method, path) == ("PATCH", P + "/items/42")
+    document = kwargs["json_body"]["changes"]["steps"]
+    assert kwargs["json_body"]["version"] == 4
+    assert [step["description"] for step in document["steps"]] == expected
+    assert document["input_signals"] == STEP_DOC["input_signals"]
+
+
+def test_steps_show_by_test_id_falls_back_to_case_id(cli):
+    code, out, _ = cli("steps", "show", "7", "--test-id", "C9",
+                       responses=[items_page({"id": 9, "case_id": "C9", "version": 1, "steps": STEP_DOC})])
+    assert code == 0 and out["data"] == STEP_DOC
+
+
+@pytest.mark.parametrize(("arguments", "rows", "error"), [
+    (["remove", "--step", "4"], [row(42, "TC-2")], "STEP_NOT_FOUND"),
+    (["move", "--step", "1", "--to", "4"], [row(42, "TC-2")], "STEP_NOT_FOUND"),
+    (["add", "--json", "{}", "--at", "5"], [row(42, "TC-2")], "STEP_NOT_FOUND"),
+    (["remove", "--step", "1"], [row(42, "TC-2"), row(43, "TC-2")], "AMBIGUOUS_TEST_ID"),
+    (["remove", "--step", "1"], [row(41, "TC-1")], "NOT_FOUND"),
+])
+def test_steps_structure_edit_refusals_never_patch(cli, arguments, rows, error):
+    code, out, calls = cli("steps", arguments[0], "7", "--test-id", "TC-2", *arguments[1:], "--confirm",
+                           responses=[items_page(*rows)])
+    assert code == 2 and out["error"]["code"] == error
+    assert [method for method, *_ in calls] == ["GET"]
+
+
+@pytest.mark.parametrize("target", [[], ["42", "--test-id", "TC-2"]])
+def test_steps_need_exactly_one_item_reference(cli, target):
+    code, out, calls = cli("steps", "show", "7", *target)
+    assert code == 2 and out["error"]["code"] == "ARGUMENT_ERROR" and calls == []
+
+
+def test_steps_add_dry_run_is_offline(cli):
+    code, out, calls = cli("steps", "add", "7", "--test-id", "TC-2", "--json", '{"description": "x"}', "--dry-run")
+    assert code == 0 and calls == []
+    assert out["data"]["test_id"] == "TC-2" and out["data"]["new_step"] == {"description": "x"}
+    assert out["data"]["requests"][1]["path"] == P + "/items/<item resolved from --test-id>"

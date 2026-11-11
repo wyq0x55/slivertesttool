@@ -118,6 +118,9 @@ python -m silver_cli task rerun 7 T000001 --confirm
 | `steps show PID IID` | Extract the item's steps document |
 | `steps set PID IID --json @FILE` | Read current item version, then `items.patch_item` with `version` and `changes.steps` |
 | `steps edit PID IID --step N --set KEY=VALUE` | Read the document, edit one step (1-based index), and patch with the current version; repeat `--set` or give multiple pairs |
+| `steps add PID IID --json @STEP [--at N]` | Insert one step object (default: append) and patch with the current version |
+| `steps remove PID IID --step N` / `steps move PID IID --step N --to M` | Delete or reorder one step; signals and other steps are preserved |
+| `--test-id TC-1` in place of `IID` | `item show` and every `steps` command can address a test-sheet row by its test id (`test_id`, else `case_id`); several rows with the same id return `AMBIGUOUS_TEST_ID` |
 | `task list PID --status STATUS` | Read `tasks.list_project_tasks` and filter locally; the endpoint has no status query filter |
 | `task show PID TID` | `tasks.project_task_detail`, including review data and events |
 | `task failures PID [--task TID]` | Failed/error cases with judge result (`tasks.project_task_jdgrslt`) and error information |

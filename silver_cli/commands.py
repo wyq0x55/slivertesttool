@@ -50,7 +50,10 @@ def register(commands):
         if project:
             parser.add_argument("pid", type=_positive_int, help="Numeric project ID.")
         if item:
-            parser.add_argument("iid", type=_positive_int, help="Numeric matrix item ID (not case_id).")
+            parser.add_argument("iid", type=_positive_int, nargs="?",
+                                help="Numeric matrix item ID; or omit it and pass --test-id.")
+            parser.add_argument("--test-id", dest="test_id",
+                                help="Test-sheet row by its test id (test_id, else case_id) instead of IID.")
         if task:
             parser.add_argument("tid", help="Task key returned as task_id by the API (not the database ID).")
         if job:
@@ -97,6 +100,19 @@ def register(commands):
                          help="One-based position in the steps array (1 is the first step).")
     editing.add_argument("--set", dest="assignments", action="append", nargs="+", required=True,
                          metavar="KEY=VALUE", help="Step fields to replace; repeat --set or supply several pairs. Values parse as JSON when valid, otherwise as text. Keys are literal, not dotted paths.")
+    adding = command("steps", "add", "Insert one step object, preserving the other steps and signal definitions. VERSION_CONFLICT is never retried.",
+                     "add 1 --test-id TC-1 --json @step.json --at 2 --confirm", item=True, write=True)
+    adding.add_argument("--json", dest="json_input", required=True, metavar="JSON|@FILE|@-",
+                        help="The new step object; copy the field names used by existing steps (see steps show).")
+    adding.add_argument("--at", type=_positive_int,
+                        help="One-based position the new step takes; default: append after the last step.")
+    removing = command("steps", "remove", "Delete one step, preserving the others and signal definitions. VERSION_CONFLICT is never retried.",
+                       "remove 1 --test-id TC-1 --step 3 --confirm", item=True, write=True)
+    removing.add_argument("--step", type=_positive_int, required=True, help="One-based position of the step to delete.")
+    moving = command("steps", "move", "Move one step to another position. VERSION_CONFLICT is never retried.",
+                     "move 1 --test-id TC-1 --step 4 --to 1 --confirm", item=True, write=True)
+    moving.add_argument("--step", type=_positive_int, required=True, help="One-based position of the step to move.")
+    moving.add_argument("--to", type=_positive_int, required=True, help="One-based position it ends up at.")
     tasks = command("task", "list", "List the newest 2000 runs; report truncation. Status filtering happens locally because the API has no status filter.",
                     "list 1 --status failed")
     tasks.add_argument("--status", choices=("queued", "running", "passed", "failed", "cancelled"),
@@ -128,18 +144,32 @@ def _request(client, name, params=None, *, query=None, body=None):
     return client.request(spec["method"], spec["path"], query=spec["query"], json_body=body)
 
 
-def _item(client, params, item_id):
-    page = 1
+def _test_id(item):
+    return str(item.get("test_id") or "").strip() or str(item.get("case_id") or "").strip()
+
+
+def _item(client, params, item_id=None, test_id=None):
+    """Find a live item by numeric ID, or a test-sheet row by its test id (must be unique)."""
+    page, matches = 1, []
+    sheet = [("sheet", "test")] if test_id is not None else []
     while True:
         response = _request(client, "items.list_items", params,
-                            query=[("page", str(page)), ("page_size", "500")])
+                            query=sheet + [("page", str(page)), ("page_size", "500")])
         data = response["data"]
         for item in data["items"]:
-            if item["id"] == item_id:
+            if item_id is not None and item["id"] == item_id:
                 return response, item
+            if test_id is not None and _test_id(item) == test_id:
+                matches.append((response, item))
         if not data["items"] or data["page"] * data["page_size"] >= data["total"]:
-            raise CliError("NOT_FOUND", "Item ID was not found in this project's live items.", 2, status=404)
+            break
         page += 1
+    if len(matches) == 1:
+        return matches[0]
+    if matches:
+        raise CliError("AMBIGUOUS_TEST_ID", "Several test rows share this test id; pass the item ID instead.", 2,
+                       details=[{"id": item["id"], "case_id": item.get("case_id")} for _, item in matches])
+    raise CliError("NOT_FOUND", "Item was not found in this project's live items.", 2, status=404)
 
 
 def _document(document):
@@ -183,8 +213,11 @@ def execute(args, secrets):
         return args.handler(args)
     group, action = args.command, args.action
     params = {"project_id": args.pid} if hasattr(args, "pid") else {}
-    write = (group, action) in {("project", "create"), ("steps", "set"),
-                                ("steps", "edit"), ("task", "rerun")}
+    write = (group, action) in {("project", "create"), ("steps", "set"), ("steps", "edit"), ("steps", "add"),
+                                ("steps", "remove"), ("steps", "move"), ("task", "rerun")}
+    if group in {"item", "steps"} and action != "list" and (args.iid is None) == (args.test_id is None):
+        raise CliError("ARGUMENT_ERROR", "Give exactly one of IID or --test-id.", 2)
+    target = args.iid if getattr(args, "iid", None) is not None else "<item resolved from --test-id>"
     body = _json_input(args.json_input) if hasattr(args, "json_input") else None
     edits = _assignments(args.assignments) if group == "steps" and action == "edit" else None
     secrets.update(_collect_secrets(body))
@@ -199,15 +232,22 @@ def execute(args, secrets):
         elif group == "task":
             plan = [_request_spec("tasks.rerun_selected_tasks", params, body={"task_keys": [args.tid]})]
         else:
-            plan = [_request_spec("items.list_items", params, query=[("page", "1"), ("page_size", "500")]),
-                    _request_spec("items.patch_item", {**params, "item_id": args.iid},
+            patch = _request_spec("items.patch_item", {**params, "item_id": args.iid or 1},
                                   body={"version": "<current item version>",
-                                        "changes": {"steps": body if action == "set" else "<current document with requested edits>"}})]
+                                        "changes": {"steps": body if action == "set" else "<current document with requested edits>"}})
+            patch["path"] = patch["path"].rsplit("/", 1)[0] + "/" + str(target)
+            plan = [_request_spec("items.list_items", params, query=[("page", "1"), ("page_size", "500")]), patch]
         result = {"dry_run": True, "requests": plan}
         if group == "steps":
-            result.update({"item_id": args.iid, "reads": "Scan item-list pages until the ID is found; use its version in PATCH."})
+            result.update({"item_id": target, "reads": "Scan item-list pages until the item is found; use its version in PATCH."})
+            if args.test_id is not None:
+                result["test_id"] = args.test_id
             if edits is not None:
                 result.update({"step": args.step, "set": edits})
+            if action in {"add", "remove", "move"}:
+                result.update({key: getattr(args, key) for key in ("step", "at", "to") if hasattr(args, key)})
+                if action == "add":
+                    result["new_step"] = body
         return _ok(result)
     if write and not args.confirm:
         raise CliError("CONFIRM_REQUIRED", "Mutating commands require --confirm; inspect --dry-run first.", 2)
@@ -236,7 +276,7 @@ def execute(args, secrets):
             query = [(key, str(getattr(args, key))) for key in ("sheet", "page", "page_size")
                      if getattr(args, key) is not None]
             return _request(client, "items.list_items", params, query=query)
-        response, item = _item(client, params, args.iid)
+        response, item = _item(client, params, args.iid, args.test_id)
         if group == "item":
             return {**response, "data": {"item": item}}
         document = None
@@ -255,10 +295,25 @@ def execute(args, secrets):
                 raise CliError("STEP_NOT_FOUND", "--step exceeds the number of steps in the document.", 2)
             document["steps"][args.step - 1].update(edits)
             body = document
+        if action in {"add", "remove", "move"}:
+            document = copy.deepcopy(document)
+            steps = document["steps"]
+            limit = len(steps) + 1 if action == "add" else len(steps)
+            for name in ("at", "step", "to"):
+                position = getattr(args, name, None)
+                if position is not None and position > limit:
+                    raise CliError("STEP_NOT_FOUND", f"--{name} exceeds the number of steps in the document.", 2)
+            if action == "add":
+                steps.insert((args.at or limit) - 1, body)
+            elif action == "remove":
+                steps.pop(args.step - 1)
+            else:
+                steps.insert(args.to - 1, steps.pop(args.step - 1))
+            body = document
         version = item.get("version")
         if not isinstance(version, int) or isinstance(version, bool):
             raise CliError("INVALID_RESPONSE", "Current item has no valid version; refusing to update.", 7)
-        return _request(client, "items.patch_item", {**params, "item_id": args.iid},
+        return _request(client, "items.patch_item", {**params, "item_id": item["id"]},
                         body={"version": version, "changes": {"steps": body}})
     if action == "rerun":
         return _request(client, "tasks.rerun_selected_tasks", params, body={"task_keys": [args.tid]})

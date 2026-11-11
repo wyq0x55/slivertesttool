@@ -42,6 +42,10 @@ tasks`, and `describe OPERATION`; the server's own `.pyz` always matches its API
    use `steps edit PID IID --step N --set KEY=VALUE --dry-run`; repeat `--set`
    for multiple fields. Step positions start at 1. Values parse as JSON when
    valid, otherwise as text; keys are literal fields rather than dotted paths.
+   Change the structure with `steps add PID IID --json @step.json [--at N]`,
+   `steps remove PID IID --step N` and `steps move PID IID --step N --to M`.
+   Every steps command accepts `--test-id TC-1` instead of `IID`; copy the field
+   names that existing steps use when writing a new step.
 5. Review the proposed changes under the user's authorized scope. Replace
    `--dry-run` with `--confirm`, then read `steps show` again. These flags are
    mutually exclusive. The CLI reads
