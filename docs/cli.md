@@ -80,6 +80,18 @@ python -m silver_cli call projects.create_project --json '@project.json' --confi
 读取最新版本后强行覆盖。协同编辑活跃时原有 `COLLAB_ACTIVE` 写保护仍生效，
 CLI 不绕过 CRDT 的单写者约束。用户角色也不会因为使用 CLI 而提升。
 
+## Typical flow: find a project, pick a case, fix its steps, rerun
+
+```sh
+python -m silver_cli project list --search brake          # 1. all projects -> project id
+python -m silver_cli case list 7                         # 2. every test id with its latest result
+python -m silver_cli case list 7 --failed                #    or only the failing ones
+python -m silver_cli case show 7 TC-1                    # 3. steps + latest verdict, jdgrslt, errors
+python -m silver_cli steps edit 7 --test-id TC-1 --step 2 --set timing=20 --confirm
+python -m silver_cli steps add 7 --test-id TC-1 --json @step.json --at 3 --confirm
+python -m silver_cli task run 7 --test-id TC-1 --wait --confirm   # 4. rerun and wait for the verdict
+```
+
 ## High-level commands for agents
 
 Use these task-oriented commands for common workflows. They use the same
@@ -126,6 +138,8 @@ python -m silver_cli task rerun 7 T000001 --confirm
 | `task failures PID [--task TID]` | Failed/error cases with judge result (`tasks.project_task_jdgrslt`) and error information |
 | `task log PID TID --tail N` | Runtime events and errors from `tasks.project_task_detail`; limit displayed log lines within the first 5000 events |
 | `task rerun PID TID` | `tasks.rerun_selected_tasks` with `{"task_keys":["T000001"]}` |
+| `case list PID [--failed] [--status S\|not_run]` | Test-sheet items joined with the latest run: test id, item id, title, status, result, task key (two requests) |
+| `case show PID TEST_ID` | One case's steps with its latest run, verdict, jdgrslt and errors |
 | `project list --search TEXT` | `projects.list_projects`, filtered locally by code, name and description |
 | `task search [--project PID] [--q TEXT] [--status S] [--mine]` | `me.me_tasks`: runs across every visible project |
 | `task run PID --test-id ID... [--model NAME@VERSION] [--wait]` | `tasks.run_selected_tasks`; `--wait` then behaves like `task wait` |

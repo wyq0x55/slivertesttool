@@ -267,3 +267,34 @@ def test_steps_add_dry_run_is_offline(cli):
     assert code == 0 and calls == []
     assert out["data"]["test_id"] == "TC-2" and out["data"]["new_step"] == {"description": "x"}
     assert out["data"]["requests"][1]["path"] == P + "/items/<item resolved from --test-id>"
+
+
+CASE_ITEMS = items_page(row(1, "TC-1"), row(2, "TC-2"), row(3, "TC-3"), {"id": 4, "case_id": "", "test_id": ""})
+CASE_RUNS = {"tasks": [{**task("T3", "failed", "TC-2"), "result": "FAIL"}, {**task("T2", "passed", "TC-1"), "result": "PASS"},
+                       {**task("T1", "passed", "TC-2"), "result": "PASS"}], "total": 3, "truncated": False}
+
+
+@pytest.mark.parametrize(("arguments", "expected"), [
+    ([], [("TC-1", "passed"), ("TC-2", "failed"), ("TC-3", "not_run")]),
+    (["--failed"], [("TC-2", "failed")]),
+    (["--status", "not_run"], [("TC-3", "not_run")]),
+])
+def test_case_list_gives_test_ids_with_latest_result(cli, arguments, expected):
+    code, out, calls = cli("case", "list", "7", *arguments, responses=[CASE_ITEMS, CASE_RUNS])
+    assert code == 0
+    assert [(case["test_id"], case["status"]) for case in out["data"]["cases"]] == expected
+    assert all(method == "GET" for method, *_ in calls) and len(calls) == 2
+
+
+def test_case_show_returns_steps_and_latest_verdict(cli):
+    code, out, _ = cli("case", "show", "7", "TC-2",
+                       responses=[CASE_ITEMS, CASE_RUNS, {"task": task("T3", "failed", "TC-2")},
+                                  {"verdict": "FAIL", "failed_steps": 1, "content": "NG"}])
+    assert code == 0
+    assert out["data"]["test_id"] == "TC-2" and out["data"]["steps"] == STEP_DOC
+    assert out["data"]["latest_run"]["task_id"] == "T3" and out["data"]["latest_run"]["verdict"] == "FAIL"
+
+
+def test_case_show_unknown_test_id(cli):
+    code, out, _ = cli("case", "show", "7", "TC-9", responses=[CASE_ITEMS, CASE_RUNS])
+    assert code == 2 and out["error"]["code"] == "NOT_FOUND"

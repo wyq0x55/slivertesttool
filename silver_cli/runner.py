@@ -33,7 +33,7 @@ def _parser():
     parser = Parser(description="Silver platform CLI. JSON stdout; no interactive prompts. "
                     "Set SILVER_CLI_USERNAME and SILVER_CLI_PASSWORD together for session login.",
                     epilog="Task commands: project list/show/create; item list/show; steps show/set/edit; "
-                    "task search/list/show/run/wait/report/failures/log/rerun/cancel/download; "
+                    "case list/show; task search/list/show/run/wait/report/failures/log/rerun/cancel/download; "
                     "model list/upload/use; ut options/config/configure/validate-manifest/paths/import-targets/"
                     "targets/run/wait/jobs/batches/job/evidence/revise/retry/stop/stop-batch/review/export/stats. "
                     "Examples: python3 -m silver_cli project list; python3 -m silver_cli steps show 1 2; "

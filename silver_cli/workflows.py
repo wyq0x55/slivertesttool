@@ -87,6 +87,18 @@ def register(command, group):
     report.add_argument("--no-steps", action="store_true", help="Omit steps documents.")
     report.add_argument("--output", type=Path, help="Also write the report to this new file (.md for Markdown, otherwise JSON).")
 
+    group("case", "List a project's test cases by test id with their latest result, or show one case.",
+          "case list 1 --failed")
+    cases = command("case", "list", "List every test-sheet case: test id, item id, title and latest run status/result.",
+                    "list 1 --failed", handler=case_list)
+    cases.add_argument("--status", choices=TASK_DONE + TASK_PENDING + ("not_run",),
+                       help="Only cases whose latest run has this status (not_run: never run).")
+    cases.add_argument("--failed", action="store_true",
+                       help="Only cases whose latest run failed, was cancelled, or has a FAIL/ERROR result.")
+    show = command("case", "show", "Show one case's steps with its latest run, judge verdict, jdgrslt and errors.",
+                   "show 1 TC-1", handler=case_show)
+    show.add_argument("test_id", help="Test id from case list.")
+
     group("model", "List, upload, register or select project models.", "model list 1")
     command("model", "list", "List the project's saved models and versions.", "list 1",
             handler=simple("models.list_project_models"))
@@ -425,6 +437,55 @@ def task_report(args):
             handle.write(text)
         data["output"] = str(args.output)
     return _ok(data)
+
+
+def case_show(args):
+    from .runner import _ok
+
+    args.test_ids, args.status, args.no_steps, args.output = [args.test_id], None, False, None
+    data = task_report(args)["data"]
+    if not data["cases"]:
+        raise CliError("NOT_FOUND", "No test-sheet case has this test id; see case list.", 2, status=404)
+    if len(data["cases"]) > 1:
+        raise CliError("AMBIGUOUS_TEST_ID", "Several test rows share this test id.", 2,
+                       details=[{"item_id": case["item_id"]} for case in data["cases"]])
+    return _ok({**data["cases"][0], "runs_truncated": data["runs_truncated"]})
+
+
+def _case_failed(run):
+    return run is not None and (run.get("status") in {"failed", "cancelled"}
+                                or str(run.get("result") or "").upper() in {"FAIL", "FAILED", "ERROR", "NG"})
+
+
+def case_list(args):
+    """One compact row per test case: the test id other commands take, plus its latest run."""
+    from .commands import _test_id
+    from .runner import _ok
+
+    client = _client(args)
+    items = _items(client, args.pid, "test")
+    listing = _call(client, "tasks.list_project_tasks", _params(args), query=[("limit", "2000")])["data"]
+    latest = {}
+    for task in listing["tasks"]:  # newest first
+        latest.setdefault(task.get("test_id"), task)
+    rows, counts = [], {}
+    for item in items:
+        test_id = _test_id(item)
+        if not test_id:
+            continue
+        task = latest.get(test_id)
+        status = task.get("status") if task else "not_run"
+        if (args.status and status != args.status) or (args.failed and not _case_failed(task)):
+            continue
+        counts[status] = counts.get(status, 0) + 1
+        rows.append({"test_id": test_id, "item_id": item["id"],
+                     "title": item.get("title") or item.get("test_name"),
+                     "status": status, "result": task.get("result") if task else None,
+                     "task_id": task.get("task_id") if task else None,
+                     "finished_at": task.get("finished_at") if task else None})
+    return _ok({"cases": rows, "returned": len(rows), "statuses": counts,
+                "runs_scanned": len(listing["tasks"]), "runs_truncated": listing.get("truncated", False),
+                "next": "Use the test_id with case show, steps show/edit/add/remove/move --test-id, or task run --test-id."})
 
 
 # --------------------------------------------------------------------------- #
