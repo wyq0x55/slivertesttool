@@ -125,6 +125,10 @@
             <small>{% if user.is_system_admin %}系统管理员{% elif user.is_bootstrap_admin %}超级管理员{% else %}成员{% endif %}</small>
           </span>
         </div>
+        <a href="{{ url_for('lanmatrix_pages.api_tokens') }}" class="btn ghost">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 20 3M17 6l3 3M15 8l2 2"/></svg>
+          <span>API Token</span>
+        </a>
         <a href="#" id="lm-logout" class="btn ghost">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
           <span>退出登录</span>

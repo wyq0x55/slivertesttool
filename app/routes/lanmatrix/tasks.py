@@ -426,6 +426,14 @@ def rerun_selected_tasks(project_id):
     return ok({"created": created, "skipped": skipped,
                "missing": missing, "errors": errors}, status=201)
 
+@bp.get("/projects/<int:project_id>/tasks/latest")
+@login_required
+def project_latest_tasks(project_id):
+    """The newest run of every test id, with no recent-window truncation."""
+    _project_and_role(project_id, "task.view")
+    tasks = task_service.latest_per_test(project_id)
+    return ok({"tasks": [task.to_dict() for task in tasks], "total": len(tasks)})
+
 @bp.get("/projects/<int:project_id>/tasks/<task_key>")
 @login_required
 def project_task_status(project_id, task_key):
@@ -526,7 +534,8 @@ def project_task_jdgrslt(project_id, task_key):
         return ok({"available": False, "verdict": task.result, "content": "",
                    "message": f"无法读取 jdgrslt.log: {exc}"})
     from ...runners.test_runner import (
-        count_failed_steps, extract_case_section, parse_verdict_text,
+        count_failed_steps, extract_case_section, parse_step_results,
+        parse_verdict_text,
     )
     content = extract_case_section(raw, task.test_id)
     verdict = task.result
@@ -534,7 +543,7 @@ def project_task_jdgrslt(project_id, task_key):
         verdict = parse_verdict_text(raw, task.test_id)
     return ok({"available": True, "verdict": verdict,
                "failed_steps": count_failed_steps(raw, task.test_id),
-               "content": content})
+               "content": content, "steps": parse_step_results(content)})
 
 @bp.post("/projects/<int:project_id>/tasks/<task_key>/cancel")
 @login_required

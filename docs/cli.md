@@ -4,6 +4,21 @@
 标准库，不导入 Flask、不连接数据库、不启动 worker。它向已经运行的 Web
 服务发送 HTTP 请求，复用浏览器使用的权限、校验、版本冲突及执行链路。
 
+### 在其他电脑上使用（服务器部署后）
+
+平台提供与自身 API 完全对应的单文件 CLI，无需平台源码或额外依赖：
+
+```powershell
+curl.exe -o silver-cli.pyz https://silver.example.internal/api/v1/cli/silver-cli.pyz
+$env:SILVER_CLI_URL = 'https://silver.example.internal'
+$env:SILVER_CLI_USERNAME = 'your-account'
+python silver-cli.pyz --help
+```
+
+每个用户使用自己的账号，权限与浏览器完全相同。服务器升级后重新下载即可
+保持命令目录一致。命令目录由 `scripts/export_cli_catalog.py` 从路由源码生成
+到 `silver_cli/catalog.json`；修改路由后重新生成，测试会检查是否过期。
+
 ## 1. 发现命令和连接目标
 
 ```powershell
@@ -38,6 +53,42 @@ CSRF，再执行操作。退出后不持久化凭据；下一次命令重新登�
 开关。仅 loopback HTTP 默认允许；明确接受可信内网明文传输风险时才使用
 `--allow-http`。禁止 URL 内嵌凭据、重定向和自动读取代理环境变量。
 
+### 登录一次，之后自动使用（推荐）
+
+```powershell
+python -m silver_cli login --url https://silver.example.internal --username your-account   # 隐藏输入密码
+python -m silver_cli case list BRK          # 之后无需密码或环境变量
+python -m silver_cli logout                 # 吊销并删除本机保存的 Token
+```
+
+`login` 用账号密码换取一个个人 API Token（同名旧 Token 自动吊销），保存在
+`%APPDATA%\silver-cli\credentials.json`（Linux/macOS：`~/.config/silver-cli/`，
+可用 `SILVER_CLI_CONFIG` 指定），文件只含 Token、不含密码，仅本人可读。未设置
+`SILVER_CLI_URL` 时使用最近一次登录的服务器。凭据优先级：`SILVER_CLI_TOKEN` >
+`SILVER_CLI_USERNAME`/`PASSWORD` > 已保存的登录。非交互环境可用 `--password-stdin`
+或 `SILVER_CLI_PASSWORD`。
+
+### 个人 API Token（推荐给 Agent 和脚本）
+
+用账号密码登录一次签发 Token，之后只设置 `SILVER_CLI_TOKEN`，不再需要密码，
+也不会因为频繁登录触发账号锁定：
+
+```powershell
+python -m silver_cli token create --name agent --days 90 --output agent.token --confirm
+$env:SILVER_CLI_TOKEN = (Get-Content agent.token); Remove-Item Env:SILVER_CLI_PASSWORD
+python -m silver_cli token list
+python -m silver_cli token revoke 3 --confirm
+```
+
+- Token 以 `Authorization: Bearer` 发送，权限与所属账号完全相同，账号停用即失效。
+- 密钥只在签发时写入指定的新文件一次；服务器只保存其 SHA-256。
+- 有效期 1-365 天，每人最多 20 个有效 Token。Token 不能再签发 Token，也不能访问数据库控制台。
+- `SILVER_CLI_TOKEN` 与用户名/密码不能同时设置（`token create` 除外）。
+- 网页端：侧栏底部「API Token」页面可签发、查看、吊销。
+- 密钥事后无法再查看（服务器只存哈希）。忘记时用账号密码重新签发即可：
+  `token create --name agent --days 90 --output agent.token --replace --confirm`
+  会签发新 Token，并吊销同名的旧 Token。
+
 ## 2. 调用、预演与权限
 
 ```powershell
@@ -64,6 +115,36 @@ python -m silver_cli call projects.create_project --json '@project.json' --confi
 低层 `call items.patch_item` 仍需正文 `version` + `changes`。版本冲突返回 409，此命令不替你
 读取最新版本后强行覆盖。协同编辑活跃时原有 `COLLAB_ACTIVE` 写保护仍生效，
 CLI 不绕过 CRDT 的单写者约束。用户角色也不会因为使用 CLI 而提升。
+
+## Typical flow: find a project, pick a case, fix its steps, rerun
+
+```sh
+python -m silver_cli project list --search brake          # 1. all projects -> code (BRK) or id
+python -m silver_cli case list BRK                       # 2. every test id with its latest result
+python -m silver_cli case list BRK --failed              #    or only the failing ones
+python -m silver_cli case show BRK TC-1                  # 3. purpose and other fields, steps, latest verdict
+python -m silver_cli case show BRK TC-1 --context        #    plus every const, io and lib row of the project
+python -m silver_cli steps edit BRK --test-id TC-1 --step 2 --set timing=20 --confirm
+python -m silver_cli steps add BRK --test-id TC-1 --json @step.json --at 3 --confirm
+python -m silver_cli task run BRK --test-id TC-1 --wait --confirm   # 4. rerun and wait for the verdict
+python -m silver_cli task run BRK --failed --wait --confirm         #    or every failing case at once
+```
+
+Edit cases and shared rows by business keys:
+
+```sh
+python -m silver_cli case set BRK TC-1 --set purpose="..." environment=SILVER --confirm
+python -m silver_cli case add BRK --json @case.json --after TC-1 --confirm
+python -m silver_cli case copy BRK TC-1 --as TC-9 --confirm
+python -m silver_cli case delete BRK TC-9 --confirm          # recycle bin, restorable
+python -m silver_cli row set BRK --sheet const --key SPEED_MAX --set const_value=130 --confirm
+```
+
+Every `PID` argument (and `task search --project`) accepts the numeric project
+ID or the project code. A code is resolved once per invocation through
+`project list`: an exact match wins, otherwise a unique case-insensitive match;
+no match returns `PROJECT_NOT_FOUND`, several return `AMBIGUOUS_PROJECT` (exit 2).
+Dry runs never resolve codes and show `<id of CODE>` in planned paths.
 
 ## High-level commands for agents
 
@@ -103,11 +184,43 @@ python -m silver_cli task rerun 7 T000001 --confirm
 | `steps show PID IID` | Extract the item's steps document |
 | `steps set PID IID --json @FILE` | Read current item version, then `items.patch_item` with `version` and `changes.steps` |
 | `steps edit PID IID --step N --set KEY=VALUE` | Read the document, edit one step (1-based index), and patch with the current version; repeat `--set` or give multiple pairs |
+| `steps add PID IID --json @STEP [--at N]` | Insert one step object (default: append) and patch with the current version |
+| `steps remove PID IID --step N` / `steps move PID IID --step N --to M` | Delete or reorder one step; signals and other steps are preserved |
+| `--test-id TC-1` in place of `IID` | `item show` and every `steps` command can address a test-sheet row by its test id (`test_id`, else `case_id`); several rows with the same id return `AMBIGUOUS_TEST_ID` |
 | `task list PID --status STATUS` | Read `tasks.list_project_tasks` and filter locally; the endpoint has no status query filter |
 | `task show PID TID` | `tasks.project_task_detail`, including review data and events |
 | `task failures PID [--task TID]` | Failed/error cases with judge result (`tasks.project_task_jdgrslt`) and error information |
 | `task log PID TID --tail N` | Runtime events and errors from `tasks.project_task_detail`; limit displayed log lines within the first 5000 events |
 | `task rerun PID TID` | `tasks.rerun_selected_tasks` with `{"task_keys":["T000001"]}` |
+| `case list PID [--failed] [--status S\|not_run]` | Test-sheet items joined with the latest run: test id, item id, title, status, result, task key (two requests) |
+| `case show PID TEST_ID [--context]` | One case: every filled test-row field with its display name (目的 etc.), steps, version, latest run with verdict, jdgrslt and errors; `--context` adds all const, io and lib rows |
+| `project context PID [--sheet const\|io\|lib]` | Every row of the project's const, io and lib sheets with field display names |
+| `case set PID TEST_ID --set FIELD=VALUE` | Patch case fields (not steps) with the current item version |
+| `case add PID --json @FILE [--after TEST_ID]` | `items.create_item` on the test sheet; refuses an existing test_id |
+| `case copy PID TEST_ID --as NEW_ID` | Create a copy below the source without run results (result, exec_date, executor, log) |
+| `case delete PID TEST_ID` | `items.delete_item` (soft delete to the recycle bin) |
+| `row set PID --sheet const\|io\|lib --key NAME --set FIELD=VALUE` | Find the row by const_name, io_name or lib_func (must be unique) and patch it |
+| `task run PID --failed\|--not-run\|--all` | Select cases as `case list` does, then submit them in one request |
+| Run outcomes (`task wait`, `task report`, `case show`) | Include `step_results` (per step: result, time, description, checks with target/expected/observed/timing) and `failed_checks` when the server provides structured jdgrslt |
+| `project list --search TEXT` | `projects.list_projects`, filtered locally by code, name and description |
+| `task search [--project PID] [--q TEXT] [--status S] [--mine]` | `me.me_tasks`: runs across every visible project |
+| `task run PID --test-id ID... [--model NAME@VERSION] [--wait]` | `tasks.run_selected_tasks`; `--wait` then behaves like `task wait` |
+| `task wait PID TID...` | Poll `tasks.project_task_status`, then report detail and jdgrslt per run; exit 8 if any run did not pass, 9 on timeout |
+| `task report PID [--test-id ...] [--status S\|not_run] [--output FILE]` | Test-sheet items joined with each case's latest run, verdict, jdgrslt and errors; `.md` output writes Markdown |
+| `task cancel PID TID` / `task download PID TID --output FILE` | `tasks.cancel_project_task` / `tasks.download_project_task` |
+| `model list/upload/use PID` | `models.list_project_models` / `upload_project_model` (multipart dll, sbs, pdb, extra) / `set_current_project_model` |
+| `ut options/config PID` | `ut_pipeline.manifest_options` / `get_config` |
+| `ut configure PID --json @FILE` | `ut_pipeline.put_config`; fields are listed in `--help` |
+| `ut validate-manifest PID --json @FILE` / `ut paths PID --path DIR` | `validate_manifest` (persists nothing, no `--confirm`) / `browse_server_paths` |
+| `ut import-targets PID` / `ut targets PID [--function F]` | `import_targets` / `list_targets` |
+| `ut run PID --function F... [--source S] [--wait]` | Resolve each function to exactly one indexed target, then `create_batch`; `--wait` polls `list_jobs` |
+| `ut wait PID --batch B\|--job J...` | Poll until no job is queued, generating, executing or repairing |
+| `ut jobs/batches/job/stats PID` | `list_jobs` / `list_batches` / `job_detail` / `repair_stats` |
+| `ut evidence PID JID [--attempt A]` | `job_detail` plus `attempt_csv?format=text`, `format=diagnostic` and `attempt_coverage`; a missing section is reported, not fatal |
+| `ut revise PID JID --csv FILE [--note]` | `submit_revision` with the file uploaded byte for byte |
+| `ut retry/stop PID JID`, `ut stop-batch PID B` | `retry` / `stop_job` / `stop_batch` |
+| `ut review PID JID --decision approve\|reject [--note]` | Read `current_attempt_id`, then `review` with `expected_attempt_id`; never approve without a person's consent |
+| `ut export PID [--batch B] --output FILE` | `export_approved` zip |
 
 The input to `steps set` is the steps document itself, for example:
 

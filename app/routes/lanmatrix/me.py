@@ -22,6 +22,7 @@ from ...services.lanmatrix import (exemption_service, notification_service,
                                    permissions, review_service, service)
 from ...services.ut_pipeline import workspace as ut_workspace
 from ._base import arg_int, err, ok, login_required, register_common
+from ...services import api_token_service
 
 bp = Blueprint("lanmatrix_me", __name__, url_prefix="/api/v1")
 register_common(bp)
@@ -115,6 +116,36 @@ def _status_counts(project_ids: list[int]) -> dict[int, dict[str, int]]:
     for pid, status, count in rows:
         out.setdefault(pid, {})[status] = count
     return out
+
+
+@bp.get("/me/tokens")
+@login_required
+def me_list_tokens():
+    """The caller's personal API tokens (secrets are never returned again)."""
+    return ok({"tokens": [token.to_dict() for token in api_token_service.list_for(g.user)]})
+
+
+@bp.post("/me/tokens")
+@login_required
+def me_create_token():
+    """Issue a personal API token. The secret appears only in this response.
+
+    Body: ``name`` (1-64 chars), ``expires_days`` (1-365) and optional
+    ``replace`` (revoke your active tokens of the same name). Requires a
+    password session, so a leaked token cannot mint further tokens.
+    """
+    if g.get("via_token"):
+        return err("PERMISSION_DENIED", "请使用账号密码登录后创建 API Token", status=403)
+    body = request.get_json(silent=True) or {}
+    token, secret = api_token_service.create(g.user, body.get("name"), body.get("expires_days"),
+                                             replace=body.get("replace") is True)
+    return ok({"token": secret, "info": token.to_dict()}, status=201)
+
+
+@bp.delete("/me/tokens/<int:token_id>")
+@login_required
+def me_revoke_token(token_id):
+    return ok({"info": api_token_service.revoke(g.user, token_id).to_dict()})
 
 
 @bp.get("/me/overview")

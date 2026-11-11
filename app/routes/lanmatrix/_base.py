@@ -170,7 +170,25 @@ def arg_json(name: str, default: Any = None) -> Any:
 # --------------------------------------------------------------------------- #
 # Auth plumbing
 # --------------------------------------------------------------------------- #
+def bearer_token() -> Optional[str]:
+    """The secret of an ``Authorization: Bearer`` header, if the request carries one."""
+    scheme, _, value = request.headers.get("Authorization", "").partition(" ")
+    value = value.strip()
+    return value if scheme.lower() == "bearer" and value else None
+
+
 def current_user() -> Optional[LMUser]:
+    # A bearer token, when present, is the request's only identity: a session
+    # cookie riding along must not silently stand in for an invalid token.
+    secret = bearer_token()
+    if secret is not None:
+        cached = getattr(g, "_lm_token_user", None)
+        if cached is None or cached[0] != secret:  # keyed like the session cache below
+            from ...services import api_token_service
+            cached = (secret, api_token_service.authenticate(secret))
+            g._lm_token_user = cached
+        g.via_token = cached[1] is not None
+        return cached[1]
     uid = session.get("lm_user_id")
     if uid is None:
         return None
@@ -227,6 +245,8 @@ def bootstrap_admin_required(fn):
             return err("UNAUTHENTICATED", "未登录或会话已过期", status=401)
         if not user.is_bootstrap_admin:
             return err("PERMISSION_DENIED", "仅系统 admin 账户可访问", status=403)
+        if g.get("via_token"):
+            return err("PERMISSION_DENIED", "API Token 不能访问数据库控制台，请登录后操作", status=403)
         g.user = user
         return fn(*args, **kwargs)
     return wrapper
@@ -245,6 +265,10 @@ def _check_csrf() -> bool:
     if request.method in ("GET", "HEAD", "OPTIONS"):
         return True
     if request.endpoint in _CSRF_EXEMPT:
+        return True
+    # CSRF defends ambient cookie credentials. A bearer header is never sent
+    # by the browser on its own, so a token request cannot be forged that way.
+    if bearer_token() is not None:
         return True
     token = request.headers.get("X-CSRF-Token", "")
     return bool(token) and secrets.compare_digest(token, session.get("csrf_token", ""))

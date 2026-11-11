@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .ai_draft import AiDraft, AiSignalDict
+from .api_token import ApiToken
 from .lanmatrix import (
     AuditLog,
     CellComment,
@@ -33,6 +34,7 @@ __all__ = [
     "TaskEvent",
     "EventType",
     "AiDraft",
+    "ApiToken",
     "AiSignalDict",
     "RunEvidence",
     # LAN Test Matrix models (merged into the platform's model layer).

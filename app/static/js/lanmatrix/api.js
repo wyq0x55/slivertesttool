@@ -77,6 +77,12 @@
     // Scoped server-side to the projects the caller can already see; the
     // client never sends a project list of its own.
     meOverview() { return request("GET", "/me/overview"); },
+    // Personal API tokens: the secret is returned once, by createMeToken only.
+    meTokens() { return request("GET", "/me/tokens"); },
+    createMeToken(name, days) {
+      return request("POST", "/me/tokens", { body: { name: name, expires_days: days } });
+    },
+    revokeMeToken(id) { return request("DELETE", `/me/tokens/${id}`); },
     meTasks(params) { return request("GET", "/me/tasks", { query: params }); },
     meReviews(params) { return request("GET", "/me/reviews", { query: params }); },
     // 項目作成 = 不要 sign-off queue. Separate from meReviews on purpose: a

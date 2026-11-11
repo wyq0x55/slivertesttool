@@ -221,6 +221,7 @@ def _install_auth_gate(app: Flask) -> None:
         "lanmatrix_auth.logout",
         "lanmatrix_auth.me",
         "lanmatrix_auth.health",
+        "lanmatrix_auth.download_cli",
     }
 
     @app.before_request
@@ -236,6 +237,9 @@ def _install_auth_gate(app: Flask) -> None:
         if _current_user() is not None:
             return None
         if request.path.startswith("/api/"):
+            from .routes.lanmatrix._base import bearer_token, current_user
+            if bearer_token() is not None and current_user() is not None:
+                return None
             return jsonify(
                 success=False, data=None,
                 error={"code": "UNAUTHENTICATED",
