@@ -134,3 +134,23 @@ def test_token_lifetime_is_bounded(app, days):
     csrf = client.post("/api/v1/auth/login", json={"username": "agent", "password": "secret"}).get_json()["data"]["csrf_token"]
     response = client.post("/api/v1/me/tokens", json={"name": "x", "expires_days": days}, headers={"X-CSRF-Token": csrf})
     assert response.status_code == 400
+
+
+def test_replace_rotates_tokens_of_the_same_name(app):
+    first, _ = _issue(app)
+    client = app.test_client()
+    csrf = client.post("/api/v1/auth/login", json={"username": "agent", "password": "secret"}).get_json()["data"]["csrf_token"]
+    response = client.post("/api/v1/me/tokens", json={"name": "ci", "expires_days": 30, "replace": True},
+                           headers={"X-CSRF-Token": csrf})
+    second = response.get_json()["data"]["token"]
+    fresh = app.test_client()
+    assert fresh.get("/api/v1/projects", headers=_bearer(first)).status_code == 401
+    assert fresh.get("/api/v1/projects", headers=_bearer(second)).status_code == 200
+
+
+def test_token_page_needs_login_and_renders(app):
+    client = app.test_client()
+    assert client.get("/lanmatrix/tokens").status_code == 302
+    client.post("/api/v1/auth/login", json={"username": "agent", "password": "secret"})
+    page = client.get("/lanmatrix/tokens")
+    assert page.status_code == 200 and "lm-token-form" in page.get_data(as_text=True)

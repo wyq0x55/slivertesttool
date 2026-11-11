@@ -497,7 +497,7 @@ def test_token_create_writes_secret_only_to_new_file(cli, monkeypatch, tmp_path,
     code, out, calls = cli("token", "create", "--name", "ci", "--days", "30", "--output", str(target), "--confirm",
                            responses=[{"token": "slv_secret_value", "info": {"id": 3, "prefix": "slv_secret_v"}}])
     assert code == 0 and calls[0][:2] == ("POST", "/api/v1/me/tokens")
-    assert calls[0][2]["json_body"] == {"name": "ci", "expires_days": 30}
+    assert calls[0][2]["json_body"] == {"name": "ci", "expires_days": 30, "replace": False}
     assert target.read_text(encoding="utf-8") == "slv_secret_value\n"
     assert "slv_secret_value" not in json.dumps(out)
 

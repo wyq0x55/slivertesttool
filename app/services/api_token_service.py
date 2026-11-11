@@ -43,16 +43,21 @@ def _active(query):
                         db.or_(ApiToken.expires_at.is_(None), ApiToken.expires_at > now))
 
 
-def create(user: LMUser, name: str, days: object) -> tuple[ApiToken, str]:
+def create(user: LMUser, name: str, days: object, *, replace: bool = False) -> tuple[ApiToken, str]:
+    """Issue a token; with ``replace`` the owner's active tokens of the same name are revoked."""
     name = (name or "").strip()
     if not name or len(name) > 64:
         raise ServiceError("name must be 1-64 characters", code="VALIDATION_ERROR")
     if type(days) is not int or not 1 <= days <= MAX_DAYS:
         raise ServiceError(f"expires_days must be an integer from 1 to {MAX_DAYS}", code="VALIDATION_ERROR")
+    now = _now()
+    if replace:
+        for old in _active(ApiToken.query.filter_by(user_id=user.id, name=name)).all():
+            old.revoked_at = now
+            audit.record("api_token.revoke", actor_id=user.id, object_type="api_token", object_id=old.id)
     if _active(ApiToken.query.filter_by(user_id=user.id)).count() >= MAX_ACTIVE:
         raise ServiceError(f"at most {MAX_ACTIVE} active tokens per user; revoke one first", code="VALIDATION_ERROR")
     secret = PREFIX + secrets.token_urlsafe(32)
-    now = _now()
     token = ApiToken(user_id=user.id, name=name, token_hash=_digest(secret), prefix=secret[:12],
                      created_at=now, expires_at=now + _dt.timedelta(days=days))
     db.session.add(token)

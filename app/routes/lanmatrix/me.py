@@ -130,13 +130,15 @@ def me_list_tokens():
 def me_create_token():
     """Issue a personal API token. The secret appears only in this response.
 
-    Body: ``name`` (1-64 chars) and ``expires_days`` (1-365). Requires a
+    Body: ``name`` (1-64 chars), ``expires_days`` (1-365) and optional
+    ``replace`` (revoke your active tokens of the same name). Requires a
     password session, so a leaked token cannot mint further tokens.
     """
     if g.get("via_token"):
         return err("PERMISSION_DENIED", "请使用账号密码登录后创建 API Token", status=403)
     body = request.get_json(silent=True) or {}
-    token, secret = api_token_service.create(g.user, body.get("name"), body.get("expires_days"))
+    token, secret = api_token_service.create(g.user, body.get("name"), body.get("expires_days"),
+                                             replace=body.get("replace") is True)
     return ok({"token": secret, "info": token.to_dict()}, status=201)
 
 

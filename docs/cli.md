@@ -69,6 +69,10 @@ python -m silver_cli token revoke 3 --confirm
 - 密钥只在签发时写入指定的新文件一次；服务器只保存其 SHA-256。
 - 有效期 1-365 天，每人最多 20 个有效 Token。Token 不能再签发 Token，也不能访问数据库控制台。
 - `SILVER_CLI_TOKEN` 与用户名/密码不能同时设置（`token create` 除外）。
+- 网页端：侧栏底部「API Token」页面可签发、查看、吊销。
+- 密钥事后无法再查看（服务器只存哈希）。忘记时用账号密码重新签发即可：
+  `token create --name agent --days 90 --output agent.token --replace --confirm`
+  会签发新 Token，并吊销同名的旧 Token。
 
 ## 2. 调用、预演与权限
 

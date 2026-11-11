@@ -155,6 +155,8 @@ def register(command, group):
     create.add_argument("--name", required=True, help="Label shown in token list, 1-64 characters.")
     create.add_argument("--days", type=_positive_int, required=True, help="Lifetime in days, 1-365.")
     create.add_argument("--output", type=Path, required=True, help="New file to receive the secret.")
+    create.add_argument("--replace", action="store_true",
+                        help="Revoke your active tokens of the same name, so logging in again rotates the token.")
     command("token", "list", "List your tokens with name, prefix, expiry and last use; secrets are never shown.",
             "list", project=False, handler=token_list)
     revoke = command("token", "revoke", "Revoke one of your tokens immediately.", "revoke 3 --confirm",
@@ -977,7 +979,7 @@ def token_create(args):
     import os
 
     _new_output(args.output)
-    body = {"name": args.name, "expires_days": args.days}
+    body = {"name": args.name, "expires_days": args.days, "replace": args.replace}
     gated = _gate(args, [("me.me_create_token", None, None, body)], output=str(args.output))
     if gated:
         return gated

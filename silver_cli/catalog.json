@@ -1418,7 +1418,8 @@
   {
    "body_fields": [
     "expires_days",
-    "name"
+    "name",
+    "replace"
    ],
    "file_fields": [],
    "form_fields": [],
@@ -1429,7 +1430,7 @@
    "path_params": {},
    "query_params": [],
    "response_kind": "json",
-   "summary": "Issue a personal API token. The secret appears only in this response.\n\nBody: ``name`` (1-64 chars) and ``expires_days`` (1-365). Requires a\npassword session, so a leaked token cannot mint further tokens."
+   "summary": "Issue a personal API token. The secret appears only in this response.\n\nBody: ``name`` (1-64 chars), ``expires_days`` (1-365) and optional\n``replace`` (revoke your active tokens of the same name). Requires a\npassword session, so a leaked token cannot mint further tokens."
   },
   {
    "body_fields": [],

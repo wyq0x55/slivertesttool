@@ -1,0 +1,48 @@
+{% extends "lanmatrix/base_lm.html" %}
+{% block title %}API Token{% endblock %}
+{% block crumb %}<b>API Token</b>{% endblock %}
+{% block content %}
+<div class="content lm-tokens">
+  <div class="page-head">
+    <div class="ttl">
+      <h1>API Token</h1>
+      <p>供命令行和 Agent 免密码调用平台使用。Token 与你的账号权限相同；不能签发新的 Token，也不能访问数据库控制台。</p>
+    </div>
+  </div>
+
+  <form id="lm-token-form" class="lm-filters" aria-label="签发 API Token">
+    <div class="lm-filter">
+      <label for="lm-token-name">名称</label>
+      <input id="lm-token-name" name="name" maxlength="64" required placeholder="例如 agent">
+    </div>
+    <div class="lm-filter">
+      <label for="lm-token-days">有效期（天）</label>
+      <input id="lm-token-days" name="days" type="number" min="1" max="365" value="90" required>
+    </div>
+    <div class="lm-filter">
+      <label>&nbsp;</label>
+      <button type="submit" class="btn primary">签发</button>
+    </div>
+  </form>
+
+  <div id="lm-token-secret" class="lm-banner" role="status" hidden>
+    <p><b>请立即复制保存，此 Token 只显示这一次。</b>之后在命令行设置
+       <code>SILVER_CLI_TOKEN</code> 即可使用。</p>
+    <p><code id="lm-token-value"></code>
+       <button type="button" class="btn" id="lm-token-copy">复制</button></p>
+  </div>
+
+  <p id="lm-token-info" class="lm-muted" role="status" aria-live="polite">加载中…</p>
+  <div class="tablecard"><div style="overflow-x:auto">
+  <table class="lm-table">
+    <thead>
+      <tr><th>名称</th><th>前缀</th><th>签发时间</th><th>到期时间</th><th>最近使用</th><th>状态</th><th>操作</th></tr>
+    </thead>
+    <tbody id="lm-token-rows"><tr><td colspan="7" class="lm-muted">加载中…</td></tr></tbody>
+  </table>
+  </div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ static_asset_url('js/lanmatrix/tokens.js') }}"></script>
+{% endblock %}

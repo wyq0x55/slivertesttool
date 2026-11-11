@@ -127,6 +127,15 @@ def workspace():
                            univer_available=_univer_bundle_available())
 
 
+@pages_bp.get("/tokens")
+def api_tokens():
+    """Personal API tokens for the CLI and agents."""
+    user = _current_user()
+    if user is None:
+        return redirect(url_for("lanmatrix_pages.login"))
+    return render_template("lanmatrix/tokens.html", user=user.to_dict())
+
+
 @pages_bp.get("/admin/db")
 def admin_db():
     """PostgreSQL management console — bootstrap admin account only."""
