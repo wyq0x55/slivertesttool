@@ -18,6 +18,7 @@ tasks`, and `describe OPERATION`; the server's own `.pyz` always matches its API
 - `SILVER_CLI_URL`: explicit target web URL; `--url` overrides it.
 - `SILVER_CLI_USERNAME` and `SILVER_CLI_PASSWORD`: inject both through the caller
   or secret manager. Never print, persist, or put real passwords in arguments.
+- If the user has run `login`, commands authenticate automatically from the saved token; do not ask for a password.
 - Prefer `SILVER_CLI_TOKEN` (a personal API token from `token create`) for
   unattended work: no per-command login and no lockout risk. Never print it.
 - With username/password, each invocation logs in and keeps cookies/CSRF only in memory. The CLI does

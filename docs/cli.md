@@ -53,6 +53,21 @@ CSRF，再执行操作。退出后不持久化凭据；下一次命令重新登�
 开关。仅 loopback HTTP 默认允许；明确接受可信内网明文传输风险时才使用
 `--allow-http`。禁止 URL 内嵌凭据、重定向和自动读取代理环境变量。
 
+### 登录一次，之后自动使用（推荐）
+
+```powershell
+python -m silver_cli login --url https://silver.example.internal --username your-account   # 隐藏输入密码
+python -m silver_cli case list BRK          # 之后无需密码或环境变量
+python -m silver_cli logout                 # 吊销并删除本机保存的 Token
+```
+
+`login` 用账号密码换取一个个人 API Token（同名旧 Token 自动吊销），保存在
+`%APPDATA%\silver-cli\credentials.json`（Linux/macOS：`~/.config/silver-cli/`，
+可用 `SILVER_CLI_CONFIG` 指定），文件只含 Token、不含密码，仅本人可读。未设置
+`SILVER_CLI_URL` 时使用最近一次登录的服务器。凭据优先级：`SILVER_CLI_TOKEN` >
+`SILVER_CLI_USERNAME`/`PASSWORD` > 已保存的登录。非交互环境可用 `--password-stdin`
+或 `SILVER_CLI_PASSWORD`。
+
 ### 个人 API Token（推荐给 Agent 和脚本）
 
 用账号密码登录一次签发 Token，之后只设置 `SILVER_CLI_TOKEN`，不再需要密码，

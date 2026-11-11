@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import time
 from pathlib import Path
 
@@ -973,6 +974,89 @@ def ut_review(args):
     job = _call(client, "ut_pipeline.job_detail", params)["data"]
     body["expected_attempt_id"] = job.get("current_attempt_id")
     return _call(client, "ut_pipeline.review", params, body=body)
+
+
+def register_login(commands):
+    from .runner import _positive
+
+    def add(name, description, example, handler):
+        parser = commands.add_parser(name, help=description, description=description,
+                                     epilog=f"Example: python3 -m silver_cli {example}")
+        parser.set_defaults(high_level=True, handler=handler, password_login=name == "login")
+        parser.add_argument("--url", default=os.environ.get("SILVER_CLI_URL"),
+                            help="Server base URL; defaults to SILVER_CLI_URL (logout: the saved server).")
+        parser.add_argument("--timeout", type=_positive, default=30.0, help="Per-request timeout in seconds.")
+        parser.add_argument("--allow-http", action="store_true", help="Allow plain HTTP for a trusted server.")
+        return parser
+
+    login = add("login", "Log in once with username and password: issue a personal API token and save it for "
+                "this server, so later commands need no password or SILVER_CLI_TOKEN.",
+                "login --url https://silver.example --username alice", login_command)
+    login.add_argument("--username", default=os.environ.get("SILVER_CLI_USERNAME"),
+                       help="Account name; defaults to SILVER_CLI_USERNAME.")
+    login.add_argument("--password-stdin", action="store_true",
+                       help="Read the password from standard input (default: SILVER_CLI_PASSWORD, else a hidden prompt).")
+    login.add_argument("--name", default=None, help="Token label (default: silver-cli@<this computer>).")
+    login.add_argument("--days", type=_positive_int, default=90, help="Token lifetime in days, 1-365 (default: 90).")
+    add("logout", "Revoke the saved token on the server and remove it from this computer.", "logout", logout_command)
+
+
+def _password(args):
+    import getpass
+    import sys
+
+    if args.password_stdin:
+        return sys.stdin.readline().rstrip("\r\n")
+    if os.environ.get("SILVER_CLI_PASSWORD"):
+        return os.environ["SILVER_CLI_PASSWORD"]
+    if sys.stdin.isatty():
+        return getpass.getpass("Password: ")
+    raise CliError("CREDENTIALS", "Give the password with SILVER_CLI_PASSWORD or --password-stdin.", 2)
+
+
+def login_command(args):
+    import platform
+
+    from . import credentials
+    from .runner import _ok
+    from .transport import Client
+
+    if not args.url:
+        raise CliError("URL_REQUIRED", "Set SILVER_CLI_URL or pass --url for the server to log in to.", 2)
+    if not args.username:
+        raise CliError("CREDENTIALS", "Give --username or set SILVER_CLI_USERNAME.", 2)
+    password = _password(args)
+    name = args.name or ("silver-cli@" + (platform.node() or "host"))[:64]
+    client = Client(args.url, timeout=args.timeout, allow_http=args.allow_http)
+    client.login(args.username, password)
+    data = _call(client, "me.me_create_token",
+                 body={"name": name, "expires_days": args.days, "replace": True})["data"]
+    location = credentials.save(args.url, {"token": data["token"], "username": args.username,
+                                           "token_id": data["info"]["id"], "expires_at": data["info"]["expires_at"]})
+    return _ok({"logged_in": True, "server": args.url.rstrip("/"), "username": args.username,
+                "token": data["info"], "saved_to": str(location),
+                "next": "Later commands use this login automatically; unset SILVER_CLI_PASSWORD."})
+
+
+def logout_command(args):
+    from . import credentials
+    from .runner import _ok
+    from .transport import Client
+
+    url, entry = credentials.saved(args.url)
+    if not entry:
+        return _ok({"logged_out": False, "message": "No saved login for this server."})
+    client = Client(url, timeout=args.timeout, allow_http=args.allow_http)
+    client.use_token(entry["token"])
+    revoked = True
+    try:
+        _call(client, "me.me_revoke_token", {"token_id": entry["token_id"]})
+    except CliError as exc:
+        if exc.exit_code not in (3, 2):  # already invalid or gone: still forget it locally
+            raise
+        revoked = False
+    credentials.forget(url)
+    return _ok({"logged_out": True, "server": url, "revoked_on_server": revoked})
 
 
 def token_create(args):

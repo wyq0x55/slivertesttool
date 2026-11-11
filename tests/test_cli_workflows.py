@@ -538,3 +538,66 @@ def test_token_requests_send_bearer_without_login_or_csrf(monkeypatch, capsys):
     assert code == 0 and "slv_token_value" not in output
     assert seen[0].get_header("Authorization") == "Bearer slv_token_value"
     assert seen[0].get_header("X-csrf-token") is None
+
+
+def _login(cli, monkeypatch, tmp_path):
+    from silver_cli.transport import Client
+
+    monkeypatch.delenv("SILVER_CLI_URL")
+    monkeypatch.setenv("SILVER_CLI_PASSWORD", "pw")
+    monkeypatch.setattr(Client, "login", lambda self, username, password: setattr(self, "logged_in", username))
+    return cli("login", "--url", "http://127.0.0.1:5000/", "--username", "agent", "--name", "laptop",
+               responses=[{"token": "slv_saved_secret", "info": {"id": 4, "expires_at": "2027-01-01T00:00:00Z"}}])
+
+
+def test_login_saves_token_and_later_commands_use_it(cli, monkeypatch, tmp_path):
+    import os
+    from silver_cli import credentials
+    from silver_cli.transport import Client
+
+    code, out, calls = _login(cli, monkeypatch, tmp_path)
+    assert code == 0 and "slv_saved_secret" not in json.dumps(out)
+    assert calls[0][2]["json_body"] == {"name": "laptop", "expires_days": 90, "replace": True}
+    saved = json.loads(credentials.path().read_text(encoding="utf-8"))
+    assert saved["default_url"] == "http://127.0.0.1:5000"
+    assert saved["servers"]["http://127.0.0.1:5000"]["token"] == "slv_saved_secret"
+    assert "pw" not in credentials.path().read_text(encoding="utf-8")
+    if os.name != "nt":
+        assert credentials.path().stat().st_mode & 0o077 == 0
+
+    monkeypatch.delenv("SILVER_CLI_PASSWORD")
+    used = []
+    monkeypatch.setattr(Client, "use_token", lambda self, token: used.append(token))
+    monkeypatch.setattr(Client, "login", lambda *a: pytest.fail("saved login must not use the password"))
+    code, _, _ = cli("project", "list", responses=[{"projects": []}])
+    assert code == 0 and used == ["slv_saved_secret"]
+
+
+def test_environment_token_wins_over_saved_login(cli, monkeypatch, tmp_path):
+    from silver_cli.transport import Client
+
+    _login(cli, monkeypatch, tmp_path)
+    monkeypatch.delenv("SILVER_CLI_PASSWORD")
+    monkeypatch.setenv("SILVER_CLI_URL", "http://127.0.0.1:5000")
+    monkeypatch.setenv("SILVER_CLI_TOKEN", "slv_env")
+    used = []
+    monkeypatch.setattr(Client, "use_token", lambda self, token: used.append(token))
+    cli("project", "list", responses=[{"projects": []}])
+    assert used == ["slv_env"]
+
+
+def test_logout_revokes_and_forgets(cli, monkeypatch, tmp_path):
+    from silver_cli import credentials
+
+    _login(cli, monkeypatch, tmp_path)
+    code, out, calls = cli("logout", responses=[{"info": {"id": 4}}])
+    assert code == 0 and out["data"]["revoked_on_server"] is True
+    assert calls[-1][:2] == ("DELETE", "/api/v1/me/tokens/4")
+    assert credentials.saved(None) == (None, None)
+
+
+def test_login_needs_a_password_source(cli, monkeypatch):
+    monkeypatch.delenv("SILVER_CLI_PASSWORD", raising=False)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False, raising=False)
+    code, out, calls = cli("login", "--username", "agent")
+    assert code == 2 and out["error"]["code"] == "CREDENTIALS" and calls == []

@@ -35,7 +35,7 @@ def _parser():
                     "or SILVER_CLI_USERNAME and SILVER_CLI_PASSWORD together for session login.",
                     epilog="Task commands: project list/show/create; item list/show; steps show/set/edit; "
                     "case list/show/set/add/copy/delete; row set; task search/list/show/run/wait/report/failures/log/rerun/cancel/download; "
-                    "model list/upload/use; token create/list/revoke; ut options/config/configure/validate-manifest/paths/import-targets/"
+                    "login; logout; model list/upload/use; token create/list/revoke; ut options/config/configure/validate-manifest/paths/import-targets/"
                     "targets/run/wait/jobs/batches/job/evidence/revise/retry/stop/stop-batch/review/export/stats. "
                     "Examples: python3 -m silver_cli project list; python3 -m silver_cli steps show 1 2; "
                     "python3 -m silver_cli describe items.patch_item")
@@ -78,6 +78,8 @@ def _parser():
             sub.add_argument("--interval", type=_positive, default=1.0, help="Polling interval in seconds (default: 1).")
             sub.add_argument("--max-wait", type=_positive, default=300.0, help="Maximum polling duration in seconds (default: 300).")
     register(commands)
+    from .workflows import register_login
+    register_login(commands)
     return parser
 
 
@@ -237,11 +239,19 @@ def _wait(client, operation, path, kwargs, args, secrets):
 
 
 def _client(args, operation=None):
-    if not args.url:
-        raise CliError("URL_REQUIRED", "Set SILVER_CLI_URL or pass --url for the intended server.", 2)
+    from . import credentials
+
     username = os.environ.get("SILVER_CLI_USERNAME")
     password = os.environ.get("SILVER_CLI_PASSWORD")
     token = os.environ.get("SILVER_CLI_TOKEN")
+    if not args.url or not (token or username):
+        # Fall back to the token saved by `login`: for this URL, or the last login's server.
+        url, entry = credentials.saved(args.url)
+        if entry and not getattr(args, "password_login", False):
+            args.url, token = url, entry["token"]
+            args.saved_login = True
+    if not args.url:
+        raise CliError("URL_REQUIRED", "Set SILVER_CLI_URL, pass --url, or run login first.", 2)
     if bool(username) != bool(password):
         raise CliError("CREDENTIALS", "Set both SILVER_CLI_USERNAME and SILVER_CLI_PASSWORD, or neither.", 2)
     if token and username and not getattr(args, "password_login", False):
@@ -259,6 +269,9 @@ def main(argv=None):
     try:
         args = _parser().parse_args(argv)
         if getattr(args, "high_level", False):
+            from . import credentials
+            secrets.update(entry.get("token", "") for entry in credentials.load()["servers"].values()
+                           if isinstance(entry, dict))
             result, code = execute(args, secrets), 0
             if isinstance(result, tuple):
                 result, code = result

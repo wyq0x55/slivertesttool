@@ -178,3 +178,9 @@ def app_ctx(monkeypatch):
 @pytest.fixture()
 def client(app_ctx):
     return app_ctx.test_client()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_cli_login(tmp_path, monkeypatch):
+    """Keep CLI tests away from a developer's real saved login."""
+    monkeypatch.setenv("SILVER_CLI_CONFIG", str(tmp_path / "silver-cli-credentials.json"))
