@@ -6,6 +6,7 @@ import argparse
 import copy
 import json
 import os
+import re
 
 from . import workflows
 from .catalog import get_operation
@@ -17,6 +18,15 @@ def _positive_int(value):
     if number < 1:
         raise argparse.ArgumentTypeError("Expected an integer greater than zero.")
     return number
+
+
+def _project_ref(value):
+    """A numeric project ID, or a project code resolved through project list."""
+    if value.isdigit():
+        return _positive_int(value)
+    if not re.fullmatch(r"[^\s/\\?#%]{1,128}", value):
+        raise argparse.ArgumentTypeError("Expected a project ID or project code.")
+    return value
 
 
 def register(commands):
@@ -48,7 +58,7 @@ def register(commands):
         )
         parser.set_defaults(high_level=True, handler=handler)
         if project:
-            parser.add_argument("pid", type=_positive_int, help="Numeric project ID.")
+            parser.add_argument("pid", type=_project_ref, help="Project ID or project code (from project list).")
         if item:
             parser.add_argument("iid", type=_positive_int, nargs="?",
                                 help="Numeric matrix item ID; or omit it and pass --test-id.")
@@ -134,14 +144,41 @@ def _request_spec(name, params=None, *, query=None, body=None):
     from .runner import _path
 
     operation = get_operation(name)
-    path = _path(operation, [f"{key}={value}" for key, value in (params or {}).items()])
+    params = dict(params or {})
+    code = params.get("project_id")
+    if isinstance(code, str):  # dry run: the code is resolved only once a request is sent
+        params["project_id"] = 1
+    path = _path(operation, [f"{key}={value}" for key, value in params.items()])
+    if isinstance(code, str):
+        prefix = "/api/v1/projects/1"
+        path = f"/api/v1/projects/<id of {code}>" + path[len(prefix):]
     return {"operation": name, "method": operation.method, "path": path,
             "query": query or [], "json_body": body}
 
 
-def _request(client, name, params=None, *, query=None, body=None):
+def resolve_project(client, ref):
+    """Map a project code to its ID once per client; exact match first, then a unique case-insensitive one."""
+    if not isinstance(ref, str):
+        return ref
+    cache = client.__dict__.setdefault("_project_ids", {})
+    if ref not in cache:
+        projects = _request(client, "projects.list_projects")["data"]["projects"]
+        matches = [project for project in projects if project.get("code") == ref] or [
+            project for project in projects if str(project.get("code") or "").casefold() == ref.casefold()]
+        if len(matches) != 1:
+            raise CliError("PROJECT_NOT_FOUND" if not matches else "AMBIGUOUS_PROJECT",
+                           "No visible project has this code; see project list." if not matches
+                           else "Several visible projects match this code; pass the project ID.", 2,
+                           details=[{"id": project["id"], "code": project.get("code")} for project in matches])
+        cache[ref] = matches[0]["id"]
+    return cache[ref]
+
+
+def _request(client, name, params=None, *, query=None, body=None, **kwargs):
+    if params and isinstance(params.get("project_id"), str):
+        params = {**params, "project_id": resolve_project(client, params["project_id"])}
     spec = _request_spec(name, params, query=query, body=body)
-    return client.request(spec["method"], spec["path"], query=spec["query"], json_body=body)
+    return client.request(spec["method"], spec["path"], query=spec["query"], json_body=body, **kwargs)
 
 
 def _test_id(item):

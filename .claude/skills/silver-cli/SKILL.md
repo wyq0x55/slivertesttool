@@ -60,8 +60,9 @@ tasks`, and `describe OPERATION`; the server's own `.pyz` always matches its API
 
 Default flow: `project list [--search TEXT]` -> `case list PID [--failed]` ->
 `case show PID TEST_ID` -> edit with `steps ... --test-id TEST_ID` -> `task run
-PID --test-id TEST_ID --wait --confirm`. Use the test id everywhere; item ids
-and task keys are only needed for low-level calls.
+PID --test-id TEST_ID --wait --confirm`. `PID` may be the project code (for
+example `BRK`) or its numeric ID. Use the test id everywhere; item ids and task
+keys are only needed for low-level calls.
 
 - Search: `project list --search TEXT`; `task search [--project PID] [--q TEXT]
   [--status failed] [--mine]` searches runs across all visible projects.

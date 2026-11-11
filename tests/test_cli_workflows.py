@@ -298,3 +298,38 @@ def test_case_show_returns_steps_and_latest_verdict(cli):
 def test_case_show_unknown_test_id(cli):
     code, out, _ = cli("case", "show", "7", "TC-9", responses=[CASE_ITEMS, CASE_RUNS])
     assert code == 2 and out["error"]["code"] == "NOT_FOUND"
+
+
+PROJECTS = {"projects": [{"id": 7, "code": "BRK"}, {"id": 8, "code": "door"}, {"id": 9, "code": "Door"}]}
+
+
+def test_project_code_resolves_once_and_routes_by_id(cli):
+    code, out, calls = cli("case", "show", "brk", "TC-2",
+                           responses=[PROJECTS, CASE_ITEMS, CASE_RUNS, {"task": task("T3", "failed", "TC-2")},
+                                      {"verdict": "FAIL", "content": ""}])
+    assert code == 0
+    assert calls[0][1] == "/api/v1/projects"
+    assert [path for _, path, _ in calls[1:]] == [P + "/items", P + "/tasks", P + "/tasks/T3/detail",
+                                                  P + "/tasks/T3/jdgrslt"]
+
+
+@pytest.mark.parametrize(("ref", "error"), [("NOPE", "PROJECT_NOT_FOUND"), ("DOOR", "AMBIGUOUS_PROJECT")])
+def test_unknown_or_ambiguous_project_code_stops(cli, ref, error):
+    code, out, calls = cli("case", "list", ref, responses=[PROJECTS])
+    assert code == 2 and out["error"]["code"] == error and len(calls) == 1
+
+
+def test_exact_code_wins_over_case_insensitive_matches(cli):
+    code, _, calls = cli("ut", "jobs", "Door", responses=[PROJECTS, []])
+    assert code == 0 and calls[1][1] == "/api/v1/projects/9/ut/jobs"
+
+
+def test_project_code_dry_run_stays_offline(cli):
+    code, out, calls = cli("task", "run", "BRK", "--test-id", "TC-1", "--dry-run")
+    assert code == 0 and calls == []
+    assert out["data"]["requests"][0]["path"] == "/api/v1/projects/<id of BRK>/tasks/run-selected"
+
+
+def test_task_search_accepts_project_code(cli):
+    code, _, calls = cli("task", "search", "--project", "BRK", responses=[PROJECTS, {"tasks": []}])
+    assert code == 0 and calls[1][2]["query"] == [("project_id", "7")]

@@ -83,14 +83,20 @@ CLI 不绕过 CRDT 的单写者约束。用户角色也不会因为使用 CLI �
 ## Typical flow: find a project, pick a case, fix its steps, rerun
 
 ```sh
-python -m silver_cli project list --search brake          # 1. all projects -> project id
-python -m silver_cli case list 7                         # 2. every test id with its latest result
-python -m silver_cli case list 7 --failed                #    or only the failing ones
-python -m silver_cli case show 7 TC-1                    # 3. steps + latest verdict, jdgrslt, errors
-python -m silver_cli steps edit 7 --test-id TC-1 --step 2 --set timing=20 --confirm
-python -m silver_cli steps add 7 --test-id TC-1 --json @step.json --at 3 --confirm
-python -m silver_cli task run 7 --test-id TC-1 --wait --confirm   # 4. rerun and wait for the verdict
+python -m silver_cli project list --search brake          # 1. all projects -> code (BRK) or id
+python -m silver_cli case list BRK                       # 2. every test id with its latest result
+python -m silver_cli case list BRK --failed              #    or only the failing ones
+python -m silver_cli case show BRK TC-1                  # 3. steps + latest verdict, jdgrslt, errors
+python -m silver_cli steps edit BRK --test-id TC-1 --step 2 --set timing=20 --confirm
+python -m silver_cli steps add BRK --test-id TC-1 --json @step.json --at 3 --confirm
+python -m silver_cli task run BRK --test-id TC-1 --wait --confirm   # 4. rerun and wait for the verdict
 ```
+
+Every `PID` argument (and `task search --project`) accepts the numeric project
+ID or the project code. A code is resolved once per invocation through
+`project list`: an exact match wins, otherwise a unique case-insensitive match;
+no match returns `PROJECT_NOT_FOUND`, several return `AMBIGUOUS_PROJECT` (exit 2).
+Dry runs never resolve codes and show `<id of CODE>` in planned paths.
 
 ## High-level commands for agents
 

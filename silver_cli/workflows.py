@@ -34,6 +34,11 @@ UT_CONFIG_FIELDS = (
 )
 
 
+def _project_ref(value):
+    from .commands import _project_ref as parse
+    return parse(value)
+
+
 def _positive_int(value):
     from .commands import _positive_int as parse
     return parse(value)
@@ -54,7 +59,7 @@ def register(command, group):
 
     search = command("task", "search", "Search runs across every visible project by task key, test id or name (me.me_tasks).",
                      "search --q TC-1 --status failed", project=False, handler=task_search)
-    search.add_argument("--project", type=_positive_int, help="Limit to one project ID.")
+    search.add_argument("--project", type=_project_ref, help="Limit to one project ID or project code.")
     search.add_argument("--q", help="Substring of task key, test id or task name.")
     search.add_argument("--status", choices=TASK_DONE + TASK_PENDING, help="Execution status.")
     search.add_argument("--mine", action="store_true", help="Only runs submitted by the logged-in user.")
@@ -192,10 +197,9 @@ def register(command, group):
 # Shared helpers
 # --------------------------------------------------------------------------- #
 def _call(client, name, params=None, *, query=None, body=None, **kwargs):
-    from .commands import _request_spec
+    from .commands import _request
 
-    spec = _request_spec(name, params, query=query, body=body)
-    return client.request(spec["method"], spec["path"], query=spec["query"], json_body=body, **kwargs)
+    return _request(client, name, params, query=query, body=body, **kwargs)
 
 
 def _params(args, **extra):
@@ -277,12 +281,16 @@ def ut_job_simple(name):
 # Silver tasks
 # --------------------------------------------------------------------------- #
 def task_search(args):
-    query = [(key, str(value)) for key, value in (("project_id", args.project), ("q", args.q),
+    from .commands import resolve_project
+
+    client = _client(args)
+    project = resolve_project(client, args.project) if args.project is not None else None
+    query = [(key, str(value)) for key, value in (("project_id", project), ("q", args.q),
                                                  ("status", args.status), ("limit", args.limit))
              if value is not None]
     if args.mine:
         query.append(("mine", "1"))
-    return _call(_client(args), "me.me_tasks", query=query)
+    return _call(client, "me.me_tasks", query=query)
 
 
 def _passed(entry):
