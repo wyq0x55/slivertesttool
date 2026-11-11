@@ -136,7 +136,14 @@ class Client:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.csrf_token = None
+        self.bearer = None
         self.opener = build_opener(ProxyHandler({}), HTTPCookieProcessor(http.cookiejar.CookieJar()), NoRedirect())
+
+    def use_token(self, token):
+        """Authenticate every request with a personal API token instead of a session."""
+        if not isinstance(token, str) or not token or any(ord(char) < 33 for char in token):
+            raise CliError("CREDENTIALS", "SILVER_CLI_TOKEN is not a usable token.", 2)
+        self.bearer = token
 
     def login(self, username, password):
         payload = self.request("POST", "/api/v1/auth/login", json_body={"username": username, "password": password})
@@ -181,7 +188,9 @@ class Client:
                 raise CliError("STREAM_INPUT", "Streams require GET without an output file.", 2)
             return self._stream(url)
         headers = {"Accept": "application/json, application/octet-stream", "User-Agent": "silver-cli/1"}
-        if self.csrf_token and method != "GET":
+        if self.bearer:
+            headers["Authorization"] = "Bearer " + self.bearer
+        elif self.csrf_token and method != "GET":
             headers["X-CSRF-Token"] = self.csrf_token
         try:
             with ExitStack() as stack:

@@ -53,6 +53,23 @@ CSRF，再执行操作。退出后不持久化凭据；下一次命令重新登�
 开关。仅 loopback HTTP 默认允许；明确接受可信内网明文传输风险时才使用
 `--allow-http`。禁止 URL 内嵌凭据、重定向和自动读取代理环境变量。
 
+### 个人 API Token（推荐给 Agent 和脚本）
+
+用账号密码登录一次签发 Token，之后只设置 `SILVER_CLI_TOKEN`，不再需要密码，
+也不会因为频繁登录触发账号锁定：
+
+```powershell
+python -m silver_cli token create --name agent --days 90 --output agent.token --confirm
+$env:SILVER_CLI_TOKEN = (Get-Content agent.token); Remove-Item Env:SILVER_CLI_PASSWORD
+python -m silver_cli token list
+python -m silver_cli token revoke 3 --confirm
+```
+
+- Token 以 `Authorization: Bearer` 发送，权限与所属账号完全相同，账号停用即失效。
+- 密钥只在签发时写入指定的新文件一次；服务器只保存其 SHA-256。
+- 有效期 1-365 天，每人最多 20 个有效 Token。Token 不能再签发 Token，也不能访问数据库控制台。
+- `SILVER_CLI_TOKEN` 与用户名/密码不能同时设置（`token create` 除外）。
+
 ## 2. 调用、预演与权限
 
 ```powershell

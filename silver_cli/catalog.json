@@ -1416,6 +1416,35 @@
    "summary": "restore item"
   },
   {
+   "body_fields": [
+    "expires_days",
+    "name"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "me.me_create_token",
+   "path": "/api/v1/me/tokens",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Issue a personal API token. The secret appears only in this response.\n\nBody: ``name`` (1-64 chars) and ``expires_days`` (1-365). Requires a\npassword session, so a leaked token cannot mint further tokens."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "me.me_list_tokens",
+   "path": "/api/v1/me/tokens",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "The caller's personal API tokens (secrets are never returned again)."
+  },
+  {
    "body_fields": [],
    "file_fields": [],
    "form_fields": [],
@@ -1513,6 +1542,21 @@
    ],
    "response_kind": "json",
    "summary": "me reviews"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "DELETE",
+   "mutating": true,
+   "name": "me.me_revoke_token",
+   "path": "/api/v1/me/tokens/<int:token_id>",
+   "path_params": {
+    "token_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "me revoke token"
   },
   {
    "body_fields": [],

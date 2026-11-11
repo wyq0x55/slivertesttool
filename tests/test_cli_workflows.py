@@ -486,3 +486,55 @@ def test_edit_commands_need_confirm_and_dry_run_offline(cli, arguments):
     assert code == 2 and out["error"]["code"] == "CONFIRM_REQUIRED" and calls == []
     code, out, calls = cli(*arguments, "--dry-run")
     assert code == 0 and out["data"]["dry_run"] is True and calls == []
+
+
+def test_token_create_writes_secret_only_to_new_file(cli, monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("SILVER_CLI_USERNAME", "agent")
+    monkeypatch.setenv("SILVER_CLI_PASSWORD", "pw")
+    from silver_cli.transport import Client
+    monkeypatch.setattr(Client, "login", lambda self, username, password: None)
+    target = tmp_path / "agent.token"
+    code, out, calls = cli("token", "create", "--name", "ci", "--days", "30", "--output", str(target), "--confirm",
+                           responses=[{"token": "slv_secret_value", "info": {"id": 3, "prefix": "slv_secret_v"}}])
+    assert code == 0 and calls[0][:2] == ("POST", "/api/v1/me/tokens")
+    assert calls[0][2]["json_body"] == {"name": "ci", "expires_days": 30}
+    assert target.read_text(encoding="utf-8") == "slv_secret_value\n"
+    assert "slv_secret_value" not in json.dumps(out)
+
+
+def test_token_and_password_together_are_refused(cli, monkeypatch):
+    monkeypatch.setenv("SILVER_CLI_TOKEN", "slv_x")
+    monkeypatch.setenv("SILVER_CLI_USERNAME", "agent")
+    monkeypatch.setenv("SILVER_CLI_PASSWORD", "pw")
+    code, out, calls = cli("project", "list")
+    assert code == 2 and out["error"]["code"] == "CREDENTIALS" and calls == []
+
+
+def test_token_requests_send_bearer_without_login_or_csrf(monkeypatch, capsys):
+    from silver_cli import runner
+    from silver_cli.transport import Client
+
+    monkeypatch.setenv("SILVER_CLI_URL", "http://127.0.0.1:5000")
+    monkeypatch.setenv("SILVER_CLI_TOKEN", "slv_token_value")
+    for name in ("SILVER_CLI_USERNAME", "SILVER_CLI_PASSWORD"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(Client, "login", lambda *a: pytest.fail("token auth must not log in"))
+    seen = []
+
+    class Response:
+        status = 200
+        headers = type("H", (), {"get_content_type": lambda self: "application/json"})()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(Client, "_open", lambda self, request: seen.append(request) or Response())
+    monkeypatch.setattr("silver_cli.transport._json", lambda response: envelope({"deleted": True}))
+    code = runner.main(["call", "items.delete_item", "--param", "project_id=7", "--param", "item_id=3", "--confirm"])
+    output = capsys.readouterr().out
+    assert code == 0 and "slv_token_value" not in output
+    assert seen[0].get_header("Authorization") == "Bearer slv_token_value"
+    assert seen[0].get_header("X-csrf-token") is None

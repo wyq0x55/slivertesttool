@@ -146,6 +146,21 @@ def register(command, group):
     row.add_argument("--set", dest="assignments", action="append", nargs="+", required=True, metavar="FIELD=VALUE",
                      help="Field keys as shown by project context; values parse as JSON when valid, otherwise as text.")
 
+    group("token", "Create, list or revoke personal API tokens for unattended use.", "token list")
+    create = command("token", "create", "Issue a personal API token and write it to a new file (shown nowhere else). "
+                     "Needs SILVER_CLI_USERNAME/PASSWORD; then use SILVER_CLI_TOKEN instead of the password.",
+                     "create --name agent --days 90 --output agent.token --confirm",
+                     project=False, write=True, handler=token_create)
+    create.set_defaults(password_login=True)
+    create.add_argument("--name", required=True, help="Label shown in token list, 1-64 characters.")
+    create.add_argument("--days", type=_positive_int, required=True, help="Lifetime in days, 1-365.")
+    create.add_argument("--output", type=Path, required=True, help="New file to receive the secret.")
+    command("token", "list", "List your tokens with name, prefix, expiry and last use; secrets are never shown.",
+            "list", project=False, handler=token_list)
+    revoke = command("token", "revoke", "Revoke one of your tokens immediately.", "revoke 3 --confirm",
+                     project=False, write=True, handler=token_revoke)
+    revoke.add_argument("token_id", type=_positive_int)
+
     group("model", "List, upload, register or select project models.", "model list 1")
     command("model", "list", "List the project's saved models and versions.", "list 1",
             handler=simple("models.list_project_models"))
@@ -956,6 +971,37 @@ def ut_review(args):
     job = _call(client, "ut_pipeline.job_detail", params)["data"]
     body["expected_attempt_id"] = job.get("current_attempt_id")
     return _call(client, "ut_pipeline.review", params, body=body)
+
+
+def token_create(args):
+    import os
+
+    _new_output(args.output)
+    body = {"name": args.name, "expires_days": args.days}
+    gated = _gate(args, [("me.me_create_token", None, None, body)], output=str(args.output))
+    if gated:
+        return gated
+    if not os.environ.get("SILVER_CLI_USERNAME"):
+        raise CliError("CREDENTIALS", "token create needs SILVER_CLI_USERNAME and SILVER_CLI_PASSWORD.", 2)
+    data = _call(_client(args), "me.me_create_token", body=body)["data"]
+    descriptor = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(data["token"] + "\n")
+    from .runner import _ok
+    return _ok({"info": data["info"], "output": str(args.output),
+                "next": "Set SILVER_CLI_TOKEN to the file's content and unset SILVER_CLI_PASSWORD."})
+
+
+def token_list(args):
+    return _call(_client(args), "me.me_list_tokens")
+
+
+def token_revoke(args):
+    params = {"token_id": args.token_id}
+    gated = _gate(args, [("me.me_revoke_token", params, None, None)])
+    if gated:
+        return gated
+    return _call(_client(args), "me.me_revoke_token", params)
 
 
 def ut_export(args):

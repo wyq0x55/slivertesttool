@@ -31,10 +31,11 @@ def _positive(value):
 
 def _parser():
     parser = Parser(prog="silver_cli", description="Silver platform CLI. JSON stdout; no interactive prompts. "
-                    "Set SILVER_CLI_USERNAME and SILVER_CLI_PASSWORD together for session login.",
+                    "Authenticate with SILVER_CLI_TOKEN (personal API token, see token create), "
+                    "or SILVER_CLI_USERNAME and SILVER_CLI_PASSWORD together for session login.",
                     epilog="Task commands: project list/show/create; item list/show; steps show/set/edit; "
                     "case list/show/set/add/copy/delete; row set; task search/list/show/run/wait/report/failures/log/rerun/cancel/download; "
-                    "model list/upload/use; ut options/config/configure/validate-manifest/paths/import-targets/"
+                    "model list/upload/use; token create/list/revoke; ut options/config/configure/validate-manifest/paths/import-targets/"
                     "targets/run/wait/jobs/batches/job/evidence/revise/retry/stop/stop-batch/review/export/stats. "
                     "Examples: python3 -m silver_cli project list; python3 -m silver_cli steps show 1 2; "
                     "python3 -m silver_cli describe items.patch_item")
@@ -240,16 +241,21 @@ def _client(args, operation=None):
         raise CliError("URL_REQUIRED", "Set SILVER_CLI_URL or pass --url for the intended server.", 2)
     username = os.environ.get("SILVER_CLI_USERNAME")
     password = os.environ.get("SILVER_CLI_PASSWORD")
+    token = os.environ.get("SILVER_CLI_TOKEN")
     if bool(username) != bool(password):
         raise CliError("CREDENTIALS", "Set both SILVER_CLI_USERNAME and SILVER_CLI_PASSWORD, or neither.", 2)
+    if token and username and not getattr(args, "password_login", False):
+        raise CliError("CREDENTIALS", "Set either SILVER_CLI_TOKEN or SILVER_CLI_USERNAME/PASSWORD, not both.", 2)
     client = Client(args.url, timeout=args.timeout, allow_http=args.allow_http)
-    if username and (operation is None or operation.name not in {"auth.login", "auth.register"}):
+    if token and not getattr(args, "password_login", False):
+        client.use_token(token)
+    elif username and (operation is None or operation.name not in {"auth.login", "auth.register"}):
         client.login(username, password)
     return client
 
 
 def main(argv=None):
-    secrets = {os.environ.get("SILVER_CLI_PASSWORD", "")}
+    secrets = {os.environ.get("SILVER_CLI_PASSWORD", ""), os.environ.get("SILVER_CLI_TOKEN", "")}
     try:
         args = _parser().parse_args(argv)
         if getattr(args, "high_level", False):
