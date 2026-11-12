@@ -202,8 +202,13 @@ def parse_verdict_text(text: str, test_id: str = "") -> str:
     Order of precedence within the test case's own section:
       1. An overall ``Test is Passed`` / ``Test is failed`` marker wins.
       2. Otherwise, any failing ``Step.N is failed`` line -> ``FAIL``.
-      3. Otherwise a passing step marker -> ``PASS``.
-      4. Otherwise ``UNKNOWN``.
+      3. Otherwise ``UNKNOWN``.
+
+    Passing step markers alone never yield ``PASS``. Every judge this platform
+    runs writes the overall pass line once the last step is verified, so a
+    section without it was cut short: a timeout, a crash, or a killed Silver
+    process that judged only the first steps. Treating that as a pass let a
+    truncated run be recorded as PASS.
     """
     if not text.strip():
         return "UNKNOWN"
@@ -219,9 +224,7 @@ def parse_verdict_text(text: str, test_id: str = "") -> str:
     if any(_STEP_FAIL_RE.search(ln) for ln in section.splitlines()):
         return "FAIL"
 
-    # 3. A passing step with no failures.
-    if any(_STEP_PASS_RE.search(ln) for ln in section.splitlines()):
-        return "PASS"
+    # 3. No overall verdict: the judge never finished this case.
     return "UNKNOWN"
 
 

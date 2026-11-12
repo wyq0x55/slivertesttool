@@ -95,11 +95,22 @@ INFO:root:Test is failed in Step1!!!!
         assert parse_verdict_text(failed + _PASSING_CASE, TID) == "PASS"
         assert parse_verdict_text(_PASSING_CASE + failed, TID) == "FAIL"
 
-    def test_an_unterminated_case_still_falls_back_to_step_markers(self):
+    def test_a_truncated_case_is_never_a_pass(self):
+        """A run cut short (timeout, crash, kill) never wrote its verdict line."""
         text = f"""INFO:root:Test case ID.ID;;{TID} is started!
+INFO:root:-------------------Step1-------------------
+INFO:root:Step.1 is passed at 0.0s.
+INFO:root:-------------------Step2-------------------
+INFO:root:Step.2 is passed at 0.026s.
+INFO:root:-------------------Step3-------------------
+"""
+        assert parse_verdict_text(text, TID) == "UNKNOWN"
+
+    def test_a_truncated_rerun_does_not_inherit_the_previous_pass(self):
+        truncated = f"""INFO:root:Test case ID.ID;;{TID} is started!
 INFO:root:Step.1 is passed at 0.0s.
 """
-        assert parse_verdict_text(text, TID) == "PASS"
+        assert parse_verdict_text(_PASSING_CASE + truncated, TID) == "UNKNOWN"
 
     def test_another_case_is_never_borrowed_from(self):
         other = """INFO:root:Test case ID.ID;;SOME-OTHER-CASE is started!
@@ -111,7 +122,7 @@ INFO:root:Test is failed in Step1!!!!
     def test_empty_and_markerless_text_are_unchanged(self):
         assert parse_verdict_text("", TID) == "UNKNOWN"
         assert parse_verdict_text("INFO:root:Step.1 is passed at 0.0s.", TID) \
-            == "PASS"
+            == "UNKNOWN"
 
 
 class TestDiscardedInstanceStaysSilent:
