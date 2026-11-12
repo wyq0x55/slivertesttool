@@ -1,0 +1,71 @@
+/* Result curves inherit the platform shell, controls and typography. */
+#lm-curves-content {
+  color-scheme:light;
+  --curve-series-1:#5e6ad2; --curve-series-2:#df6534; --curve-series-3:#169f83;
+  --curve-series-4:#eda100; --curve-series-5:#e87ba4; --curve-series-6:#008300;
+  --curve-series-7:#6250d6; --curve-series-8:#e34948;
+}
+[data-theme="dark"] #lm-curves-content {
+  color-scheme:dark;
+  --curve-series-1:#7f8ae8; --curve-series-2:#da6938; --curve-series-3:#22a27d;
+  --curve-series-4:#c98500; --curve-series-5:#d55181; --curve-series-6:#008300;
+  --curve-series-7:#9085e9; --curve-series-8:#e66767;
+}
+.curve-tabs { display:flex; gap:24px; border-bottom:1px solid var(--border); margin:-4px 0 18px; }
+.curve-tab { appearance:none; border:0; border-bottom:2px solid transparent; background:none; color:var(--text-2); padding:12px 0; font:inherit; font-weight:500; cursor:pointer; }
+.curve-tab[aria-selected="true"] { color:var(--brand-text); border-bottom-color:var(--brand); }
+.curve-tab:focus-visible { outline:2px solid var(--brand); outline-offset:3px; }
+.curve-notice { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:10px 12px; background:var(--surface-2); border:1px solid var(--border); border-radius:var(--r-sm, 6px); color:var(--text-2); font-size:12px; }
+.curve-notice .pill { white-space:nowrap; background:var(--brand-soft); color:var(--brand-text); }
+.curve-notice .btn, .curve-notice a.btn { margin-left:auto; }
+.curve-import-options { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-top:14px; }
+.curve-import-options label { display:flex; flex-direction:column; gap:6px; font-size:12px; color:var(--text-2); }
+.curve-import-options select, .curve-import-options input { min-width:0; width:100%; }
+.curve-range { display:flex; align-items:end; gap:10px; flex-wrap:wrap; margin:0 0 8px; font-size:12px; }
+.curve-range label { display:flex; align-items:center; gap:6px; color:var(--text-2); }
+.curve-range input { width:120px; min-width:0; padding:6px 8px; }
+.curve-toolbar { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; padding:18px 0 14px; }
+.curve-tools { display:flex; align-items:center; gap:16px; }
+.curve-layout { display:grid; grid-template-columns:260px minmax(0, 1fr); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+.curve-variables { background:var(--surface-2); padding:16px; border-right:1px solid var(--border); }
+.curve-search-label { display:block; font-weight:600; margin-bottom:12px; }
+.curve-variables input[type="search"] { width:100%; min-width:0; margin-bottom:14px; }
+.curve-variable { display:flex; align-items:flex-start; gap:8px; padding:12px 0; border-bottom:1px solid var(--border); }
+.curve-variable input { margin-top:4px; accent-color:var(--brand); }
+.curve-variable-text { min-width:0; flex:1; }
+.curve-variable-name { display:block; color:var(--text); font-size:12px; font-weight:500; cursor:pointer; overflow-wrap:anywhere; }
+.curve-variable-settings { display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
+.curve-variable-settings input, .curve-variable-settings select { min-width:0; width:100%; padding:5px 6px; font-size:11px; }
+.curve-variable-text code { display:block; color:var(--text-3); font-size:11px; margin-top:5px; }
+.curve-key { display:inline-block; width:18px; height:0; border-top:2px solid var(--key-color); vertical-align:middle; margin-right:6px; }
+.curve-key.dashed { border-top-style:dashed; }
+.curve-variable .submuted { font-size:11px; }
+.curve-variables p { font-size:11px; line-height:1.8; margin:18px 0 0; }
+.curve-plot-area { padding:10px 16px 0; min-width:0; }
+#curve-chart { width:100%; height:420px; }
+#curve-empty { text-align:center; padding:80px 12px; }
+.curve-cursor { padding:12px 0; border-top:1px solid var(--border); display:flex; flex-wrap:wrap; align-items:center; gap:12px; font-size:12px; }
+.curve-cursor label { white-space:nowrap; color:var(--text-2); }
+.curve-cursor output { font-family:var(--mono); color:var(--text); margin-left:8px; }
+#curve-time { flex:1; min-width:100px; accent-color:var(--brand); }
+#curve-values { display:flex; gap:16px; flex-wrap:wrap; width:100%; color:var(--text-2); }
+#curve-values strong { color:var(--text); font-family:var(--mono); font-weight:500; margin-left:6px; }
+.curve-help { font-size:11px; margin:0 0 12px; }
+#curve-table-details { margin-top:14px; font-size:12px; }
+#curve-table-details summary { cursor:pointer; color:var(--text-2); padding:6px 0; }
+.curve-table-wrap { overflow:auto; max-height:300px; margin-top:10px; }
+#curve-table { min-width:540px; width:100%; font-variant-numeric:tabular-nums; }
+.curve-tooltip { font-family:var(--font); min-width:220px; font-size:12px; }
+.curve-tooltip p { margin:6px 0; display:flex; justify-content:space-between; gap:20px; color:var(--text-2); }
+.curve-tooltip strong { color:var(--text); }
+@media (max-width:800px) {
+  .curve-import-options { grid-template-columns:1fr 1fr; }
+  .curve-layout { grid-template-columns:1fr; }
+  .curve-variables { border-right:0; border-bottom:1px solid var(--border); }
+  #curve-options { display:flex; flex-wrap:wrap; gap:10px; }
+  .curve-variable { flex:1; min-width:160px; }
+  .curve-variables p { margin-top:10px; }
+  .curve-toolbar .submuted { display:block; margin-top:5px; }
+  .curve-tools { flex-wrap:wrap; }
+  .curve-plot-area { padding:10px 8px 0; }
+}

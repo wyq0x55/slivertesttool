@@ -3,6 +3,7 @@
 {% block title %}任务/运行{% endblock %}
 {% block crumb %}{{ project_crumb(project_id, "任务 / 运行") }}{% endblock %}
 {% block content %}
+<link rel="stylesheet" href="{{ static_asset_url('css/lanmatrix-curves.css') }}">
 <div class="content lm-tasks" data-project="{{ project_id }}">
   <div class="page-head" id="lm-list-head">
     <div class="ttl">
@@ -206,6 +207,11 @@
   </div>
 
   <div class="panel" style="margin-top:20px">
+    <div class="curve-tabs" role="tablist" aria-label="测试结果视图">
+      <button class="curve-tab" id="lm-result-tab" type="button" role="tab" aria-selected="true" aria-controls="lm-result-content">判定结果</button>
+      <button class="curve-tab" id="lm-curves-tab" type="button" role="tab" aria-selected="false" aria-controls="lm-curves-content" tabindex="-1">变量曲线</button>
+    </div>
+    <div id="lm-result-content" role="tabpanel" aria-labelledby="lm-result-tab">
     <div class="panel-bar">
       <h4 style="margin:0">判定结果 <span class="submuted">· jdgrslt.log</span></h4>
       <div style="flex:1"></div>
@@ -214,6 +220,39 @@
     </div>
     <p class="judge-hint" id="lm-d-judge-hint">加载判定结果…</p>
     <div id="lm-d-judge" class="jsteps"></div>
+    </div>
+    <section id="lm-curves-content" role="tabpanel" aria-labelledby="lm-curves-tab" hidden>
+      <div class="curve-notice"><span class="pill" id="curve-source-label">任务产物 · output.csv</span><span id="curve-source-note">选择变量曲线后读取当前任务产物；单位和数字量类型不会自动推断。</span><button class="btn small" id="curve-demo" type="button">模拟预览</button><button class="btn small" id="curve-reload" type="button">重新读取</button><a class="btn small" id="curve-download" hidden>下载原始 CSV</a></div>
+      <div class="curve-import-options">
+        <label>编码 <select id="curve-encoding"><option value="">自动 / BOM</option><option value="utf-8-sig">UTF-8</option><option value="utf-16">UTF-16 (BOM)</option><option value="gb18030">GB18030</option><option value="cp1252">Windows-1252</option></select></label>
+        <label>分隔符 <select id="curve-delimiter"><option value="">自动</option><option value=",">逗号</option><option value=";">分号</option><option value="&#9;">Tab</option><option value="|">竖线</option></select></label>
+        <label>时间列 <select id="curve-time-column"><option value="">请选择时间列</option></select></label>
+        <label>时间单位 <input id="curve-time-unit" type="text" maxlength="16" placeholder="未声明，可手动填写"></label>
+      </div>
+      <p id="curve-status" class="submuted" role="status" aria-live="polite">尚未读取 CSV。</p>
+      <div id="curve-workspace" hidden>
+        <div class="curve-toolbar">
+          <div><strong>变量曲线</strong><span class="submuted" id="curve-summary"></span></div>
+          <div class="curve-tools"><label class="jchk"><input type="checkbox" id="curve-group" checked>按单位分轨</label><button class="btn small" id="curve-reset" type="button">重置缩放</button></div>
+        </div>
+        <div class="curve-layout">
+          <aside class="curve-variables" aria-label="选择变量">
+            <label class="curve-search-label" for="curve-search">选择变量 <span class="submuted" id="curve-count"></span></label>
+            <input id="curve-search" type="search" placeholder="搜索变量…" autocomplete="off">
+            <div id="curve-options"></div>
+            <p class="submuted">最多选择 8 个变量。单位未声明时各自分轨；可手动填写单位或选择阶梯线。设置仅影响显示。</p>
+          </aside>
+          <div class="curve-plot-area">
+            <div class="curve-range"><label>开始 <input id="curve-start" type="number" step="any"></label><label>结束 <input id="curve-end" type="number" step="any"></label><button class="btn small" id="curve-apply-range" type="button">细化所选区间</button></div>
+            <div id="curve-chart" role="img" aria-label="CSV 变量时间曲线；共享时间轴，可缩放；下方游标与原始数据表支持键盘访问"></div>
+            <p id="curve-empty" class="muted" hidden>请选择至少一个变量。</p>
+            <div class="curve-cursor"><label for="curve-time">游标 <output id="curve-time-label">—</output></label><input id="curve-time" type="range" min="0" max="0" value="0" aria-label="游标时间"><button class="btn small" id="curve-original" type="button">读取此处原始值</button><span class="submuted" id="curve-readout-source"></span><div id="curve-values" aria-live="polite"></div></div>
+            <p class="curve-help submuted">悬停查看同步读数 · 拖动底部滑块缩放 · 图内滚轮缩放 · 游标支持方向键</p>
+          </div>
+        </div>
+        <details id="curve-table-details"><summary>查看原始 CSV 数据 <span class="submuted">· 按记录分页，不使用抽样值</span></summary><div class="curve-table-wrap"><table class="tbl" id="curve-table"></table></div><div class="curve-tools"><button class="btn small" id="curve-prev" type="button">上一页</button><span class="submuted" id="curve-page"></span><button class="btn small" id="curve-next" type="button">下一页</button></div></details>
+      </div>
+    </section>
   </div>
 </section>
 
@@ -231,5 +270,8 @@
 <script src="{{ static_asset_url('js/lanmatrix/json_editor.js') }}"></script>
 <script src="{{ static_asset_url('js/lanmatrix/steps_editor.js') }}"></script>
 <script src="{{ static_asset_url('js/lanmatrix/preflight.js') }}"></script>
+<script src="{{ static_asset_url('vendor/charts/echarts.min.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/charts_theme.js') }}"></script>
+<script src="{{ static_asset_url('js/lanmatrix/task_curves.js') }}"></script>
 <script src="{{ static_asset_url('js/lanmatrix/project_tasks.js') }}"></script>
 {% endblock %}

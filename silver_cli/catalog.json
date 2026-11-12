@@ -2264,6 +2264,114 @@
    "form_fields": [],
    "method": "GET",
    "mutating": false,
+   "name": "tasks.project_task_curve_data",
+   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/curves/data",
+   "path_params": {
+    "project_id": "int",
+    "task_key": "string"
+   },
+   "query_params": [
+    "columns",
+    "delimiter",
+    "encoding",
+    "end",
+    "limit",
+    "revision",
+    "start",
+    "time"
+   ],
+   "response_kind": "json",
+   "summary": "project task curve data"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "tasks.project_task_curve_download",
+   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/curves/download",
+   "path_params": {
+    "project_id": "int",
+    "task_key": "string"
+   },
+   "query_params": [
+    "revision"
+   ],
+   "response_kind": "download",
+   "summary": "project task curve download"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "tasks.project_task_curve_point",
+   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/curves/point",
+   "path_params": {
+    "project_id": "int",
+    "task_key": "string"
+   },
+   "query_params": [
+    "at",
+    "columns",
+    "delimiter",
+    "encoding",
+    "revision",
+    "time"
+   ],
+   "response_kind": "json",
+   "summary": "project task curve point"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "tasks.project_task_curve_raw",
+   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/curves/raw",
+   "path_params": {
+    "project_id": "int",
+    "task_key": "string"
+   },
+   "query_params": [
+    "count",
+    "delimiter",
+    "encoding",
+    "offset",
+    "revision"
+   ],
+   "response_kind": "json",
+   "summary": "project task curve raw"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "tasks.project_task_curves",
+   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/curves",
+   "path_params": {
+    "project_id": "int",
+    "task_key": "string"
+   },
+   "query_params": [
+    "delimiter",
+    "encoding",
+    "revision"
+   ],
+   "response_kind": "json",
+   "summary": "project task curves"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
    "name": "tasks.project_task_detail",
    "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/detail",
    "path_params": {
