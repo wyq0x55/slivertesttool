@@ -84,6 +84,64 @@ def attempt_dir(task, run_count=None, *, workspace=None):
     return checked_path(base, base / ".evidence" / key / str(attempt))
 
 
+def result_file(task, name, *, max_bytes):
+    """Resolve one bounded result without hashing unrelated model/input files.
+
+    Sealed attempts retain their committed manifest/outcome identity and the
+    selected result's digest. Legacy tasks use only their conventional log path.
+    No caller-supplied directory or report_path is used as a result location.
+    """
+    task = _task(task)
+    validate_segment(name)
+    root = attempt_dir(task)
+    sealed = (root.parent.exists()
+              or ".evidence" in Path(task.report_path or "").parts)
+    expected_digest = None
+    if sealed:
+        count = task.run_count or 1
+        # Bound metadata before the existing identity helpers read/hash it.
+        for filename in ("manifest.json", "outcome.json"):
+            meta = checked_path(root, root / filename, exists=True)
+            if not meta.is_file() or meta.stat().st_size > 1024 * 1024:
+                raise EvidenceError("Result metadata exceeds the preview limit")
+        _check_identity(task, root, count)
+        manifest = _read_json(root, "manifest.json")
+        expected = (task.id, task.task_key, count, task.project_id, task.test_id)
+        actual = tuple(manifest.get(key) for key in
+                       ("task_id", "task_key", "run_count", "project_id", "test_id"))
+        if manifest.get("schema") != 1 or actual != expected:
+            raise EvidenceError("Evidence attempt identity mismatch")
+        _check_identity(task, root, count, outcome=True)
+        outcome = _read_json(root, "outcome.json")
+        expected_digest = outcome.get("result_files", {}).get(name)
+        if not expected_digest:
+            raise EvidenceError("Result is not part of the sealed attempt")
+        path = checked_path(root, root / "results" / name, exists=True)
+    else:
+        base = Path(task.workspace)
+        path = checked_path(base, base / "log" / validate_segment(task.test_id) / name,
+                            exists=True)
+    if not path.is_file():
+        raise EvidenceError("Result file is missing")
+    if path.stat().st_size > max_bytes:
+        raise EvidenceError("Result file exceeds the preview size limit")
+    if expected_digest:
+        digest = hashlib.sha256()
+        remaining = max_bytes
+        with path.open("rb") as stream:
+            while True:
+                chunk = stream.read(min(1024 * 1024, remaining + 1))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                if remaining < 0:
+                    raise EvidenceError("Result file exceeds the preview size limit")
+                digest.update(chunk)
+        if digest.hexdigest() != expected_digest:
+            raise EvidenceError("Result file hash integrity check failed")
+    return path
+
+
 def _digest(path):
     digest = hashlib.sha256()
     with path.open("rb") as stream:

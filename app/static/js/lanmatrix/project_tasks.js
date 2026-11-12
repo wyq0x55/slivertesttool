@@ -541,6 +541,7 @@
   function showDetail(on) {
     if (root) root.hidden = on;
     if (detailView) detailView.hidden = !on;
+    if (!on) document.dispatchEvent(new CustomEvent("lm-task-close"));
     if (on) window.scrollTo(0, 0);
   }
 
@@ -656,6 +657,7 @@
   async function openDetail(key, opts) {
     if ((opts || {}).push !== false && window.LMUrl) LMUrl.set({ task: key });
     detailKey = key;
+    document.dispatchEvent(new CustomEvent("lm-task-open", { detail: { projectId: pid, taskKey: key } }));
     resetDetailBuffers();
     $("lm-d-log").innerHTML = "";
     $("lm-d-judge").textContent = "";

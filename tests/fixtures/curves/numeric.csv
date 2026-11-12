@@ -1,0 +1,7 @@
+Time,Speed,Speed,State,Note
+0,800,795,0,idle
+0.1,1200,900,0,rising
+0.2,1600,1200,1,active
+0.2,1600,1300,1,duplicate time
+0.3,1600,bad,1,missing measurement
+0.4,1600,1590,0,stable

@@ -17,7 +17,7 @@ from ...models import DataJob, FieldDefinition, LMUser, Project, Task, TaskStatu
 from ...services import (
     event_service, license_service, project_model_service,
     report_service, task_service, upload_service,
-    run_evidence_service,
+    run_evidence_service, task_curves_service,
 )
 from ...services.upload_service import UploadError
 from ...services.lanmatrix import (
@@ -558,6 +558,94 @@ def delete_project_task(project_id, task_key):
         task_service.request_cancel(task)
     task_service.delete_task(task, actor_id=g.user.id)
     return ok({"deleted": True})
+
+@bp.errorhandler(task_curves_service.CurveError)
+def _curve_error(exc):
+    response, status = err(exc.code, str(exc), status=exc.status)
+    response.headers["Cache-Control"] = "no-store"
+    return response, status
+
+
+def _curve_source(project_id, task_key):
+    _, task = _require_task(project_id, task_key, "task.view")
+    return task_curves_service.CsvResult(
+        task, encoding=request.args.get("encoding") or None,
+        delimiter=request.args.get("delimiter") or None,
+        expected_revision=request.args.get("revision") or None)
+
+
+def _curve_number(name, default=None, *, integer=False):
+    import math
+    raw = request.args.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw) if integer else float(raw)
+        if not math.isfinite(value):
+            raise ValueError
+        return value
+    except (ValueError, OverflowError):
+        raise task_curves_service.CurveError(
+            f"Invalid {name}", "CSV_OPTIONS", 400) from None
+
+
+def _curve_selection():
+    return request.args.get("time", ""), request.args.get("columns", "").split(",")
+
+
+def _curve_ok(data):
+    response, status = ok(data)
+    response.headers["Cache-Control"] = "no-store"
+    return response, status
+
+
+@bp.get("/projects/<int:project_id>/tasks/<task_key>/curves")
+@login_required
+def project_task_curves(project_id, task_key):
+    return _curve_ok(_curve_source(project_id, task_key).metadata())
+
+
+@bp.get("/projects/<int:project_id>/tasks/<task_key>/curves/data")
+@login_required
+def project_task_curve_data(project_id, task_key):
+    source = _curve_source(project_id, task_key)
+    return _curve_ok(source.data(*_curve_selection(),
+                                start=_curve_number("start"), end=_curve_number("end"),
+                                limit=_curve_number("limit", 1600, integer=True)))
+
+
+@bp.get("/projects/<int:project_id>/tasks/<task_key>/curves/point")
+@login_required
+def project_task_curve_point(project_id, task_key):
+    source = _curve_source(project_id, task_key)
+    at = _curve_number("at")
+    if at is None:
+        raise task_curves_service.CurveError("Cursor time is required", "CSV_OPTIONS", 400)
+    return _curve_ok(source.point(*_curve_selection(), at))
+
+
+@bp.get("/projects/<int:project_id>/tasks/<task_key>/curves/raw")
+@login_required
+def project_task_curve_raw(project_id, task_key):
+    source = _curve_source(project_id, task_key)
+    return _curve_ok(source.raw(offset=_curve_number("offset", 0, integer=True),
+                               count=_curve_number("count", 100, integer=True)))
+
+
+@bp.get("/projects/<int:project_id>/tasks/<task_key>/curves/download")
+@login_required
+def project_task_curve_download(project_id, task_key):
+    _, task = _require_task(project_id, task_key, "task.download")
+    path = task_curves_service.artifact(task)
+    expected = request.args.get("revision")
+    if expected and expected != task_curves_service.revision(task, path):
+        raise task_curves_service.CurveError("The task artifact changed; reload", "CSV_CHANGED", 409)
+    response = send_file(path, mimetype="text/csv", as_attachment=True,
+                         download_name="output.csv", conditional=False)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
 
 @bp.get("/projects/<int:project_id>/tasks/<task_key>/download")
 @login_required
