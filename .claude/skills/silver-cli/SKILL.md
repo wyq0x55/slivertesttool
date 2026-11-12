@@ -121,6 +121,11 @@ it cannot prove remote business validity. Confirmation permits a request; it
 does not grant permissions or authorize broader changes. Follow the user's
 existing authorization; ask only when the required mutation exceeds it.
 
+`COLLAB_ACTIVE` (409) also covers Excel import commit, I/O extraction and
+recycle-bin row restore: while a collaboration room is active, stop and retry
+only after collaborative editing ends; never send `X-Collab-Reconcile`, which
+is reserved for the collaborative editor that reconciles rows into the Y.Doc.
+
 Never bypass server permissions, project locks, `COLLAB_ACTIVE`, or the human
 review/apply boundary for generated AI content. On `VERSION_CONFLICT`, stop,
 fetch the latest document, and reconcile; never overwrite by guessing a version

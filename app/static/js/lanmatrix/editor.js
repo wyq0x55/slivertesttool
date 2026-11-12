@@ -1659,7 +1659,7 @@
       const format = job.parameters?.format || job.preview?.format ||
         (importFormatSel ? importFormatSel.value : "generic");
       const targetSheet = IMPORT_SHEETS[format] || currentSheet;
-      const result = await LMApi.commitImport(job.id);
+      const result = await LMApi.commitImport(job.id, { collabReconcile: collabActive() });
       if (requestId !== previewRequest || pendingJob !== job) return;
       pendingJob = null;
       pendingFile = null;
@@ -1707,7 +1707,7 @@
     const mode = document.getElementById("lm-import-mode").value;
     extractIoBtn.disabled = true;
     try {
-      const data = await LMApi.extractIo(pid, sheets, mode);
+      const data = await LMApi.extractIo(pid, sheets, mode, { collabReconcile: collabActive() });
       const s = data.summary || {};
       const rowErrors = s.errors || [];
       // Surface the newly-merged signals on the io sheet.

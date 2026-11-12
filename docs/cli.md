@@ -115,7 +115,9 @@ python -m silver_cli call projects.create_project --json '@project.json' --confi
 
 低层 `call items.patch_item` 仍需正文 `version` + `changes`。版本冲突返回 409，此命令不替你
 读取最新版本后强行覆盖。协同编辑活跃时原有 `COLLAB_ACTIVE` 写保护仍生效，
-CLI 不绕过 CRDT 的单写者约束。用户角色也不会因为使用 CLI 而提升。
+CLI 不绕过 CRDT 的单写者约束。Excel 导入提交、入出力抽取和回收站行还原同样受此
+保护：房间活跃时返回 409 `COLLAB_ACTIVE`，需等协同编辑结束后再执行（只有协同编辑器
+本身能在写入后把行折回 Y.Doc）。用户角色也不会因为使用 CLI 而提升。
 
 ## Typical flow: find a project, pick a case, fix its steps, rerun
 

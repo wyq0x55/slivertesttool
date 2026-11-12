@@ -39,6 +39,7 @@ from ._base import (
 
 
 from .projects_items import bp
+from .projects import _collab_bulk_write_blocked
 
 
 @bp.get("/projects/<int:project_id>/excel/template")
@@ -89,6 +90,9 @@ def commit_import(job_id):
         return err("PROJECT_LOCKED", "项目当前不可编辑", status=409)
     if (job.parameters or {}).get("mode") == "replace_all":
         _project_and_role(job.project_id, "import.replace")
+    blocked = _collab_bulk_write_blocked(project.id)
+    if blocked:
+        return blocked
     result = excel_service.commit_import(g.user, project, job)
     return ok(result)
 
@@ -157,6 +161,9 @@ def extract_io(project_id):
         form_sheets = request.form.get("sheets")
         raw_sheets = form_sheets.split(",") if form_sheets else ["lib"]
     sheets = [str(s).strip() for s in raw_sheets if str(s).strip()] or ["lib"]
+    blocked = _collab_bulk_write_blocked(project_id)
+    if blocked:
+        return blocked
     try:
         summary = libconst_bridge.extract_io_from_steps(
             g.user, project, sheets=sheets, mode=mode, source_label="extract")

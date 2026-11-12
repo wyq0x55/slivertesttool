@@ -16,8 +16,8 @@
     }
   }
 
-  async function request(method, path, { body, raw, query } = {}) {
-    const headers = {};
+  async function request(method, path, { body, raw, query, headers: extraHeaders } = {}) {
+    const headers = { ...(extraHeaders || {}) };
     let url = BASE + path;
     if (query) {
       const qs = new URLSearchParams(query).toString();
@@ -224,7 +224,14 @@
       fd.append("mode", mode || "upsert");
       return request("POST", `/projects/${id}/imports`, { body: fd });
     },
-    commitImport(jobId) { return request("POST", `/imports/${jobId}/commit`, {}); },
+    // ``collabReconcile``: the caller is a live collaborative editor that will
+    // reconcile the written rows into the shared Y.Doc itself. Without it the
+    // server refuses the write while a collaboration room is active.
+    commitImport(jobId, { collabReconcile } = {}) {
+      return request("POST", `/imports/${jobId}/commit`, {
+        headers: collabReconcile ? { "X-Collab-Reconcile": "1" } : undefined,
+      });
+    },
     importTestMatrix(id, file, mode) {
       const fd = new FormData();
       fd.append("file", file);
@@ -253,9 +260,10 @@
       fd.append("mode", mode || "upsert");
       return request("POST", `/projects/${id}/io/import`, { body: fd });
     },
-    extractIo(id, sheets, mode) {
+    extractIo(id, sheets, mode, { collabReconcile } = {}) {
       return request("POST", `/projects/${id}/io/extract`, {
         body: { sheets: sheets || ["lib"], mode: mode || "upsert" },
+        headers: collabReconcile ? { "X-Collab-Reconcile": "1" } : undefined,
       });
     },
     async exportProject(id, payload) {
