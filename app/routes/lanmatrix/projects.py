@@ -41,7 +41,33 @@ from ._base import (
 from .projects_items import bp
 
 
-def _collab_write_blocked(project_id) -> "Response | None":
+COLLAB_RECONCILE_HEADER = "X-Collab-Reconcile"
+
+_COLLAB_BULK_WRITE_MESSAGE = (
+    "该项目正在实时协同编辑，此操作写入的行会被协同层回滚。"
+    "请在协同编辑视图中执行，或等所有人退出协同编辑后再试。")
+
+
+_COLLAB_RESTORE_MESSAGE = (
+    "该项目正在实时协同编辑，还原的行会被协同层回滚。请等所有人退出协同编辑后再还原。")
+
+
+def _collab_bulk_write_blocked(project_id, *, message=None) -> "Response | None":
+    """Guard a server-side bulk row write (import, IO extraction, item restore).
+
+    These writes add or revive rows the live Y.Doc does not contain, so the
+    room's next materializer flush would soft-delete them again: a silent
+    rollback. They are refused while a room is active, except for a connected
+    collaborative editor that reconciles the written rows into the Y.Doc right
+    after the call (it sends ``X-Collab-Reconcile: 1``). The header only waives
+    the guard for that caller's own write; it grants no permission.
+    """
+    if request.headers.get(COLLAB_RECONCILE_HEADER) == "1":
+        return None
+    return _collab_write_blocked(project_id, message=message or _COLLAB_BULK_WRITE_MESSAGE)
+
+
+def _collab_write_blocked(project_id, *, message=None) -> "Response | None":
     """Enforce the CRDT single-writer boundary for direct row mutations.
 
     With the guard enabled (the default), an active collaboration room owns row
@@ -60,7 +86,7 @@ def _collab_write_blocked(project_id) -> "Response | None":
         if presence.is_collab_active(int(project_id)):
             return err(
                 "COLLAB_ACTIVE",
-                "该项目正在实时协同编辑，请在协同视图中修改（此改动已由协同层接管）。",
+                message or "该项目正在实时协同编辑，请在协同视图中修改（此改动已由协同层接管）。",
                 status=409)
     except Exception:  # noqa: BLE001 - correctness boundary, fail closed
         current_app.logger.exception(

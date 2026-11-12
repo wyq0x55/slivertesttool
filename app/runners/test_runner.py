@@ -26,7 +26,7 @@ from ..extensions import db
 from ..models import Task, TaskStatus, TestItemRow
 from ..services import event_service, report_service, runtime_config, task_service
 from ..services import run_evidence_service as evidence
-from . import run_layout
+from . import process_guard, run_layout
 from .silver_runner import (
     RunContext,
     RunnerCancelled,
@@ -312,6 +312,16 @@ def _tail_console(app, task_pk: int, console_path: Path,
     _drain()
 
 
+def _fail_internal(task: Task, exc: Exception) -> None:
+    """Finalise an unexpected runner failure as ERROR and stop the project queue."""
+    logger.error("Unexpected failure in task %s", task.task_key, exc_info=exc)
+    # Terminal events before the final-status flip (see the cancel path).
+    event_service.emit_error(task, f"Internal error: {exc}")
+    event_service.emit_result(task, "failed", f"Internal error: {exc}")
+    _finalise(task, TaskStatus.FAILED, f"Internal error: {exc}", verdict="ERROR")
+    _cancel_project_queue_on_error(task, f"Internal error: {exc}")
+
+
 def execute(app, config, task: Task, pool=None, instance=None,
             dedicated_slot=None) -> None:
     """Validate and claim the pinned attempt before invoking either backend."""
@@ -494,10 +504,20 @@ def _execute_backend(app, config, task: Task, pool=None, instance=None,
         event_service.emit_result(task, "cancelled", "Cancelled by user.")
         _finalise(task, TaskStatus.CANCELLED, "Cancelled by user.", verdict="CANCELLED")
         return
-    except RunnerError as exc:
+    except Exception as exc:  # noqa: BLE001 - classified below
         finish_logs()
         if pooled and not pool.is_mock:
             pool.poison(instance)
+        if process_guard.is_shutting_down():
+            # The worker is disposing Silver under this run. That is an
+            # interruption, not an ERROR: leave the attempt RUNNING (no verdict,
+            # no project-queue cancel) for startup recovery, exactly as a run
+            # cut off by a killed worker is handled.
+            logger.warning("Task %s interrupted by worker shutdown: %s", task.task_key, exc)
+            return
+        if not isinstance(exc, RunnerError):
+            _fail_internal(task, exc)
+            return
         # Terminal events before the final-status flip (see cancel path above).
         event_service.emit_error(task, str(exc))
         event_service.emit_result(task, "failed", str(exc))
@@ -506,17 +526,6 @@ def _execute_backend(app, config, task: Task, pool=None, instance=None,
         # rest of THIS project's queue so it does not keep failing (other
         # projects are untouched).
         _cancel_project_queue_on_error(task, str(exc))
-        return
-    except Exception as exc:  # noqa: BLE001
-        finish_logs()
-        if pooled and not pool.is_mock:
-            pool.poison(instance)
-        logger.exception("Unexpected failure in task %s", task.task_key)
-        # Terminal events before the final-status flip (see cancel path above).
-        event_service.emit_error(task, f"Internal error: {exc}")
-        event_service.emit_result(task, "failed", f"Internal error: {exc}")
-        _finalise(task, TaskStatus.FAILED, f"Internal error: {exc}", verdict="ERROR")
-        _cancel_project_queue_on_error(task, f"Internal error: {exc}")
         return
     finally:
         finish_logs()

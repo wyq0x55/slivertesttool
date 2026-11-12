@@ -31,6 +31,7 @@ from pathlib import Path
 
 from app.config import Config
 from app.logging_setup import configure as configure_logging
+from app.runners import process_guard
 
 # The launcher serves the web app in the foreground, so it takes the "web" role;
 # the worker and collab children configure their own files in their own
@@ -48,18 +49,34 @@ app = create_app()
 
 _worker_proc: subprocess.Popen | None = None
 _collab_proc: subprocess.Popen | None = None
+# Kill-on-close job holding the worker (and, through inheritance, every Silver
+# process it starts). Kept referenced for the launcher's lifetime: if the
+# launcher itself is killed, the kernel closes the handle and the worker tree
+# goes with it instead of lingering with licenses held.
+_worker_job: process_guard.KillOnCloseJob | None = None
+
+# How long the worker gets to dispose its Silver instances after a graceful
+# stop request before it is killed. Disposing is sequential per instance.
+_WORKER_STOP_TIMEOUT_SECONDS = 60
 
 
 def _start_worker() -> subprocess.Popen | None:
     if os.environ.get("START_WORKER", "1").strip().lower() in ("0", "false", "no", "off"):
         print("START_WORKER=0 -> not starting the worker (web only).")
         return None
+    global _worker_job
     print("Starting task worker (run_worker.py)...")
     proc = subprocess.Popen(
         [sys.executable, str(BASE_DIR / "run_worker.py")],
         cwd=str(BASE_DIR),
         env=os.environ.copy(),
+        # Own process group, so request_stop() can deliver CTRL_BREAK_EVENT.
+        creationflags=process_guard.child_creationflags(),
     )
+    if _worker_job is None:
+        _worker_job = process_guard.KillOnCloseJob.create()
+    if _worker_job is not None:
+        _worker_job.assign_pid(proc.pid)
     return proc
 
 
@@ -91,13 +108,12 @@ def _start_collab() -> subprocess.Popen | None:
     return proc
 
 
-def _graceful_silver_drain() -> None:
-    """Ask the worker to wind Silver down before we terminate it.
+def _begin_silver_drain() -> None:
+    """Stop new Silver work from starting while the worker shuts down.
 
-    Rather than hard-killing the worker (which skips a clean Silver dispose and
-    can orphan processes / leak licenses), request a separate transient drain
-    state. The configured license limit is never changed. The worker's reconcile
-    loop observes the drain and shrinks its pool target to zero before shutdown.
+    The drain flag is a transient shutdown state; the configured license limit
+    is never changed. Disposing the instances is the worker's own job, done
+    from its exit path once :func:`_stop_worker` asks it to stop.
     """
     if _worker_proc is None or _worker_proc.poll() is not None:
         return
@@ -108,12 +124,6 @@ def _graceful_silver_drain() -> None:
 
         with app.app_context():
             license_service.begin_drain()
-        interval = float(getattr(Config, "SILVER_POOL_RECONCILE_SECONDS", 5) or 5)
-        # One interval for the reconciler to observe the new limit, plus a small
-        # margin for the disposes to finish.
-        wait_s = min(30.0, interval + 3.0)
-        print(f"Draining Silver pool, waiting {wait_s:.0f}s...")
-        time.sleep(wait_s)
     except Exception:  # noqa: BLE001 - shutdown must never raise
         pass
 
@@ -124,12 +134,25 @@ def _stop_worker() -> None:
         return
     if _worker_proc.poll() is None:
         print("\nStopping task worker...")
-        _graceful_silver_drain()
-        _worker_proc.terminate()
+        _begin_silver_drain()
+        # A graceful request lets the worker run its exit path, which disposes
+        # every Silver instance and releases its license. On Windows a plain
+        # terminate() is TerminateProcess and would skip that entirely.
+        if process_guard.request_stop(_worker_proc):
+            timeout = _WORKER_STOP_TIMEOUT_SECONDS
+        else:
+            _worker_proc.terminate()
+            timeout = 10
         try:
-            _worker_proc.wait(timeout=10)
+            _worker_proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
+            print("Task worker did not stop in time; killing it.")
+            # The worker's own kill-on-close job then takes its Silver children.
             _worker_proc.kill()
+            try:
+                _worker_proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass
     _worker_proc = None
     _sweep_silver()
 
