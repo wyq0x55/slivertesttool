@@ -145,7 +145,7 @@ def _case(task) -> dict:
         from ..runners.test_runner import parse_verdict_text
         verdict = parse_verdict_text(section)
     if (data is not None and not outcome) or status in ("queued", "running") or (status == "cancelled" and not section):
-        result = "NoNeed"
+        result = "Untested"
     elif verdict == "FAIL":
         result = "Failed"
     elif verdict == "PASS" and status == "passed":
@@ -176,7 +176,7 @@ def _project_cases(project_id: int) -> list[dict]:
             cases.append({"id": identifier or "-", "name": row.get_field("test_name") or "-",
                           "purpose": row.get_field("purpose") or "-",
                           "category": row.get_field("category_name") or "-",
-                          "status": "NoNeed", "rows": []})
+                          "status": "Untested", "rows": []})
     return cases
 
 

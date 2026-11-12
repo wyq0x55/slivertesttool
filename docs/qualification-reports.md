@@ -33,12 +33,12 @@ that case's final verdict to exclude unrelated teardown output. No graph or log
 links are generated when their target files are absent from the HTML download.
 
 All unrun rows, including queued/running attempts and not-required cases, display
-`NoNeed`. This is a report presentation rule and does not change exemption
-approvals, task states or stored matrix results. NoNeed is included in the total
+`Untested`. This is a report presentation rule and does not change exemption
+approvals, task states or stored matrix results. Untested is included in the total
 and not-executed counts. Passed, failed and T.B.D cases contribute to executed
-statistics; NoNeed cases never count as passed. Cancelled attempts with judge
+statistics; Untested cases never count as passed. Cancelled attempts with judge
 output and runs without a conclusive judge result are T.B.D. A failing case makes
-the overall banner fail. An all-NoNeed report uses a neutral banner; a report
+the overall banner fail. An all-Untested report uses a neutral banner; a report
 whose executed cases all passed uses the passed banner. Missing values and empty
 step tables display `-` without adding explanatory rows.
 
@@ -61,7 +61,7 @@ Targeted checks cover whole-project exports without selection, more than 200
 cases, not-required and never-run rows, latest attempts, project isolation,
 excluded sheets/deleted rows, duplicate IDs, dash-only metadata on both pages,
 original CSS/logo hashes and sealed-evidence integrity. Browser verification
-checks the requested System Under Test layout, NoNeed display and offline case
+checks the requested System Under Test layout, Untested display and offline case
 navigation/expansion. Real Silver/license execution remains an internal
 validation step.
 

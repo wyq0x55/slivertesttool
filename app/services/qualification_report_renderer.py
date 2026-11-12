@@ -16,7 +16,7 @@ _STATUSES = {
     "Passed": ("PositiveResultCell", "TestcaseHeadingPositiveResult"),
     "Failed": ("NegativeResultCell", "TestcaseHeadingNegativeResult"),
     "T.B.D": ("TBDResultCell", "TestcaseHeadingTBDResult"),
-    "NoNeed": ("NoneedResultCell", "TestcaseHeadingDefaultResult"),
+    "Untested": ("NoneedResultCell", "TestcaseHeadingDefaultResult"),
 }
 _GENERAL_FIELDS = (
     "vehicle", "document", "owner", "project_owner", "software_version",
@@ -57,14 +57,14 @@ def _banner(stats):
     if stats["tbd"]:
         return "TBDResultCell", "Test T.B.D"
     if not stats["executed"]:
-        return "NoneResult", "Test NoNeed"
+        return "NoneResult", "Test Untested"
     return "PositiveResult", "Test passed"
 
 
 def _case_view(case, index):
-    status = case.get("status", "NoNeed")
+    status = case.get("status", "Untested")
     if status not in _STATUSES:
-        status = "NoNeed"
+        status = "Untested"
     result_class, heading_class = _STATUSES[status]
     rows = []
     for row in case.get("rows", []):

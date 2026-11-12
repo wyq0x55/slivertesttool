@@ -22,7 +22,7 @@ def report(cases):
 
 
 def test_preserves_reference_css_logo_statistics_and_offline_links():
-    pages = render_reports(report([case()] * 14 + [case("Failed")] * 9 + [case("NoNeed")] * 27), "Report")
+    pages = render_reports(report([case()] * 14 + [case("Failed")] * 9 + [case("Untested")] * 27), "Report")
     overview, detail = pages.values()
     css = re.search(r"<style[^>]*>(.*?)</style>", overview, re.S).group(1)
     logo = re.search(r'<img[^>]*src="([^"]*)', overview).group(1)
@@ -58,11 +58,11 @@ def test_escapes_all_fields_and_generates_safe_unique_names():
 
 
 @pytest.mark.parametrize("statuses, banner", [
-    (["Passed"], "Test passed"), (["NoNeed"], "Test NoNeed"),
-    (["T.B.D"], "Test T.B.D"), (["Passed", "NoNeed"], "Test passed"),
-    (["Failed", "NoNeed"], "Test failed"),
+    (["Passed"], "Test passed"), (["Untested"], "Test Untested"),
+    (["T.B.D"], "Test T.B.D"), (["Passed", "Untested"], "Test passed"),
+    (["Failed", "Untested"], "Test failed"),
 ])
-def test_banner_uses_executed_results_and_noneed_status(statuses, banner):
+def test_banner_uses_executed_results_and_untested_status(statuses, banner):
     assert banner in next(iter(render_reports(report([case(s) for s in statuses]), "Report").values()))
 
 
@@ -131,7 +131,7 @@ INFO:root:Test is failed in Step1!!!!
 
 
 def test_system_under_test_matches_dash_only_fields_on_every_page():
-    data = report([case("NoNeed")])
+    data = report([case("Untested")])
     data["general"] = {key: "Must not be added" for key in (
         "vehicle", "document", "owner", "project_owner", "software_version",
         "test_db_version", "date", "conclusion", "remarks")}
@@ -140,7 +140,7 @@ def test_system_under_test_matches_dash_only_fields_on_every_page():
         assert values == ["-"] * 9
         assert "Must not be added" not in page
         assert "親レポート参照" not in page
-        assert "Untested" not in page
+        assert "NoNeed" not in page
 
 
 def test_empty_project_can_export_without_selecting_cases(monkeypatch):
@@ -196,7 +196,7 @@ def test_unsealed_attempt_cannot_inherit_a_live_pass_or_missing_final_outcome(tm
     project = SimpleNamespace(id=7, name="SYS")
     stream, _ = build_qualification_report(project)
     with zipfile.ZipFile(stream) as archive:
-        assert "Test NoNeed" in archive.read(archive.namelist()[0]).decode()
+        assert "Test Untested" in archive.read(archive.namelist()[0]).decode()
     selected.status = "passed"
     with pytest.raises(service().EvidenceError, match="no sealed outcome"):
         build_qualification_report(project)

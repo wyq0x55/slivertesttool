@@ -98,18 +98,18 @@ def test_reader_can_export_whole_project_without_selecting_any_cases(report_env)
     with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
         assert len(archive.namelist()) == 2
         detail = archive.read(archive.namelist()[1]).decode("utf-8")
-        assert "Case TC-1 : NoNeed" in detail
-        assert "Case TC-2 : NoNeed" in detail
-        assert "Case TC-4 : NoNeed" in detail
-        assert "Case TC-5 : NoNeed" in detail
+        assert "Case TC-1 : Untested" in detail
+        assert "Case TC-2 : Untested" in detail
+        assert "Case TC-4 : Untested" in detail
+        assert "Case TC-5 : Untested" in detail
         assert 'id="testall">4</td>' in archive.read(archive.namelist()[0]).decode()
         assert "TC-3" not in detail
-        assert detail.count("Case TC-1 : NoNeed") == 1
+        assert detail.count("Case TC-1 : Untested") == 1
     single = report_env["client"].get(
         f"/api/v1/projects/{report_env['project_id']}/tasks/{report_env['first_key']}/qualification-report")
     assert single.status_code == 200
     with zipfile.ZipFile(io.BytesIO(single.data)) as archive:
-        assert "Case TC-5 : NoNeed" in archive.read(archive.namelist()[1]).decode()
+        assert "Case TC-5 : Untested" in archive.read(archive.namelist()[1]).decode()
 
 
 def test_qualification_export_checks_membership_and_ignores_selection_filters(report_env):
@@ -119,7 +119,7 @@ def test_qualification_export_checks_membership_and_ignores_selection_filters(re
     assert response.status_code == 200
     with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
         detail = archive.read(archive.namelist()[1]).decode()
-        assert "Case TC-4 : NoNeed" in detail
+        assert "Case TC-4 : Untested" in detail
         assert "TC-3" not in detail
     with client.session_transaction() as session:
         session["lm_user_id"] = report_env["outsider_id"]
@@ -165,7 +165,7 @@ def test_project_report_combines_results_with_unrun_and_not_required_cases(repor
     assert 'id="test2-1">2</td>' in overview
     assert "Case TC-1 : Passed" in detail
     assert "Case TC-2 : Failed" in detail
-    assert "Case TC-4 : NoNeed" in detail and "Case TC-5 : NoNeed" in detail
+    assert "Case TC-4 : Untested" in detail and "Case TC-5 : Untested" in detail
     assert "0.1s" in detail
     assert "Evidence:" not in overview + detail
 
@@ -189,7 +189,7 @@ def test_project_report_uses_latest_live_task_without_reviving_a_pending_retest(
     assert response.status_code == 200
     with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
         detail = archive.read(archive.namelist()[1]).decode()
-        assert "Case TC-1 : NoNeed" in detail
+        assert "Case TC-1 : Untested" in detail
         assert "Case TC-1 : Passed" not in detail
     with app_ctx.app_context():
         Task.query.filter_by(task_key="T-RETEST").one().deleted_at = datetime.now()
@@ -224,9 +224,9 @@ def test_project_report_includes_all_rows_beyond_task_window_without_extra_sheet
         overview, detail = [archive.read(name).decode() for name in archive.namelist()]
     assert 'id="testall">211</td>' in overview
     assert detail.count('<table class="TestCaseTable">') == 211
-    assert "Case UNRUN-204 : NoNeed" in detail
-    assert detail.count("Case TC-4 : NoNeed") == 2
-    assert "Case - : NoNeed" in detail
+    assert "Case UNRUN-204 : Untested" in detail
+    assert detail.count("Case TC-4 : Untested") == 2
+    assert "Case - : Untested" in detail
     assert "DELETED" not in detail and "EXCLUDED-" not in detail and "ORPHAN" not in detail
 
 
