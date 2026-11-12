@@ -157,6 +157,12 @@ def _pin_model(task, source, root, workspace):
             raise EvidenceError("Previous pinned model attempt identity mismatch")
         previous = _manifest(task, previous_root, previous_count)["model"]
         original = checked_path(model_root, model_root / "approved.sil", exists=True).read_bytes()
+        # Rewrite the PRISTINE text. The previous attempt's ``RWS.sil`` already
+        # carries absolute ``.evidence/<task>/<n>/model/...`` module paths, so
+        # rewriting it again resolves the dependencies inside the evidence copy
+        # and ``checked_path(dependency_root, ...)`` rejects it as outside the
+        # registered model (Path containment failed).
+        execution_text = original
         source_path = previous["source_path"]
     target_root = root / "model"
     target_root.mkdir()
