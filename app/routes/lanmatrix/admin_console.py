@@ -26,6 +26,7 @@ from ...services.lanmatrix import (
 )
 from ._base import (
     ok, err, current_user, login_required, system_admin_required,
+    password_session_required,
     register_common, _project_and_role, _client_ip,
     _LOCK_THRESHOLD, _LOCK_MINUTES,
 )
@@ -50,6 +51,7 @@ def admin_list_users():
 
 @bp.post("/admin/users")
 @system_admin_required
+@password_session_required
 def admin_create_user():
     body = request.get_json(silent=True) or {}
     user = service.admin_create_user(
@@ -64,6 +66,7 @@ def admin_create_user():
 
 @bp.patch("/admin/users/<int:user_id>")
 @system_admin_required
+@password_session_required
 def admin_update_user(user_id):
     body = request.get_json(silent=True) or {}
     user = service.admin_update_user(g.user, user_id, body.get("changes", body))
@@ -71,6 +74,7 @@ def admin_update_user(user_id):
 
 @bp.delete("/admin/users/<int:user_id>")
 @system_admin_required
+@password_session_required
 def admin_delete_user(user_id):
     service.admin_delete_user(g.user, user_id)
     return ok({"deleted": True})

@@ -231,6 +231,23 @@ def system_admin_required(fn):
     return wrapper
 
 
+def password_session_required(fn):
+    """Reject requests authenticated by an API token.
+
+    Apply *inside* an auth decorator (which resolves the identity and sets
+    ``g.via_token``). Credential and account management must not be reachable
+    with a token: otherwise a leaked token could mint a new admin account or
+    reset a password, then log in and issue fresh tokens -- an escalation
+    around the "a token cannot mint tokens" rule.
+    """
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        if g.get("via_token"):
+            return err("PERMISSION_DENIED", "API Token 不能管理账号或凭据，请使用账号密码登录后操作", status=403)
+        return fn(*args, **kwargs)
+    return wrapper
+
+
 def bootstrap_admin_required(fn):
     """Gate an endpoint to the single bootstrap administrator only.
 

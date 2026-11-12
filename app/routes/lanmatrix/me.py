@@ -21,7 +21,7 @@ from ...services import task_service
 from ...services.lanmatrix import (exemption_service, notification_service,
                                    permissions, review_service, service)
 from ...services.ut_pipeline import workspace as ut_workspace
-from ._base import arg_int, err, ok, login_required, register_common
+from ._base import arg_int, err, ok, login_required, password_session_required, register_common
 from ...services import api_token_service
 
 bp = Blueprint("lanmatrix_me", __name__, url_prefix="/api/v1")
@@ -127,6 +127,7 @@ def me_list_tokens():
 
 @bp.post("/me/tokens")
 @login_required
+@password_session_required
 def me_create_token():
     """Issue a personal API token. The secret appears only in this response.
 
@@ -134,8 +135,6 @@ def me_create_token():
     ``replace`` (revoke your active tokens of the same name). Requires a
     password session, so a leaked token cannot mint further tokens.
     """
-    if g.get("via_token"):
-        return err("PERMISSION_DENIED", "请使用账号密码登录后创建 API Token", status=403)
     body = request.get_json(silent=True) or {}
     token, secret = api_token_service.create(g.user, body.get("name"), body.get("expires_days"),
                                              replace=body.get("replace") is True)

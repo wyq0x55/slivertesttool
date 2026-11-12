@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 from ...extensions import db
 from ...models import LMUser, Project, ProjectMember
+from .. import api_token_service
 from . import audit, settings
 from .errors import ServiceError
 
@@ -259,6 +260,9 @@ def admin_update_user(actor: LMUser, user_id: int,
         user.must_change_password = False
         user.failed_logins = 0
         user.locked_until = None
+        # A reset password usually means the old credentials are suspect, so
+        # tokens issued under them must not outlive it.
+        api_token_service.revoke_all(user, actor_id=actor.id)
     audit.record("user.update", actor_id=actor.id, object_type="user",
                  object_id=user.username, old_value=old, new_value=user.to_dict())
     db.session.commit()
