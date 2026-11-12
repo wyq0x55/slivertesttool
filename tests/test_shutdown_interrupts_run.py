@@ -38,12 +38,12 @@ def test_shutdown_runner_error_leaves_the_attempt_for_recovery(submitted, shutti
     monkeypatch.setattr(test_runner, "_write_row_result", lambda *args, **kwargs: writes.append(args))
     monkeypatch.setattr(test_runner, "_cancel_project_queue_on_error",
                         lambda *args: cancelled.append(args))
-    with application.app_context():
-        task.status = TaskStatus.RUNNING.value
-        db.session.commit()
-        test_runner.execute(application, application.config_obj, task)
-        db.session.refresh(task)
-        assert task.status == TaskStatus.RUNNING.value
-        assert not task.result
-        assert service().read_evidence(task)["outcome"] is None
+    # The fixture already runs inside the application context and session.
+    task.status = TaskStatus.RUNNING.value
+    db.session.commit()
+    test_runner.execute(application, application.config_obj, task)
+    db.session.refresh(task)
+    assert task.status == TaskStatus.RUNNING.value
+    assert not task.result
+    assert service().read_evidence(task)["outcome"] is None
     assert not cancelled and not writes
