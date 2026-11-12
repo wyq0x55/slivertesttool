@@ -2173,9 +2173,7 @@
    "path_params": {
     "project_id": "int"
    },
-   "query_params": [
-    "keys"
-   ],
+   "query_params": [],
    "response_kind": "download",
    "summary": "download project qualification report"
   },

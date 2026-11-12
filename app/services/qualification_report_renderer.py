@@ -16,7 +16,7 @@ _STATUSES = {
     "Passed": ("PositiveResultCell", "TestcaseHeadingPositiveResult"),
     "Failed": ("NegativeResultCell", "TestcaseHeadingNegativeResult"),
     "T.B.D": ("TBDResultCell", "TestcaseHeadingTBDResult"),
-    "Untested": ("NoneedResultCell", "TestcaseHeadingDefaultResult"),
+    "NoNeed": ("NoneedResultCell", "TestcaseHeadingDefaultResult"),
 }
 _GENERAL_FIELDS = (
     "vehicle", "document", "owner", "project_owner", "software_version",
@@ -57,16 +57,14 @@ def _banner(stats):
     if stats["tbd"]:
         return "TBDResultCell", "Test T.B.D"
     if not stats["executed"]:
-        return "NoneResult", "Test untested"
-    if stats["untested"]:
-        return "InconclusiveResult", "Test incomplete"
+        return "NoneResult", "Test NoNeed"
     return "PositiveResult", "Test passed"
 
 
 def _case_view(case, index):
-    status = case.get("status", "Untested")
+    status = case.get("status", "NoNeed")
     if status not in _STATUSES:
-        status = "Untested"
+        status = "NoNeed"
     result_class, heading_class = _STATUSES[status]
     rows = []
     for row in case.get("rows", []):
@@ -102,7 +100,7 @@ def render_reports(report: dict, basename: str) -> dict[str, str]:
     """
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", basename):
         raise ValueError("Report basename must contain only letters, digits, underscores and hyphens")
-    general = {key: _text(report.get("general", {}).get(key)) for key in _GENERAL_FIELDS}
+    general = {key: "-" for key in _GENERAL_FIELDS}
     overview_filename = f"{basename}.html"
     suites = []
     used_filenames = {overview_filename}
@@ -128,8 +126,7 @@ def render_reports(report: dict, basename: str) -> dict[str, str]:
     }
     for suite in suites:
         banner_class, banner_text = _banner(suite["stats"])
-        suite_common = {**common, "general": {key: "親レポート参照" for key in _GENERAL_FIELDS}}
         pages[suite["filename"]] = _ENVIRONMENT.get_template("suite.html").render(
-            **suite_common, suite=suite, stats=suite["stats"], banner_class=banner_class, banner_text=banner_text,
+            **common, suite=suite, stats=suite["stats"], banner_class=banner_class, banner_text=banner_text,
         )
     return pages

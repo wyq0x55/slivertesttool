@@ -348,10 +348,8 @@
     if (!keys.length) { toast("所选任务均无可下载的报告", false); return; }
     window.location = LMApi.projectTasksDownloadBatchUrl(pid, keys);
   }
-  function batchHtmlReport() {
-    const keys = selectedKeys();
-    if (!keys.length) { toast("请先选择任务", false); return; }
-    window.location = LMApi.projectQualificationReportUrl(pid, keys);
+  function projectHtmlReport() {
+    window.location = LMApi.projectQualificationReportUrl(pid);
   }
   async function batchCancel() {
     const keys = selectedKeys().filter((k) => {
@@ -653,7 +651,7 @@
     $("lm-d-judge").textContent = "";
     $("lm-d-judge-hint").textContent = "加载判定结果…";
     $("lm-d-download").href = LMApi.projectTaskDownloadUrl(pid, key);
-    $("lm-d-html-report").href = LMApi.projectTaskQualificationReportUrl(pid, key);
+    $("lm-d-html-report").href = LMApi.projectQualificationReportUrl(pid);
     $("lm-d-title").textContent = key;
     $("lm-d-sub").textContent = "";
     showDetail(true);
@@ -1236,7 +1234,7 @@
     });
   }
   $("lm-batch-download").addEventListener("click", batchDownload);
-  $("lm-batch-html-report").addEventListener("click", batchHtmlReport);
+  $("lm-project-html-report").addEventListener("click", projectHtmlReport);
   $("lm-batch-cancel").addEventListener("click", batchCancel);
   $("lm-batch-retest").addEventListener("click", batchRetest);
   $("lm-batch-delete").addEventListener("click", batchDelete);

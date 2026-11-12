@@ -1,4 +1,4 @@
-"""Build offline qualification reports from the selected execution attempts."""
+"""Build offline qualification reports for the complete project test matrix."""
 
 from __future__ import annotations
 
@@ -8,7 +8,9 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-from . import report_service, run_evidence_service as evidence
+from ..models import TestItemRow
+from . import report_service, run_evidence_service as evidence, task_service
+from .lanmatrix.silver_json_export import row_test_id
 from .qualification_report_renderer import render_reports
 
 _PREFIX = re.compile(r"^(?:DEBUG|INFO|WARNING|ERROR|CRITICAL):[^:]*:\s?")
@@ -118,7 +120,7 @@ def parse_judge_rows(text: str, test_id: str) -> list[dict]:
     return rows
 
 
-def _case(task) -> tuple[dict, dict]:
+def _case(task) -> dict:
     attempt = task.run_count or 1
     data = None
     if task.workspace:
@@ -143,7 +145,7 @@ def _case(task) -> tuple[dict, dict]:
         from ..runners.test_runner import parse_verdict_text
         verdict = parse_verdict_text(section)
     if (data is not None and not outcome) or status in ("queued", "running") or (status == "cancelled" and not section):
-        result = "Untested"
+        result = "NoNeed"
     elif verdict == "FAIL":
         result = "Failed"
     elif verdict == "PASS" and status == "passed":
@@ -151,43 +153,36 @@ def _case(task) -> tuple[dict, dict]:
     else:
         result = "T.B.D"
     rows = parse_judge_rows(raw, task.test_id)
-    if not rows:
-        rows = [{"timestamp": "-", "step": "-", "description": "Judge log unavailable.",
-                 "result": "-", "checks": []}]
-    if outcome.get("evidence_kind"):
-        rows.append({"timestamp": "-", "step": "Aditional Information",
-                     "description": "Evidence: " + outcome["evidence_kind"],
-                     "result": "-", "checks": []})
     return {"id": task.test_id, "name": source.get("test_name") or source.get("title") or task.task_name or task.test_id,
             "purpose": source.get("purpose") or "-", "category": source.get("category_name") or "-",
-            "status": result, "rows": rows}, {
-                "version": ((data or {}).get("model") or {}).get("version", task.sil_version) or "-",
-                "owner": task.submitter or "-",
-                "date": outcome.get("finished_at") or (task.finished_at.isoformat() if task.finished_at else "-"),
-                "kind": outcome.get("evidence_kind", "legacy" if data is None else "unsealed"),
-            }
+            "status": result, "rows": rows}
 
 
-def build_qualification_report(tasks, project_name: str) -> tuple[io.BytesIO, str]:
-    """Render into a ZIP without modifying the sealed results or old downloads."""
-    cases, metadata = [], []
-    seen = set()
-    for task in tasks:
-        identity = (task.task_key, task.run_count or 1)
-        if identity not in seen:
-            case, info = _case(task)
-            cases.append(case)
-            metadata.append(info)
-            seen.add(identity)
-    if not cases:
-        raise ValueError("Select at least one task")
-    def joined(key):
-        return ", ".join(dict.fromkeys(info[key] for info in metadata))
-    report = {"suites": [{"name": project_name, "cases": cases}], "general": {
-        "vehicle": "-", "document": "-", "owner": joined("owner"), "project_owner": "-",
-        "software_version": joined("version"), "test_db_version": "-", "date": joined("date"),
-        "conclusion": "-", "remarks": "Evidence: " + joined("kind"),
-    }}
+def _project_cases(project_id: int) -> list[dict]:
+    """Read all materialized test rows, pairing each with its latest live task."""
+    rows = (TestItemRow.query.filter_by(project_id=project_id, sheet="test", deleted_at=None)
+            .order_by(TestItemRow.row_order.asc(), TestItemRow.id.asc()).all())
+    tasks = {task.test_id: task for task in task_service.latest_per_test(project_id)}
+    executed = {}
+    cases = []
+    for row in rows:
+        identifier = row_test_id(row)
+        task = tasks.get(identifier) if identifier else None
+        if task is not None:
+            if identifier not in executed:
+                executed[identifier] = _case(task)
+            cases.append(executed[identifier])
+        else:
+            cases.append({"id": identifier or "-", "name": row.get_field("test_name") or "-",
+                          "purpose": row.get_field("purpose") or "-",
+                          "category": row.get_field("category_name") or "-",
+                          "status": "NoNeed", "rows": []})
+    return cases
+
+
+def build_qualification_report(project) -> tuple[io.BytesIO, str]:
+    """Export every current project case without changing stored execution evidence."""
+    report = {"suites": [{"name": project.name, "cases": _project_cases(project.id)}]}
     basename = "Qualification_Test_Report_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     files = render_reports(report, basename)
     buffer = io.BytesIO()

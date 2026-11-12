@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.services.qualification_report_renderer import render_reports
+from app.services import qualification_report_service as reports
 from app.services.qualification_report_service import build_qualification_report, parse_judge_rows
 
 
@@ -21,7 +22,7 @@ def report(cases):
 
 
 def test_preserves_reference_css_logo_statistics_and_offline_links():
-    pages = render_reports(report([case()] * 14 + [case("Failed")] * 9 + [case("Untested")] * 27), "Report")
+    pages = render_reports(report([case()] * 14 + [case("Failed")] * 9 + [case("NoNeed")] * 27), "Report")
     overview, detail = pages.values()
     css = re.search(r"<style[^>]*>(.*?)</style>", overview, re.S).group(1)
     logo = re.search(r'<img[^>]*src="([^"]*)', overview).group(1)
@@ -57,11 +58,11 @@ def test_escapes_all_fields_and_generates_safe_unique_names():
 
 
 @pytest.mark.parametrize("statuses, banner", [
-    (["Passed"], "Test passed"), (["Untested"], "Test untested"),
-    (["T.B.D"], "Test T.B.D"), (["Passed", "Untested"], "Test incomplete"),
-    (["Failed", "Untested"], "Test failed"),
+    (["Passed"], "Test passed"), (["NoNeed"], "Test NoNeed"),
+    (["T.B.D"], "Test T.B.D"), (["Passed", "NoNeed"], "Test passed"),
+    (["Failed", "NoNeed"], "Test failed"),
 ])
-def test_banner_never_claims_pending_cases_passed(statuses, banner):
+def test_banner_uses_executed_results_and_noneed_status(statuses, banner):
     assert banner in next(iter(render_reports(report([case(s) for s in statuses]), "Report").values()))
 
 
@@ -129,26 +130,28 @@ INFO:root:Test is failed in Step1!!!!
     assert mock[1]["result"] == "passed"
 
 
-def task(**kwargs):
-    return SimpleNamespace(task_key="T1", test_id="TC-1", run_count=1, workspace="",
-                           report_path="", task_name="Task", status="queued", result="",
-                           submitter="Owner", sil_version="v1", finished_at=None, **kwargs)
+def test_system_under_test_matches_dash_only_fields_on_every_page():
+    data = report([case("NoNeed")])
+    data["general"] = {key: "Must not be added" for key in (
+        "vehicle", "document", "owner", "project_owner", "software_version",
+        "test_db_version", "date", "conclusion", "remarks")}
+    for page in render_reports(data, "Report").values():
+        values = re.findall(r'id="Inf\d+">([^<]*)</td>', page)
+        assert values == ["-"] * 9
+        assert "Must not be added" not in page
+        assert "親レポート参照" not in page
+        assert "Untested" not in page
 
 
-def test_unexecuted_tasks_are_included_and_duplicate_selections_count_once():
-    queued = task()
-    stream, filename = build_qualification_report([queued, queued], "SYS")
-    assert filename.startswith("Qualification_Test_Report_")
+def test_empty_project_can_export_without_selecting_cases(monkeypatch):
+    monkeypatch.setattr(reports, "_project_cases", lambda project_id: [])
+    stream, _ = build_qualification_report(SimpleNamespace(id=7, name="SYS"))
     with zipfile.ZipFile(stream) as archive:
         assert len(archive.namelist()) == 2
-        overview = archive.read(archive.namelist()[0]).decode()
-        detail = archive.read(archive.namelist()[1]).decode()
-    assert "Test untested" in overview
-    assert detail.count("Case TC-1 : Untested") == 1
-    assert "Judge log unavailable." in detail
+        assert 'id="testall">0</td>' in archive.read(archive.namelist()[0]).decode()
 
 
-def test_pinned_report_uses_snapshot_and_rejects_integrity_failures(tmp_path):
+def test_pinned_report_uses_snapshot_and_rejects_integrity_failures(tmp_path, monkeypatch):
     from test_run_evidence import prepared, service
 
     selected, source, _ = prepared(tmp_path)
@@ -165,20 +168,22 @@ def test_pinned_report_uses_snapshot_and_rejects_integrity_failures(tmp_path):
     evidence.seal_attempt(selected, status="passed", verdict="PASS", message="", evidence_kind="mock", runner_backend="mock")
     before = {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
     selected.sil_version = "mutated-version"
-    stream, _ = build_qualification_report([selected], "SYS")
+    monkeypatch.setattr(reports, "_project_cases", lambda project_id: [reports._case(selected)])
+    project = SimpleNamespace(id=7, name="SYS")
+    stream, _ = build_qualification_report(project)
     with zipfile.ZipFile(stream) as archive:
         detail = archive.read(archive.namelist()[1]).decode()
     assert "Approved name" in detail and "Approved purpose" in detail
-    assert "Approved category" in detail and "Evidence: mock" in detail
+    assert "Approved category" in detail and "Evidence: mock" not in detail
     assert "Case TC-1 : Passed" in detail
     assert "mutated-version" not in detail
     assert before == {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
     (root / "results" / "jdgrslt.log").write_text("tampered", encoding="utf-8")
     with pytest.raises(evidence.EvidenceError, match="integrity"):
-        build_qualification_report([selected], "SYS")
+        build_qualification_report(project)
 
 
-def test_unsealed_attempt_cannot_inherit_a_live_pass_or_missing_final_outcome(tmp_path):
+def test_unsealed_attempt_cannot_inherit_a_live_pass_or_missing_final_outcome(tmp_path, monkeypatch):
     from test_run_evidence import prepared, service
 
     selected, source, _ = prepared(tmp_path)
@@ -187,9 +192,11 @@ def test_unsealed_attempt_cannot_inherit_a_live_pass_or_missing_final_outcome(tm
     selected.submitter = "Owner"
     selected.finished_at = None
     service().pin_attempt(selected, source)
-    stream, _ = build_qualification_report([selected], "SYS")
+    monkeypatch.setattr(reports, "_project_cases", lambda project_id: [reports._case(selected)])
+    project = SimpleNamespace(id=7, name="SYS")
+    stream, _ = build_qualification_report(project)
     with zipfile.ZipFile(stream) as archive:
-        assert "Test untested" in archive.read(archive.namelist()[0]).decode()
+        assert "Test NoNeed" in archive.read(archive.namelist()[0]).decode()
     selected.status = "passed"
     with pytest.raises(service().EvidenceError, match="no sealed outcome"):
-        build_qualification_report([selected], "SYS")
+        build_qualification_report(project)

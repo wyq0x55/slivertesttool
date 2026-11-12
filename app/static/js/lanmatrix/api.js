@@ -330,8 +330,8 @@
     projectTaskQualificationReportUrl(id, key) {
       return `${BASE}/projects/${id}/tasks/${key}/qualification-report`;
     },
-    projectQualificationReportUrl(id, keys) {
-      return `${BASE}/projects/${id}/tasks/qualification-report?keys=${encodeURIComponent(keys.join(","))}`;
+    projectQualificationReportUrl(id) {
+      return `${BASE}/projects/${id}/tasks/qualification-report`;
     },
     projectTasksDownloadBatchUrl(id, keys) {
       return `${BASE}/projects/${id}/tasks/download_batch?keys=${encodeURIComponent(keys.join(","))}`;

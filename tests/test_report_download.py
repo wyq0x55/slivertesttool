@@ -13,7 +13,7 @@ import pytest
 @pytest.fixture
 def report_env(app_ctx, client, tmp_path):
     from app.extensions import db
-    from app.models import LMUser, Project, ProjectMember, Task
+    from app.models import LMUser, Project, ProjectMember, Task, TestItemRow
 
     suffix = uuid.uuid4().hex[:10]
     workspace = tmp_path / "workspace"
@@ -44,6 +44,18 @@ def report_env(app_ctx, client, tmp_path):
                  workspace=str(workspace), submitter="reader"),
             Task(task_key=foreign_key, project_id=other_project.id,
                  test_id="TC-3", workspace=str(workspace), submitter="owner"),
+        ])
+        db.session.add_all([
+            TestItemRow(project_id=project.id, sheet="test", row_order=1,
+                        case_id="LEGACY-1", title="First", custom_values={"test_id": "TC-1"}),
+            TestItemRow(project_id=project.id, sheet="test", row_order=2,
+                        case_id="TC-2", title="Second"),
+            TestItemRow(project_id=project.id, sheet="test", row_order=3,
+                        case_id="TC-4", title="Never run"),
+            TestItemRow(project_id=project.id, sheet="test", row_order=4,
+                        case_id="TC-5", title="Not required", custom_values={"item_created": "不要"}),
+            TestItemRow(project_id=other_project.id, sheet="test", row_order=1,
+                        case_id="TC-3", title="Other project"),
         ])
         db.session.commit()
         project_id = project.id
@@ -77,30 +89,38 @@ def _download_url(project_id: int, task_key: str) -> str:
     return f"/api/v1/projects/{project_id}/tasks/{task_key}/download"
 
 
-def test_reader_can_export_selected_qualification_html_reports(report_env):
+def test_reader_can_export_whole_project_without_selecting_any_cases(report_env):
     response = report_env["client"].get(
         f"/api/v1/projects/{report_env['project_id']}/tasks/qualification-report",
-        query_string={"keys": [report_env["first_key"], report_env["second_key"], report_env["first_key"]]},
     )
     assert response.status_code == 200
     assert response.mimetype == "application/zip"
     with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
         assert len(archive.namelist()) == 2
         detail = archive.read(archive.namelist()[1]).decode("utf-8")
-        assert "Case TC-1 : Untested" in detail
-        assert "Case TC-2 : Untested" in detail
+        assert "Case TC-1 : NoNeed" in detail
+        assert "Case TC-2 : NoNeed" in detail
+        assert "Case TC-4 : NoNeed" in detail
+        assert "Case TC-5 : NoNeed" in detail
+        assert 'id="testall">4</td>' in archive.read(archive.namelist()[0]).decode()
         assert "TC-3" not in detail
-        assert detail.count("Case TC-1 : Untested") == 1
+        assert detail.count("Case TC-1 : NoNeed") == 1
     single = report_env["client"].get(
         f"/api/v1/projects/{report_env['project_id']}/tasks/{report_env['first_key']}/qualification-report")
     assert single.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(single.data)) as archive:
+        assert "Case TC-5 : NoNeed" in archive.read(archive.namelist()[1]).decode()
 
 
-def test_qualification_export_checks_membership_selection_and_project_scope(report_env):
+def test_qualification_export_checks_membership_and_ignores_selection_filters(report_env):
     url = f"/api/v1/projects/{report_env['project_id']}/tasks/qualification-report"
     client = report_env["client"]
-    assert client.get(url).status_code == 400
-    assert client.get(url, query_string={"keys": report_env["foreign_key"]}).status_code == 404
+    response = client.get(url, query_string={"keys": report_env["foreign_key"]})
+    assert response.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
+        detail = archive.read(archive.namelist()[1]).decode()
+        assert "Case TC-4 : NoNeed" in detail
+        assert "TC-3" not in detail
     with client.session_transaction() as session:
         session["lm_user_id"] = report_env["outsider_id"]
     assert client.get(url, query_string={"keys": report_env["first_key"]}).status_code == 403
@@ -117,6 +137,97 @@ def test_qualification_export_rejects_invalid_evidence(report_env, monkeypatch):
         f"/api/v1/projects/{report_env['project_id']}/tasks/{report_env['first_key']}/qualification-report")
     assert response.status_code == 409
     assert response.json["error"]["code"] == "EVIDENCE_INVALID"
+
+
+def test_project_report_combines_results_with_unrun_and_not_required_cases(report_env, app_ctx):
+    from app.extensions import db
+    from app.models import Task
+
+    with app_ctx.app_context():
+        for key, status, verdict in ((report_env["first_key"], "passed", "PASS"),
+                                     (report_env["second_key"], "failed", "FAIL")):
+            selected = Task.query.filter_by(task_key=key).one()
+            selected.status, selected.result = status, verdict
+        db.session.commit()
+    log_dir = _log_dir(report_env, "TC-1")
+    log_dir.mkdir(parents=True)
+    (log_dir / "jdgrslt.log").write_text(
+        "INFO:root:Test case ID.ID;;TC-1 is started!\n"
+        "INFO:root:Step.1 is passed at 0.1s.\n"
+        "INFO:root:All steps are verified.Test is Passed.", encoding="utf-8")
+    response = report_env["client"].get(
+        f"/api/v1/projects/{report_env['project_id']}/tasks/qualification-report")
+    assert response.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
+        overview, detail = [archive.read(name).decode() for name in archive.namelist()]
+    assert 'id="testall">4</td>' in overview
+    assert 'id="test1-1">2</td>' in overview
+    assert 'id="test2-1">2</td>' in overview
+    assert "Case TC-1 : Passed" in detail
+    assert "Case TC-2 : Failed" in detail
+    assert "Case TC-4 : NoNeed" in detail and "Case TC-5 : NoNeed" in detail
+    assert "0.1s" in detail
+    assert "Evidence:" not in overview + detail
+
+
+def test_project_report_uses_latest_live_task_without_reviving_a_pending_retest(report_env, app_ctx):
+    from datetime import datetime
+    from app.extensions import db
+    from app.models import Task
+
+    with app_ctx.app_context():
+        first = Task.query.filter_by(task_key=report_env["first_key"]).one()
+        first.status, first.result = "passed", "PASS"
+        newer = Task(task_key="T-RETEST", project_id=report_env["project_id"], test_id="TC-1",
+                     status="queued", result="PASS", workspace="")
+        db.session.add(newer)
+        db.session.add(Task(task_key="T-FOREIGN", project_id=report_env["other_project_id"],
+                            test_id="TC-1", status="failed", result="FAIL"))
+        db.session.commit()
+    url = f"/api/v1/projects/{report_env['project_id']}/tasks/qualification-report"
+    response = report_env["client"].get(url)
+    assert response.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
+        detail = archive.read(archive.namelist()[1]).decode()
+        assert "Case TC-1 : NoNeed" in detail
+        assert "Case TC-1 : Passed" not in detail
+    with app_ctx.app_context():
+        Task.query.filter_by(task_key="T-RETEST").one().deleted_at = datetime.now()
+        db.session.commit()
+    response = report_env["client"].get(url)
+    with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
+        assert "Case TC-1 : Passed" in archive.read(archive.namelist()[1]).decode()
+
+
+def test_project_report_includes_all_rows_beyond_task_window_without_extra_sheets(report_env, app_ctx):
+    from datetime import datetime
+    from app.extensions import db
+    from app.models import Task, TestItemRow
+
+    with app_ctx.app_context():
+        pid = report_env["project_id"]
+        db.session.add_all([TestItemRow(project_id=pid, sheet="test", row_order=i + 10,
+                                       case_id=f"UNRUN-{i}") for i in range(205)])
+        db.session.add_all([
+            TestItemRow(project_id=pid, sheet="test", row_order=215, case_id="TC-4"),
+            TestItemRow(project_id=pid, sheet="test", row_order=216, case_id=""),
+            TestItemRow(project_id=pid, sheet="test", row_order=217, case_id="DELETED", deleted_at=datetime.now()),
+            *[TestItemRow(project_id=pid, sheet=sheet, row_order=1, case_id=f"EXCLUDED-{sheet}")
+              for sheet in ("const", "lib", "io")],
+            Task(task_key="T-ORPHAN", project_id=pid, test_id="ORPHAN", status="failed", result="FAIL"),
+        ])
+        db.session.commit()
+    response = report_env["client"].get(
+        f"/api/v1/projects/{report_env['project_id']}/tasks/qualification-report")
+    assert response.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
+        overview, detail = [archive.read(name).decode() for name in archive.namelist()]
+    assert 'id="testall">211</td>' in overview
+    assert detail.count('<table class="TestCaseTable">') == 211
+    assert "Case UNRUN-204 : NoNeed" in detail
+    assert detail.count("Case TC-4 : NoNeed") == 2
+    assert "Case - : NoNeed" in detail
+    assert "DELETED" not in detail and "EXCLUDED-" not in detail and "ORPHAN" not in detail
 
 
 def test_reader_can_download_single_report_without_stored_report_zip(report_env):
