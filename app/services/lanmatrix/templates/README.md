@@ -22,6 +22,10 @@ new test numbers use the category's first block and new categories use category
 1. Summary print ranges grow with the exported item count. Auxiliary sheets and
 format indexes are not included in exports.
 
+Empty summary fields, signal names/paths and procedure data cells are exported
+as `-`. Numeric zero and boolean false remain typed values. Spacer rows, margins
+and the blank parts of the multi-row procedure header remain layout whitespace.
+
 Regenerate the asset explicitly from a trusted reference with the validated
 project Python environment:
 

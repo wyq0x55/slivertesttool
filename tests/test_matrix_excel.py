@@ -20,7 +20,7 @@ import io
 import os
 import unittest
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _MODULE_PATH = os.path.join(
@@ -47,6 +47,17 @@ def _reference_path():
         if os.path.exists(path):
             return path
     return None
+
+
+def _with_export_placeholders(value):
+    """The export contract represents absent procedure values with dashes."""
+    if isinstance(value, dict):
+        return {key: _with_export_placeholders(v) for key, v in value.items()}
+    if isinstance(value, list):
+        return [_with_export_placeholders(v) for v in value]
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return "-"
+    return value
 
 
 class RoundTripTest(unittest.TestCase):
@@ -81,7 +92,8 @@ class RoundTripTest(unittest.TestCase):
         for a, b in zip(parsed["items"], reparsed["items"]):
             for key in ("category", "test_no", "test_name", "priority", "result"):
                 self.assertEqual(a.get(key), b.get(key), f"mismatch on {key}")
-            self.assertEqual(a.get("steps"), b.get("steps"), "steps mismatch")
+            self.assertEqual(_with_export_placeholders(a.get("steps")),
+                             b.get("steps"), "steps mismatch")
 
 
 class BuildTest(unittest.TestCase):
@@ -121,6 +133,62 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(item["category"], 1)
         self.assertEqual(item["test_no"], 1)
         self.assertEqual(item["steps"]["steps"], [])
+
+
+class EmptyExportCellTest(unittest.TestCase):
+    def test_summary_missing_values_use_dashes_and_dates_stay_typed(self):
+        import datetime
+
+        wb = Workbook()
+        ws = wb.active
+        mx._write_summary_sheet(ws, [
+            {"category": 7, "test_no": 1, "test_name": " ",
+             "description": 0, "remark": False},
+            {"category": 7, "test_no": 2, "exec_date": "2026-11-12"},
+            {"test_name": "No identity"},
+        ], "ID;;UNIT-")
+        stream = io.BytesIO()
+        wb.save(stream)
+        ws = load_workbook(stream).active
+        for row in ws.iter_rows(min_row=2, max_row=4, max_col=22):
+            self.assertTrue(all(cell.value is not None for cell in row))
+        self.assertEqual(ws["F2"].value, "-")
+        self.assertEqual(ws["O2"].value, "-")
+        self.assertEqual(ws["M2"].value, 0)
+        self.assertIs(ws["T2"].value, False)
+        self.assertEqual(ws["A4"].value, "-")
+        self.assertEqual(ws["O3"].value, datetime.datetime(2026, 11, 12))
+        self.assertTrue(ws["A2"].value.startswith('="ID;;UNIT-"'))
+
+    def test_detail_missing_data_use_dashes_but_layout_stays_blank(self):
+        wb = Workbook()
+        ws = wb.active
+        mx._write_detail_block(ws, 3, {
+            "category": 7, "test_no": 1, "_id_prefix": "ID;;UNIT-",
+            "steps": {
+                "input_signals": [["signal", ""], [None, None]],
+                "expected_signals": [["expected", " "]],
+                "steps": [{"no": 1, "purpose": " ", "inputs": [0, False]}, {}],
+            },
+        })
+        stream = io.BytesIO()
+        wb.save(stream)
+        ws = load_workbook(stream).active
+        self.assertEqual(ws["G21"].value, 0)
+        self.assertIs(ws["H21"].value, False)
+        for row in (21, 22):
+            for col in range(2, 11):
+                if (row, col) not in {(21, 2), (21, 7), (21, 8)}:
+                    self.assertEqual(ws.cell(row, col).value, "-")
+        for coordinate in ("G20", "H19", "H20", "I20"):
+            self.assertEqual(ws[coordinate].value, "-")
+        # The fixed header columns form a tall visual group; separators and
+        # margins are layout whitespace rather than missing business values.
+        for coordinate in ("A21", "B19", "B20", "B17", "C3"):
+            self.assertIsNone(ws[coordinate].value)
+        self.assertEqual(ws["C11"].value,
+                         '=": "&IF(VLOOKUP(B3,DB[#Data],COLUMN(DB[実施日]),0)="-",'
+                         '"-",TEXT(VLOOKUP(B3,DB[#Data],COLUMN(DB[実施日]),0),"yyyy/mm/dd"))')
 
 
 class _NoSeekableStream:

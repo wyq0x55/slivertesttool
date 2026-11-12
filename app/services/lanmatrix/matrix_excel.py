@@ -638,6 +638,13 @@ def _is_blank_item(item: dict) -> bool:
     return True
 
 
+def _export_value(value: Any) -> Any:
+    """Display absent data as a dash without replacing zero or False."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return "-"
+    return value
+
+
 def _write_summary_sheet(ws, items: list[dict], id_prefix: str) -> None:
     ws.append(SUMMARY_HEADERS)
     for i, it in enumerate(items):
@@ -646,7 +653,10 @@ def _write_summary_sheet(ws, items: list[dict], id_prefix: str) -> None:
             col = SUMMARY_HEADERS.index(jp) + 1
             cell = ws.cell(r, col)
             if key == "test_id":
-                cell.value = f'="{id_prefix}"&TEXT(B{r},"000")&TEXT(E{r},"000")'
+                if any(_export_value(it.get(k)) == "-" for k in INT_KEYS):
+                    cell.value = "-"
+                else:
+                    cell.value = f'="{id_prefix}"&TEXT(B{r},"000")&TEXT(E{r},"000")'
             elif key == "log":
                 # =IF(優先度="高", テストID, "-")
                 cell.value = f'=IF(L{r}="高",A{r},"-")'
@@ -655,6 +665,7 @@ def _write_summary_sheet(ws, items: list[dict], id_prefix: str) -> None:
             else:
                 val = it.get(key)
                 cell.value = None if val in (None, "") else val
+            cell.value = _export_value(cell.value)
 
     last_col = get_column_letter(len(SUMMARY_HEADERS))
     last_row = len(items) + 1
@@ -725,9 +736,9 @@ def _write_detail_block(ws, header_row: int, item: dict) -> int:
         ws.cell(rr, COL_STEP_NO).value = label
         col_header = KEY_TO_HEADER[key]
         if key == "exec_date":
+            lookup = f"VLOOKUP(B{hr},DB[#Data],COLUMN(DB[{col_header}]),0)"
             ws.cell(rr, COL_STEP_PURPOSE).value = (
-                f'=": "&TEXT(VLOOKUP(B{hr},DB[#Data],'
-                f'COLUMN(DB[{col_header}]),0),"yyyy/mm/dd")'
+                f'=": "&IF({lookup}="-","-",TEXT({lookup},"yyyy/mm/dd"))'
             )
         else:
             ws.cell(rr, COL_STEP_PURPOSE).value = (
@@ -759,11 +770,11 @@ def _write_detail_block(ws, header_row: int, item: dict) -> int:
     s1 = hr + _OFF_SIGNAL1
     s2 = hr + _OFF_SIGNAL2
     for i, (name, path) in enumerate(input_signals):
-        ws.cell(s1, COL_SIGNAL_START + i).value = name or None
-        ws.cell(s2, COL_SIGNAL_START + i).value = path or None
+        ws.cell(s1, COL_SIGNAL_START + i).value = _export_value(name)
+        ws.cell(s2, COL_SIGNAL_START + i).value = _export_value(path)
     for i, (name, path) in enumerate(expected_signals):
-        ws.cell(s1, COL_SIGNAL_START + n_in + i).value = name or None
-        ws.cell(s2, COL_SIGNAL_START + n_in + i).value = path or None
+        ws.cell(s1, COL_SIGNAL_START + n_in + i).value = _export_value(name)
+        ws.cell(s2, COL_SIGNAL_START + n_in + i).value = _export_value(path)
 
     # Step rows.
     last_row = s2
@@ -786,6 +797,9 @@ def _write_detail_block(ws, header_row: int, item: dict) -> int:
                 expecteds[i] if i < len(expecteds) else None
             )
         ws.cell(rr, timing_col).value = st.get("timing")
+        for c in range(COL_STEP_NO, timing_col + 1):
+            cell = ws.cell(rr, c)
+            cell.value = _export_value(cell.value)
 
     # Borders on the whole procedure table; header rows (手順番号 row + the two
     # signal-name rows) filled green up to the 入力値 columns and blue from the
