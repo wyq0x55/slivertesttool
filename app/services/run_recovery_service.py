@@ -14,19 +14,22 @@ from . import run_evidence_service as evidence
 def is_run_pending(task_id, run_count):
     """Check Huey's published jobs using the recovery attempt identity.
 
-    Include scheduled license retries as well as pending jobs. MemoryHuey is
-    safe for isolated tests; never query PostgreSQL storage from SQLite tests.
-    Queue read failures propagate rather than declaring a live attempt stale.
+    Include scheduled license retries as well as pending jobs, and messages a
+    worker thread has already dequeued and is waiting on (dispatch lease).
+    MemoryHuey is safe for isolated tests; never query PostgreSQL storage from
+    SQLite tests. Queue read failures propagate rather than declaring a live
+    attempt stale.
     """
     from ..jobqueue import huey
-    from ..jobqueue.tasks import run_task
+    from ..jobqueue.tasks import dispatch_lease_is_live, run_task
     from huey.storage import MemoryStorage
 
     if db.engine.dialect.name != "postgresql" and not isinstance(huey.storage, MemoryStorage):
         raise RuntimeError("Queue liveness requires PostgreSQL or MemoryHuey")
-    return any(isinstance(job, run_task.task_class)
-               and tuple(job.args) == (task_id, run_count)
-               for job in (*huey.pending(), *huey.scheduled()))
+    return (any(isinstance(job, run_task.task_class)
+                and tuple(job.args) == (task_id, run_count)
+                for job in (*huey.pending(), *huey.scheduled()))
+            or dispatch_lease_is_live(task_id, run_count))
 
 
 def _validate_limit(limit):

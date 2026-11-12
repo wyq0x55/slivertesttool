@@ -299,12 +299,15 @@ class SilverInstancePool:
         sil_path: Path,
         should_cancel: Callable[[], bool] | None = None,
         poll: float = 0.5,
+        blocking: bool = True,
     ) -> Optional[PooledInstance]:
         """Borrow an idle instance, blocking until one is free.
 
         A new instance is created lazily (opened on *sil_path*) when the pool is
         below target and none is idle. Returns ``None`` if *should_cancel*
         becomes true while waiting (the job was cancelled before it started).
+        With ``blocking=False`` it also returns ``None`` instead of waiting when
+        no instance is idle and the pool is already at its target size.
         """
         should_cancel = should_cancel or (lambda: False)
         while True:
@@ -321,6 +324,8 @@ class SilverInstancePool:
                 if self._size < self._target:
                     self._size += 1
                     reserve_uid = self._slots.acquire()
+                elif not blocking:
+                    return None
                 else:
                     self._cond.wait(timeout=poll)
                     continue

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import logging
+import threading
 import time
 from pathlib import Path
 
@@ -21,6 +22,25 @@ from .huey_app import huey
 logger = logging.getLogger("silvetestapp.tasks")
 
 _LICENSE_POLL_SECONDS = 0.5
+
+# A run that cannot start yet waits on a Huey consumer thread. Those threads are
+# shared with AI generation and the unit-test pipeline, so the number of run
+# attempts allowed to *wait* in one worker is bounded (see _wait_capacity). An
+# attempt over that bound goes back on the schedule after this delay instead of
+# blocking a thread; enough waiters remain to take every license as it frees.
+_OVERFLOW_RETRY_SECONDS = 30.0
+
+# Dispatch lease: a dequeued run message is invisible to huey.pending() and
+# huey.scheduled() while its thread waits for a license or pool instance, so the
+# periodic recovery used to re-publish it every minute. The waiting thread keeps
+# a heartbeat in Huey's PostgreSQL key/value table instead; recovery treats a
+# fresh heartbeat as "already published". The heartbeat stops with the thread
+# (or the process), so a lost message is recovered once the lease goes stale.
+_DISPATCH_LEASE_TTL_SECONDS = 120.0
+_DISPATCH_LEASE_RENEW_SECONDS = 15.0
+
+_waiters_lock = threading.Lock()
+_waiters = 0
 
 # Lazily-created worker-side Flask application (avoids an import cycle with the
 # app factory and keeps a single app per worker process).
@@ -108,6 +128,91 @@ def _current_pool_target(app) -> int:
         return 0 if license_service.is_draining() else license_service.get_limit()
 
 
+def _lease_key(task_id: int, run_count: int) -> str:
+    return f"run-dispatch-lease:{int(task_id)}:{int(run_count)}"
+
+
+class _DispatchLease:
+    """Heartbeat proving a worker thread currently holds one attempt's message."""
+
+    def __init__(self, task_id: int, run_count: int) -> None:
+        self._key = _lease_key(task_id, run_count)
+        self._renewed_at: float | None = None
+
+    def renew(self, *, force: bool = False) -> None:
+        now = time.monotonic()
+        if (not force and self._renewed_at is not None
+                and now - self._renewed_at < _DISPATCH_LEASE_RENEW_SECONDS):
+            return
+        try:
+            huey.put(self._key, time.time())
+            self._renewed_at = now
+        except Exception:  # noqa: BLE001 - a missed beat only risks a duplicate
+            logger.warning("Could not renew dispatch lease %s", self._key, exc_info=True)
+
+    def release(self) -> None:
+        if self._renewed_at is None:
+            return
+        try:
+            huey.delete(self._key)
+        except Exception:  # noqa: BLE001 - the lease expires on its own
+            logger.warning("Could not release dispatch lease %s", self._key, exc_info=True)
+        self._renewed_at = None
+
+
+def dispatch_lease_is_live(task_id: int, run_count: int, now: float | None = None) -> bool:
+    """Whether a worker thread is holding this attempt's dequeued message.
+
+    Read failures propagate: they are not evidence that the attempt is lost.
+    """
+    stamp = huey.get(_lease_key(task_id, run_count), peek=True)
+    if stamp is None:
+        return False
+    return (time.time() if now is None else now) - float(stamp) < _DISPATCH_LEASE_TTL_SECONDS
+
+
+def _wait_capacity(app) -> int:
+    """How many run attempts may block a consumer thread while waiting.
+
+    One waiter per license is enough to start a run the moment any license
+    frees; the cap also leaves at least one thread for non-Silver tasks.
+    """
+    from ..services import license_service
+
+    workers = max(1, int(getattr(app.config_obj, "HUEY_WORKERS", 16) or 1))
+    with app.app_context():
+        limit = max(1, license_service.get_limit())
+    return max(1, min(limit, workers - limit - 1))
+
+
+def _try_enter_wait(app) -> bool:
+    global _waiters
+    capacity = _wait_capacity(app)
+    with _waiters_lock:
+        if _waiters >= capacity:
+            return False
+        _waiters += 1
+        return True
+
+
+def _leave_wait() -> None:
+    global _waiters
+    with _waiters_lock:
+        _waiters = max(0, _waiters - 1)
+
+
+def _reschedule(task_pk: int, run_count: int, delay: float) -> None:
+    from ..extensions import db
+
+    if huey.immediate:
+        return
+    try:
+        run_task.schedule(args=(task_pk, run_count), delay=delay)
+    except Exception:  # noqa: BLE001 - recovery republishes a lost attempt
+        db.session.rollback()
+        logger.exception("Task retry publication failed for pk=%s", task_pk)
+
+
 def _claim_run(database, task_pk: int, expected_run_count: int):
     from ..models import Task, TaskStatus
 
@@ -146,8 +251,6 @@ def _run_task_pooled(app, config, task_pk: int, expected_run_count=None) -> None
     """Execute a task on a pre-warmed, reusable pooled Silver instance."""
     from ..extensions import db
     from ..models import Task, TaskStatus
-    from ..runners import test_runner
-    from ..services import event_service, license_service
 
     with app.app_context():
         task = db.session.get(Task, task_pk)
@@ -170,9 +273,23 @@ def _run_task_pooled(app, config, task_pk: int, expected_run_count=None) -> None
         sil_path = sil_ref if sil_ref.is_absolute() else (staged / sil_ref).resolve()
 
     pool = get_pool(app, config)
+    lease = _DispatchLease(task_pk, expected_run_count)
+    lease.renew(force=True)
+    try:
+        _run_pooled_attempt(app, pool, task_pk, expected_run_count, sil_path, lease)
+    finally:
+        lease.release()
+
+
+def _run_pooled_attempt(app, pool, task_pk, expected_run_count, sil_path, lease) -> None:
+    from ..extensions import db
+    from ..models import Task, TaskStatus
+    from ..runners import test_runner
+    from ..services import event_service, license_service
 
     # --- Phase 1: borrow a pooled instance, cancellable while queued. ---
     def _should_cancel() -> bool:
+        lease.renew()
         with app.app_context():
             db.session.expire_all()
             t = db.session.get(Task, task_pk)
@@ -180,14 +297,23 @@ def _run_task_pooled(app, config, task_pk: int, expected_run_count=None) -> None
                     or t is None or t.cancel_requested or t.deleted_at is not None
                     or t.status != TaskStatus.QUEUED.value or t.run_count != expected_run_count)
 
-    instance = pool.acquire(sil_path, should_cancel=_should_cancel,
-                            poll=_LICENSE_POLL_SECONDS)
+    waiting = _try_enter_wait(app)
+    try:
+        instance = pool.acquire(sil_path, should_cancel=_should_cancel,
+                                poll=_LICENSE_POLL_SECONDS, blocking=waiting)
+    finally:
+        if waiting:
+            _leave_wait()
     if instance is None:
         with app.app_context():
             task = db.session.get(Task, task_pk)
             if (task is not None and task.run_count == expected_run_count
                     and task.status == TaskStatus.QUEUED.value and task.cancel_requested):
                 _mark_cancelled(db, task)
+            elif not waiting and not _should_cancel():
+                # No free instance and no waiter slot: retry later rather than
+                # occupy a consumer thread.
+                _reschedule(task_pk, expected_run_count, _OVERFLOW_RETRY_SECONDS)
         return
 
     # --- Phase 2: run, always returning the instance to the pool. ---
@@ -197,12 +323,8 @@ def _run_task_pooled(app, config, task_pk: int, expected_run_count=None) -> None
         try:
             acquired = license_service.try_acquire()
             if not acquired:
-                if not huey.immediate and not _should_cancel():
-                    try:
-                        run_task.schedule(args=(task_pk, expected_run_count), delay=_LICENSE_POLL_SECONDS)
-                    except Exception:
-                        db.session.rollback()
-                        logger.exception("Task retry publication failed for pk=%s", task_pk)
+                if not _should_cancel():
+                    _reschedule(task_pk, expected_run_count, _LICENSE_POLL_SECONDS)
                 return
             task = _claim_run(db, task_pk, expected_run_count)
             if task is None:
@@ -210,7 +332,7 @@ def _run_task_pooled(app, config, task_pk: int, expected_run_count=None) -> None
             claimed = True
             event_service.emit_status(task, "running", "Running on Silver.")
 
-            test_runner.execute(app, config, task, pool=pool, instance=instance)
+            test_runner.execute(app, app.config_obj, task, pool=pool, instance=instance)
         except Exception as exc:  # noqa: BLE001
             logger.exception("run_task failed for pk=%s", task_pk)
             db.session.rollback()
@@ -233,8 +355,6 @@ def _run_task_dedicated(app, config, task_pk: int, expected_run_count=None) -> N
     """Classic path: launch a dedicated Silver instance per task."""
     from ..extensions import db
     from ..models import Task, TaskStatus
-    from ..runners import test_runner
-    from ..services import event_service, license_service
 
     with app.app_context():
         task = db.session.get(Task, task_pk)
@@ -249,53 +369,88 @@ def _run_task_dedicated(app, config, task_pk: int, expected_run_count=None) -> N
         if task.deleted_at is not None or task.run_count != expected_run_count:
             return
 
-        # --- Phase 1: wait for a license slot, cancellable while queued. ---
-        acquired = False
-        while not acquired:
+        lease = _DispatchLease(task_pk, expected_run_count)
+        lease.renew(force=True)
+        try:
+            if not _wait_for_dedicated_license(app, db, task_pk, expected_run_count, lease):
+                return
+            _run_dedicated_attempt(app, db, task_pk, expected_run_count)
+        finally:
+            lease.release()
+
+
+def _wait_for_dedicated_license(app, db, task_pk, expected_run_count, lease) -> bool:
+    """Phase 1 of the classic path: take a license slot, cancellable while queued.
+
+    Returns ``True`` with a license held, or ``False`` when the attempt must not
+    run now (gone, cancelled, draining, or rescheduled because the worker
+    already has enough waiting threads).
+    """
+    from ..models import Task, TaskStatus
+    from ..services import license_service
+
+    waiting = False
+    try:
+        while True:
+            lease.renew()
             db.session.expire_all()
             task = db.session.get(Task, task_pk)
             if task is None:
-                return
+                return False
             if (task.deleted_at is not None or task.run_count != expected_run_count
                     or task.status != TaskStatus.QUEUED.value):
-                return
+                return False
             if task.cancel_requested:
                 _mark_cancelled(db, task)
-                return
+                return False
             if license_service.is_draining():
-                return
-            acquired = license_service.try_acquire()
-            if not acquired:
-                time.sleep(_LICENSE_POLL_SECONDS)
+                return False
+            if license_service.try_acquire():
+                return True
+            if not waiting:
+                waiting = _try_enter_wait(app)
+                if not waiting:
+                    _reschedule(task_pk, expected_run_count, _OVERFLOW_RETRY_SECONDS)
+                    return False
+            time.sleep(_LICENSE_POLL_SECONDS)
+    finally:
+        if waiting:
+            _leave_wait()
 
-        # --- Phase 2: run, always releasing the slot. ---
-        # Reserve a bounded, reused run-folder slot so the classic path also
-        # labels its directory ``inst_<n>`` (recycled on release) instead of a
-        # unique ``inst_dedicated_<task_id>`` per task that piles up on disk.
-        from ..runners.slots import dedicated_allocator
-        slot = dedicated_allocator().acquire()
-        claimed = False
-        try:
-            task = _claim_run(db, task_pk, expected_run_count)
-            if task is None:
-                return
-            claimed = True
-            event_service.emit_status(task, "running", "Running on Silver.")
 
-            test_runner.execute(app, app.config_obj, task, dedicated_slot=slot)
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("run_task failed for pk=%s", task_pk)
-            db.session.rollback()
-            task = db.session.get(Task, task_pk)
-            if (claimed and task is not None and task.run_count == expected_run_count
-                    and not TaskStatus(task.status).is_final and not _has_pending_outcome(task_pk, expected_run_count)):
-                task.status = TaskStatus.FAILED.value
-                task.message = f"Internal error: {exc}"
-                task.finished_at = _utcnow()
-                db.session.commit()
-        finally:
-            dedicated_allocator().release(slot)
-            license_service.release()
+def _run_dedicated_attempt(app, db, task_pk, expected_run_count) -> None:
+    """Phase 2 of the classic path: run, always releasing the license slot."""
+    from ..models import Task, TaskStatus
+    from ..runners import test_runner
+    from ..services import event_service, license_service
+
+    # Reserve a bounded, reused run-folder slot so the classic path also
+    # labels its directory ``inst_<n>`` (recycled on release) instead of a
+    # unique ``inst_dedicated_<task_id>`` per task that piles up on disk.
+    from ..runners.slots import dedicated_allocator
+    slot = dedicated_allocator().acquire()
+    claimed = False
+    try:
+        task = _claim_run(db, task_pk, expected_run_count)
+        if task is None:
+            return
+        claimed = True
+        event_service.emit_status(task, "running", "Running on Silver.")
+
+        test_runner.execute(app, app.config_obj, task, dedicated_slot=slot)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("run_task failed for pk=%s", task_pk)
+        db.session.rollback()
+        task = db.session.get(Task, task_pk)
+        if (claimed and task is not None and task.run_count == expected_run_count
+                and not TaskStatus(task.status).is_final and not _has_pending_outcome(task_pk, expected_run_count)):
+            task.status = TaskStatus.FAILED.value
+            task.message = f"Internal error: {exc}"
+            task.finished_at = _utcnow()
+            db.session.commit()
+    finally:
+        dedicated_allocator().release(slot)
+        license_service.release()
 
 
 def publish_ai_generation(draft_pk: int) -> None:
@@ -387,14 +542,22 @@ def recover_run_attempts(*, startup=False) -> dict:
         for key in result:
             result[key].extend(recovered[key])
 
-    pending = {tuple(task.args) for task in huey.pending(limit=1000)
-               if isinstance(task, run_task.task_class)}
+    # An attempt is already published when its message is waiting in the
+    # queue, sits on the schedule (license / overflow retries), or is held by a
+    # worker thread (dispatch lease). Only the rest are re-published.
+    published = {tuple(task.args) for task in (*huey.pending(), *huey.scheduled())
+                 if isinstance(task, run_task.task_class)}
+    now = time.time()
+
+    def is_published(task_id, run_count):
+        return ((task_id, run_count) in published
+                or dispatch_lease_is_live(task_id, run_count, now))
 
     def enqueue(task_id, run_count):
         message = run_task.s(task_id, run_count)
         huey.storage.enqueue(huey.serialize_task(message), message.priority)
 
-    queued = recover_queued_attempts(enqueue, is_pending=lambda task_id, run_count: (task_id, run_count) in pending)
+    queued = recover_queued_attempts(enqueue, is_pending=is_published)
     for key in result:
         result[key].extend(queued[key])
     return result
