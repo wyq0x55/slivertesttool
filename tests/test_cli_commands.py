@@ -227,8 +227,10 @@ def test_steps_set_reads_version_then_patches_document(runner, transport, capsys
     assert result(capsys)["success"] is True
     assert [(method, path) for method, path, kwargs in transport["calls"]] == [
         ("GET", ITEM_PATH), ("PATCH", ITEM_PATH + "/42")]
+    # The server stores a ``steps`` value with ``str(raw)`` unless it is already
+    # text, which would persist a Python repr the read path cannot parse.
     assert transport["calls"][1][2]["json_body"] == {
-        "version": 9, "changes": {"steps": document}}
+        "version": 9, "changes": {"steps": json.dumps(document, ensure_ascii=False)}}
 
 
 def test_steps_set_conflict_is_explicit_and_never_retries(runner, transport, capsys, monkeypatch):
@@ -285,7 +287,7 @@ def test_steps_edit_preserves_other_steps_and_signals(runner, transport, capsys,
     assert result(capsys)["success"] is True
     body = transport["calls"][-1][2]["json_body"]
     assert body["version"] == 9
-    document = body["changes"]["steps"]
+    document = json.loads(body["changes"]["steps"])
     assert document["input_signals"] == STEPS["input_signals"]
     assert document["expected_signals"] == STEPS["expected_signals"]
     assert document["steps"][0] == {"description": "updated", "enabled": True}

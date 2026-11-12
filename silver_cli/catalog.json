@@ -2168,6 +2168,23 @@
    "form_fields": [],
    "method": "GET",
    "mutating": false,
+   "name": "tasks.download_project_qualification_report",
+   "path": "/api/v1/projects/<int:project_id>/tasks/qualification-report",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [
+    "keys"
+   ],
+   "response_kind": "download",
+   "summary": "download project qualification report"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
    "name": "tasks.download_project_task",
    "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/download",
    "path_params": {
@@ -2177,6 +2194,22 @@
    "query_params": [],
    "response_kind": "download",
    "summary": "download project task"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "tasks.download_project_task_qualification_report",
+   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/qualification-report",
+   "path_params": {
+    "project_id": "int",
+    "task_key": "string"
+   },
+   "query_params": [],
+   "response_kind": "download",
+   "summary": "download project task qualification report"
   },
   {
    "body_fields": [],

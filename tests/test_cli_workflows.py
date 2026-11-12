@@ -231,7 +231,7 @@ def test_steps_structure_edits_by_test_id_keep_signals_and_pin_version(cli, argu
     assert calls[0][2]["query"][0] == ("sheet", "test")
     method, path, kwargs = calls[1]
     assert (method, path) == ("PATCH", P + "/items/42")
-    document = kwargs["json_body"]["changes"]["steps"]
+    document = json.loads(kwargs["json_body"]["changes"]["steps"])
     assert kwargs["json_body"]["version"] == 4
     assert [step["description"] for step in document["steps"]] == expected
     assert document["input_signals"] == STEP_DOC["input_signals"]

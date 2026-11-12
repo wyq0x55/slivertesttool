@@ -350,8 +350,13 @@ def execute(args, secrets):
         version = item.get("version")
         if not isinstance(version, int) or isinstance(version, bool):
             raise CliError("INVALID_RESPONSE", "Current item has no valid version; refusing to update.", 7)
+        # The server stores a ``steps`` field through ``str(raw)`` when it is not a
+        # string, which produces a Python repr (single quotes) that the read path
+        # cannot ``json.loads`` -- the item then breaks every consumer
+        # ("Invalid steps JSON" on rerun). Send the document as JSON text.
         return _request(client, "items.patch_item", {**params, "item_id": item["id"]},
-                        body={"version": version, "changes": {"steps": body}})
+                        body={"version": version,
+                              "changes": {"steps": json.dumps(body, ensure_ascii=False)}})
     if action == "rerun":
         return _request(client, "tasks.rerun_selected_tasks", params, body={"task_keys": [args.tid]})
     if action in {"show", "log"}:
