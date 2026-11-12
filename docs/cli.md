@@ -82,7 +82,8 @@ python -m silver_cli token revoke 3 --confirm
 
 - Token 以 `Authorization: Bearer` 发送，权限与所属账号完全相同，账号停用即失效。
 - 密钥只在签发时写入指定的新文件一次；服务器只保存其 SHA-256。
-- 有效期 1-365 天，每人最多 20 个有效 Token。Token 不能再签发 Token，也不能访问数据库控制台。
+- 有效期 1-365 天，每人最多 20 个有效 Token。Token 不能再签发 Token，不能管理账号（创建、修改、删除用户），也不能访问数据库控制台；这些操作返回 403 `PERMISSION_DENIED`（退出码 4），请用账号密码登录后执行。
+- 管理员重置某用户的密码时，该用户的所有有效 Token 会被吊销，需要重新 `login` 或 `token create`。
 - `SILVER_CLI_TOKEN` 与用户名/密码不能同时设置（`token create` 除外）。
 - 网页端：侧栏底部「API Token」页面可签发、查看、吊销。
 - 密钥事后无法再查看（服务器只存哈希）。忘记时用账号密码重新签发即可：

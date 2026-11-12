@@ -18,9 +18,17 @@ tasks`, and `describe OPERATION`; the server's own `.pyz` always matches its API
 - `SILVER_CLI_URL`: explicit target web URL; `--url` overrides it.
 - `SILVER_CLI_USERNAME` and `SILVER_CLI_PASSWORD`: inject both through the caller
   or secret manager. Never print, persist, or put real passwords in arguments.
-- If the user has run `login`, commands authenticate automatically from the saved token; do not ask for a password.
+- `login --url URL --username NAME` exchanges the password once (hidden prompt;
+  non-interactive callers use `--password-stdin` or `SILVER_CLI_PASSWORD`) for a
+  saved personal token. After `login`, commands authenticate automatically; do
+  not ask for a password. `logout` revokes and deletes the saved token.
 - Prefer `SILVER_CLI_TOKEN` (a personal API token from `token create`) for
   unattended work: no per-command login and no lockout risk. Never print it.
+  Precedence: `SILVER_CLI_TOKEN` > username/password > saved login.
+- A token cannot manage accounts or credentials: `token create` and admin user
+  create/update/delete return exit 4 `PERMISSION_DENIED` under token auth. Ask
+  the user to run those with username/password; never work around it. An admin
+  password reset revokes that user's tokens, so a later exit 3 means log in again.
 - With username/password, each invocation logs in and keeps cookies/CSRF only in memory. The CLI does
   not read `.env`, guess a URL, or connect to PostgreSQL directly.
 - Prefer HTTPS. Loopback HTTP is allowed; use `--allow-http` for other trusted
@@ -125,6 +133,10 @@ automatically repeat reruns, project creation, approval, deletion, or uploads.
 Except for `--help`, stdout is JSON (`success`, `data`, `error`, `request_id`);
 streams use JSON Lines. Inspect both exit status and business data. Never infer
 test PASS from a successful HTTP request, completed task, or finished stream.
+A run whose judge output stops before the overall verdict line (timeout, crash,
+killed Silver process) has verdict `UNKNOWN` and is finalised as FAILED, even
+when every step it reached passed. Treat it as incomplete evidence: read
+`task log` and rerun once the cause is fixed, never report it as passing.
 
 | Exit | Action |
 |---|---|
