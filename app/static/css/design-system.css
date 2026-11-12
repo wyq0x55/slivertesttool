@@ -453,8 +453,7 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 #lm-f-seg{ flex-wrap:wrap; max-width:100%; gap:2px; }
 #lm-f-seg button{ white-space:nowrap; }
 .lm-task-batch{ display:flex; align-items:center; gap:8px 16px; flex-wrap:wrap;
-  margin-bottom:12px; padding:10px 12px; border:1px solid var(--border);
-  border-radius:var(--radius-sm); background:var(--surface); }
+  margin-bottom:12px; }
 .lm-task-batch > .muted{ font-size:12.5px; white-space:nowrap; }
 .lm-task-batch .toolbar-batch{ flex-wrap:wrap; }
 .lm-task-batch .btn{ white-space:nowrap; }
