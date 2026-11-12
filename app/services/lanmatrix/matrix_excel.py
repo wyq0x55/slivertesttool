@@ -57,6 +57,7 @@ except ImportError:
 # fall back to loading ``xlsx_style.py`` directly by file path (openpyxl-only).
 try:
     from . import xlsx_style as _xs
+    from .matrix_format import MatrixFormat
 except ImportError:
     import importlib.util as _ilu_xs
     import pathlib as _pathlib_xs
@@ -65,6 +66,11 @@ except ImportError:
     _spec_xs = _ilu_xs.spec_from_file_location("_lm_pure_xlsx_style", _xs_path)
     _xs = _ilu_xs.module_from_spec(_spec_xs)
     _spec_xs.loader.exec_module(_xs)
+    _format_path = _pathlib_xs.Path(__file__).resolve().with_name("matrix_format.py")
+    _format_spec = _ilu_xs.spec_from_file_location("_lm_matrix_format", _format_path)
+    _format_module = _ilu_xs.module_from_spec(_format_spec)
+    _format_spec.loader.exec_module(_format_module)
+    MatrixFormat = _format_module.MatrixFormat
 
 # --------------------------------------------------------------------------- #
 # Schema (single source of truth, shared by import + export)
@@ -579,10 +585,11 @@ def build_workbook(matrix: dict[str, Any]) -> Workbook:
     summary_title = matrix.get("summary_sheet") or DEFAULT_SUMMARY_SHEET
     items = [it for it in (matrix.get("items") or []) if not _is_blank_item(it)]
 
-    wb = Workbook()
-    summary_ws = wb.active
-    summary_ws.title = summary_title
+    presentation = MatrixFormat()
+    wb = presentation.workbook
+    summary_ws = wb.create_sheet(summary_title)
     _write_summary_sheet(summary_ws, items, id_prefix)
+    presentation.summary(summary_ws, items)
 
     # One detail sheet per category (only items that carry a procedure block).
     by_cat: dict[int, list[dict]] = {}
@@ -595,8 +602,9 @@ def build_workbook(matrix: dict[str, Any]) -> Workbook:
         by_cat.setdefault(cat, []).append(it)
     for cat in sorted(by_cat):
         ws = wb.create_sheet(title=str(cat))
-        _write_detail_sheet(ws, by_cat[cat])
+        _write_detail_sheet(ws, by_cat[cat], presentation)
 
+    presentation.finish()
     return wb
 
 
@@ -683,16 +691,23 @@ _A1_CATEGORY_FORMULA = (
 )
 
 
-def _write_detail_sheet(ws, items: list[dict]) -> None:
+def _write_detail_sheet(ws, items: list[dict], presentation: MatrixFormat) -> None:
     ws.cell(1, 1).value = _A1_CATEGORY_FORMULA
     ws.freeze_panes = "E1"
+    presentation.detail(ws)
     # Column widths are set by ``xlsx_style.style_step_table`` (reference-based),
     # applied per block while the step tables are written below.
 
     row = _FIRST_BLOCK_ROW
     for it in items:
+        first = row
         row = _write_detail_block(ws, row, it)
+        steps = it.get("steps") or {}
+        presentation.block(ws, it, first, row,
+                           len(steps.get("input_signals") or []),
+                           len(steps.get("expected_signals") or []))
         row += _BLANK_ROWS_BETWEEN_BLOCKS
+    presentation.detail_widths(ws)
 
 
 def _write_detail_block(ws, header_row: int, item: dict) -> int:
