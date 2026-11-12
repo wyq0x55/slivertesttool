@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import datetime as _dt
-import io
 import json
 import secrets
-import zipfile
 from pathlib import Path
 
 from flask import (
@@ -645,30 +643,11 @@ def download_project_tasks_batch(project_id):
     ``task.download``; keys are resolved within the project.
     """
     project, _ = _project_and_role(project_id, "task.download")
-    from ...runners import run_layout
     keys = _parse_keys(request.args.getlist("keys"))
-    added = 0
-    seen_folders: dict[str, int] = {}
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as bundle:
-        for key in keys:
-            task = task_service.get_project_task(project_id, key)
-            if task is None:
-                continue
-            # Compress each task's results on demand into its own folder, so the
-            # bundle holds individual result files directly (no zip-in-zip).
-            # ``test_id`` is unique per project, so it alone names the folder.
-            folder = run_layout.safe_tid(task.test_id)
-            dup = seen_folders.get(folder)
-            if dup is not None:
-                seen_folders[folder] = dup + 1
-                folder = f"{folder}_{dup + 1}"
-            else:
-                seen_folders[folder] = 0
-            if report_service.add_result_to_zip(bundle, task, arc_root=folder):
-                added += 1
-    if added == 0:
+    tasks = (task for key in dict.fromkeys(keys)
+             if (task := task_service.get_project_task(project_id, key)) is not None)
+    buffer, added = report_service.build_reports_stream(tasks)
+    if buffer is None:
         return err("NOT_FOUND", "所选任务均无可下载的报告", status=404)
-    buffer.seek(0)
     return send_file(buffer, mimetype="application/zip", as_attachment=True,
                      download_name=f"{project.code}_reports_{added}.zip")

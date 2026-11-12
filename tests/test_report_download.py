@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import io
 import os
 import subprocess
@@ -244,8 +245,11 @@ def test_reader_can_download_single_report_without_stored_report_zip(report_env)
     assert response.mimetype == "application/zip"
     assert "TC-1_report.zip" in response.headers["Content-Disposition"]
     with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
-        assert archive.namelist() == ["TC-1/stdout.log"]
-        assert archive.read("TC-1/stdout.log") == b"run output"
+        assert archive.namelist() == ["log/TC-1/stdout.log", "all.csv"]
+        assert archive.read("log/TC-1/stdout.log") == b"run output"
+        assert list(csv.reader(io.StringIO(archive.read("all.csv").decode("utf-8-sig")))) == [
+            ["Test_No.", "Result", "Path"], ["TC-1", "-", "log/TC-1"],
+        ]
 
 
 def test_batch_report_download_is_project_scoped_and_contains_selected_files(report_env):
@@ -265,9 +269,13 @@ def test_batch_report_download_is_project_scoped_and_contains_selected_files(rep
 
     assert response.status_code == 200
     with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
-        assert archive.namelist() == ["TC-1/stdout.log", "TC-2/stdout.log"]
-        assert archive.read("TC-1/stdout.log") == b"first"
-        assert archive.read("TC-2/stdout.log") == b"second"
+        assert archive.namelist() == ["log/TC-1/stdout.log", "log/TC-2/stdout.log", "all.csv"]
+        assert archive.read("log/TC-1/stdout.log") == b"first"
+        assert archive.read("log/TC-2/stdout.log") == b"second"
+        assert list(csv.reader(io.StringIO(archive.read("all.csv").decode("utf-8-sig")))) == [
+            ["Test_No.", "Result", "Path"],
+            ["TC-1", "-", "log/TC-1"], ["TC-2", "-", "log/TC-2"],
+        ]
 
 
 def test_report_download_requires_project_membership(report_env):
@@ -279,6 +287,78 @@ def test_report_download_requires_project_membership(report_env):
     )
 
     assert response.status_code == 403
+
+
+def test_result_bundle_preserves_silver_ids_verdicts_and_relative_paths(tmp_path):
+    from types import SimpleNamespace
+    from app.runners import run_layout
+    from app.services import report_service
+
+    ids = ["ID;;MWCPD-TY-SWEL.6-TC_ALGO-001001", "ID;;測試,002", "ID;;TC-003"]
+    tasks = []
+    for i, (test_id, verdict) in enumerate(zip(ids, ["PASS", "FAIL", "NoNeed"])):
+        task = SimpleNamespace(task_key=f"T{i}", test_id=test_id, workspace=str(tmp_path),
+                               result=verdict, run_count=1, report_path="")
+        tasks.append(task)
+        if i < 2:
+            log_dir = run_layout.log_dir(tmp_path, test_id)
+            (log_dir / "nested").mkdir(parents=True)
+            (log_dir / "nested" / "stdout.log").write_text(verdict, encoding="utf-8")
+
+    buffer, added = report_service.build_reports_stream(tasks)
+    assert added == 2
+    with zipfile.ZipFile(buffer) as archive:
+        rows = list(csv.DictReader(io.StringIO(archive.read("all.csv").decode("utf-8-sig"))))
+        assert rows == [
+            {"Test_No.": ids[0], "Result": "PASS", "Path": f"log/{ids[0]}"},
+            {"Test_No.": ids[1], "Result": "FAIL", "Path": f"log/{ids[1]}"},
+            {"Test_No.": ids[2], "Result": "NoNeed", "Path": "-"},
+        ]
+        assert set(archive.namelist()) == {"all.csv", *[
+            f"log/{test_id}/nested/stdout.log" for test_id in ids[:2]
+        ]}
+        for row in rows[:2]:
+            assert not Path(row["Path"]).is_absolute()
+            assert archive.read(row["Path"] + "/nested/stdout.log").decode() == row["Result"]
+
+
+def test_result_bundle_allocates_unique_folders_even_for_suffix_and_case_collisions(tmp_path):
+    from types import SimpleNamespace
+    from app.runners import run_layout
+    from app.services import report_service
+
+    tasks = []
+    for i, test_id in enumerate(["A", "A", "A_1", "a"]):
+        log_dir = run_layout.log_dir(tmp_path, test_id)
+        log_dir.mkdir(exist_ok=True, parents=True)
+        (log_dir / "stdout.log").write_text("output", encoding="utf-8")
+        tasks.append(SimpleNamespace(task_key=f"T{i}", test_id=test_id, workspace=str(tmp_path),
+                                     result="PASS", run_count=1, report_path=""))
+    buffer, added = report_service.build_reports_stream(tasks)
+    assert added == 4
+    with zipfile.ZipFile(buffer) as archive:
+        rows = list(csv.DictReader(io.StringIO(archive.read("all.csv").decode("utf-8-sig"))))
+        assert [row["Path"] for row in rows] == ["log/A", "log/A_1", "log/A_1_1", "log/a_2"]
+        assert len({name.casefold() for name in archive.namelist()}) == 5
+        assert all(row["Path"] + "/stdout.log" in archive.namelist() for row in rows)
+
+
+def test_batch_download_deduplicates_keys_and_rejects_selection_without_results(report_env):
+    url = f"/api/v1/projects/{report_env['project_id']}/tasks/download_batch"
+    client = report_env["client"]
+    assert client.get(url, query_string={"keys": report_env["first_key"]}).status_code == 404
+    assert client.get(url, query_string={"keys": report_env["foreign_key"]}).status_code == 404
+    log_dir = _log_dir(report_env, "TC-1")
+    log_dir.mkdir(parents=True)
+    (log_dir / "stdout.log").write_text("output", encoding="utf-8")
+    response = client.get(url, query_string={"keys": [
+        report_env["first_key"], report_env["first_key"], report_env["second_key"],
+    ]})
+    assert response.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
+        rows = list(csv.reader(io.StringIO(archive.read("all.csv").decode("utf-8-sig"))))
+        assert rows == [["Test_No.", "Result", "Path"],
+                        ["TC-1", "-", "log/TC-1"], ["TC-2", "-", "-"]]
 
 
 def test_report_download_does_not_follow_symlinks_outside_result_tree(
@@ -303,14 +383,14 @@ def test_report_download_does_not_follow_symlinks_outside_result_tree(
         )
         if linked.returncode:
             pytest.skip("directory junctions are unavailable")
-        leaked_name = "TC-1/external/private.txt"
+        leaked_name = "log/TC-1/external/private.txt"
     else:
         link = log_dir / "private.txt"
         try:
             link.symlink_to(external_file)
         except (OSError, NotImplementedError) as exc:
             pytest.skip(f"file symlinks are unavailable: {exc}")
-        leaked_name = "TC-1/private.txt"
+        leaked_name = "log/TC-1/private.txt"
 
     try:
         response = report_env["client"].get(

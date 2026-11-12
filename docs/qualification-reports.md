@@ -19,6 +19,16 @@ No owner, version, date, evidence label or parent-report reference is inserted.
 The existing raw-result ZIP download continues to provide the original runner
 artifacts.
 
+Raw-result ZIPs contain `all.csv` at the archive root and runner artifacts under
+`log/<test ID>/`. Export folder names preserve Silver's `ID;;` prefix; unsafe
+path characters are sanitized, and duplicate names receive unique suffixes.
+The CSV columns are `Test_No.`, `Result`, and `Path`. It lists the selected tasks,
+preserves their judge verdicts, and uses paths relative to `all.csv`, such as
+`log/ID;;MWCPD-TY-SWEL.6-TC_ALGO-001001`. Missing verdicts or result directories
+use `-`. Historical exports use the selected attempt's sealed verdict. Downloads
+still return 404 when no selected task has result files. The CSV uses UTF-8 with
+a BOM so spreadsheet applications can open non-ASCII test IDs.
+
 The function name is the project name. Cases follow matrix row order, without
 removing duplicate or blank case IDs. Soft-deleted rows and const/lib/io sheets
 are excluded. Each row is paired with its latest non-deleted task, without a

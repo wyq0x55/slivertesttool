@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import csv
 import io
 import zipfile
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Iterable, Iterator, Optional
 
 from ..models import Task, TaskStatus
 
@@ -97,6 +98,10 @@ def add_result_to_zip(zf: zipfile.ZipFile, task: Task, arc_root: str = "", run_c
     log_dir = result_dir(task, run_count)
     if log_dir is None:
         return 0
+    return _add_result_files(zf, log_dir, arc_root)
+
+
+def _add_result_files(zf: zipfile.ZipFile, log_dir: Path, arc_root: str) -> int:
     added = 0
     for path in _iter_result_files(log_dir):
         rel = path.relative_to(log_dir)
@@ -111,13 +116,53 @@ def build_report_stream(task: Task, run_count=None) -> Optional[io.BytesIO]:
 
     Returns ``None`` when the task has no artefacts to offer.
     """
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        added = add_result_to_zip(zf, task, arc_root=task.test_id, run_count=run_count)
-    if added == 0:
-        return None
-    buffer.seek(0)
+    buffer, _ = build_reports_stream([task], run_count=run_count)
     return buffer
+
+
+def build_reports_stream(tasks: Iterable[Task], run_count=None) -> tuple[Optional[io.BytesIO], int]:
+    """Bundle selected results under ``log/`` with a relative-path CSV index.
+
+    Keep raw test IDs in the index and preserve filesystem-safe punctuation
+    (including Silver's ``ID;;`` prefix) in export folders. Runtime directory
+    names remain independent of this download layout.
+    """
+    from ..runners.run_layout import sanitize_segment
+    from . import run_evidence_service as evidence
+
+    buffer = io.BytesIO()
+    summary = io.StringIO(newline="")
+    writer = csv.writer(summary)
+    writer.writerow(["Test_No.", "Result", "Path"])
+    used_folders: set[str] = set()
+    added = 0
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as bundle:
+        for task in tasks:
+            base = sanitize_segment(task.test_id, "testcase")
+            folder = base
+            suffix = 0
+            while folder.casefold() in used_folders:
+                suffix += 1
+                folder = f"{base}_{suffix}"
+            used_folders.add(folder.casefold())
+            arc_root = f"log/{folder}"
+            path = "-"
+            verdict = (getattr(task, "result", "") or "-") if run_count is None else "-"
+            log_dir = result_dir(task, run_count)
+            if log_dir is not None:
+                root = evidence.attempt_dir(task, run_count)
+                if root.parent.exists():
+                    data = evidence.read_evidence(task, run_count, max_log_bytes=0)
+                    verdict = data["outcome"]["verdict"] or "-"
+                if _add_result_files(bundle, log_dir, arc_root):
+                    added += 1
+                    path = arc_root
+            writer.writerow([task.test_id, verdict, path])
+        bundle.writestr("all.csv", summary.getvalue().encode("utf-8-sig"))
+    if added == 0:
+        return None, 0
+    buffer.seek(0)
+    return buffer, added
 
 
 def jdgrslt_path(task: Task, run_count=None) -> Optional[Path]:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import json
 import os
 import subprocess
@@ -214,12 +216,41 @@ def test_reports_remain_attempt_specific_for_retest_and_same_case_tasks(tmp_path
         evidence.seal_attempt(task, status="failed", verdict="FAIL", message=verdict)
         roots.append(root)
     task.task_key, task.run_count = "T000001", 2
+    task.result = "PASS"
     task.report_path = str(roots[1])
     assert len(set(roots)) == 3
     assert report_service.jdgrslt_path(task, run_count=1).read_text(encoding="utf-8") == "first"
     with zipfile.ZipFile(report_service.build_report_stream(task, run_count=1)) as archive:
-        assert archive.read("TC-1/jdgrslt.log") == b"first"
+        assert archive.read("log/TC-1/jdgrslt.log") == b"first"
+        rows = list(csv.reader(io.StringIO(archive.read("all.csv").decode("utf-8-sig"))))
+        assert rows == [["Test_No.", "Result", "Path"], ["TC-1", "FAIL", "log/TC-1"]]
     assert evidence.read_evidence(task, run_count=1)["outcome"]["message"] == "first"
+
+
+def test_historical_csv_uses_sealed_verdict_even_without_result_files(tmp_path):
+    from app.services import report_service
+
+    evidence = service()
+    empty, empty_source, _ = prepared(tmp_path / "empty", task_key="T-EMPTY")
+    evidence.pin_attempt(empty, empty_source)
+    evidence.seal_attempt(empty, status="failed", verdict="FAIL", message="No logs")
+    empty.result = "PASS"
+    empty.run_count = 2
+
+    available, source, _ = prepared(tmp_path / "available", task_key="T-AVAILABLE")
+    root = evidence.pin_attempt(available, source)
+    (root / "results").mkdir()
+    (root / "results" / "stdout.log").write_text("output", encoding="utf-8")
+    evidence.seal_attempt(available, status="passed", verdict="PASS", message="Complete")
+
+    missing, _, _ = prepared(tmp_path / "missing", task_key="T-MISSING")
+    missing.result = "PASS"
+    buffer, added = report_service.build_reports_stream([empty, available, missing], run_count=1)
+    assert added == 1
+    with zipfile.ZipFile(buffer) as archive:
+        rows = list(csv.reader(io.StringIO(archive.read("all.csv").decode("utf-8-sig"))))
+        assert rows == [["Test_No.", "Result", "Path"], ["TC-1", "FAIL", "-"],
+                        ["TC-1", "PASS", "log/TC-1_1"], ["TC-1", "-", "-"]]
 
 
 def test_changed_snapshot_is_rejected_and_not_used_as_report_fallback(tmp_path):
