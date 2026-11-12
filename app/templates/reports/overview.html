@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+{% block detail %}
+<a name="TestDetail" id="TestDetail"></a>
+    <table class="SubHeadingTable">
+      <tr>
+        <td><div class="Heading2">Test Detail</div></td>
+      </tr>
+    </table>
+    <div class="Indentation">
+      <table class="OverviewTable" id="table1">
+        <tr></tr>
+        <tr>
+          <td class="DefineCell">機能名 </td>
+          <td class="DefineCell">Passed </td>
+          <td class="DefineCell">Failed </td>
+          <td class="DefineCell">T.B.D </td>
+          <td class="DefineCell">Untested </td>
+        </tr>
+        {% for suite in suites %}
+        <tr>
+          <td class="DefineCell"><a href="{{ suite.filename }}" target="_blank" rel="noopener noreferrer">{{ suite.name }}</a></td>
+          <td class="NumberCellPositiveResult">{{ suite.stats.passed }}</td>
+          <td class="NumberCellNegativeResult">{{ suite.stats.failed }}</td>
+          <td class="NumberCellTBDResult">{{ suite.stats.tbd }}</td>
+          <td class="NumberCellNoneResult">{{ suite.stats.untested }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+{% endblock %}

@@ -574,6 +574,43 @@ def download_project_task(project_id, task_key):
     return send_file(buffer, mimetype="application/zip", as_attachment=True,
                      download_name=f"{run_layout.safe_tid(task.test_id)}_report.zip")
 
+
+def _qualification_download(tasks, project):
+    from ...services.qualification_report_service import build_qualification_report
+
+    try:
+        buffer, filename = build_qualification_report(tasks, project.name)
+    except run_evidence_service.EvidenceError:
+        return err("EVIDENCE_INVALID", "执行证据不完整或校验失败，无法生成报告", status=409)
+    except OSError:
+        return err("REPORT_UNAVAILABLE", "无法读取执行报告", status=409)
+    return send_file(buffer, mimetype="application/zip", as_attachment=True,
+                     download_name=filename)
+
+
+@bp.get("/projects/<int:project_id>/tasks/<task_key>/qualification-report")
+@login_required
+def download_project_task_qualification_report(project_id, task_key):
+    project, task = _require_task(project_id, task_key, "task.download")
+    return _qualification_download([task], project)
+
+
+@bp.get("/projects/<int:project_id>/tasks/qualification-report")
+@login_required
+def download_project_qualification_report(project_id):
+    project, _ = _project_and_role(project_id, "task.download")
+    keys = list(dict.fromkeys(_parse_keys(request.args.getlist("keys"))))
+    if not keys:
+        return err("INVALID_ARGUMENT", "请先选择任务", status=400)
+    tasks = []
+    for key in keys:
+        task = task_service.get_project_task(project_id, key)
+        if task is None:
+            return err("NOT_FOUND", "所选任务不存在", status=404)
+        tasks.append(task)
+    return _qualification_download(tasks, project)
+
+
 def _parse_keys(raw) -> list[str]:
     """Normalise a ``keys`` payload (list and/or comma string) into a clean list."""
     items = [raw] if isinstance(raw, str) else list(raw or [])

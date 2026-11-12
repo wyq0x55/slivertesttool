@@ -77,6 +77,48 @@ def _download_url(project_id: int, task_key: str) -> str:
     return f"/api/v1/projects/{project_id}/tasks/{task_key}/download"
 
 
+def test_reader_can_export_selected_qualification_html_reports(report_env):
+    response = report_env["client"].get(
+        f"/api/v1/projects/{report_env['project_id']}/tasks/qualification-report",
+        query_string={"keys": [report_env["first_key"], report_env["second_key"], report_env["first_key"]]},
+    )
+    assert response.status_code == 200
+    assert response.mimetype == "application/zip"
+    with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
+        assert len(archive.namelist()) == 2
+        detail = archive.read(archive.namelist()[1]).decode("utf-8")
+        assert "Case TC-1 : Untested" in detail
+        assert "Case TC-2 : Untested" in detail
+        assert "TC-3" not in detail
+        assert detail.count("Case TC-1 : Untested") == 1
+    single = report_env["client"].get(
+        f"/api/v1/projects/{report_env['project_id']}/tasks/{report_env['first_key']}/qualification-report")
+    assert single.status_code == 200
+
+
+def test_qualification_export_checks_membership_selection_and_project_scope(report_env):
+    url = f"/api/v1/projects/{report_env['project_id']}/tasks/qualification-report"
+    client = report_env["client"]
+    assert client.get(url).status_code == 400
+    assert client.get(url, query_string={"keys": report_env["foreign_key"]}).status_code == 404
+    with client.session_transaction() as session:
+        session["lm_user_id"] = report_env["outsider_id"]
+    assert client.get(url, query_string={"keys": report_env["first_key"]}).status_code == 403
+
+
+def test_qualification_export_rejects_invalid_evidence(report_env, monkeypatch):
+    from app.services import qualification_report_service, run_evidence_service
+
+    def invalid(*args):
+        raise run_evidence_service.EvidenceError("Invalid sealed attempt")
+
+    monkeypatch.setattr(qualification_report_service, "build_qualification_report", invalid)
+    response = report_env["client"].get(
+        f"/api/v1/projects/{report_env['project_id']}/tasks/{report_env['first_key']}/qualification-report")
+    assert response.status_code == 409
+    assert response.json["error"]["code"] == "EVIDENCE_INVALID"
+
+
 def test_reader_can_download_single_report_without_stored_report_zip(report_env):
     log_dir = _log_dir(report_env, "TC-1")
     log_dir.mkdir(parents=True)

@@ -1,0 +1,35 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html>
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <title id="Title1">{{ title }}03_01</title>
+    {% include '_style.html' %}
+    <script type="text/javascript">
+      function switchAll(id, linkText) {
+        var expanded = linkText === '[+]';
+        var links = id ? [document.getElementById('lnk_' + id)] : document.querySelectorAll('a[data-collapse]');
+        var sections = id ? [document.getElementById('div_' + id)] : document.querySelectorAll('div[data-case-details]');
+        for (var i = 0; i < links.length; i++) {
+          if (links[i]) links[i].textContent = expanded ? '[-]' : '[+]';
+        }
+        for (var j = 0; j < sections.length; j++) {
+          if (sections[j]) sections[j].style.display = expanded ? '' : 'none';
+        }
+      }
+      function showTC(id) {
+        switchAll(id, '[+]');
+      }
+      window.addEventListener('load', function () {
+        var link = document.getElementById('lnk_all');
+        if (link) switchAll('', link.textContent);
+        if (/^#case-[0-9]+$/.test(window.location.hash)) showTC(window.location.hash.substring(1));
+      });
+    </script>
+  </head>
+  <body>
+    {% include '_header.html' %}
+    {% include '_summary.html' %}
+    {% block detail %}{% endblock %}
+   </div>
+  </body>
+</html>

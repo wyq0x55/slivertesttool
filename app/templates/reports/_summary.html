@@ -1,0 +1,100 @@
+    <center>
+      <table class="OverallResultTable">
+        <tr id="result1">
+<td class="{{ banner_class }}">{{ banner_text }}</td>
+        </tr>
+      </table>
+    </center>
+  <table class="SubHeadingTable">
+      <tr>
+        <td>
+          <div class="Heading2">General Test Information</div>
+        </td>
+      </tr>
+    </table>
+   <div class="Indentation">
+      <div class="Heading4">System Under Test</div>
+      <div class="Indentation">
+        <table>
+          <tr>
+            <td class="CellNoColor">車両：</td>
+            <td class="CellNoColor" id="Inf1">{{ general.vehicle }}</td>
+          </tr>
+          <tr>
+            <td class="CellNoColor">上位文書: </td>
+            <td class="CellNoColor" id="Inf2">{{ general.document }}</td>
+          </tr>
+          <tr>
+            <td class="CellNoColor">担当者: </td>
+            <td class="CellNoColor" id="Inf3">{{ general.owner }}</td>
+          </tr>
+          <tr>
+            <td class="CellNoColor">プロジェクト担当者: </td>
+            <td class="CellNoColor" id="Inf4">{{ general.project_owner }}</td>
+          </tr>
+          <tr>
+            <td class="CellNoColor">ソフトウェアバージョン: </td>
+            <td class="CellNoColor" id="Inf8">{{ general.software_version }}</td>
+		  </tr>
+          <tr>
+            <td class="CellNoColor">テストDBバージョン: </td>
+            <td class="CellNoColor" id="Inf9">{{ general.test_db_version }}</td>
+          </tr>
+          <tr>
+            <td class="CellNoColor">実施日: </td>
+            <td class="CellNoColor" id="Inf5">{{ general.date }}</td>
+          </tr>
+          <tr>
+            <td class="CellNoColor">結論: </td>
+            <td class="CellNoColor" id="Inf6">{{ general.conclusion }}</td>
+          </tr>
+          <tr>
+            <td class="CellNoColor">備考: </td>
+            <td class="CellNoColor" id="Inf7">{{ general.remarks }}</td>
+          </tr>
+        </table>
+      </div>
+<a name="TestOverview"></a>
+    <table class="SubHeadingTable">
+      <tr>
+        <td>
+          <div class="Heading2">Test Overview</div>
+        </td>
+      </tr>
+    </table>
+      <div class="Heading4">Statistics</div>
+      <div class="Indentation">
+        <table class="OverviewTable">
+          <tr>
+            <td class="DefineCell">Overall number of test cases </td>
+            <td class="NumberCell" width="60" id="testall">{{ stats.total }}</td>
+            <td class="DefaultCell"></td>
+          </tr>
+          <tr>
+            <td class="DefineCell">Executed test cases </td>
+            <td class="NumberCell" id="test1-1">{{ stats.executed }}</td>
+            <td class="DefaultCell" id="test1-2">{{ stats.executed_percent }}% of all test cases</td>
+          </tr>
+          <tr>
+            <td class="DefineCell">Not executed test cases </td>
+            <td class="NumberCell" id="test2-1">{{ stats.untested }}</td>
+            <td class="DefaultCell" id="test2-2">{{ stats.untested_percent }}% of all test cases</td>
+          </tr>
+          <tr>
+            <td class="DefineCell">Test cases passed </td>
+            <td class="NumberCellPositiveResult" id="test3-1">{{ stats.passed }}</td>
+            <td class="NumberCellPositiveResult" id="test3-2">{{ stats.passed_percent }}% of executed test cases</td>
+          </tr>
+          <tr>
+            <td class="DefineCell">Test cases failed </td>
+            <td class="NumberCellNegativeResult" id="test4-1">{{ stats.failed }}</td>
+            <td class="NumberCellNegativeResult" id="test4-2">{{ stats.failed_percent }}% of executed test cases</td>
+          </tr>
+          <tr>
+            <td class="DefineCell">T.B.D Test Cases </td>
+            <td class="NumberCellTBDResult" id="test5-1">{{ stats.tbd }}</td>
+            <td class="NumberCellTBDResult" id="test5-2">{{ stats.tbd_percent }}% of executed test cases</td>
+          </tr>
+        </table>
+      </div>
+

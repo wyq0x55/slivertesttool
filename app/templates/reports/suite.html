@@ -1,0 +1,78 @@
+{% extends 'base.html' %}
+{% block detail %}
+<a name="TestDetail" id="TestDetail"></a>
+    <table class="SubHeadingTable">
+      <tr><td><div class="Heading2">Test Detail</div></td></tr>
+    </table>
+    <div class="Indentation">
+      <table class="OverviewTable" id="table1">
+        {% for case in suite.cases %}
+        <tr>
+          <td class="DefineCell"><a href="#{{ case.anchor }}" onclick="showTC('{{ case.anchor }}')">Case {{ case.id }}</a></td>
+          <td class="NumberCell" width="60">detail</td>
+          <td class="{{ case.result_class }}">{{ case.status }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+<a name="TestCaseDetails" id="TestCaseDetails"></a>
+    <table class="SubHeadingTable">
+      <tr>
+        <td class="LinkCell"><a class="Undecorated" id="lnk_all" data-collapse="all" href="#TestCaseDetails" onclick="switchAll('', this.textContent); return false;">[-]</a></td>
+        <td><div class="Heading2">Test Case Details</div></td>
+      </tr>
+    </table>
+    <div class="Indentation" id="table2"></div>
+{% for case in suite.cases %}
+<table>
+  <tr>
+    <td class="LinkCell"><a class="Undecorated" id="lnk_{{ case.anchor }}" data-collapse="case" href="#{{ case.anchor }}" onclick="switchAll('{{ case.anchor }}', this.textContent); return false;">[-]</a></td>
+    <td class="{{ case.heading_class }}"><big class="Heading3"><a name="{{ case.anchor }}" id="{{ case.anchor }}">Case {{ case.id }} : {{ case.status }}</a></big></td>
+    <td class="DefaultCell"><a href="#TestDetail">back</a></td>
+    <td class="DefaultCell">テスト区分名:{{ case.category }}</td>
+  </tr>
+</table>
+<div class="Indentation" id="div_{{ case.anchor }}" data-case-details="true">
+  <table class="TestCaseTable">
+    <tr>
+      <td class="DefaultCell" width="800">テスト名:{{ case.name }}</td>
+      <td class="DefaultCell" width="auto">テスト目的:{{ case.purpose }}</td>
+    </tr>
+  </table>
+  <div class="Indentation">
+    <table class="ResultTable">
+      <tr>
+        <th class="TableHeadingCell" width="1px">Timestamp</th>
+        <th class="TableHeadingCell" width="1px">TestStep</th>
+        <th class="TableHeadingCell" width="auto">Description</th>
+        <th class="TableHeadingCell" width="1px">Result</th>
+      </tr>
+      {% for row in case.rows %}
+      <tr>
+        <td class="DefineCell">{{ row.timestamp }}</td>
+        <td class="NumberCell">{{ row.step }}</td>
+        <td class="DefaultCell">{% if row.result != '-' %}&emsp;&emsp;{% endif %}{% for line in row.description.splitlines() %}{{ line }}<br>{% endfor %}
+          {% for check in row.checks %}
+          <div class="{{ check.class }}">
+            <b>&emsp;&emsp;&emsp;&emsp;Monitoring target: {{ check.target }} </b><br>
+            &emsp;&emsp;&emsp;&emsp;Expected Value:{{ check.expected }} <br>
+            &emsp;&emsp;&emsp;&emsp;Observed Value:{{ check.observed }} <br>
+            &emsp;&emsp;&emsp;&emsp;確認タイミング：{{ check.timing }}
+          </div>
+          {% endfor %}
+        </td>
+        <td class="{{ row.result_class }}">{{ row.result }}</td>
+      </tr>
+      {% else %}
+      <tr>
+        <td class="DefineCell">-</td>
+        <td class="NumberCell">-</td>
+        <td class="DefaultCell">-</td>
+        <td class="DefaultCell">-</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+</div>
+{% endfor %}
+{% endblock %}

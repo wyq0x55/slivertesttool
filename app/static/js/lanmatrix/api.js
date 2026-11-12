@@ -327,6 +327,12 @@
     deleteProjectTask(id, key) { return request("DELETE", `/projects/${id}/tasks/${key}`); },
     deleteProjectTasksBatch(id, keys) { return request("POST", `/projects/${id}/tasks/delete_batch`, { body: { keys } }); },
     projectTaskDownloadUrl(id, key) { return `${BASE}/projects/${id}/tasks/${key}/download`; },
+    projectTaskQualificationReportUrl(id, key) {
+      return `${BASE}/projects/${id}/tasks/${key}/qualification-report`;
+    },
+    projectQualificationReportUrl(id, keys) {
+      return `${BASE}/projects/${id}/tasks/qualification-report?keys=${encodeURIComponent(keys.join(","))}`;
+    },
     projectTasksDownloadBatchUrl(id, keys) {
       return `${BASE}/projects/${id}/tasks/download_batch?keys=${encodeURIComponent(keys.join(","))}`;
     },
