@@ -118,3 +118,30 @@ def test_own_assets_are_immutable_only_at_their_current_revision(app):
     assert client.get(url.split("?")[0]).headers["Cache-Control"] == "no-cache"
     assert client.get(url.split("?")[0] + "?v=stale").headers["Cache-Control"] == "no-cache"
 
+
+def test_cached_template_reloads_alongside_changed_static_assets(tmp_path):
+    """A production process must not pair cached old HTML with fresh JS."""
+    import os
+
+    from flask import render_template
+    from jinja2 import FileSystemLoader
+
+    from app import create_app
+    from app.config import Config
+
+    class ProductionConfig(Config):
+        TESTING = False
+        DEBUG = False
+        SECRET_KEY = "template-reload-test-only"
+
+    app = create_app(ProductionConfig)
+    app.jinja_loader = FileSystemLoader(str(tmp_path))
+    template = tmp_path / "tasks.html"
+    template.write_text('<button id="old-report"></button>', encoding="utf-8")
+    with app.test_request_context():
+        assert 'id="old-report"' in render_template("tasks.html")
+        previous_mtime = template.stat().st_mtime
+        template.write_text('<button id="project-report"></button>', encoding="utf-8")
+        os.utime(template, (previous_mtime + 2, previous_mtime + 2))
+        assert 'id="project-report"' in render_template("tasks.html")
+

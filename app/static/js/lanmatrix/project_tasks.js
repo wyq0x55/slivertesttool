@@ -1068,17 +1068,25 @@
       Array.from(selected).forEach((k) => { if (!present.has(k)) selected.delete(k); });
       populateSubmitters();
       renderTasks();
+      const error = $("lm-tasks-error"); if (error) error.hidden = true;
       $("lm-tasks-body").hidden = false;
       $("lm-tasks-denied").hidden = true;
       const acts = $("lm-tasks-actions"); if (acts) acts.hidden = false;
     } catch (ex) {
       if (ex.status === 401) { window.location = LM.urls.login; return; }
       if (ex.status === 403) {
+        const error = $("lm-tasks-error"); if (error) error.hidden = true;
         $("lm-tasks-denied").hidden = false;
         $("lm-tasks-body").hidden = true;
         const acts = $("lm-tasks-actions"); if (acts) acts.hidden = true;
         return;
       }
+      const error = $("lm-tasks-error");
+      if (error) {
+        error.textContent = "任务加载失败：" + ex.message + "。请点击刷新重试。";
+        error.hidden = false;
+      }
+      const acts = $("lm-tasks-actions"); if (acts) acts.hidden = false;
       toast(ex.message, false);
     }
   }
@@ -1234,7 +1242,10 @@
     });
   }
   $("lm-batch-download").addEventListener("click", batchDownload);
-  $("lm-project-html-report").addEventListener("click", projectHtmlReport);
+  // A running process can still cache the pre-report template while serving
+  // new static bytes. Accept that known button ID until the next web restart.
+  const htmlReport = $("lm-project-html-report") || $("lm-batch-html-report");
+  htmlReport.addEventListener("click", projectHtmlReport);
   $("lm-batch-cancel").addEventListener("click", batchCancel);
   $("lm-batch-retest").addEventListener("click", batchRetest);
   $("lm-batch-delete").addEventListener("click", batchDelete);

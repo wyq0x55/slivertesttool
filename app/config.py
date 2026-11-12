@@ -51,6 +51,9 @@ class Config:
     """Flask + platform configuration."""
 
     # --- Flask ---
+    # Static revisions follow on-disk updates; revalidate cached templates too
+    # so a running web process cannot combine old markup with new scripts.
+    TEMPLATES_AUTO_RELOAD = True
     # Sentinel: the insecure fallback used only when SECRET_KEY is unset. The app
     # factory refuses to start with this value unless explicitly allowed for a
     # throwaway/dev run (LM_ALLOW_INSECURE_SECRET=1), because both the session

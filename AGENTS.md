@@ -92,6 +92,11 @@ Use normal Git branches, commits, issues, and pull requests. Do **not** create
 special delivery-copy directories, incremented duplicate filenames, or
 whole-project ZIP archives unless a user explicitly requests an archive artifact.
 
+After completing and verifying changes, default to pulling the latest upstream
+changes, resolving any merge conflicts, and committing and pushing the completed
+work on the current branch without another confirmation. Preserve unrelated
+local changes and never force-push unless explicitly requested.
+
 
 ## Codex subagent orchestration
 
