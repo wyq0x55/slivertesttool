@@ -158,6 +158,30 @@ class TestDiscardedInstanceStaysSilent:
             framework.run_cleanup(ctx, 0.0)
         assert caplog.text == ""
 
+    def test_no_output_when_only_an_init_subroutine_ran(self, caplog):
+        """The discarded instance still runs pre_init (e.g. SystemInitialize)."""
+        framework = self._framework()
+        step = framework.Step(no=1, comment="init",
+                              inputs=[framework.Assign(var="x", value=0)])
+        ctx = self._ctx(framework)
+        variables = {}
+
+        class _Var:
+            def __init__(self, name):
+                variables[name] = self
+                self.Value = None
+
+        ctx._cache = {}
+        ctx._param_stack = []
+        ctx._Variable = _Var
+        framework.run_init_subroutine(ctx, "SystemInitialize", [step])
+        assert variables["x"].Value == 0
+        caplog.clear()
+        with caplog.at_level(logging.INFO):
+            framework.run_cleanup(ctx, 0.0)
+        assert "suspended" not in caplog.text
+        assert "is failed" not in caplog.text
+
     def test_a_real_suspension_is_still_reported(self, caplog):
         framework = self._framework()
         step = framework.Step.__new__(framework.Step)

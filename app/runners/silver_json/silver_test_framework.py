@@ -575,6 +575,14 @@ def run_init_subroutine(ctx: TestContext, name, steps):
         for asg in step.inputs:
             ctx.var(asg.var).Value = ctx.bind_arg(asg.param, asg.value)
 
+    # An init subroutine only assigns inputs; it never judges and cannot be
+    # suspended mid-way (pre_init is synchronous). Leaving its last step as the
+    # "current" step made ``run_cleanup`` treat the instance Silver discards
+    # after ``add_module`` (it runs pre_init but never a test step) as a test
+    # suspended in Step1, printing a bogus failure block before the real run.
+    ctx.test_step_no = -1
+    ctx.current_step = None
+
 
 def run_cleanup(ctx: TestContext, time):
     """
