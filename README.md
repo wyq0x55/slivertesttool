@@ -278,12 +278,21 @@ Then point the frontend at the proxied socket by setting **`COLLAB_WS_URL`**
 frontend derives the socket URL from `window.location`.
 
 **Single-writer boundary.** While a project has live collaborators the CRDT
-materializer is its **only** authoritative DB writer. The collab server
+materializer is its **only** structural DB writer. The collab server
 heartbeats live-room presence into `lm_collab_presence`, and the web process
-reads it to decide whether a project is "collaborative". Direct REST row
-mutations are rejected by default on an active collaborative project (HTTP
-`409 COLLAB_ACTIVE`) so REST and CRDT never fight over
-`row_order`/`version`. If the collab process crashes, its presence row goes
+reads it to decide whether a project is "collaborative". Structural REST row
+mutations (create, delete, move, duplicate, batch) are rejected by default on
+an active collaborative project (HTTP `409 COLLAB_ACTIVE`) so REST and CRDT
+never fight over `row_order`. A versioned field PATCH is accepted: it commits
+an outbox message with the row update, and the collab server mirrors the
+changed cells into the live Y.Doc.
+
+While no room is live, REST writes go to the database only. When a room is next
+opened from its persisted Y.Doc, the server first reconciles the Doc from the
+database (changed cells, new and deleted rows, row order), so offline writes
+are never reverted by the editor. The database wins unless the Doc holds edits
+that were never materialized (the collab process died before its final flush);
+those are kept, except on rows a versioned REST write changed afterwards. If the collab process crashes, its presence row goes
 stale within `COLLAB_PRESENCE_TTL_SECONDS` and REST writes resume automatically.
 A presence lookup error fails closed with `503 COLLAB_STATE_UNAVAILABLE`; set
 `COLLAB_REST_GUARD=0` only as an explicit rollback escape hatch.

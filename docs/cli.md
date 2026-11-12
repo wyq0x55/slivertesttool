@@ -118,17 +118,27 @@ version returns 409; the CLI never forces an overwrite. Accepted field PATCHes
 (including case, steps and shared-row edits) commit a durable mirror message
 with the database update. They work while collaboration is active. The collab
 server applies only the supplied cells, persists the Y.Doc and a delivery
-receipt, then acknowledges the message. Pending messages survive offline rooms
-and restarts; stale materialization cannot overwrite their fields. An accepted
-PATCH takes effect when delivered; subsequent browser edits remain valid, and
-retrying an already delivered message does not replay it over those edits.
+receipt, then acknowledges the message. Stale materialization cannot overwrite
+pending fields. An accepted PATCH takes effect when delivered; subsequent
+browser edits remain valid, and retrying an already delivered message does not
+replay it over those edits.
+
+The version check compares against the database row, which trails the live
+editor by its materialization delay (about 3 seconds). A PATCH can therefore
+replace a cell a collaborator changed moments earlier without a
+`VERSION_CONFLICT`; `steps` is replaced as one field.
+
+While no room is active, every write (field, structural or bulk) goes to the
+database only. The next time the project is opened in the collaborative editor,
+the server folds those database changes into the persisted Y.Doc before anyone
+connects: changed cells, new rows, deleted rows and row order. Nothing written
+while the room was closed is reverted by the editor.
 
 Structural and bulk operations retain `COLLAB_ACTIVE`: create/delete/move rows,
 Excel import commit, IO extraction and recycle-bin row restore still require
 the collaborative editor's reconciliation path or an inactive room. CLI access
 does not change roles or permissions. The same outbox covers `test`, `const`,
-`lib` and `io`. Reasserting a field's current DB value also queues it, allowing
-an older stale document to be repaired without deleting its CRDT history.
+`lib` and `io`.
 
 ## Typical flow: find a project, pick a case, fix its steps, rerun
 

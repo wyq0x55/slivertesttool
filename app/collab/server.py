@@ -114,20 +114,22 @@ class CollabWebsocketServer(WebsocketServer):
         except YDocNotFound:
             loaded = False
         if not loaded:
-            await anyio.to_thread.run_sync(self._bootstrap_sync, ydoc, pid)
+            covered = await anyio.to_thread.run_sync(
+                self._bootstrap_sync, ydoc, pid)
             # Persist the seed so we never bootstrap this room twice.
             await ystore.write(ydoc.get_update())
         else:
-            # Existing doc: make sure every sheet array key exists.
+            # Existing doc: make sure every sheet array key exists, then fold
+            # in what REST wrote to the database while no room was live.
             doc_model.ensure_sheets(ydoc)
+            covered = await self._reconcile_hydrated(ydoc, ystore, pid)
+        # Outbox entries committed before that database read are already in
+        # the Doc. Later ones are delivered once the room is live.
+        await anyio.to_thread.run_sync(self._acknowledge_writebacks_sync, covered)
 
-        # 2) Drain the complete offline backlog before observing or exposing the
-        # room. Hydration and live delivery use the same persistence/ack path.
+        # 2) Build the room (ystore persists every future update) and start it.
         room = YRoom(ydoc=ydoc, ystore=ystore)
-        mat = Materializer(pid, self._app)
-        delivered = False
-        while await self._deliver_writebacks(room, pid, mat):
-            delivered = True
+        mat = Materializer(pid, self._app, persist=ystore.write)
         await self.start_room(room)
 
         # 3) Attach debounced materialization (Y.Doc -> TestItemRow). The room's
@@ -135,15 +137,75 @@ class CollabWebsocketServer(WebsocketServer):
         # materializer credit each row to the collaborator editing it.
         mat.attach(ydoc, awareness=getattr(room, "awareness", None))
         self._materializers[name] = mat
-        if delivered:
-            mat.schedule_flush()
+        # One flush settles the opened Doc against the database and stores the
+        # sync mark the next hydration compares with.
+        mat.schedule_flush()
         _log.info("collab room ready: %s (hydrated=%s)", name, loaded)
         return room
 
-    def _bootstrap_sync(self, ydoc: Doc, pid: int) -> None:
+    def _bootstrap_sync(self, ydoc: Doc, pid: int) -> list[int]:
+        from ..extensions import db
+        from . import writeback
         with self._app.app_context():
+            # Same lock as REST writers: the seed and the list of outbox
+            # entries it already contains come from one consistent read.
+            writeback.lock_project(pid)
             n = doc_model.bootstrap_doc(ydoc, pid)
+            covered = writeback.pending_ids(pid)
+            db.session.rollback()
         _log.info("bootstrapped project %s from DB: %s rows", pid, n)
+        return covered
+
+    async def _reconcile_hydrated(self, ydoc: Doc, ystore: PgYStore,
+                                  pid: int) -> list[int]:
+        """Bring a persisted Doc up to date with offline database writes.
+
+        The room is neither observed nor exposed yet. Returns the outbox IDs
+        the database read already contained, for the caller to acknowledge
+        after the reconciled Doc is durable.
+        """
+        full, states, covered = await anyio.to_thread.run_sync(
+            self._hydration_plan_sync, pid, doc_model.content_hash(ydoc))
+        before = ydoc.get_state()
+        touched = 0
+        with ydoc.transaction(origin="hydrate-reconcile"):
+            for sheet, rows in states.items():
+                touched += doc_model.reconcile_from_db(
+                    ydoc, sheet, rows, full=full)
+        if touched:
+            await ystore.write(ydoc.get_update(before))
+        if not full:
+            _log.warning("project %s: persisted document has edits that were "
+                         "never materialized; keeping them, except rows with "
+                         "a newer database version", pid)
+        _log.info("reconciled project %s from DB: %s row change(s)",
+                  pid, touched)
+        return covered
+
+    def _hydration_plan_sync(self, pid: int, doc_hash: str):
+        """Decide who wins and read the rows, under the REST writers' lock.
+
+        The database wins when the Doc still matches its sync mark. A Doc with
+        no mark predates sync marks; its last flush cannot be verified either
+        way, and the database is what users and the CLI have been reading.
+        """
+        from ..extensions import db
+        from ..models import CollabSyncMark, TestItemRow
+        from . import writeback
+        with self._app.app_context():
+            writeback.lock_project(pid)
+            mark = db.session.get(CollabSyncMark, pid)
+            full = mark is None or mark.content_hash == doc_hash
+            states = {}
+            for sheet in doc_model.sheets():
+                rows = (TestItemRow.query
+                        .filter_by(project_id=pid, sheet=sheet, deleted_at=None)
+                        .order_by(TestItemRow.row_order.asc(),
+                                  TestItemRow.id.asc()).all())
+                states[sheet] = [row.to_dict() for row in rows]
+            covered = writeback.pending_ids(pid)
+            db.session.rollback()
+            return full, states, covered
 
     # ------------------------------------------------------------------ #
     # Lifecycle: start the idle sweeper with the server, detach on stop.
@@ -171,12 +233,15 @@ class CollabWebsocketServer(WebsocketServer):
         return self
 
     async def __aexit__(self, exc_type, exc_value, exc_tb):
-        # Detach every Materializer so no Y.Doc observer leaks past shutdown.
+        # Write out debounced edits, then detach every Materializer so no
+        # Y.Doc observer leaks past shutdown. Without the final flush a normal
+        # restart would leave Docs ahead of the database.
         for name, mat in list(self._materializers.items()):
             try:
-                mat.detach()
+                await mat.flush_and_detach()
             except Exception:  # pragma: no cover - best effort on teardown
-                _log.exception("materializer detach failed on shutdown: %s", name)
+                _log.exception("materializer flush failed on shutdown: %s", name)
+                mat.detach()
         self._materializers.clear()
         # Best-effort: mark every project as having no live collaborators so the
         # web app stops treating them as collaborative the moment we shut down.
@@ -263,7 +328,7 @@ class CollabWebsocketServer(WebsocketServer):
 
     async def _deliver_writebacks(self, room: YRoom, pid: int,
                                  mat: Materializer, *,
-                                 live_name: str | None = None) -> bool:
+                                 live_name: str) -> bool:
         """Deliver one ordered batch, with a durable receipt before exact ack.
 
         A failed store write leaves the in-memory receipt in place. The retry
@@ -274,8 +339,7 @@ class CollabWebsocketServer(WebsocketServer):
         from . import writeback
         async with mat.write_lock:
             # Eviction may have won the lock after the drain chose this room.
-            if live_name is not None and (
-                    self._rooms.get(live_name) is not room
+            if (self._rooms.get(live_name) is not room
                     or self._materializers.get(live_name) is not mat):
                 return False
             entries = await anyio.to_thread.run_sync(
@@ -294,20 +358,11 @@ class CollabWebsocketServer(WebsocketServer):
                 by_sheet.setdefault(sheet, {}).setdefault(
                     entry["row_uuid"], {}).update(
                         writeback.expand_aliases(entry["payload"]))
-            targets = (await anyio.to_thread.run_sync(
-                self._writeback_targets_sync, pid,
-                {sheet: set(by_uuid) for sheet, by_uuid in by_sheet.items()}
-            )) if by_sheet else {}
             with mat.suppressed():
                 with doc.transaction(origin="server-writeback"):
                     for sheet, by_uuid in by_sheet.items():
-                        states, order, deleted = targets[sheet]
-                        doc_model.remove_rows(doc, sheet, deleted)
-                        # Only hydration repairs an incomplete historical Doc.
-                        # Absence in a live room is a browser deletion, which
-                        # wins over an undelivered field patch.
-                        if live_name is None:
-                            doc_model.restore_rows(doc, sheet, states, order)
+                        # A target absent from a live room was deleted in the
+                        # browser, which wins over an undelivered field patch.
                         doc_model.write_row_fields(doc, sheet, by_uuid)
                     if fresh:
                         receipts[str(pid)] = str(fresh[-1]["id"])
@@ -330,26 +385,6 @@ class CollabWebsocketServer(WebsocketServer):
         with self._app.app_context():
             writeback.acknowledge(ids)
 
-    def _writeback_targets_sync(self, pid: int, targets: dict) -> dict:
-        """Load live outbox targets and identify later deletions.
-
-        A deleted target may still exist in persisted CRDT history. Remove it
-        before acknowledging its older patch, or materialization resurrects it.
-        """
-        from ..models import TestItemRow
-        with self._app.app_context():
-            result = {}
-            for sheet, uuids in targets.items():
-                # One snapshot supplies both targets and insertion order, so
-                # a concurrent deletion cannot leave a target without a rank.
-                rows = TestItemRow.query.filter_by(
-                    project_id=pid, sheet=sheet, deleted_at=None).all()
-                states = [row.to_dict() for row in rows if row.uuid in uuids]
-                order = {row.uuid: (row.row_order, row.id) for row in rows}
-                deleted = uuids - set(order)
-                result[sheet] = states, order, deleted
-            return result
-
     async def _sweep_loop(self) -> None:
         """Periodically evict rooms that have been client-less past the TTL."""
         while True:
@@ -359,11 +394,23 @@ class CollabWebsocketServer(WebsocketServer):
             except Exception:  # pragma: no cover - sweeper must never die
                 _log.exception("collab idle sweep iteration failed")
             try:
+                # Entries of projects without a live room need no delivery:
+                # the next room open reads the database. Hold the lifecycle
+                # lock so no room goes live between the check and the update.
+                async with self._room_lifecycle_lock:
+                    live = [int(name.split(":", 1)[1]) for name in self._rooms]
+                    await anyio.to_thread.run_sync(
+                        self._acknowledge_offline_sync, live)
                 # ``lm_row_writebacks`` is append-only otherwise: nothing else
                 # in the project calls ``purge_applied``.
                 await anyio.to_thread.run_sync(self._purge_writebacks_sync)
             except Exception:  # pragma: no cover - sweeper must never die
                 _log.exception("collab write-back purge failed")
+
+    def _acknowledge_offline_sync(self, live: list[int]) -> None:
+        from . import writeback
+        with self._app.app_context():
+            writeback.acknowledge_offline(live)
 
     def _purge_writebacks_sync(self) -> None:
         from . import writeback

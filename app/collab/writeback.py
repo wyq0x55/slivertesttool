@@ -1,8 +1,13 @@
-"""Transactional outbox for database field writes mirrored into project Y.Docs.
+"""Transactional outbox for database field writes mirrored into live Y.Docs.
 
 Writers take the project lock before reading/updating rows and queue the actual
-field changes in the same transaction. Pending entries never expire. Delivery
-acknowledges exact IDs only after the Doc (including its receipt) is durable.
+field changes in the same transaction. For a live room, delivery acknowledges
+exact IDs only after the Doc (including its receipt) is durable, and pending
+fields are protected from stale materialization meanwhile.
+
+The outbox only has to reach rooms that are live. A room opened later reads the
+database (see ``doc_model.reconcile_from_db``), which already holds every queued
+value, so entries of projects without a live room are acknowledged unapplied.
 This module deliberately has no pycrdt dependency: REST and workers use it too.
 """
 
@@ -137,6 +142,34 @@ def pending_batch(project_ids: Iterable[int]) -> list[dict[str, Any]]:
             for row in rows]
 
 
+def pending_ids(project_id: int) -> list[int]:
+    """IDs pending for one project, for a caller that holds the project lock.
+
+    Read in the same locked transaction as the rows themselves, these are
+    exactly the entries whose values that row snapshot already contains.
+    """
+    return [entry_id for (entry_id,) in
+            db.session.query(RowWriteback.id).filter_by(
+                project_id=project_id, applied_at=None).all()]
+
+
+def acknowledge_offline(live_project_ids: Iterable[int]) -> int:
+    """Acknowledge entries of projects that have no live room.
+
+    Their values are in the database, which the next room open reads. The
+    caller must hold the collab server's room lifecycle lock, so a room cannot
+    go live between choosing ``live_project_ids`` and this update.
+    """
+    query = RowWriteback.query.filter(RowWriteback.applied_at.is_(None))
+    live = [int(pid) for pid in live_project_ids]
+    if live:
+        query = query.filter(RowWriteback.project_id.notin_(live))
+    count = query.update({RowWriteback.applied_at: _utcnow()},
+                         synchronize_session=False)
+    db.session.commit()
+    return int(count or 0)
+
+
 def acknowledge(ids: Iterable[int]) -> None:
     """Mark only the IDs whose Doc update has already been persisted."""
     ids = list(ids)
@@ -149,7 +182,7 @@ def acknowledge(ids: Iterable[int]) -> None:
 
 
 def purge_applied(older_than_seconds: int = 3600) -> int:
-    """Trim old acknowledged rows; offline, unapplied writes remain durable."""
+    """Trim acknowledged rows older than ``older_than_seconds``."""
     cutoff = _utcnow() - timedelta(seconds=max(0, older_than_seconds))
     deleted = (RowWriteback.query
                .filter(RowWriteback.applied_at.isnot(None),

@@ -43,13 +43,14 @@ Key properties:
 
 * **The database is always written first and stays authoritative.** The queue
   only mirrors the same values into the Doc so the editor cannot revert them.
-* **Nothing is lost if the collab server is down.** The value is in the database
-  and a room bootstrapped later reads it from there.
-* **Nothing is queued for non-collaborative projects.** `is_collab_active()`
-  gates it, so the classic path is unchanged and costs nothing.
-* **Stale items are dropped, not replayed.** A write-back older than
-  `COLLAB_WRITEBACK_TTL_SECONDS` belongs to a room that never came back;
-  replaying it onto a much newer Doc could undo a manual edit.
+* **Nothing is lost if the collab server is down.** The value is in the database,
+  and a room opened later is reconciled from the database before anyone
+  connects (`doc_model.reconcile_from_db`).
+* **Every write-back is queued, in the same transaction as the row.** Presence
+  is a heartbeat and cannot gate it safely. Entries of projects without a live
+  room are acknowledged unapplied by the collab server's sweep.
+* **Pending items are never replayed onto a later Doc.** A live room applies
+  them once, guarded by a delivery receipt stored in the Doc.
 * The write goes inside `Materializer.suppressed()` — the extension point the
   materializer's own docstring reserves for exactly this case — so it does not
   bounce back through a reconcile.
@@ -155,7 +156,6 @@ Two operations beyond creation:
 | `LM_MODEL_VERSION_PATTERN` | `^[A-Za-z0-9._\-+]{1,64}$` | accepted version labels |
 | `LM_WRITEBACK_LOG_COLUMN` | `1` | mirror `task_key` into the `ログ` column |
 | `COLLAB_WRITEBACK_POLL_SECONDS` | `2.0` | Doc drain interval (keep < 3s debounce) |
-| `COLLAB_WRITEBACK_TTL_SECONDS` | `900` | queued write-backs older than this are dropped |
 
 > **Timezone note.** The Excel column headers are Japanese. If the workbook is
 > delivered to a Japanese counterpart, consider `Asia/Tokyo`: it differs from

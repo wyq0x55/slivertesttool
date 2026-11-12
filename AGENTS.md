@@ -48,7 +48,11 @@ Do not reintroduce startup races by moving persistent bootstrap work back into
   writes retain the single-writer guard during active collaboration. Versioned
   field PATCHes use a transactional outbox shared with server result updates:
   pending fields are protected from stale materialization, and delivery is
-  acknowledged only after the document and its receipt are durable.
+  acknowledged only after the document and its receipt are durable. The outbox
+  serves live rooms only. A room opened from a persisted Y.Doc is reconciled
+  from the database first (`doc_model.reconcile_from_db`), so any writer may
+  change rows while no room is live; the database wins unless the Doc is ahead
+  of its sync mark (`lm_collab_sync_marks`), i.e. holds unmaterialized edits.
 
 The `lanmatrix_projects` Flask blueprint name and endpoint identities are a
 public route contract. Project resource routes are intentionally split across
