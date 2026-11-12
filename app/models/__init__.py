@@ -9,6 +9,7 @@ from .lanmatrix import (
     CellComment,
     CollabDoc,
     CollabPresence,
+    CollabSyncMark,
     DataJob,
     FieldDefinition,
     LMUser,
@@ -53,6 +54,7 @@ __all__ = [
     "DataJob",
     "CollabDoc",
     "CollabPresence",
+    "CollabSyncMark",
     # Unit-test pipeline (ut-agent + Clang/LLVM execution + local LLM repair).
     "UtPipelineConfig",
     "UtTarget",

@@ -286,16 +286,10 @@ class Config:
     LM_WRITEBACK_LOG_COLUMN = _as_bool(
         os.environ.get("LM_WRITEBACK_LOG_COLUMN"), True)
     # How often (seconds) the collab server drains queued row write-backs into
-    # its live Y.Docs. Keep it well below the materializer debounce (3s) so a
-    # verdict lands in the Doc before the next reconcile.
+    # its live Y.Docs. This only sets how soon a committed write shows up in
+    # the editor; pending fields are protected from stale flushes meanwhile.
     COLLAB_WRITEBACK_POLL_SECONDS = float(
         os.environ.get("COLLAB_WRITEBACK_POLL_SECONDS", "2.0"))
-    # Queued write-backs older than this are dropped by the drain loop: they
-    # belong to a room that never came back, and the database already holds the
-    # authoritative value, so replaying them onto a much later Doc would undo
-    # newer manual edits.
-    COLLAB_WRITEBACK_TTL_SECONDS = _as_int(
-        os.environ.get("COLLAB_WRITEBACK_TTL_SECONDS"), 900)
 
     # --- In-app notifications ------------------------------------------------
     # Collapsing window, in seconds. 0 (the default) = every event gets its own

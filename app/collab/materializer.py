@@ -39,7 +39,8 @@ _log = logging.getLogger("collab.materializer")
 class Materializer:
     def __init__(self, project_id: int, flask_app, *,
                  actor_user_id: Optional[int] = None,
-                 debounce: float = 3.0) -> None:
+                 debounce: float = 3.0,
+                 persist=None) -> None:
         self._pid = project_id
         self._app = flask_app
         self._actor_user_id = actor_user_id
@@ -57,6 +58,14 @@ class Materializer:
         # commit and ID writeback, so no snapshot taken before delivery can
         # commit after that delivery's acknowledgement.
         self.write_lock = asyncio.Lock()
+        # Content fingerprint last stored as this project's sync mark, so an
+        # unchanged Doc does not rewrite it on every flush.
+        self._marked_hash: Optional[str] = None
+        # ``async persist(update: bytes)`` appends to the room's store. The
+        # room persists updates itself, but from a background task that can
+        # lag or be cut off; a flush writes what it relies on explicitly.
+        self._persist = persist
+        self._persisted_state: Optional[bytes] = None
         # FIX: 用整数计数器替代 bool，嵌套 suppressed() 调用不会提前放开观察器。
         # 进入 +1，退出 -1；只有计数归零才重新响应 Y.Doc 事务。
         self._suppress: int = 0
@@ -163,6 +172,8 @@ class Materializer:
         if self._doc is None:
             return
         self._flushing = True
+        # The snapshot below includes every edit made so far.
+        self._dirty_again = False
         try:
             # Snapshot on the loop thread (reads the Y types), then hand the
             # plain dicts to a worker thread for the DB reconcile.
@@ -179,6 +190,9 @@ class Materializer:
             # back into the Y.Doc on the loop thread; suppressed so it does not
             # re-trigger a reconcile.
             self._apply_id_writeback(idmaps, row_errors)
+            if summary:
+                await self._persist_doc()
+                await self._mark_synced()
         except Exception:  # pragma: no cover - logged, never crashes the loop
             _log.exception("materialization failed for project %s", self._pid)
         finally:
@@ -186,6 +200,62 @@ class Materializer:
             if self._dirty_again:
                 self._dirty_again = False
                 self._schedule()
+
+    async def _persist_doc(self) -> None:
+        """Make the Doc durable up to now, including the id/version write-back.
+
+        The next room open compares row versions and the content fingerprint
+        of the *persisted* Doc, so both must not depend on the room's own
+        background writes having caught up. Re-writing an update the room
+        also stores is harmless: applying an update twice changes nothing.
+        """
+        if self._persist is None or self._doc is None:
+            return
+        state = self._doc.get_state()
+        if state == self._persisted_state:
+            return
+        update = (self._doc.get_update(self._persisted_state)
+                  if self._persisted_state is not None
+                  else self._doc.get_update())
+        await self._persist(update)
+        self._persisted_state = state
+
+    async def _mark_synced(self) -> None:
+        """Record that the Doc holds nothing the database has not seen.
+
+        Only true when no browser transaction arrived since this flush took its
+        snapshot: such an edit is in the Doc but not yet in the database. The
+        fingerprint is taken here on the loop thread, so an edit landing while
+        it is being stored simply leaves the Doc ahead of its mark again. A
+        missed or failed mark is safe: the next room open then keeps the Doc.
+        """
+        if self._doc is None or self._dirty_again or self._timer is not None:
+            return
+        content_hash = doc_model.content_hash(self._doc)
+        if content_hash == self._marked_hash:
+            return
+        try:
+            await anyio.to_thread.run_sync(self._store_mark_sync, content_hash)
+        except Exception:  # pragma: no cover - the mark is advisory
+            _log.exception("sync mark failed for project %s", self._pid)
+            return
+        self._marked_hash = content_hash
+
+    def _store_mark_sync(self, content_hash: str) -> None:
+        from datetime import datetime, timezone
+        from ..extensions import db
+        from ..models import CollabSyncMark
+        with self._app.app_context():
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            mark = db.session.get(CollabSyncMark, self._pid)
+            if mark is None:
+                db.session.add(CollabSyncMark(
+                    project_id=self._pid, content_hash=content_hash,
+                    synced_at=now))
+            else:
+                mark.content_hash = content_hash
+                mark.synced_at = now
+            db.session.commit()
 
     def _materialize_sync(self, snapshot: dict[str, list[dict]],
                           row_uid: Optional[dict[str, int]] = None):

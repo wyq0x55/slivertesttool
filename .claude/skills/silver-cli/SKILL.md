@@ -121,10 +121,20 @@ it cannot prove remote business validity. Confirmation permits a request; it
 does not grant permissions or authorize broader changes. Follow the user's
 existing authorization; ask only when the required mutation exceeds it.
 
-`COLLAB_ACTIVE` (409) also covers Excel import commit, I/O extraction and
-recycle-bin row restore: while a collaboration room is active, stop and retry
+Versioned field PATCHes (`steps set` and low-level `items.patch_item`) work
+while a collaboration room is active; the server mirrors the accepted cells
+into the live editor. The version check sees the database row, which trails
+the editor by a few seconds, so a PATCH can replace a cell a collaborator just
+changed; `steps` is replaced as one field. Tell the user when you patch a
+project that is being edited live.
+
+`COLLAB_ACTIVE` (409) still covers structural and bulk writes: creating,
+deleting, moving or duplicating rows, Excel import commit, I/O extraction and
+recycle-bin row restore. While a collaboration room is active, stop and retry
 only after collaborative editing ends; never send `X-Collab-Reconcile`, which
 is reserved for the collaborative editor that reconciles rows into the Y.Doc.
+Writes made while no room is active are picked up by the editor the next time
+the project is opened.
 
 Never bypass server permissions, project locks, `COLLAB_ACTIVE`, or the human
 review/apply boundary for generated AI content. On `VERSION_CONFLICT`, stop,

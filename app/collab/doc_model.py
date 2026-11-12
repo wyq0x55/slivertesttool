@@ -7,6 +7,9 @@ values plus the stable ``uuid`` used as the CRDT row identity.
 
 * :func:`bootstrap_doc` seeds an empty ``Doc`` from the current DB state the
   first time a room is opened (when the YStore has no persisted updates).
+* :func:`reconcile_from_db` folds database rows into a Doc hydrated from
+  persisted updates, because REST writes made while no room is live reach the
+  database only.
 * :func:`snapshot_sheet` reads a sheet's array back into the plain list of row
   dicts that :func:`items_service.materialize_sheet` consumes.
 
@@ -16,6 +19,7 @@ pure ``Y`` object construction does not.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
@@ -56,8 +60,8 @@ def bootstrap_doc(doc: Doc, project_id: int) -> int:
     """Populate an empty ``doc`` from the live DB rows of ``project_id``.
 
     Returns the number of rows seeded. Call only when the YStore had nothing to
-    replay (a brand-new room); otherwise the persisted CRDT history is authority
-    and re-seeding would duplicate rows.
+    replay (a brand-new room). A persisted Doc is brought up to date with
+    :func:`reconcile_from_db` instead; re-seeding it would duplicate rows.
     """
     seeded = 0
     with doc.transaction(origin="bootstrap"):
@@ -66,7 +70,8 @@ def bootstrap_doc(doc: Doc, project_id: int) -> int:
             doc[sheet_key(sheet)] = arr
             rows = (TestItemRow.query
                     .filter_by(project_id=project_id, sheet=sheet, deleted_at=None)
-                    .order_by(TestItemRow.row_order.asc()).all())
+                    .order_by(TestItemRow.row_order.asc(),
+                              TestItemRow.id.asc()).all())
             for item in rows:
                 arr.append(Map(_row_state(item)))
                 seeded += 1
@@ -151,37 +156,144 @@ def write_row_errors(doc: Doc, errors_by_uuid: dict[str, Any]) -> int:
     return len(desired)
 
 
-def remove_rows(doc: Doc, sheet: str, uuids: set[str]) -> None:
-    """Remove outbox targets superseded by a later database deletion."""
-    arr = doc.get(sheet_key(sheet), type=Array)
-    for index in reversed(range(len(arr))):
-        if arr[index].get("uuid") in uuids:
-            del arr[index]
+def content_hash(doc: Doc) -> str:
+    """Fingerprint the row content of every sheet, independent of CRDT encoding.
+
+    The materializer stores this after a flush that left nothing unwritten. A
+    persisted Doc that still hashes to the stored value holds no edit the
+    database has not seen, so the database may safely win at the next room open.
+    """
+    content = {sheet: snapshot_sheet(doc, sheet) for sheet in sheets()}
+    text = json.dumps(content, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def restore_rows(doc: Doc, sheet: str, states: list[dict[str, Any]],
-                 order_by_uuid: dict[str, tuple[int, int]]) -> int:
-    """Restore missing live outbox targets at their deterministic DB positions.
+def _same_steps(left: Any, right: Any) -> bool:
+    """Compare step details by meaning: nested CRDT, dict and JSON text agree."""
+    def plain(value: Any) -> Any:
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except ValueError:
+                return value
+        return value
+    return plain(left) == plain(right)
 
-    The server loads only live targets; this is deliberately not a whole-sheet
-    bootstrap. Keep the relative order and content of existing browser rows.
-    Call inside the delivery transaction and materializer suppression block.
+
+def _keep_in_place(ranks: list[int]) -> set[int]:
+    """Positions of a longest increasing run; every other row has to move."""
+    tails: list[int] = []          # tails[k] = position ending a run of length k+1
+    previous = [-1] * len(ranks)
+    for position, rank in enumerate(ranks):
+        low, high = 0, len(tails)
+        while low < high:
+            middle = (low + high) // 2
+            if ranks[tails[middle]] < rank:
+                low = middle + 1
+            else:
+                high = middle
+        previous[position] = tails[low - 1] if low else -1
+        if low == len(tails):
+            tails.append(position)
+        else:
+            tails[low] = position
+    keep: set[int] = set()
+    position = tails[-1] if tails else -1
+    while position >= 0:
+        keep.add(position)
+        position = previous[position]
+    return keep
+
+
+def reconcile_from_db(doc: Doc, sheet: str, states: list[dict[str, Any]],
+                      *, full: bool) -> int:
+    """Fold database rows into a Doc hydrated from persisted updates.
+
+    While no room is live every REST write goes to the database only, so the
+    persisted Doc falls behind. ``states`` are the live rows in database order.
+
+    ``full=True`` (the Doc holds nothing the database has not seen): the
+    database wins. Differing fields are overwritten, rows created offline are
+    inserted, rows deleted offline are removed and the database order is
+    restored by moving as few rows as possible. A row the last flush rejected
+    (listed in the error channel) keeps its in-progress cells unless the
+    database row changed, and a row that never reached the database stays.
+
+    ``full=False`` (the Doc has edits that were never materialized, e.g. after
+    a crash): the Doc wins, except rows whose database version is newer than
+    the version last written back. Those were changed through the versioned
+    REST path after the Doc's last sync and must not be reverted.
+
+    Call inside a ``doc.transaction()`` before the room is observed. Returns
+    the number of rows written, inserted, removed or moved.
     """
     arr = doc.get(sheet_key(sheet), type=Array)
-    restored = 0
-    for state in sorted(states, key=lambda row: order_by_uuid[row["uuid"]]):
-        rows = arr.to_py()
-        row_uuid = state["uuid"]
-        if any(row.get("uuid") == row_uuid for row in rows):
+    rejected = set(doc.get(ERRORS_KEY, type=Map).keys())
+    steps_field = _steps_field(sheet)
+    wanted = {state["uuid"]: {key: value for key, value in state.items()
+                              if key not in _SEED_SKIP}
+              for state in states if state.get("uuid")}
+    rank = {row_uuid: index for index, row_uuid in enumerate(wanted)}
+    rows = arr.to_py()
+    touched = 0
+    in_progress: dict[str, dict[str, Any]] = {}
+
+    for index, row in enumerate(rows):
+        target = wanted.get((row or {}).get("uuid"))
+        if target is None:
             continue
-        rank = order_by_uuid[row_uuid]
-        index = next((index for index, row in enumerate(rows)
-                      if row.get("uuid") in order_by_uuid
-                      and order_by_uuid[row["uuid"]] > rank), len(rows))
-        arr.insert(index, Map({key: value for key, value in state.items()
-                               if key not in _SEED_SKIP}))
-        restored += 1
-    return restored
+        doc_version, db_version = row.get("version"), target.get("version")
+        if full:
+            if row["uuid"] in rejected and doc_version == db_version:
+                in_progress[row["uuid"]] = dict(row)
+                continue
+        elif not (isinstance(doc_version, (int, float))
+                  and isinstance(db_version, int) and db_version > doc_version):
+            continue
+        ymap = arr[index]
+        changed = False
+        for key, value in target.items():
+            current = row.get(key)
+            if key == steps_field and _same_steps(current, value):
+                continue
+            if current != value:
+                ymap[key] = value
+                changed = True
+        touched += changed
+    if not full:
+        return touched
+
+    # Structure. Work on a uuid list mirroring the array, so each insert does
+    # not have to convert the whole array again.
+    for index in reversed(range(len(rows))):
+        row = rows[index] or {}
+        row_id = row.get("id")
+        if (row.get("uuid") not in wanted
+                and isinstance(row_id, (int, float)) and row_id > 0):
+            del arr[index]
+            del rows[index]
+            touched += 1
+    known = [index for index, row in enumerate(rows)
+             if (row or {}).get("uuid") in rank]
+    keep = _keep_in_place([rank[rows[index]["uuid"]] for index in known])
+    moving = [index for position, index in enumerate(known)
+              if position not in keep]
+    placed = [(row or {}).get("uuid") for row in rows]
+    for index in reversed(moving):
+        del arr[index]
+        del placed[index]
+    present = set(placed)
+    for row_uuid in wanted:
+        if row_uuid in present:
+            continue
+        position = next((index for index, other in enumerate(placed)
+                         if other in rank and rank[other] > rank[row_uuid]),
+                        len(placed))
+        arr.insert(position, Map(dict(in_progress.get(row_uuid)
+                                      or wanted[row_uuid])))
+        placed.insert(position, row_uuid)
+        touched += 1
+    return touched
 
 
 def write_row_fields(doc: Doc, sheet: str,

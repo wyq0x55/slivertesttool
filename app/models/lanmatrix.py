@@ -980,6 +980,27 @@ class CollabDoc(db.Model):
 
 
 # --------------------------------------------------------------------------- #
+# Last point at which a project's Y.Doc and its database rows agreed.
+#
+# The materializer stores a fingerprint of the Doc's row content after a flush
+# that left nothing unwritten. When a room is next opened from persisted
+# updates, a matching fingerprint proves the Doc holds no edit the database has
+# not seen, so every difference is a REST write made while the room was closed
+# and the database wins. A mismatch (the collab process died before its final
+# flush) keeps the Doc's unwritten edits instead.
+# --------------------------------------------------------------------------- #
+class CollabSyncMark(db.Model):
+    __tablename__ = "lm_collab_sync_marks"
+
+    project_id = db.Column(
+        db.Integer, db.ForeignKey("lm_projects.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    content_hash = db.Column(db.String(64), nullable=False)
+    synced_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
+
+
+# --------------------------------------------------------------------------- #
 # Cross-process collaboration presence heartbeat (design doc §1.6 / §12.3).
 #
 # The collab server (run_collab) owns exactly one row per project and refreshes
