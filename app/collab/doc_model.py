@@ -151,6 +151,39 @@ def write_row_errors(doc: Doc, errors_by_uuid: dict[str, Any]) -> int:
     return len(desired)
 
 
+def remove_rows(doc: Doc, sheet: str, uuids: set[str]) -> None:
+    """Remove outbox targets superseded by a later database deletion."""
+    arr = doc.get(sheet_key(sheet), type=Array)
+    for index in reversed(range(len(arr))):
+        if arr[index].get("uuid") in uuids:
+            del arr[index]
+
+
+def restore_rows(doc: Doc, sheet: str, states: list[dict[str, Any]],
+                 order_by_uuid: dict[str, tuple[int, int]]) -> int:
+    """Restore missing live outbox targets at their deterministic DB positions.
+
+    The server loads only live targets; this is deliberately not a whole-sheet
+    bootstrap. Keep the relative order and content of existing browser rows.
+    Call inside the delivery transaction and materializer suppression block.
+    """
+    arr = doc.get(sheet_key(sheet), type=Array)
+    restored = 0
+    for state in sorted(states, key=lambda row: order_by_uuid[row["uuid"]]):
+        rows = arr.to_py()
+        row_uuid = state["uuid"]
+        if any(row.get("uuid") == row_uuid for row in rows):
+            continue
+        rank = order_by_uuid[row_uuid]
+        index = next((index for index, row in enumerate(rows)
+                      if row.get("uuid") in order_by_uuid
+                      and order_by_uuid[row["uuid"]] > rank), len(rows))
+        arr.insert(index, Map({key: value for key, value in state.items()
+                               if key not in _SEED_SKIP}))
+        restored += 1
+    return restored
+
+
 def write_row_fields(doc: Doc, sheet: str,
                      values_by_uuid: dict[str, dict[str, Any]]) -> int:
     """Publish server-computed field values onto matching rows in the Doc.
@@ -162,10 +195,10 @@ def write_row_fields(doc: Doc, sheet: str,
     reverted by the next materializer flush, because in collaborative mode the
     ``Y.Doc`` is the authoritative copy of a row (see ``RowWriteback``).
 
-    Only primitives are written: a nested dict/list would become a nested
-    ``Y.Map``/``Y.Array``, which the rest of the pipeline treats as an opaque
-    string. Unchanged values are skipped so an already-applied write-back causes
-    no observer churn. Returns the number of rows actually modified.
+    List/object fields retain the same representation as :func:`_row_state`
+    (for example, ``tags`` stays a list). Only step-detail fields are JSON text,
+    matching :func:`snapshot_sheet` and the database field contract. Unchanged
+    values are skipped. Returns the number of rows actually modified.
 
     MUST be called inside a ``doc.transaction()`` **and** the materializer's
     ``suppressed()`` block so the write does not re-trigger a reconcile.
@@ -183,7 +216,7 @@ def write_row_fields(doc: Doc, sheet: str,
         ymap = arr[index]
         touched = False
         for key, value in wanted.items():
-            if isinstance(value, (dict, list)):
+            if key == _steps_field(sheet) and isinstance(value, (dict, list)):
                 try:
                     value = json.dumps(value, ensure_ascii=False)
                 except (TypeError, ValueError):

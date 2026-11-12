@@ -157,9 +157,10 @@ def test_periodic_worker_reconciles_sealed_outcome_and_crdt_once(submitted, monk
     assert db.session.get(RunEvidence, (task.id, 1)).finalised
     assert TestRunRecord.query.count() == 1
     assert RowWriteback.query.count() == 1
-    pending = writeback.claim_pending([task.project_id])
+    pending = writeback.pending_batch([task.project_id])
+    by_uuid = {entry["row_uuid"]: entry["payload"] for entry in pending}
     with document.transaction():
-        assert doc_model.write_row_fields(document, "test", pending[task.project_id]) == 1
+        assert doc_model.write_row_fields(document, "test", by_uuid) == 1
     assert doc_model.snapshot_sheet(document, "test")[0]["result"] == "PASS"
     assert tasks.recover_run_attempts()["recovered"] == []
     assert TestRunRecord.query.count() == 1 and RowWriteback.query.count() == 1

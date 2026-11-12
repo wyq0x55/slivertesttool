@@ -53,17 +53,10 @@ class Materializer:
         self._timer: Optional[asyncio.TimerHandle] = None
         self._flushing = False
         self._dirty_again = False
-        # Monotonic counter bumped whenever something OUTSIDE this materializer
-        # writes authoritative values into the Y.Doc (currently: the run
-        # write-back drain in ``server._drain_writebacks``).
-        #
-        # A flush snapshots the Doc on the loop thread and then spends hundreds
-        # of milliseconds committing that snapshot in a worker thread. Any Doc
-        # write that lands inside that window is NOT in the snapshot, yet the
-        # commit rewrites the whole sheet -- blanking the freshly written
-        # columns. Comparing the epoch across the window detects exactly that
-        # race and re-runs the reconcile with a fresh snapshot.
-        self._wb_epoch: int = 0
+        # The server drain shares this lock. Hold it from snapshot through DB
+        # commit and ID writeback, so no snapshot taken before delivery can
+        # commit after that delivery's acknowledgement.
+        self.write_lock = asyncio.Lock()
         # FIX: 用整数计数器替代 bool，嵌套 suppressed() 调用不会提前放开观察器。
         # 进入 +1，退出 -1；只有计数归零才重新响应 Y.Doc 事务。
         self._suppress: int = 0
@@ -92,17 +85,6 @@ class Materializer:
         finally:
             self._suppress -= 1
 
-    def note_external_write(self) -> None:
-        """Record that authoritative values were written into the Doc by others.
-
-        Called by the collab server right after it applies queued run
-        write-backs inside :meth:`suppressed` (which, by design, does not arm
-        the debounce timer). Combined with :meth:`schedule_flush` this makes the
-        mirrored values reach the database instead of waiting for the next
-        unrelated user edit -- and invalidates any snapshot taken before it.
-        """
-        self._wb_epoch += 1
-
     def schedule_flush(self) -> None:
         """Arm the debounced reconcile from outside the Doc observer."""
         if self._flushing:
@@ -117,6 +99,9 @@ class Materializer:
             except Exception:  # pragma: no cover - best effort on teardown
                 pass
         self._sub = None
+        self._doc = None
+        self._awareness = None
+        self._loop = None
         if self._timer is not None:
             self._timer.cancel()
             self._timer = None
@@ -130,6 +115,11 @@ class Materializer:
         reconcile so no edits are lost, then detach so the ``Y.Doc`` can be torn
         down without leaking this observer. Awaited on the event-loop thread.
         """
+        async with self.write_lock:
+            await self._flush_and_detach_locked()
+
+    async def _flush_and_detach_locked(self) -> None:
+        """Final flush/teardown with ``write_lock`` already held by eviction."""
         had_pending = (self._timer is not None
                        or self._dirty_again
                        or self._flushing)
@@ -138,7 +128,7 @@ class Materializer:
             self._timer = None
         if had_pending and self._doc is not None:
             try:
-                await self._flush()
+                await self._flush_locked()
             except Exception:  # pragma: no cover - never crash teardown
                 _log.exception("final flush failed for project %s", self._pid)
         self.detach()
@@ -166,10 +156,13 @@ class Materializer:
         self._loop.create_task(self._flush())
 
     async def _flush(self) -> None:
+        async with self.write_lock:
+            await self._flush_locked()
+
+    async def _flush_locked(self) -> None:
+        if self._doc is None:
+            return
         self._flushing = True
-        # Read BEFORE the snapshot: any external Doc write after this point is
-        # missing from the snapshot we are about to commit (see ``_wb_epoch``).
-        epoch_at_snapshot = self._wb_epoch
         try:
             # Snapshot on the loop thread (reads the Y types), then hand the
             # plain dicts to a worker thread for the DB reconcile.
@@ -186,13 +179,6 @@ class Materializer:
             # back into the Y.Doc on the loop thread; suppressed so it does not
             # re-trigger a reconcile.
             self._apply_id_writeback(idmaps, row_errors)
-            if self._wb_epoch != epoch_at_snapshot:
-                # Server-owned values landed in the Doc while we were writing a
-                # snapshot that predates them; that commit just blanked them in
-                # the database. Reconcile once more from the current Doc.
-                _log.info("stale snapshot detected for project %s; "
-                          "re-materializing", self._pid)
-                self._dirty_again = True
         except Exception:  # pragma: no cover - logged, never crashes the loop
             _log.exception("materialization failed for project %s", self._pid)
         finally:
@@ -218,7 +204,7 @@ class Materializer:
         with self._app.app_context():
             project = Project.query.get(self._pid)
             if project is None:
-                return {}, {}
+                return {}, {}, {}
             actor = self._resolve_actor(project)
             actor_by_uuid = self._resolve_row_actors(row_uid)
             result: dict[str, dict[str, int]] = {}

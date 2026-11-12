@@ -113,11 +113,22 @@ python -m silver_cli call projects.create_project --json '@project.json' --confi
   授予、审批证明或风险豁免。AI 审核、删除、清空、管理员 SQL 等动作应由调用器
   另行实施明确的人类授权策略，不能把 `--confirm` 当成自动批准。
 
-低层 `call items.patch_item` 仍需正文 `version` + `changes`。版本冲突返回 409，此命令不替你
-读取最新版本后强行覆盖。协同编辑活跃时原有 `COLLAB_ACTIVE` 写保护仍生效，
-CLI 不绕过 CRDT 的单写者约束。Excel 导入提交、入出力抽取和回收站行还原同样受此
-保护：房间活跃时返回 409 `COLLAB_ACTIVE`，需等协同编辑结束后再执行（只有协同编辑器
-本身能在写入后把行折回 Y.Doc）。用户角色也不会因为使用 CLI 而提升。
+Low-level `call items.patch_item` still requires `version` + `changes`. A stale
+version returns 409; the CLI never forces an overwrite. Accepted field PATCHes
+(including case, steps and shared-row edits) commit a durable mirror message
+with the database update. They work while collaboration is active. The collab
+server applies only the supplied cells, persists the Y.Doc and a delivery
+receipt, then acknowledges the message. Pending messages survive offline rooms
+and restarts; stale materialization cannot overwrite their fields. An accepted
+PATCH takes effect when delivered; subsequent browser edits remain valid, and
+retrying an already delivered message does not replay it over those edits.
+
+Structural and bulk operations retain `COLLAB_ACTIVE`: create/delete/move rows,
+Excel import commit, IO extraction and recycle-bin row restore still require
+the collaborative editor's reconciliation path or an inactive room. CLI access
+does not change roles or permissions. The same outbox covers `test`, `const`,
+`lib` and `io`. Reasserting a field's current DB value also queues it, allowing
+an older stale document to be repaired without deleting its CRDT history.
 
 ## Typical flow: find a project, pick a case, fix its steps, rerun
 
@@ -247,8 +258,9 @@ state; they cannot validate the remote version or step index against live data.
 For a confirmed steps write, the CLI reads the current version and submits one
 PATCH. A stale version returns `VERSION_CONFLICT` (exit 5); inspect the latest
 document, reconcile the change, and retry only within the authorized scope. The
-CLI does not silently rebase or retry the write. `COLLAB_ACTIVE` and project
-locks remain server-enforced.
+CLI does not silently rebase or retry the write. Project locks remain enforced;
+`COLLAB_ACTIVE` still protects structural and bulk writes. Versioned field
+PATCHes use the durable collaboration delivery path described above.
 
 Task listing reads the newest 2000 runs and can be truncated by the server's
 growing-window limit; inspect `total`, `truncated`, and returned counts before

@@ -11,6 +11,8 @@ from typing import Any, Optional
 
 _log = logging.getLogger(__name__)
 
+from sqlalchemy.orm.attributes import set_committed_value
+
 from ...extensions import db
 from ...models import LMUser, Project, TestItemRow
 from . import audit, queries, settings, validation
@@ -259,37 +261,23 @@ def add_pool_entry(user: LMUser, project: Project, sheet: str,
 def update_item(user: LMUser, project: Project, item: TestItemRow,
                 version: int, changes: dict[str, Any],
                 *, commit: bool = True) -> TestItemRow:
-    # Fast pre-check for a friendly error without touching the DB when the caller
-    # is already known to be stale.
+    from ...collab import writeback
+    writeback.lock_project(project.id)
+    # Callers load the row before acquiring this lock. Refresh only after the
+    # lock so CAS reports the committed winner, including materializer writes.
+    writeback.refresh_row(item)
+    with db.session.no_autoflush:
+        status, deleted_at = (db.session.query(Project.status, Project.deleted_at)
+                              .filter(Project.id == project.id).one())
+    if status not in ("draft", "active") or deleted_at is not None:
+        raise ServiceError("项目当前不可编辑", code="PROJECT_LOCKED")
+    if item.project_id != project.id or item.deleted_at is not None:
+        raise ServiceError("测试项不存在", code="NOT_FOUND")
     if version != item.version:
         raise VersionConflict(version, item.version, item.to_dict())
-    # Atomically CLAIM the version with a single guarded UPDATE that only matches
-    # while the row is still at ``version``. This closes the check-then-write
-    # TOCTOU: two editors starting from the same version can no longer both
-    # succeed (previously the Python-level compare above let both pass, then both
-    # bumped to version+1 and the last writer silently clobbered the first). The
-    # matched row is also write-locked until commit, serialising the rest of this
-    # function; a losing caller matches 0 rows and is told to reload.
-    claimed = (
-        db.session.query(TestItemRow)
-        .filter(TestItemRow.id == item.id, TestItemRow.version == version)
-        .update({TestItemRow.version: version + 1}, synchronize_session=False)
-    )
-    if not claimed:
-        # Someone committed a newer version between our pre-check and the claim.
-        # Re-read the winning row (identity-mapped ``item`` still holds the stale
-        # value, so force a refresh) to report the true current version.
-        try:
-            db.session.refresh(item)
-        except Exception:  # noqa: BLE001 - row may have been deleted meanwhile
-            db.session.rollback()
-        raise VersionConflict(version, item.version, item.to_dict())
-    # Keep the in-session object consistent with the DB value we just wrote
-    # (synchronize_session=False does not update it for us).
-    item.version = version + 1
+    old = item.to_dict()
     specs = field_specs(project.id)
     spec_by_key = {s.field_key: s for s in specs}
-    old = item.to_dict()
     errors: list = []
     coerced: dict[str, Any] = {}
     for key, raw in changes.items():
@@ -303,13 +291,38 @@ def update_item(user: LMUser, project: Project, item: TestItemRow,
     if validation.has_blocking(errors):
         raise ServiceError("输入数据校验失败", code="VALIDATION_ERROR",
                            details=[e.to_dict() for e in errors])
+    # Keep the guarded claim even with the project lock: other legacy writers
+    # may still update rows directly. Validation has not mutated the row yet.
+    claimed = (db.session.query(TestItemRow)
+               .filter(TestItemRow.id == item.id,
+                       TestItemRow.project_id == project.id,
+                       TestItemRow.deleted_at.is_(None),
+                       TestItemRow.version == version)
+               .update({TestItemRow.version: version + 1},
+                       synchronize_session=False))
+    if not claimed:
+        writeback.refresh_row(item)
+        raise VersionConflict(version, item.version, item.to_dict())
+    # The guarded UPDATE already stored this version. Mark it committed in the
+    # identity map so another commit=False update does not rebase it as a local
+    # increment when refreshing the same row.
+    set_committed_value(item, "version", version + 1)
     _apply_values(item, coerced, specs)
-    # version was already claimed atomically above; do not bump again.
     item.updated_by = user.id
     item.updated_at = _utcnow()
+    new = item.to_dict()
+    # Diff the serialized fields, not request keys: aliases and coercion can
+    # change additional keys, and ignored/read-only fields must not be mirrored.
+    # Include accepted supplied fields even when unchanged: reasserting a value
+    # can repair an older persisted Doc whose original delivery was lost.
+    effective = {key: new[key] for key in coerced if key in new}
+    effective.update({key: value for key, value in new.items()
+                      if key not in _MATERIALIZE_SKIP and old.get(key) != value})
+    effective["version"] = item.version
+    writeback.enqueue_fields(project.id, item, effective)
     audit.record("item.update", actor_id=user.id, object_type="item",
                  object_id=item.id, project_id=project.id,
-                 old_value=old, new_value=item.to_dict())
+                 old_value=old, new_value=new)
     if commit:
         db.session.commit()
     return item
@@ -668,7 +681,18 @@ def materialize_sheet(user: LMUser, project: Project, sheet: str,
     cursor sits on a row that has just disappeared).
     """
     from . import fields as fld
+    from ...collab import writeback
+    from ...models import RowWriteback
+    writeback.lock_project(project.id)
     row_sheet = sheet if sheet in fld.SHEETS else fld.DEFAULT_SHEET
+    # Read the entire pending set under the same lock as API writes. A bounded
+    # delivery batch is insufficient here: every unmirrored field is protected.
+    pending: dict[str, dict[str, Any]] = {}
+    for entry in (RowWriteback.query.filter_by(
+            project_id=project.id, sheet=row_sheet, applied_at=None)
+            .order_by(RowWriteback.id.asc()).all()):
+        pending.setdefault(entry.row_uuid, {}).update(
+            writeback.expand_aliases(entry.payload or {}))
     by_uuid = actor_by_uuid or {}
     # Validate only fields that belong to this sheet, so a required cell on
     # another tab never flags a const/lib row and vice-versa.
@@ -676,7 +700,7 @@ def materialize_sheet(user: LMUser, project: Project, sheet: str,
              if getattr(s, "sheet", fld.DEFAULT_SHEET) == row_sheet]
     existing: dict[str, TestItemRow] = {
         r.uuid: r for r in TestItemRow.query.filter_by(
-            project_id=project.id, sheet=row_sheet).all()}
+            project_id=project.id, sheet=row_sheet).populate_existing().all()}
     seen: set[str] = set()
     created = updated = failed = unchanged = 0
     errors: dict[str, dict[str, Any]] = {}
@@ -685,6 +709,8 @@ def materialize_sheet(user: LMUser, project: Project, sheet: str,
         if not row_uuid:
             continue
         seen.add(row_uuid)
+        if row_uuid in pending:
+            state = {**state, **pending[row_uuid]}
         # Non-blocking validation: live collaboration means rows are constantly
         # mid-edit, so required-but-blank is tolerated (enforce_required=False);
         # only hard errors (bad number/date/enum) mark the cell.

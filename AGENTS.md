@@ -44,8 +44,11 @@ Do not reintroduce startup races by moving persistent bootstrap work back into
 - **AI**: generate -> machine validate/retry -> persist draft -> human
   review/approve -> apply through the existing service layer. AI output is never
   authoritative merely because it was generated.
-- **CRDT collaboration**: collaborative editing/materialization. Preserve the
-  single-writer boundary when a project is actively collaborative.
+- **CRDT collaboration**: collaborative editing/materialization. Structural row
+  writes retain the single-writer guard during active collaboration. Versioned
+  field PATCHes use a transactional outbox shared with server result updates:
+  pending fields are protected from stale materialization, and delivery is
+  acknowledged only after the document and its receipt are durable.
 
 The `lanmatrix_projects` Flask blueprint name and endpoint identities are a
 public route contract. Project resource routes are intentionally split across

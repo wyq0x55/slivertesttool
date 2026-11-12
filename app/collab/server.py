@@ -25,12 +25,13 @@ Contracts VERIFIED against the installed pycrdt-websocket 0.16.4 source:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from urllib.parse import parse_qs
 
 import anyio
-from pycrdt import Doc
+from pycrdt import Doc, Map
 from pycrdt.store import YDocNotFound
 from pycrdt.websocket import ASGIServer, WebsocketServer, YRoom
 
@@ -39,6 +40,11 @@ from .materializer import Materializer
 from .pg_ystore import PgYStore
 
 _log = logging.getLogger("collab.server")
+
+# One monotonic receipt per project. All producers serialize on the Project
+# lock before allocating queue IDs, so later committed entries have larger IDs.
+# The receipt is persisted atomically with fields in a full Doc update.
+_WRITEBACK_RECEIPTS_KEY = "server_writeback_receipts"
 
 
 def _room_from_scope(scope: dict) -> str:
@@ -66,6 +72,9 @@ class CollabWebsocketServer(WebsocketServer):
         self._app = flask_app
         self._rooms: dict[str, YRoom] = {}
         self._materializers: dict[str, Materializer] = {}
+        # Serialize creation/eviction so concurrent reconnects share one Doc and
+        # one PgYStore sequence allocator. Live delivery uses the per-room lock.
+        self._room_lifecycle_lock = asyncio.Lock()
         # name -> monotonic timestamp of the last moment the room had a client.
         self._last_active: dict[str, float] = {}
         cfg = flask_app.config
@@ -76,19 +85,20 @@ class CollabWebsocketServer(WebsocketServer):
         # collaborative (single-writer boundary; design doc §1.6 / §12.3).
         self._heartbeat_interval = float(
             cfg.get("COLLAB_PRESENCE_HEARTBEAT_SECONDS", 10) or 10)
-        # Server -> Doc write-back drain (finished-run verdicts etc.). Kept well
-        # below the materializer debounce so a queued value reaches the Doc
-        # before the next reconcile would overwrite it from the stale Doc state.
+        # Polling controls how quickly committed field writes reach the Doc.
+        # Correctness comes from pending-field protection and durable receipts,
+        # rather than this interval being shorter than the materializer debounce.
         self._writeback_interval = float(
             cfg.get("COLLAB_WRITEBACK_POLL_SECONDS", 2.0) or 2.0)
 
     async def get_room(self, name: str) -> YRoom:
-        room = self._rooms.get(name)
-        if room is None:
-            room = await self._create_room(name)
-            self._rooms[name] = room
-        self._last_active[name] = time.monotonic()
-        return room
+        async with self._room_lifecycle_lock:
+            room = self._rooms.get(name)
+            if room is None:
+                room = await self._create_room(name)
+                self._rooms[name] = room
+            self._last_active[name] = time.monotonic()
+            return room
 
     async def _create_room(self, name: str) -> YRoom:
         pid = int(name.split(":", 1)[1])
@@ -111,16 +121,22 @@ class CollabWebsocketServer(WebsocketServer):
             # Existing doc: make sure every sheet array key exists.
             doc_model.ensure_sheets(ydoc)
 
-        # 2) Build the room (ystore persists every future update) and start it.
+        # 2) Drain the complete offline backlog before observing or exposing the
+        # room. Hydration and live delivery use the same persistence/ack path.
         room = YRoom(ydoc=ydoc, ystore=ystore)
+        mat = Materializer(pid, self._app)
+        delivered = False
+        while await self._deliver_writebacks(room, pid, mat):
+            delivered = True
         await self.start_room(room)
 
         # 3) Attach debounced materialization (Y.Doc -> TestItemRow). The room's
         # Awareness (if the pycrdt-websocket build exposes one) lets the
         # materializer credit each row to the collaborator editing it.
-        mat = Materializer(pid, self._app)
         mat.attach(ydoc, awareness=getattr(room, "awareness", None))
         self._materializers[name] = mat
+        if delivered:
+            mat.schedule_flush()
         _log.info("collab room ready: %s (hydrated=%s)", name, loaded)
         return room
 
@@ -220,40 +236,119 @@ class CollabWebsocketServer(WebsocketServer):
                 _log.exception("collab write-back drain iteration failed")
 
     async def _drain_writebacks(self) -> None:
-        pids = {int(name.split(":", 1)[1]): name for name in self._rooms}
-        if not pids:
-            return
-        claimed = await anyio.to_thread.run_sync(self._claim_writebacks_sync,
-                                                 list(pids))
-        for pid, by_uuid in (claimed or {}).items():
-            name = pids.get(pid)
-            room = self._rooms.get(name) if name else None
-            mat = self._materializers.get(name) if name else None
-            if room is None or mat is None:
-                continue
-            # Suppress the reconcile: these values came FROM the database, so
-            # echoing them back through the materializer would be pure churn.
-            with mat.suppressed():
-                with room.ydoc.transaction():
-                    changed = doc_model.write_row_fields(
-                        room.ydoc, "test", by_uuid)
-            if changed:
-                _log.info("applied %s collab write-back row(s) to %s",
-                          changed, name)
-                # The suppressed write above deliberately does not trigger the
-                # observer, so nothing would ever persist these values back to
-                # the database -- and a materializer flush that snapshotted the
-                # Doc *before* this write is about to blank them. Bump the
-                # epoch (invalidating such a snapshot) and arm one reconcile.
-                # ``materialize_sheet`` is a no-op when nothing differs, so the
-                # extra pass is cheap when the database already agrees.
-                mat.note_external_write()
-                mat.schedule_flush()
+        # Give every room a batch per round so a large backlog in one project
+        # does not starve the others. Repeat until all current backlogs drain.
+        names = list(self._rooms)
+        failure = None
+        while names:
+            more = []
+            for name in names:
+                room = self._rooms.get(name)
+                mat = self._materializers.get(name)
+                if room is None or mat is None:
+                    continue
+                try:
+                    if await self._deliver_writebacks(
+                            room, int(name.split(":", 1)[1]), mat,
+                            live_name=name):
+                        more.append(name)
+                except Exception as exc:
+                    # Keep its batch pending and let other rooms make progress.
+                    _log.exception("collab write-back delivery failed: %s", name)
+                    if failure is None:
+                        failure = exc
+            names = more
+        if failure is not None:
+            raise failure
 
-    def _claim_writebacks_sync(self, pids: list) -> dict:
+    async def _deliver_writebacks(self, room: YRoom, pid: int,
+                                 mat: Materializer, *,
+                                 live_name: str | None = None) -> bool:
+        """Deliver one ordered batch, with a durable receipt before exact ack.
+
+        A failed store write leaves the in-memory receipt in place. The retry
+        persists the full Doc again, even if nothing changed, before acking.
+        A failed ack or process restart reuses that receipt and never replays
+        the old values over browser edits made since their first delivery.
+        """
+        from . import writeback
+        async with mat.write_lock:
+            # Eviction may have won the lock after the drain chose this room.
+            if live_name is not None and (
+                    self._rooms.get(live_name) is not room
+                    or self._materializers.get(live_name) is not mat):
+                return False
+            entries = await anyio.to_thread.run_sync(
+                self._pending_writebacks_sync, [pid])
+            if not entries:
+                return False
+            doc = room.ydoc
+            receipts = doc.get(_WRITEBACK_RECEIPTS_KEY, type=Map)
+            watermark = int(receipts.get(str(pid), "0"))
+            fresh = [entry for entry in entries if entry["id"] > watermark]
+            by_sheet = {}
+            for entry in fresh:
+                sheet = entry["sheet"]
+                if sheet not in doc_model.sheets():
+                    raise ValueError(f"invalid write-back sheet {sheet!r}")
+                by_sheet.setdefault(sheet, {}).setdefault(
+                    entry["row_uuid"], {}).update(
+                        writeback.expand_aliases(entry["payload"]))
+            targets = (await anyio.to_thread.run_sync(
+                self._writeback_targets_sync, pid,
+                {sheet: set(by_uuid) for sheet, by_uuid in by_sheet.items()}
+            )) if by_sheet else {}
+            with mat.suppressed():
+                with doc.transaction(origin="server-writeback"):
+                    for sheet, by_uuid in by_sheet.items():
+                        states, order, deleted = targets[sheet]
+                        doc_model.remove_rows(doc, sheet, deleted)
+                        # Only hydration repairs an incomplete historical Doc.
+                        # Absence in a live room is a browser deletion, which
+                        # wins over an undelivered field patch.
+                        if live_name is None:
+                            doc_model.restore_rows(doc, sheet, states, order)
+                        doc_model.write_row_fields(doc, sheet, by_uuid)
+                    if fresh:
+                        receipts[str(pid)] = str(fresh[-1]["id"])
+            # This explicit full update is required even on receipt-only retries
+            # and no-op values. YRoom's asynchronous observer is not an ack.
+            await room.ystore.write(doc.get_update())
+            await anyio.to_thread.run_sync(
+                self._acknowledge_writebacks_sync,
+                [entry["id"] for entry in entries])
+            mat.schedule_flush()
+            return True
+
+    def _pending_writebacks_sync(self, pids: list) -> list[dict]:
         from . import writeback
         with self._app.app_context():
-            return writeback.claim_pending(pids)
+            return writeback.pending_batch(pids)
+
+    def _acknowledge_writebacks_sync(self, ids: list[int]) -> None:
+        from . import writeback
+        with self._app.app_context():
+            writeback.acknowledge(ids)
+
+    def _writeback_targets_sync(self, pid: int, targets: dict) -> dict:
+        """Load live outbox targets and identify later deletions.
+
+        A deleted target may still exist in persisted CRDT history. Remove it
+        before acknowledging its older patch, or materialization resurrects it.
+        """
+        from ..models import TestItemRow
+        with self._app.app_context():
+            result = {}
+            for sheet, uuids in targets.items():
+                # One snapshot supplies both targets and insertion order, so
+                # a concurrent deletion cannot leave a target without a rank.
+                rows = TestItemRow.query.filter_by(
+                    project_id=pid, sheet=sheet, deleted_at=None).all()
+                states = [row.to_dict() for row in rows if row.uuid in uuids]
+                order = {row.uuid: (row.row_order, row.id) for row in rows}
+                deleted = uuids - set(order)
+                result[sheet] = states, order, deleted
+            return result
 
     async def _sweep_loop(self) -> None:
         """Periodically evict rooms that have been client-less past the TTL."""
@@ -297,25 +392,34 @@ class CollabWebsocketServer(WebsocketServer):
         The durable CRDT state lives in :class:`PgYStore`, so a re-connection
         after eviction rebuilds the room via :meth:`_create_room`.
         """
-        room = self._rooms.pop(name, None)
-        # A client may have connected in the tiny window before this coroutine
-        # ran; if so, keep the room and refresh its idle clock.
-        if room is not None and room.clients:
-            self._rooms[name] = room
-            self._last_active[name] = time.monotonic()
-            return
-        mat = self._materializers.pop(name, None)
+        async with self._room_lifecycle_lock:
+            room = self._rooms.get(name)
+            if room is None:
+                return
+            # Recheck after waiting for creation/another eviction.
+            if room.clients:
+                self._last_active[name] = time.monotonic()
+                return
+            mat = self._materializers.get(name)
+            if mat is not None:
+                async with mat.write_lock:
+                    if room.clients:
+                        self._last_active[name] = time.monotonic()
+                        return
+                    await mat._flush_and_detach_locked()
+                    await self._stop_and_forget_room(name, room)
+            else:
+                await self._stop_and_forget_room(name, room)
+
+    async def _stop_and_forget_room(self, name: str, room: YRoom) -> None:
+        """Stop a room while its lifecycle and materializer locks are held."""
+        try:
+            await room.stop()
+        except Exception:  # pragma: no cover
+            _log.exception("room stop failed: %s", name)
+        self._rooms.pop(name, None)
+        self._materializers.pop(name, None)
         self._last_active.pop(name, None)
-        if mat is not None:
-            try:
-                await mat.flush_and_detach()
-            except Exception:  # pragma: no cover
-                _log.exception("materializer flush/detach failed: %s", name)
-        if room is not None:
-            try:
-                await room.stop()
-            except Exception:  # pragma: no cover
-                _log.exception("room stop failed: %s", name)
         # Room is gone: tell the web app this project is no longer collaborative
         # so REST writes resume immediately (don't wait for the presence TTL).
         try:

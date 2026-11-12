@@ -130,9 +130,6 @@ def patch_item(project_id, item_id):
     project, _ = _project_and_role(project_id, "item.edit")
     if not project.is_editable:
         return err("PROJECT_LOCKED", "项目当前不可编辑", status=409)
-    blocked = _collab_write_blocked(project_id)
-    if blocked is not None:
-        return blocked
     item = service.get_item(project_id, item_id)
     body = request.get_json(silent=True) or {}
     if "version" not in body:

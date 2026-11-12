@@ -282,7 +282,7 @@ class TestCollabDelivery:
     ``record_run`` writing the database is only half the loop. When somebody has
     the sheet open, the ``Y.Doc`` -- not the database -- is the authoritative
     copy of a row, so the values also have to travel
-    ``RowWriteback -> claim_pending -> write_row_fields -> Y.Doc``. Every earlier
+    ``RowWriteback -> pending_batch -> write_row_fields -> Y.Doc``. Every earlier
     test stopped at the database, which is exactly why a break anywhere in this
     hop would have looked like "the write-back silently did nothing".
 
@@ -320,11 +320,12 @@ class TestCollabDelivery:
 
         assert rws.record_run(task, "PASS") == 1
 
-        claimed = writeback.claim_pending([project.id])
-        assert project.id in claimed, "run was not queued for the live room"
+        pending = writeback.pending_batch([project.id])
+        assert pending, "run was not queued for the live room"
+        assert all(entry["sheet"] == "test" for entry in pending)
+        by_uuid = {entry["row_uuid"]: entry["payload"] for entry in pending}
         with doc.transaction():
-            changed = doc_model.write_row_fields(doc, "test",
-                                                 claimed[project.id])
+            changed = doc_model.write_row_fields(doc, "test", by_uuid)
         assert changed == 1
 
         row = doc_model.snapshot_sheet(doc, "test")[0]
@@ -338,8 +339,8 @@ class TestCollabDelivery:
         Presence is a heartbeat with a TTL: a single missed beat used to skip
         the queue entirely, and the database write was then blanked by the next
         materializer flush with nothing left to restore it. Queueing for a
-        project nobody is editing costs one row, which ``claim_pending``'s TTL
-        and ``purge_applied`` drop.
+        project nobody is editing remains pending until durable delivery;
+        offline edits must not expire.
         """
         from app.models import RowWriteback
         from app.services.lanmatrix import run_writeback_service as rws
@@ -348,7 +349,7 @@ class TestCollabDelivery:
         assert rws.record_run(task, "PASS") == 1
         assert RowWriteback.query.filter_by(project_id=project.id).count() == 1
 
-    def test_purge_applied_trims_both_applied_and_abandoned(self, app, seeded):
+    def test_purge_applied_keeps_unacknowledged_offline_writes(self, app, seeded):
         from datetime import timedelta
 
         from app.extensions import db
@@ -368,6 +369,6 @@ class TestCollabDelivery:
         db.session.add(fresh)
         db.session.commit()
 
-        assert writeback.purge_applied() == 2
-        left = RowWriteback.query.filter_by(project_id=project.id).all()
-        assert [r.row_uuid for r in left] == ["c"]
+        assert writeback.purge_applied() == 1
+        left = RowWriteback.query.filter_by(project_id=project.id).order_by(RowWriteback.id).all()
+        assert [r.row_uuid for r in left] == ["b", "c"]
