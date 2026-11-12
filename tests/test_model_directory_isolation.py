@@ -33,11 +33,27 @@ def registry(tmp_path, monkeypatch):
     session.add.side_effect = add
     monkeypatch.setattr(project_model_service, "db", SimpleNamespace(session=session))
     monkeypatch.setattr(project_model_service, "_models_root", lambda *_args: config.MODEL_DIR)
-    monkeypatch.setattr(project_model_service, "_query", lambda *_args: SimpleNamespace(
-        filter_by=lambda **kwargs: SimpleNamespace(
-            all=lambda: [row for row in rows if row.name == kwargs["name"]],
-        ),
-    ))
+
+    class Query:
+        """Enough of the project-model query for registration's current-row update."""
+
+        def __init__(self, items):
+            self._items = list(items)
+
+        def all(self):
+            return list(self._items)
+
+        def filter_by(self, **kwargs):
+            return Query(row for row in self._items
+                         if all(getattr(row, key) == value for key, value in kwargs.items()))
+
+        def filter(self, *_criteria):
+            return self
+
+        def update(self, _values, synchronize_session=None):
+            return 0
+
+    monkeypatch.setattr(project_model_service, "_query", lambda *_args: Query(rows))
     monkeypatch.setattr(project_model_service, "_select_model", select)
     monkeypatch.setattr(project_model_service, "has_models", lambda *_args: bool(rows))
     monkeypatch.setattr(project_model_service, "_audit_version_change", Mock())
