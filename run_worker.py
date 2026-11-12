@@ -37,8 +37,15 @@ configure_logging("worker", Config)
 # the worker must never migrate schema/files itself.
 from app.jobqueue import tasks  # noqa: F401
 from app.jobqueue.huey_app import huey
+from app.runners import process_guard
 
 logger = logging.getLogger("silvetestapp.worker")
+
+# Kill-on-close job the worker places itself in (Windows only). Every Silver
+# process the worker starts inherits membership, so the kernel terminates them
+# when this process ends -- including a hard kill that never reaches the
+# ``atexit`` pool dispose. Kept referenced for the process lifetime.
+_silver_job: process_guard.KillOnCloseJob | None = None
 
 
 def _sweep_silver(config) -> None:
@@ -87,7 +94,18 @@ def _reconcile_loop(app, config, stop: threading.Event) -> None:
         stop.wait(max(0.5, interval))
 
 
+def _bind_to_kill_on_close_job() -> None:
+    global _silver_job
+    if _silver_job is not None:
+        return
+    job = process_guard.KillOnCloseJob.create()
+    if job is not None and job.assign_current_process():
+        _silver_job = job
+
+
 def main() -> None:
+    # Before any Silver instance can be launched, so all of them join the job.
+    _bind_to_kill_on_close_job()
     app = tasks._get_app()
     config = app.config_obj
     from app.services import license_service
@@ -157,6 +175,10 @@ def main() -> None:
         workers=Config.HUEY_WORKERS,
         worker_type="thread",
     )
+    # run.py stops this worker with CTRL_BREAK_EVENT on Windows (there is no
+    # SIGTERM to deliver). Treat it like Huey's SIGTERM: stop consuming and
+    # exit normally, so the atexit pool shutdown disposes every Silver instance.
+    process_guard.install_break_handler(consumer._handle_stop_signal)
     try:
         consumer.run()
     finally:
