@@ -83,6 +83,16 @@ def revoke(user: LMUser, token_id: int) -> ApiToken:
     return token
 
 
+def revoke_all(user: LMUser, *, actor_id: int) -> int:
+    """Revoke every active token of ``user`` (e.g. after a password reset); the caller commits."""
+    now = _now()
+    tokens = _active(ApiToken.query.filter_by(user_id=user.id)).all()
+    for token in tokens:
+        token.revoked_at = now
+        audit.record("api_token.revoke", actor_id=actor_id, object_type="api_token", object_id=token.id)
+    return len(tokens)
+
+
 def authenticate(secret: str) -> Optional[LMUser]:
     """The active owner of a valid, unexpired, unrevoked token, else None."""
     if not secret.startswith(PREFIX):

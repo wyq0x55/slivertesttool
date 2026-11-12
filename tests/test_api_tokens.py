@@ -154,3 +154,47 @@ def test_token_page_needs_login_and_renders(app):
     client.post("/api/v1/auth/login", json={"username": "agent", "password": "secret"})
     page = client.get("/lanmatrix/tokens")
     assert page.status_code == 200 and "lm-token-form" in page.get_data(as_text=True)
+
+
+def _make_admin(app):
+    from app.extensions import db
+    from app.models import LMUser
+
+    LMUser.query.filter_by(username="agent").one().is_system_admin = True
+    db.session.commit()
+
+
+def test_token_cannot_manage_accounts_even_as_admin(app):
+    """A leaked admin token must not create users or reset passwords, then log in to mint tokens."""
+    from app.models import LMUser
+
+    _make_admin(app)
+    secret, _ = _issue(app)
+    client = app.test_client()
+    other = LMUser.query.filter_by(username="admin").one()
+    created = client.post("/api/v1/admin/users", headers=_bearer(secret),
+                          json={"username": "mallory", "password": "mallory-pass", "is_system_admin": True})
+    assert created.status_code == 403
+    assert LMUser.query.filter_by(username="mallory").first() is None
+    assert client.patch(f"/api/v1/admin/users/{other.id}", headers=_bearer(secret),
+                        json={"password": "hijacked-pass"}).status_code == 403
+    assert client.delete(f"/api/v1/admin/users/{other.id}", headers=_bearer(secret)).status_code == 403
+    assert client.get("/api/v1/admin/users", headers=_bearer(secret)).status_code == 200
+
+
+def test_password_reset_revokes_the_users_tokens(app):
+    from app.models import LMUser
+
+    secret, _ = _issue(app)
+    agent = LMUser.query.filter_by(username="agent").one()
+    admin = LMUser.query.filter_by(username="admin").one()
+    admin.set_password("admin-pass")
+    from app.extensions import db
+    db.session.commit()
+    client = app.test_client()
+    login = client.post("/api/v1/auth/login", json={"username": "admin", "password": "admin-pass"})
+    csrf = login.get_json()["data"]["csrf_token"]
+    reset = client.patch(f"/api/v1/admin/users/{agent.id}", json={"password": "brand-new-pass"},
+                         headers={"X-CSRF-Token": csrf})
+    assert reset.status_code == 200
+    assert app.test_client().get("/api/v1/projects", headers=_bearer(secret)).status_code == 401
