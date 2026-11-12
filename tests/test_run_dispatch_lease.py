@@ -36,7 +36,7 @@ def test_dispatch_lease_is_live_until_released_or_stale():
     lease.renew(force=True)
     assert tasks.dispatch_lease_is_live(7, 2)
     assert not tasks.dispatch_lease_is_live(7, 3)
-    stamp = tasks.huey.get(tasks._lease_key(7, 2), peek=True)
+    stamp = tasks.huey.get(tasks._lease_key(7, 2), peek=True)[0]
     assert not tasks.dispatch_lease_is_live(7, 2, now=stamp + tasks._DISPATCH_LEASE_TTL_SECONDS + 1)
     lease.release()
     assert not tasks.dispatch_lease_is_live(7, 2)
@@ -172,3 +172,50 @@ def test_queue_liveness_counts_a_leased_attempt(app_ctx):
         tasks._DispatchLease(42, 3).renew(force=True)
         assert is_run_pending(42, 3)
         assert not is_run_pending(42, 2)
+
+
+def test_lease_of_a_dead_worker_on_this_host_is_not_live():
+    import socket
+    import time as _time
+
+    from test_process_guard import _dead_pid
+
+    tasks.huey.put(tasks._lease_key(8, 1), (_time.time(), socket.gethostname(), _dead_pid()))
+    assert not tasks.dispatch_lease_is_live(8, 1)
+    tasks.huey.put(tasks._lease_key(8, 1), (_time.time(), "other-host", 1))
+    assert tasks.dispatch_lease_is_live(8, 1)
+
+
+def test_recovery_rereads_the_queue_after_a_lease_miss(monkeypatch):
+    """A held message is rescheduled before its lease is released; recovery
+    must not lose it between its first queue snapshot and the lease check."""
+    seen = {}
+    scheduled = []
+
+    def recover_queued(enqueue, *, is_pending):
+        scheduled.append(tasks.run_task.s(5, 1))  # the hand-off happens now
+        seen["held"] = is_pending(5, 1)
+        seen["lost"] = is_pending(6, 1)
+        return {"recovered": [], "skipped": [], "errors": []}
+
+    monkeypatch.setattr("app.services.run_evidence_service.recover_queued_attempts", recover_queued)
+    monkeypatch.setattr("app.services.run_recovery_service.recover_interrupted_attempts",
+                        lambda *_args, **_kwargs: {"recovered": [], "skipped": [], "errors": []})
+    monkeypatch.setattr(tasks.huey, "pending", lambda: [])
+    monkeypatch.setattr(tasks.huey, "scheduled", lambda: list(scheduled))
+    tasks.recover_run_attempts()
+    assert seen == {"held": True, "lost": False}
+
+
+def test_run_task_holds_the_lease_before_any_setup(monkeypatch):
+    observed = {}
+
+    def get_app():
+        observed["live"] = tasks.dispatch_lease_is_live(9, 4)
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr(tasks, "_get_app", get_app)
+    with pytest.raises(RuntimeError):
+        tasks.run_task.call_local(9, 4)
+    assert observed == {"live": True}
+    assert not tasks.dispatch_lease_is_live(9, 4)

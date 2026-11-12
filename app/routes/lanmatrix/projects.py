@@ -48,7 +48,11 @@ _COLLAB_BULK_WRITE_MESSAGE = (
     "请在协同编辑视图中执行，或等所有人退出协同编辑后再试。")
 
 
-def _collab_bulk_write_blocked(project_id) -> "Response | None":
+_COLLAB_RESTORE_MESSAGE = (
+    "该项目正在实时协同编辑，还原的行会被协同层回滚。请等所有人退出协同编辑后再还原。")
+
+
+def _collab_bulk_write_blocked(project_id, *, message=None) -> "Response | None":
     """Guard a server-side bulk row write (import, IO extraction, item restore).
 
     These writes add or revive rows the live Y.Doc does not contain, so the
@@ -60,7 +64,7 @@ def _collab_bulk_write_blocked(project_id) -> "Response | None":
     """
     if request.headers.get(COLLAB_RECONCILE_HEADER) == "1":
         return None
-    return _collab_write_blocked(project_id, message=_COLLAB_BULK_WRITE_MESSAGE)
+    return _collab_write_blocked(project_id, message=message or _COLLAB_BULK_WRITE_MESSAGE)
 
 
 def _collab_write_blocked(project_id, *, message=None) -> "Response | None":

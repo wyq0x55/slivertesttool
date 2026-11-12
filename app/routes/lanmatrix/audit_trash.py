@@ -39,7 +39,7 @@ from ._base import (
 
 
 from .projects_items import bp
-from .projects import _collab_bulk_write_blocked
+from .projects import _COLLAB_RESTORE_MESSAGE, _collab_bulk_write_blocked
 
 
 @bp.get("/projects/<int:project_id>/audit-logs")
@@ -157,7 +157,7 @@ def restore_from_trash(project_id):
     if kind == "item":
         # A restored row is absent from a live room's Y.Doc, so the next
         # materializer flush would delete it again.
-        blocked = _collab_bulk_write_blocked(project_id)
+        blocked = _collab_bulk_write_blocked(project_id, message=_COLLAB_RESTORE_MESSAGE)
         if blocked:
             return blocked
     entry = trash_service.restore(current_user(), project, kind, obj_id)

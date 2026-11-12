@@ -168,3 +168,24 @@ def test_ctrl_break_stops_a_huey_consumer_and_runs_atexit(tmp_path):
     finally:
         if child.poll() is None:
             child.kill()
+
+
+def _dead_pid() -> int:
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc.wait(timeout=30)
+    return proc.pid
+
+
+def test_pid_liveness():
+    import os
+
+    assert process_guard.pid_is_running(os.getpid())
+    assert not process_guard.pid_is_running(_dead_pid())
+    assert not process_guard.pid_is_running(0)
+
+
+def test_shutdown_flag(monkeypatch):
+    monkeypatch.setattr(process_guard, "_shutting_down", process_guard.threading.Event())
+    assert not process_guard.is_shutting_down()
+    process_guard.begin_shutdown()
+    assert process_guard.is_shutting_down()

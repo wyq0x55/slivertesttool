@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import datetime as _dt
 import logging
+import os
+import socket
 import threading
 import time
 from pathlib import Path
@@ -138,6 +140,7 @@ class _DispatchLease:
     def __init__(self, task_id: int, run_count: int) -> None:
         self._key = _lease_key(task_id, run_count)
         self._renewed_at: float | None = None
+        self._owner = (socket.gethostname(), os.getpid())
 
     def renew(self, *, force: bool = False) -> None:
         now = time.monotonic()
@@ -145,7 +148,7 @@ class _DispatchLease:
                 and now - self._renewed_at < _DISPATCH_LEASE_RENEW_SECONDS):
             return
         try:
-            huey.put(self._key, time.time())
+            huey.put(self._key, (time.time(), *self._owner))
             self._renewed_at = now
         except Exception:  # noqa: BLE001 - a missed beat only risks a duplicate
             logger.warning("Could not renew dispatch lease %s", self._key, exc_info=True)
@@ -165,10 +168,19 @@ def dispatch_lease_is_live(task_id: int, run_count: int, now: float | None = Non
 
     Read failures propagate: they are not evidence that the attempt is lost.
     """
-    stamp = huey.get(_lease_key(task_id, run_count), peek=True)
-    if stamp is None:
+    lease = huey.get(_lease_key(task_id, run_count), peek=True)
+    if lease is None:
         return False
-    return (time.time() if now is None else now) - float(stamp) < _DISPATCH_LEASE_TTL_SECONDS
+    stamp, host, pid = lease
+    if (time.time() if now is None else now) - float(stamp) >= _DISPATCH_LEASE_TTL_SECONDS:
+        return False
+    # A lease left by a dead worker on this host (crash, kill, restart) does
+    # not have to age out: its message is gone with the process.
+    if host == socket.gethostname() and int(pid) != os.getpid():
+        from ..runners.process_guard import pid_is_running
+
+        return pid_is_running(int(pid))
+    return True
 
 
 def _wait_capacity(app) -> int:
@@ -232,12 +244,19 @@ def _claim_run(database, task_pk: int, expected_run_count: int):
 
 @huey.task()
 def run_task(task_pk: int, expected_run_count: int | None = None) -> None:
-    app = _get_app()
-    config = app.config_obj
-    if _pooling_enabled(config, app):
-        _run_task_pooled(app, config, task_pk, expected_run_count)
-    else:
-        _run_task_dedicated(app, config, task_pk, expected_run_count)
+    # Claim the dequeued message before anything slow (app/DB setup), so that
+    # recovery never sees it as neither queued nor held.
+    lease = _DispatchLease(task_pk, expected_run_count or 1)
+    lease.renew(force=True)
+    try:
+        app = _get_app()
+        config = app.config_obj
+        if _pooling_enabled(config, app):
+            _run_task_pooled(app, config, task_pk, expected_run_count)
+        else:
+            _run_task_dedicated(app, config, task_pk, expected_run_count)
+    finally:
+        lease.release()
 
 
 def _has_pending_outcome(task_pk, run_count):
@@ -545,13 +564,21 @@ def recover_run_attempts(*, startup=False) -> dict:
     # An attempt is already published when its message is waiting in the
     # queue, sits on the schedule (license / overflow retries), or is held by a
     # worker thread (dispatch lease). Only the rest are re-published.
-    published = {tuple(task.args) for task in (*huey.pending(), *huey.scheduled())
-                 if isinstance(task, run_task.task_class)}
-    now = time.time()
+    def snapshot():
+        return {tuple(task.args) for task in (*huey.pending(), *huey.scheduled())
+                if isinstance(task, run_task.task_class)}
+
+    published = snapshot()
 
     def is_published(task_id, run_count):
-        return ((task_id, run_count) in published
-                or dispatch_lease_is_live(task_id, run_count, now))
+        identity = (task_id, run_count)
+        if identity in published or dispatch_lease_is_live(task_id, run_count):
+            return True
+        # A held message is rescheduled *before* its lease is released, so a
+        # queue read taken after the lease miss sees any hand-off the earlier
+        # snapshot missed.
+        published.update(snapshot())
+        return identity in published
 
     def enqueue(task_id, run_count):
         message = run_task.s(task_id, run_count)

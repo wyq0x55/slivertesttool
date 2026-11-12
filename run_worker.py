@@ -141,6 +141,7 @@ def main() -> None:
         # Dispose all instances owned by this worker on process exit. The
         # machine-wide image-name sweep is an explicit emergency fallback.
         def _shutdown_pool() -> None:
+            process_guard.begin_shutdown()
             stop_reconcile.set()
             try:
                 pool.shutdown()
@@ -178,7 +179,11 @@ def main() -> None:
     # run.py stops this worker with CTRL_BREAK_EVENT on Windows (there is no
     # SIGTERM to deliver). Treat it like Huey's SIGTERM: stop consuming and
     # exit normally, so the atexit pool shutdown disposes every Silver instance.
-    process_guard.install_break_handler(consumer._handle_stop_signal)
+    def _on_break(signum, frame) -> None:
+        process_guard.begin_shutdown()
+        consumer._handle_stop_signal(signum, frame)
+
+    process_guard.install_break_handler(_on_break)
     try:
         consumer.run()
     finally:

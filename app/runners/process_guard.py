@@ -35,6 +35,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 
 logger = logging.getLogger("silver.process_guard")
 
@@ -45,6 +46,64 @@ _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 _PROCESS_TERMINATE = 0x0001
 _PROCESS_SET_QUOTA = 0x0100
+
+
+_shutting_down = threading.Event()
+
+
+def begin_shutdown() -> None:
+    """Mark this process as shutting down (set before Silver is disposed).
+
+    Disposing the pool force-exits instances that tasks are still running on.
+    The resulting runner errors are caused by the shutdown, not by the test or
+    the environment, so the runner checks this flag and leaves the attempt to
+    startup recovery instead of finalising it as ERROR.
+    """
+    _shutting_down.set()
+
+
+def is_shutting_down() -> bool:
+    return _shutting_down.is_set()
+
+
+def pid_is_running(pid: int) -> bool:
+    """Best-effort check that a process with *pid* exists on this host.
+
+    Errs on the side of "running" when the answer is unknown, so a caller never
+    treats a live owner as dead.
+    """
+    pid = int(pid)
+    if pid <= 0:
+        return False
+    if IS_WINDOWS:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+        kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            # ERROR_INVALID_PARAMETER: no such process. Anything else (e.g.
+            # access denied) means it exists.
+            return ctypes.get_last_error() != 87
+        try:
+            code = wintypes.DWORD()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return True
+            return code.value == 259  # STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
 
 
 def child_creationflags() -> int:

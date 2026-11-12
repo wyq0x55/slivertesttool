@@ -1525,6 +1525,7 @@
           label: "入出力信号池 (名称 / 路径)" },
   };
   const IMPORT_SHEETS = {
+    generic: "test",
     test_matrix: "test",
     libfunc: "lib",
     const: "const",
