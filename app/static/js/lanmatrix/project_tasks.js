@@ -204,8 +204,11 @@
     // Keep the segmented control in step with the hidden input it feeds.
     const segEl = $("lm-f-seg");
     if (segEl) {
-      segEl.querySelectorAll("button[data-status]").forEach((b) =>
-        b.classList.toggle("on", (b.dataset.status || "") === (q.status || "")));
+      segEl.querySelectorAll("button[data-status]").forEach((b) => {
+        const active = (b.dataset.status || "") === (q.status || "");
+        b.classList.toggle("on", active);
+        b.setAttribute("aria-pressed", String(active));
+      });
     }
     const txt = $("lm-f-text");
     if (txt) txt.value = q.q || "";
@@ -235,7 +238,7 @@
   function visibleTasks() {
     const f = getFilters();
     const rows = allTasks.filter((t) => {
-      if (f.status && t.status !== f.status) return false;
+      if (f.status && LMTaskRow.mergedVerdict(t).cls !== f.status) return false;
       if (f.submitter && !String(t.submitter || "").toLowerCase().includes(f.submitter)) return false;
       if (f.text) {
         const hay = (t.task_id + " " + (t.task_name || "") + " " + t.test_id).toLowerCase();
@@ -335,7 +338,7 @@
   }
   function updateBatchBar() {
     const n = selectedKeys().length;
-    $("lm-batch-status").textContent = n ? `已选 ${n} 个` : "";
+    $("lm-batch-status").textContent = `已选 ${n} 个`;
     const vis = visibleTasks();
     $("lm-check-all").checked = vis.length > 0 && vis.every((t) => selected.has(t.task_id));
   }
@@ -460,10 +463,12 @@
     if (typeof data.total === "number") { totalTasks = data.total; renderMore(); }
     const oldIds = allTasks.map((t) => t.task_id).join(",");
     const newIds = tasks.map((t) => t.task_id).join(",");
+    const oldVisibleIds = visibleTasks().map((t) => t.task_id).join(",");
     allTasks = tasks;
     const present = new Set(tasks.map((t) => t.task_id));
     Array.from(selected).forEach((k) => { if (!present.has(k)) selected.delete(k); });
-    if (oldIds !== newIds) { renderTasks(); return; }   // structure changed → full render
+    const newVisibleIds = visibleTasks().map((t) => t.task_id).join(",");
+    if (oldIds !== newIds || oldVisibleIds !== newVisibleIds) { renderTasks(); return; }
     let patched = false;
     tasks.forEach((t) => {
       const sig = rowSignature(t);
@@ -490,7 +495,12 @@
       const data = await LMApi.projectTaskStatus(pid, key);
       const t = data.task;
       const idx = allTasks.findIndex((x) => x.task_id === key);
+      const oldVisibleIds = visibleTasks().map((x) => x.task_id).join(",");
       if (idx >= 0 && t) allTasks[idx] = t;
+      if (oldVisibleIds !== visibleTasks().map((x) => x.task_id).join(",")) {
+        renderTasks();
+        return;
+      }
       const row = document.querySelector(`tr[data-k="${cssEscape(key)}"]`);
       if (row && t) row.outerHTML = rowHtml(t);
       bindRowActions();
@@ -1208,13 +1218,15 @@
   ["lm-f-submitter", "lm-f-text"].forEach((id) => {
     const el = $(id); if (el) el.addEventListener("input", renderFromUser);
   });
-  // Segmented status tabs write the (hidden) lm-f-status value read by getFilters.
+  // Status buttons write the hidden lm-f-status value read by getFilters.
   const seg = $("lm-f-seg");
   if (seg) {
     seg.querySelectorAll("button[data-status]").forEach((b) => {
       b.addEventListener("click", () => {
-        seg.querySelectorAll("button").forEach((x) => x.classList.remove("on"));
-        b.classList.add("on");
+        seg.querySelectorAll("button[data-status]").forEach((x) => {
+          x.classList.toggle("on", x === b);
+          x.setAttribute("aria-pressed", String(x === b));
+        });
         const st = $("lm-f-status"); if (st) st.value = b.dataset.status || "";
         renderFromUser();
       });

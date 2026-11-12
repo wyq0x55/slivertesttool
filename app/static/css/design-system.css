@@ -445,11 +445,19 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .toolbar .search{ flex:1 1 180px; max-width:420px; }
 .toolbar .search input{ width:100%; }
 
-/* task list: shorten search + submitter so the batch actions
-   (download / cancel / delete) stay on the same row when it fits; below that
-   they wrap as a group instead of squeezing the status filter. */
-#lm-tasks-body .toolbar .search{ flex:0 1 180px; max-width:180px; min-width:150px; }
+/* Project task filters and batch actions each own a row. */
+#lm-tasks-actions{ flex-wrap:wrap; }
+#lm-tasks-actions .btn{ white-space:nowrap; }
+#lm-tasks-body .toolbar .search{ flex:1 1 200px; max-width:320px; min-width:0; }
 #lm-tasks-body .toolbar #lm-f-submitter{ max-width:150px; }
+#lm-f-seg{ flex-wrap:wrap; max-width:100%; gap:2px; }
+#lm-f-seg button{ white-space:nowrap; }
+.lm-task-batch{ display:flex; align-items:center; gap:8px 16px; flex-wrap:wrap;
+  margin-bottom:12px; padding:10px 12px; border:1px solid var(--border);
+  border-radius:var(--radius-sm); background:var(--surface); }
+.lm-task-batch > .muted{ font-size:12.5px; white-space:nowrap; }
+.lm-task-batch .toolbar-batch{ flex-wrap:wrap; }
+.lm-task-batch .btn{ white-space:nowrap; }
 
 /* ---- inline task detail view (replaces the old dialog) ---- */
 .task-detail{ width:100%; max-width:1160px; margin:0 auto; padding:40px 32px 64px; }
