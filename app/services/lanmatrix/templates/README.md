@@ -33,5 +33,13 @@ project Python environment:
 python scripts/build_matrix_format_template.py REFERENCE.xlsx app/services/lanmatrix/templates/matrix_format.xlsx
 ```
 
+The build drops named cell styles that no cell format references (the reference
+workbook carried ~57k orphans, which made every export and re-import take 15+
+seconds). To clean an existing asset without the reference workbook:
+
+```text
+python scripts/build_matrix_format_template.py --prune-only app/services/lanmatrix/templates/matrix_format.xlsx
+```
+
 Run `python -m unittest tests.test_matrix_format tests.test_matrix_excel` after
 regeneration. Never replace the asset with an unsanitized customer workbook.
