@@ -97,6 +97,74 @@ class RunnerCancelled(Exception):
     """Raised when an execution is cancelled at the user's request."""
 
 
+#: Modules a run injects itself; any copy already saved in the model is disabled.
+_INJECTED_MARKERS = ("judge.py", "silver_json_runner.py", "output.csv")
+
+
+def compose_run_sil(model: bytes, module_lines: list[str], params: dict[str, str],
+                    *, working_dir: Path) -> bytes:
+    """Return *model* (a saved ``.sil``) configured for one run.
+
+    Mirrors what the scripting API calls used to do on a live instance:
+    enabled modules whose line references a judge/runner/``output.csv`` are
+    disabled, *module_lines* are inserted right after the GUI module (the
+    positions ``add_module(index=1/2)`` used), and *params* are set as
+    configuration parameters. An empty ``<working-dir>`` is pinned to
+    *working_dir* because the file is written outside the model directory.
+    """
+    import re
+    import uuid
+    import xml.etree.ElementTree as ET
+
+    try:
+        root = ET.fromstring(model)
+    except ET.ParseError as exc:
+        raise RunnerError(f"SIL model is not a readable configuration: {exc}") from exc
+    modules = root.find("modules")
+    if modules is None:
+        raise RunnerError("SIL model has no <modules> section")
+    parameters = root.find("parameters")
+    if parameters is None:
+        parameters = ET.SubElement(root, "parameters")
+    existing = {param.findtext("name"): param for param in parameters.findall("param")}
+    for name, value in params.items():
+        param = existing.get(name)
+        if param is None:
+            param = ET.SubElement(parameters, "param")
+            ET.SubElement(param, "name").text = name
+        node = param.find("value")
+        if node is None:
+            node = ET.SubElement(param, "value")
+        node.text = value
+
+    # Match on the expanded line, as ``preview_sil_line`` did: saved lines
+    # usually reference the judge through a parameter (``${JUDGEPY}``).
+    values = {param.findtext("name"): param.findtext("value") or ""
+              for param in parameters.findall("param")}
+    for module in modules.findall("module"):
+        line = re.sub(r"\$\{(\w+)\}", lambda m: values.get(m.group(1), m.group(0)),
+                      module.findtext("sil-line") or "")
+        enabled = module.find("enabled")
+        if (any(marker in line for marker in _INJECTED_MARKERS)
+                and enabled is not None and enabled.text == "true"):
+            enabled.text = "false"
+    gui = modules.find("gui-module")
+    position = list(modules).index(gui) + 1 if gui is not None else 0
+    for offset, line in enumerate(module_lines):
+        module = ET.Element("module")
+        for tag, text in (("uuid", str(uuid.uuid4())), ("sil-line", line),
+                          ("enabled", "true"), ("parallel", "false")):
+            ET.SubElement(module, tag).text = text
+        modules.insert(position + offset, module)
+
+    workdir = root.find("working-dir")
+    if workdir is None:
+        workdir = ET.SubElement(root, "working-dir")
+    if not (workdir.text or "").strip():
+        workdir.text = str(working_dir)
+    return ET.tostring(root, encoding="utf-8")
+
+
 class SilverRunnerBase:
     """Interface every backend implements."""
 
@@ -223,27 +291,50 @@ class SilverRunner(SilverRunnerBase):
         """Dedicated-instance path: launch, run, dispose."""
         console_log = ctx.console_log or (ctx.log_dir / "Console.log")
         ctx.log_dir.mkdir(parents=True, exist_ok=True)
+        run_sil = self.prepare_run_sil(ctx)
 
         if ctx.cancel_event.is_set():
             raise RunnerCancelled("Cancelled before Silver launch.")
 
-        silver = self.launch(ctx.sil_path, ctx.gui, console_log)
+        # Launch directly on the fully configured model so Silver initializes
+        # the simulation exactly once.
+        silver = self.launch(run_sil, ctx.gui, console_log)
         # Publish the handle so the JobManager can force-stop this run.
         if ctx.on_start is not None:
             ctx.on_start(silver)
         try:
-            self.configure_and_run(silver, ctx)
+            self._execute(silver, ctx)
         finally:
             self._safe_dispose(silver)
 
     def configure_and_run(self, silver: Any, ctx: RunContext) -> None:
-        """Configure the (already-running) instance for one job and run it.
+        """Configure a reused pool instance for one job and run it.
 
-        Works on both a freshly-launched dedicated instance and a reused pool
-        instance. When ``ctx.reload_model`` is set the model is re-opened first
-        so the configuration is clean. The caller is responsible for publishing
-        the handle (``ctx.on_start``) and for disposing / returning the
-        instance afterwards.
+        The job's modules and parameters are written into a per-run copy of the
+        model (:meth:`prepare_run_sil`) and loaded with a single ``open()``,
+        which also switches the model if needed and drops the previous run's
+        modules. The caller publishes the handle (``ctx.on_start``) and returns
+        the instance afterwards.
+        """
+        run_sil = self.prepare_run_sil(ctx)
+        if ctx.cancel_event.is_set():
+            raise RunnerCancelled("Cancelled before configuration.")
+        logger.info("Reusing pooled Silver instance for test '%s' "
+                    "(loading '%s')", ctx.test_id, run_sil)
+        self.open_model(silver, run_sil)
+        self._execute(silver, ctx)
+
+    def prepare_run_sil(self, ctx: RunContext) -> Path:
+        """Write ``ctx.log_dir/run.sil``: the model plus this job's modules.
+
+        Injecting CsvWriter and the judge/runner through the scripting API
+        (``add_module`` twice, then ``restart()``) re-initialized the whole
+        simulation once per call, loading every model DLL and re-checking the
+        license each time: about 13 of a typical 17 seconds per run passed
+        before the first test step. Writing the same modules and parameters
+        into the configuration lets Silver initialize once. The pinned evidence
+        model is left untouched (its hashes are verified later), and this copy
+        is archived with the run's results.
         """
         ctx.log_dir.mkdir(parents=True, exist_ok=True)
         output_csv = ctx.log_dir / "output.csv"
@@ -279,40 +370,21 @@ class SilverRunner(SilverRunnerBase):
         if not json_mode and not judge_py.is_file():
             raise RunnerError(f"judge.py not found: {judge_py}")
 
-        if ctx.cancel_event.is_set():
-            raise RunnerCancelled("Cancelled before configuration.")
-
-        # Reused pool instance: reload a fresh copy of the model. This switches
-        # the model if needed and drops the previous run's injected modules.
-        if ctx.reload_model:
-            logger.info("Reusing pooled Silver instance for test '%s' "
-                        "(reloading model '%s')", ctx.test_id, ctx.sil_path)
-            self.open_model(silver, ctx.sil_path)
-
-        silver.set_silver_property("scriptingApiLogDisabled", True)
-
-        # Configure Silver parameters (paths are absolute per-job).
-        silver.set_config_parameter("OUTPUTCSV", str(output_csv))
-        silver.set_config_parameter("JDGRSLT", str(jdgrslt))
-        silver.set_config_parameter("SIlVER", str(ctx.sil_path))
+        params = {
+            "OUTPUTCSV": str(output_csv),
+            "JDGRSLT": str(jdgrslt),
+            "SIlVER": str(ctx.sil_path),
+        }
         if json_mode:
-            silver.set_config_parameter("RUNNERPY", str(runner_py))
-            silver.set_config_parameter("TESTCASE", str(testcase_json))
+            params["RUNNERPY"] = str(runner_py)
+            params["TESTCASE"] = str(testcase_json)
         else:
-            silver.set_config_parameter("JUDGEPY", str(judge_py))
-
-        # Disable any pre-existing judge/runner/output modules, then inject ours.
-        for uuid in silver.get_module_uuids():
-            prop = silver.get_module_properties(uuid)
-            line = prop.get("preview_sil_line", "")
-            if (("judge.py" in line) or ("silver_json_runner.py" in line)
-                    or ("output.csv" in line)) and prop.get("enabled"):
-                silver.set_module_property(uuid, "enabled", False)
+            params["JUDGEPY"] = str(judge_py)
 
         # Only pass ``-l <signal list>`` when the test case actually ships
         # one; otherwise CsvWriter logs all variables (no missing-file error).
         if signal_list.is_file():
-            silver.set_config_parameter("OUTPUTTXT", str(signal_list))
+            params["OUTPUTTXT"] = str(signal_list)
             csv_line = ("CsvWriter.dll ${OUTPUTCSV} -l ${OUTPUTTXT} "
                         "-w 0 -I 0.001 -m t")
         else:
@@ -321,15 +393,22 @@ class SilverRunner(SilverRunnerBase):
                 "variables.", signal_list,
             )
             csv_line = "CsvWriter.dll ${OUTPUTCSV} -w 0 -I 0.001 -m t"
-        silver.add_module(index=1, sil_line=csv_line)
         if json_mode:
             # argv[1]=log file (as judge), argv[2]=test-case JSON; constants
             # and lib are auto-resolved from beside the runner.
             judge_line = 'Python.dll ${RUNNERPY} -a "${JDGRSLT} ${TESTCASE}"'
         else:
             judge_line = 'Python.dll ${JUDGEPY} -a "${JDGRSLT} ${SIlVER}"'
-        silver.add_module(index=2, sil_line=judge_line)
-        silver.restart()
+
+        run_sil = ctx.log_dir / "run.sil"
+        run_sil.write_bytes(compose_run_sil(
+            ctx.sil_path.read_bytes(), [csv_line, judge_line], params,
+            working_dir=ctx.sil_path.parent))
+        return run_sil
+
+    def _execute(self, silver: Any, ctx: RunContext) -> None:
+        """Run the loaded configuration to completion."""
+        silver.set_silver_property("scriptingApiLogDisabled", True)
 
         if ctx.cancel_event.is_set():
             raise RunnerCancelled("Cancelled before run.")
