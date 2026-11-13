@@ -114,16 +114,6 @@ def extract_case_section(text: str, test_id: str) -> str:
     return _section(starts[-1], len(lines))
 
 
-def line_failed(line: str) -> bool:
-    """True if a line records a failing step or an overall test failure."""
-    return bool(_STEP_FAIL_RE.search(line) or _TEST_FAIL_RE.search(line))
-
-
-def line_passed(line: str) -> bool:
-    """True if a line records a passing step or an overall pass."""
-    return bool(_STEP_PASS_RE.search(line) or _TEST_PASS_RE.search(line))
-
-
 def count_failed_steps(text: str, test_id: str = "") -> int:
     """Count failing *step* lines (``Step.N is failed``) for the test case."""
     section = extract_case_section(text, test_id) if test_id else text

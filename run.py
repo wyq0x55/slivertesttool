@@ -12,10 +12,15 @@ when you submit a task) from *execute* (done by the worker). Keeping execution i
 a separate process means a long-running Silver test never blocks the web server
 or the live SSE log streams. This launcher just manages both for you.
 
-For scaled / service deployments you can still run them independently:
+For service deployments you can still run them independently (after a one-off
+``python manage.py bootstrap``):
 
     python run_web.py        # web only
-    python run_worker.py     # one or more workers, possibly on other hosts
+    python run_worker.py     # exactly one worker
+
+Run a single worker only: at start-up the worker resets the license counter and
+treats every in-flight run, AI job and unit-test job as orphaned by a previous
+worker, so a second worker would corrupt the work of the first.
 
 Set ``START_WORKER=0`` to have this launcher start the web server only.
 """

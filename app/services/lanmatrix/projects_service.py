@@ -137,13 +137,6 @@ def update_project(user: LMUser, project: Project, changes: dict[str, Any]) -> P
     return project
 
 
-def soft_delete_project(user: LMUser, project: Project) -> None:
-    project.deleted_at = _utcnow()
-    audit.record("project.delete", actor_id=user.id, object_type="project",
-                 object_id=project.id, project_id=project.id)
-    db.session.commit()
-
-
 def delete_project(user: LMUser, project: Project) -> dict[str, int]:
     """Hard-delete a project, its DB-owned rows and safely-owned artifacts."""
     from ...models import (AuditLog, CellComment, DataJob, FieldDefinition,

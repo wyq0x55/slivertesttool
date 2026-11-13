@@ -537,15 +537,6 @@ _MATERIALIZE_SKIP = frozenset({
 })
 
 
-def find_row_by_uuid(project_id: int, row_uuid: str,
-                     *, include_deleted: bool = False) -> Optional[TestItemRow]:
-    """Look up a row by its stable ``uuid`` (the CRDT row identity)."""
-    q = TestItemRow.query.filter_by(project_id=project_id, uuid=row_uuid)
-    if not include_deleted:
-        q = q.filter(TestItemRow.deleted_at.is_(None))
-    return q.first()
-
-
 def _apply_materialized_values(item: TestItemRow, state: dict[str, Any]) -> None:
     """Copy field values from a Y.Map snapshot onto the row.
 

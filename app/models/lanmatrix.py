@@ -214,11 +214,6 @@ class Project(db.Model):
         from ..services.lanmatrix.review_routes import normalise_routes
         return normalise_routes(self.review_routes or [])
 
-    def reviewer_for_category(self, category) -> Optional[int]:
-        """Reviewer routed to ``category``, or ``None`` when no rule matches."""
-        from ..services.lanmatrix.review_routes import match_reviewer
-        return match_reviewer(self.review_routes or [], category)
-
     members = db.relationship(
         "ProjectMember", backref="project",
         cascade="all, delete-orphan", passive_deletes=True,

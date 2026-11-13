@@ -481,10 +481,3 @@ def get_pool(
         return _pool
 
 
-def reset_pool_for_tests() -> None:
-    """Dispose and clear the singleton (test helper)."""
-    global _pool
-    with _pool_lock:
-        if _pool is not None:
-            _pool.shutdown()
-        _pool = None

@@ -115,24 +115,6 @@ def count_tasks(submitter: Optional[str] = None,
     return _scoped_query(submitter, project_id).count()
 
 
-def find_active_duplicate(submitter: str, test_id: str,
-                          project_id: Optional[int] = None) -> Optional[Task]:
-    """Return the submitter's queued/running task for ``test_id`` if any.
-
-    Guards against double-clicks re-enqueuing the same test. When ``project_id``
-    is given the check is scoped to that project so the same test id can run
-    independently in different projects.
-    """
-    query = live(Task.query).filter(
-        Task.submitter == submitter,
-        Task.test_id == test_id,
-        Task.status.in_([TaskStatus.QUEUED.value, TaskStatus.RUNNING.value]),
-    )
-    if project_id is not None:
-        query = query.filter(Task.project_id == project_id)
-    return query.order_by(Task.id.desc()).first()
-
-
 def create_task(
     task_name: str,
     file_name: str,
