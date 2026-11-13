@@ -294,11 +294,6 @@ def _timing_step_fields(info: TimingInfo) -> dict:
     return out
 
 
-def _norm_timing(cell: Any) -> str:
-    """確認タイミング display text; a blank / ``-`` cell means 任意 (any timing)."""
-    return _parse_timing(cell).display
-
-
 def _signal_pairs(signals: Any) -> list[tuple[str, str]]:
     """Normalise an ``input_signals`` / ``expected_signals`` list to (name, path)."""
     out: list[tuple[str, str]] = []

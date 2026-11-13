@@ -14,26 +14,6 @@ from ..models import Task, TaskStatus
 _SKIP_NAMES = {"report.zip"}
 
 
-def package_logs(log_dir: Path, dest_zip: Path, arc_root: str = "") -> Path:
-    """Zip every artefact under ``log_dir`` into ``dest_zip``."""
-    log_dir = Path(log_dir)
-    log_dir.mkdir(parents=True, exist_ok=True)
-    dest_zip = Path(dest_zip)
-    dest_zip.parent.mkdir(parents=True, exist_ok=True)
-    dest_resolved = dest_zip.resolve()
-    with zipfile.ZipFile(dest_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path in _iter_result_files(log_dir):
-            if path.is_file():
-                # Never fold the report archive into itself when it is written
-                # inside ``log_dir``.
-                if path.resolve() == dest_resolved:
-                    continue
-                rel = path.relative_to(log_dir)
-                arcname = str(Path(arc_root) / rel) if arc_root else str(rel)
-                zf.write(path, arcname)
-    return dest_zip
-
-
 def result_dir(task: Task, run_count=None) -> Optional[Path]:
     """The on-disk results directory for a task (its per-test ``log`` dir).
 
@@ -86,19 +66,6 @@ def has_result(task: Task, run_count=None) -> bool:
     if log_dir is None:
         return False
     return any(_iter_result_files(log_dir))
-
-
-def add_result_to_zip(zf: zipfile.ZipFile, task: Task, arc_root: str = "", run_count=None) -> int:
-    """Write a task's result files into an open ``ZipFile`` under ``arc_root``.
-
-    Returns the number of files added. Used both for single-task downloads and
-    to place each task's artefacts under its own folder in a batch bundle,
-    avoiding any zip-in-zip nesting.
-    """
-    log_dir = result_dir(task, run_count)
-    if log_dir is None:
-        return 0
-    return _add_result_files(zf, log_dir, arc_root)
 
 
 def _add_result_files(zf: zipfile.ZipFile, log_dir: Path, arc_root: str) -> int:

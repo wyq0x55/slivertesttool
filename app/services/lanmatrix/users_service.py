@@ -83,11 +83,6 @@ def role_in_project(project_id: int, user: LMUser) -> Optional[str]:
     return m.role if m else None
 
 
-def is_project_member(project_id: int, user: LMUser) -> bool:
-    """True when ``user`` can act on the project (member or system admin)."""
-    return role_in_project(project_id, user) is not None
-
-
 # --------------------------------------------------------------------------- #
 # Project membership management
 # --------------------------------------------------------------------------- #

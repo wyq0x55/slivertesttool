@@ -37,15 +37,6 @@ class GenerationResult:
     # generation (per-round retries included) — the basis for cost tracking.
     usage: dict[str, int] = field(default_factory=dict)
 
-    def add_usage(self, usage: dict[str, int] | None) -> None:
-        if not usage:
-            return
-        self.usage["input_tokens"] = (self.usage.get("input_tokens", 0)
-                                      + int(usage.get("input_tokens", 0)))
-        self.usage["output_tokens"] = (self.usage.get("output_tokens", 0)
-                                       + int(usage.get("output_tokens", 0)))
-
-
 def generate_validated(*,
                        build_prompt: PromptBuilder,
                        validate: Validator,

@@ -85,20 +85,6 @@ def _legacy_segment(project_id: int) -> str:
     return f"project_{project_id}"
 
 
-def _project_segment(project_id: int) -> str:
-    """Directory segment for a project's model bundles.
-
-    Uses the project **code** (unique and immutable — it cannot be changed
-    after creation, unlike ``name``) so the folder is human-readable
-    (``instance/model/ISUZU/...`` rather than ``instance/model/project_2/...``)
-    while staying stable and collision-free. Falls back to the legacy
-    ``project_{id}`` segment when the project or its code is unavailable.
-    """
-    proj = Project.query.get(project_id) if project_id else None
-    code = getattr(proj, "code", None) if proj is not None else None
-    return _safe_segment(code or "", _legacy_segment(project_id))
-
-
 def project_models_root(config, project) -> Path:
     """Code-keyed root owned by one project's uploaded model bundles."""
     seg = _safe_segment(
@@ -187,15 +173,6 @@ def list_models(project_id: int, include_path: bool = False) -> List[dict]:
 def has_models(project_id: int) -> bool:
     return db.session.query(ProjectModel.id).filter_by(
         project_id=project_id).first() is not None
-
-
-def get_model_path(project_id: int, name: str) -> Optional[Path]:
-    if not name:
-        return None
-    row = _select_model(project_id, name)
-    if row is not None and row.sil_path:
-        return Path(row.sil_path)
-    return None
 
 
 def default_model(project_id: int) -> Optional[dict]:
@@ -387,10 +364,6 @@ def _validate_identity(project_id: int, name: str, version: str) -> None:
         if (row.version or "") == (version or ""):
             label = version or "未标注"
             raise ModelError(f"该项目已存在模型 '{name}' 版本 '{label}'。")
-
-
-def _validate_name(project_id: int, name: str) -> None:
-    _validate_identity(project_id, name, "")
 
 
 def _materialise_saved_model(config, project_id: int, name: str, version: str,

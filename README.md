@@ -24,8 +24,8 @@ Waitress (prod server)  +  Pydantic  +  pytest
 - **Admin-registered server-side `.sil` models**: an administrator registers one
   or more `.sil` **paths on the server** (not an upload). Testers pick one by
   name when submitting; the model is opened in place and never uploaded.
-- **Token-gated admin page**: the admin console stays locked and loads no data
-  until the correct `ADMIN_TOKEN` is entered and verified.
+- **Account-gated admin console**: `/lanmatrix/admin` is available only to a
+  logged-in **System Administrator**; there is no shared admin token.
 - Task queue with a runtime-adjustable **license/concurrency limit**.
 - **Pre-warmed Silver instance pool** — the worker launches `LICENSE_LIMIT`
   empty Silver instances at start-up (each holding one license) and **reuses**
@@ -325,7 +325,8 @@ Collab-related environment variables (all optional):
 
 Configuration is via environment variables (optionally a `.env` file); see
 `.env.example`. Key settings: `RUNNER_BACKEND` (`mock` for demo, `silver` for
-the real backend requiring `SILVER_HOME`), `LICENSE_LIMIT`, `ADMIN_TOKEN`,
+the real backend requiring `SILVER_HOME`), `LICENSE_LIMIT`,
+`LM_ADMIN_USER`/`LM_ADMIN_PASSWORD` (bootstrap System Administrator),
 `HOST`/`PORT`.
 
 ### Application logs
