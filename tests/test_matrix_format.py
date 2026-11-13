@@ -36,6 +36,41 @@ class MatrixFormatTest(unittest.TestCase):
         cls.template = load_workbook(
             Path(mx.__file__).with_name("templates") / "matrix_format.xlsx")
 
+    def test_template_carries_no_orphaned_named_styles(self):
+        # Every named style is expanded on load and written on save, so the
+        # ~57k orphans the reference workbook carried cost 15 s per export and
+        # were re-imported with each exported file.
+        self.assertLessEqual(len(self.template.named_styles), 50)
+        out = io.BytesIO()
+        self.wb.save(out)
+        self.assertLessEqual(len(load_workbook(out).named_styles), 50)
+
+    def test_prune_cell_styles_keeps_referenced_styles(self):
+        import importlib.util
+        script = Path(__file__).resolve().parents[1] / "scripts" / "build_matrix_format_template.py"
+        spec = importlib.util.spec_from_file_location("_build_matrix_format", script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, NamedStyle
+        wb = Workbook()
+        for i in range(30):
+            wb.add_named_style(NamedStyle(name=f"orphan {i}"))
+        wb.add_named_style(NamedStyle(name="used", font=Font(bold=True)))
+        wb.active["A1"].style = "used"
+        wb.active["A1"].value = "x"
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "styles.xlsx"
+            wb.save(path)
+            before, after = module.prune_cell_styles(path)
+            loaded = load_workbook(path)
+        self.assertEqual((before, after), (32, 2))
+        self.assertEqual(loaded.named_styles, ["Normal", "used"])
+        self.assertEqual(loaded.active["A1"].style, "used")
+        self.assertTrue(loaded.active["A1"].font.bold)
+
     def test_reference_cell_styles_and_heights(self):
         for name in ("1", "4"):
             actual, reference = self.wb[name], self.template[name]

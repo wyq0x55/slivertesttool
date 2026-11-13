@@ -154,7 +154,8 @@ def _parse_block(ws, header_row: int, is_init: bool) -> dict[str, Any]:
     # Metadata rows: from just after the header up to the step-table header
     # (手順番号) or the next block, whichever comes first.
     r = header_row + 1
-    while r <= ws.max_row:
+    max_row = ws.max_row  # rescans every cell on each access
+    while r <= max_row:
         label = _cell_str(ws.cell(r, _COL_NO).value)
         if label == _STEP_HEADER_LABEL or _is_block_header(ws, r):
             break

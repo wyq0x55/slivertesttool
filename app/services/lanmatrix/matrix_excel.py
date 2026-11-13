@@ -52,20 +52,15 @@ except ImportError:
     _spec.loader.exec_module(_config_mod)
     _Config = _config_mod.Config
 
-# Shared export cell styling. Under the standalone module loader used by
-# ``tests/test_matrix_excel.py`` the package-relative import cannot resolve, so
-# fall back to loading ``xlsx_style.py`` directly by file path (openpyxl-only).
+# Export presentation (reference template). Under the standalone module loader
+# used by ``tests/test_matrix_excel.py`` the package-relative import cannot
+# resolve, so fall back to loading ``matrix_format.py`` directly by file path.
 try:
-    from . import xlsx_style as _xs
     from .matrix_format import MatrixFormat
 except ImportError:
     import importlib.util as _ilu_xs
     import pathlib as _pathlib_xs
 
-    _xs_path = _pathlib_xs.Path(__file__).resolve().parent / "xlsx_style.py"
-    _spec_xs = _ilu_xs.spec_from_file_location("_lm_pure_xlsx_style", _xs_path)
-    _xs = _ilu_xs.module_from_spec(_spec_xs)
-    _spec_xs.loader.exec_module(_xs)
     _format_path = _pathlib_xs.Path(__file__).resolve().with_name("matrix_format.py")
     _format_spec = _ilu_xs.spec_from_file_location("_lm_matrix_format", _format_path)
     _format_module = _ilu_xs.module_from_spec(_format_spec)
@@ -488,7 +483,10 @@ def parse_step_table(ws, step_header_row: int, *, stop_on_block=None):
         expected_signals.append([_txt(ws.cell(sig1, c).value), _txt(ws.cell(sig2, c).value)])
     steps: list[dict[str, Any]] = []
     r = step_header_row + 3
-    while r <= ws.max_row:
+    # ``max_row``/``max_column`` rescan every cell of a non-read-only sheet on
+    # each access; reading them per loop iteration made parsing quadratic.
+    max_row = ws.max_row
+    while r <= max_row:
         no = ws.cell(r, COL_STEP_NO).value
         if no is None or (isinstance(no, str) and no.startswith("ID;;")):
             break
@@ -528,7 +526,8 @@ def _measure_step_columns(ws, step_header_row: int) -> tuple[int, int, int]:
     n_in = n_exp = 0
     timing_col = COL_SIGNAL_START
     c = COL_SIGNAL_START
-    while c <= ws.max_column:
+    max_column = ws.max_column
+    while c <= max_column:
         v = ws.cell(step_header_row, c).value
         if v == "入力値":
             n_in += 1
@@ -551,7 +550,8 @@ def _block_end_row(ws, header_row: int) -> int:
         return header_row + _OFF_FIRST_STEP
     r = step_header_row + 3
     last = r - 1
-    while r <= ws.max_row:
+    max_row = ws.max_row
+    while r <= max_row:
         no = ws.cell(r, COL_STEP_NO).value
         if no is None or (isinstance(no, str) and no.startswith("ID;;")):
             break
@@ -801,20 +801,10 @@ def _write_detail_block(ws, header_row: int, item: dict) -> int:
             cell = ws.cell(rr, c)
             cell.value = _export_value(cell.value)
 
-    # Borders on the whole procedure table; header rows (手順番号 row + the two
-    # signal-name rows) filled green up to the 入力値 columns and blue from the
-    # 期待値 columns through 確認タイミング, matching the reference workbook.
-    _xs.style_step_table(
-        ws, sh, last_row, COL_STEP_NO, timing_col,
-        header_rows=(sh, s1, s2),
-        expect_start_col=COL_SIGNAL_START + n_in,
-    )
-    # Description block above the table (test id + metadata label rows).
-    _xs.style_detail_meta(
-        ws, hr, hr + _OFF_FIRST_LABEL, hr + _OFF_FIRST_LABEL + _N_LABELS - 1,
-        id_col=COL_STEP_NO, title_col=COL_STEP_OP,
-        label_col=COL_STEP_NO, value_col=COL_STEP_PURPOSE,
-    )
+    # No per-cell styling here: ``MatrixFormat.block`` copies the reference
+    # presentation onto every cell of the block (rows ``hr..last_row``, columns
+    # up to 確認タイミング) right after this returns, so styling the cells first
+    # was overwritten work that dominated export time.
     return last_row
 
 

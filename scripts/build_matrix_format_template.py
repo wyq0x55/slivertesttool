@@ -5,6 +5,9 @@ schema labels and numeric formatting indexes survive; no test content is distrib
 """
 
 import argparse
+import io
+import zipfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from openpyxl import load_workbook
@@ -82,11 +85,74 @@ def build_template(source, destination):
     destination = Path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     wb.save(destination)
+    prune_cell_styles(destination)
+
+
+_MAIN_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+
+
+def prune_cell_styles(path) -> tuple[int, int]:
+    """Drop named cell styles that no cell format references, in place.
+
+    Reference workbooks that were copy-pasted between files for years carry
+    tens of thousands of orphaned named styles ("20% - Accent 1 10 2", ...).
+    openpyxl expands every one of them on load and writes every one back on
+    save, which made each export and re-import of a few hundred tests take
+    15+ seconds. Only ``cellXfs/@xfId`` (plus the mandatory Normal style at
+    index 0) references ``cellStyleXfs``, so the unreferenced entries and
+    their ``cellStyle`` names can be removed and the survivors renumbered
+    without changing how any cell looks. Returns (before, after) counts.
+    """
+    path = Path(path)
+    with zipfile.ZipFile(path) as zin:
+        entries = [(info, zin.read(info.filename)) for info in zin.infolist()]
+
+    ns = {"m": _MAIN_NS}
+    ET.register_namespace("", _MAIN_NS)
+    out = io.BytesIO()
+    before = after = 0
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
+        for info, data in entries:
+            if info.filename == "xl/styles.xml":
+                root = ET.fromstring(data)
+                style_xfs = root.find("m:cellStyleXfs", ns)
+                cell_xfs = root.find("m:cellXfs", ns)
+                names = root.find("m:cellStyles", ns)
+                parents = list(style_xfs)
+                before = len(parents)
+                used = {0} | {int(xf.get("xfId", 0)) for xf in cell_xfs}
+                remap = {old: new for new, old in enumerate(sorted(used))}
+                for old, xf in enumerate(parents):
+                    if old not in remap:
+                        style_xfs.remove(xf)
+                style_xfs.set("count", str(len(remap)))
+                for xf in cell_xfs:
+                    xf.set("xfId", str(remap[int(xf.get("xfId", 0))]))
+                if names is not None:
+                    for style in list(names):
+                        old = int(style.get("xfId", 0))
+                        if old in remap:
+                            style.set("xfId", str(remap[old]))
+                        else:
+                            names.remove(style)
+                    names.set("count", str(len(names)))
+                after = len(remap)
+                data = ET.tostring(root, xml_declaration=True, encoding="UTF-8")
+            zout.writestr(info, data)
+    path.write_bytes(out.getvalue())
+    return before, after
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("source")
-    parser.add_argument("destination")
+    parser.add_argument("source", help="reference workbook, or the asset with --prune-only")
+    parser.add_argument("destination", nargs="?")
+    parser.add_argument("--prune-only", action="store_true",
+                        help="only drop unreferenced named styles from SOURCE in place")
     args = parser.parse_args()
-    build_template(args.source, args.destination)
+    if args.prune_only:
+        print("cell styles: %d -> %d" % prune_cell_styles(args.source))
+    else:
+        if not args.destination:
+            parser.error("destination is required unless --prune-only is given")
+        build_template(args.source, args.destination)
