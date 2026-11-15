@@ -129,19 +129,30 @@ _CHECK_FIELDS = {"Monitoring target:": "target", "Expected Value:": "expected",
                  "Observed Value:": "observed", "確認タイミング：": "timing"}
 
 
+def _seconds(text: str | None) -> float | None:
+    if not text:
+        return None
+    try:
+        return float(text.rstrip("s"))
+    except ValueError:
+        return None
+
+
 def parse_step_results(section: str) -> list[dict[str, Any]]:
     """Structure one case's jdgrslt section into its top-level steps.
 
     Each entry carries the step number (or phase name such as ``pre_init``),
-    its PASS/FAIL marker and time, the description lines, and every judged
-    check (``●`` passed, ``▲`` failed) with target, expected, observed and
-    timing. Checks emitted inside a subroutine stay with the calling step and
-    name the subroutine and its step.
+    its PASS/FAIL marker and time, the description lines, the step's raw log
+    lines, and every judged check (``●`` passed, ``▲`` failed) with target,
+    expected, observed, timing and the time (``at``, seconds) of the verdict
+    line that closed it. Checks emitted inside a subroutine stay with the
+    calling step and name the subroutine and its step.
     """
     steps: list[dict[str, Any]] = []
     current: dict[str, Any] | None = None
     sub: tuple[str, int] | None = None
     check: dict[str, Any] | None = None
+    unclosed: list[dict[str, Any]] = []
     for raw in section.splitlines():
         line = _LOG_TAG_RE.sub("", raw).strip()
         heading = _HEADING_RE.match(line)
@@ -149,20 +160,28 @@ def parse_step_results(section: str) -> list[dict[str, Any]]:
             check = None
             if heading.group("sub"):
                 sub = (heading.group("sub"), int(heading.group("no") or 0))
+                if current is not None:
+                    current["lines"].append(raw)
                 continue
             sub = None
+            unclosed = []
             name = heading.group("name")
             current = {"step": int(heading.group("no")) if heading.group("no") else name,
-                       "result": None, "at": None, "description": [], "checks": []}
+                       "result": None, "at": None, "description": [], "checks": [], "lines": []}
             steps.append(current)
             continue
         if current is None:
             continue
+        current["lines"].append(raw)
         result = _RESULT_RE.match(line)
         if result:
             # Any marker closes the open subroutine step: each subroutine step
             # opens with its own heading, so a later check belongs to the caller.
             check, sub = None, None
+            at = _seconds(result.group("at"))
+            for pending in unclosed:
+                pending["at"] = at
+            unclosed = []
             if result.group("sub") is None:  # the calling step's own marker
                 if not isinstance(current["step"], int):  # e.g. pre_init is step 1
                     current["phase"], current["step"] = current["step"], int(result.group("no"))
@@ -172,10 +191,12 @@ def parse_step_results(section: str) -> list[dict[str, Any]]:
         if _SUB_START_RE.match(line):
             continue
         if line in ("●", "▲"):
-            check = {"ok": line == "●", "target": None, "expected": None, "observed": None, "timing": None}
+            check = {"ok": line == "●", "target": None, "expected": None, "observed": None,
+                     "timing": None, "at": None}
             if sub is not None:
                 check.update(subroutine=sub[0], subroutine_step=sub[1])
             current["checks"].append(check)
+            unclosed.append(check)
             continue
         prefix = next((key for key in _CHECK_FIELDS if line.startswith(key)), None)
         if check is not None and prefix is not None:

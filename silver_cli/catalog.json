@@ -743,6 +743,279 @@
    "summary": "Self-service registration for LAN users.\n\nDisabled unless ``LM_ALLOW_REGISTRATION`` is on. On success, an ``active``\naccount is logged in immediately (session + CSRF token established, mirroring\nlogin); a ``disabled`` account (approval mode) is created in a pending state\nand the client is told to wait for an administrator."
   },
   {
+   "body_fields": [
+    "layout",
+    "name",
+    "test_id"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "curves.create_curve_view",
+   "path": "/api/v1/projects/<int:project_id>/curve-views",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "create curve view"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "curves.curve_compare",
+   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/curves/compare",
+   "path_params": {
+    "project_id": "int",
+    "task_key": "string"
+   },
+   "query_params": [
+    "columns",
+    "live",
+    "other",
+    "other_run",
+    "revision",
+    "run"
+   ],
+   "response_kind": "json",
+   "summary": "First divergence against another attempt or another task of the project."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "curves.curve_context",
+   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/curves",
+   "path_params": {
+    "project_id": "int",
+    "task_key": "string"
+   },
+   "query_params": [
+    "live",
+    "revision",
+    "run"
+   ],
+   "response_kind": "json",
+   "summary": "Index metadata, attempts, judge timeline and signal dictionary."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "curves.curve_download",
+   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/curves/download",
+   "path_params": {
+    "project_id": "int",
+    "task_key": "string"
+   },
+   "query_params": [
+    "live",
+    "revision",
+    "run"
+   ],
+   "response_kind": "download",
+   "summary": "curve download"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "curves.curve_edge",
+   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/curves/edge",
+   "path_params": {
+    "project_id": "int",
+    "task_key": "string"
+   },
+   "query_params": [
+    "at",
+    "column",
+    "dir",
+    "live",
+    "revision",
+    "run"
+   ],
+   "response_kind": "json",
+   "summary": "curve edge"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "curves.curve_events",
+   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/curves/events",
+   "path_params": {
+    "project_id": "int",
+    "task_key": "string"
+   },
+   "query_params": [
+    "columns",
+    "end",
+    "limit",
+    "live",
+    "offset",
+    "revision",
+    "run",
+    "start"
+   ],
+   "response_kind": "json",
+   "summary": "curve events"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "curves.curve_export",
+   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/curves/export",
+   "path_params": {
+    "project_id": "int",
+    "task_key": "string"
+   },
+   "query_params": [
+    "columns",
+    "end",
+    "live",
+    "revision",
+    "run",
+    "start"
+   ],
+   "response_kind": "download",
+   "summary": "Original CSV text of the chosen variables inside a time range."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "curves.curve_raw",
+   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/curves/raw",
+   "path_params": {
+    "project_id": "int",
+    "task_key": "string"
+   },
+   "query_params": [
+    "count",
+    "live",
+    "offset",
+    "revision",
+    "run"
+   ],
+   "response_kind": "json",
+   "summary": "curve raw"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "curves.curve_series",
+   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/curves/series",
+   "path_params": {
+    "project_id": "int",
+    "task_key": "string"
+   },
+   "query_params": [
+    "columns",
+    "end",
+    "live",
+    "revision",
+    "run",
+    "start",
+    "width"
+   ],
+   "response_kind": "json",
+   "summary": "curve series"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "curves.curve_values",
+   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/curves/values",
+   "path_params": {
+    "project_id": "int",
+    "task_key": "string"
+   },
+   "query_params": [
+    "at",
+    "columns",
+    "live",
+    "revision",
+    "run"
+   ],
+   "response_kind": "json",
+   "summary": "curve values"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "DELETE",
+   "mutating": true,
+   "name": "curves.delete_curve_view",
+   "path": "/api/v1/projects/<int:project_id>/curve-views/<int:view_id>",
+   "path_params": {
+    "project_id": "int",
+    "view_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "delete curve view"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "curves.list_curve_views",
+   "path": "/api/v1/projects/<int:project_id>/curve-views",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [
+    "test_id"
+   ],
+   "response_kind": "json",
+   "summary": "list curve views"
+  },
+  {
+   "body_fields": [
+    "layout",
+    "name"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "PUT",
+   "mutating": true,
+   "name": "curves.update_curve_view",
+   "path": "/api/v1/projects/<int:project_id>/curve-views/<int:view_id>",
+   "path_params": {
+    "project_id": "int",
+    "view_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "update curve view"
+  },
+  {
    "body_fields": [],
    "file_fields": [],
    "form_fields": [],
@@ -2257,114 +2530,6 @@
    "query_params": [],
    "response_kind": "json",
    "summary": "The newest run of every test id, with no recent-window truncation."
-  },
-  {
-   "body_fields": [],
-   "file_fields": [],
-   "form_fields": [],
-   "method": "GET",
-   "mutating": false,
-   "name": "tasks.project_task_curve_data",
-   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/curves/data",
-   "path_params": {
-    "project_id": "int",
-    "task_key": "string"
-   },
-   "query_params": [
-    "columns",
-    "delimiter",
-    "encoding",
-    "end",
-    "limit",
-    "revision",
-    "start",
-    "time"
-   ],
-   "response_kind": "json",
-   "summary": "project task curve data"
-  },
-  {
-   "body_fields": [],
-   "file_fields": [],
-   "form_fields": [],
-   "method": "GET",
-   "mutating": false,
-   "name": "tasks.project_task_curve_download",
-   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/curves/download",
-   "path_params": {
-    "project_id": "int",
-    "task_key": "string"
-   },
-   "query_params": [
-    "revision"
-   ],
-   "response_kind": "download",
-   "summary": "project task curve download"
-  },
-  {
-   "body_fields": [],
-   "file_fields": [],
-   "form_fields": [],
-   "method": "GET",
-   "mutating": false,
-   "name": "tasks.project_task_curve_point",
-   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/curves/point",
-   "path_params": {
-    "project_id": "int",
-    "task_key": "string"
-   },
-   "query_params": [
-    "at",
-    "columns",
-    "delimiter",
-    "encoding",
-    "revision",
-    "time"
-   ],
-   "response_kind": "json",
-   "summary": "project task curve point"
-  },
-  {
-   "body_fields": [],
-   "file_fields": [],
-   "form_fields": [],
-   "method": "GET",
-   "mutating": false,
-   "name": "tasks.project_task_curve_raw",
-   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/curves/raw",
-   "path_params": {
-    "project_id": "int",
-    "task_key": "string"
-   },
-   "query_params": [
-    "count",
-    "delimiter",
-    "encoding",
-    "offset",
-    "revision"
-   ],
-   "response_kind": "json",
-   "summary": "project task curve raw"
-  },
-  {
-   "body_fields": [],
-   "file_fields": [],
-   "form_fields": [],
-   "method": "GET",
-   "mutating": false,
-   "name": "tasks.project_task_curves",
-   "path": "/api/v1/projects/<int:project_id>/tasks/<task_key>/curves",
-   "path_params": {
-    "project_id": "int",
-    "task_key": "string"
-   },
-   "query_params": [
-    "delimiter",
-    "encoding",
-    "revision"
-   ],
-   "response_kind": "json",
-   "summary": "project task curves"
   },
   {
    "body_fields": [],

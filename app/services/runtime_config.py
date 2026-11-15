@@ -78,6 +78,10 @@ FIELDS: List[FieldSpec] = [
         "task_event_retention", "int", "TASK_EVENT_RETENTION",
         min=100, max=1_000_000, group="maintenance",
     ),
+    FieldSpec("curve_max_file_mb", "int", "CURVE_MAX_FILE_MB", min=1, max=2048, group="curves"),
+    FieldSpec("curve_point_limit", "int", "CURVE_POINT_LIMIT", min=500, max=200_000, group="curves"),
+    FieldSpec("curve_max_lanes", "int", "CURVE_MAX_LANES", min=4, max=128, group="curves"),
+    FieldSpec("curve_cache_mb", "int", "CURVE_CACHE_MB", min=16, max=65536, group="curves"),
 ]
 
 _BY_KEY: Dict[str, FieldSpec] = {f.key: f for f in FIELDS}

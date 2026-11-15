@@ -1,93 +1,103 @@
-# Task CSV curves
+# Variable curves (task output.csv)
 
-Open a Silver project's **Tasks / Runs**, open a task, and select **Variable curves**.
-The viewer reads that task's current-attempt `output.csv`. It uses the existing
-project `task.view` permission; downloading requires `task.download`. No runner is
-started. The explicitly labeled synthetic preview remains a separate opt-in mode.
+Open a Silver project's **Tasks / Runs**, open a task and select **变量曲线**.
+The view shows one attempt's `output.csv` as logic-analyzer lanes on a shared
+time axis, with that attempt's judge verdict laid over it.
 
-## Verified contract and remaining validation
+## Input contract (verified)
 
-`app/runners/silver_runner.py` configures `OUTPUTCSV` as the task log directory's
-`output.csv`, then injects `CsvWriter.dll ${OUTPUTCSV} -w 0 -I 0.001 -m t`, optionally
-adding `-l ${OUTPUTTXT}` when the test case supplies an `output.txt` signal-selection
-list. That list is an input, not generated variable metadata. The code does not
-establish a CSV header, encoding, separator, unit, boolean type, or time-unit
-contract. The flag names alone are not sufficient evidence to invent one.
+`app/runners/silver_runner.py` injects `CsvWriter.dll ${OUTPUTCSV} -w 0 -I 0.001 -m t`
+(plus `-l output.txt` when the case ships a signal list). Real outputs from the
+RWS project (2026-11-15) confirm the format the viewer relies on:
 
-No proprietary Silver-produced CSV sample was available for this implementation.
-The checked-in `tests/fixtures/curves/` files are representative **fixtures**, not
-Silver evidence. An internal real-Silver check of the actual CsvWriter header and
-format remains required; neither mock CI nor the local browser demonstration proves
-Silver, license, or proprietary DLL behavior.
+- ASCII/UTF-8 text, comma separated, a quoted header, one record per line;
+- the first column is `time`, in seconds, one record per millisecond;
+- every other column is one variable path (e.g. `Rte_APL_INPUT_PP_JGD_DOORSW_u1_JGD_DOORSW`,
+  `SILS_CanIf_Receive_0x400h.data_signal.C_DR_DOOR`, `stl_Timer_MsTimerResource[2].u2_msec`).
 
-## Supported text formats
+A file that does not match (first column not `time`, wrong field count,
+decreasing or non-numeric time) is rejected with `CSV_FORMAT`; nothing is guessed.
+Non-numeric cells inside a signal are gaps, never zero.
 
-- First record: CSV column names, preserved verbatim in raw data. Blank names get
-  a display label; duplicate names retain distinct positional IDs (`c0`, `c1`, ...).
-- UTF-8, UTF-8 BOM, UTF-16 BOM, GB18030 and Windows-1252. Ambiguous legacy encodings
-  require an explicit choice; decoding errors are not silently replaced.
-- Comma, semicolon, tab or pipe separators, quoted fields and CRLF/LF. The optional
-  Excel `sep=;` directive is recognized. Separator choice can be overridden.
-- Finite numeric time and signal values, including scientific notation. Decimal
-  commas are accepted only with a non-comma separator. Text, blank values, NaN and
-  infinity become null gaps, not zero. Invalid-time and malformed records are
-  counted and excluded from curves, but raw records remain inspectable.
-- A conventional numeric `Time`, `t`, `time_s`, `Time [s]`, `time[s]` or `timestamp`
-  header is suggested. The user can explicitly choose any time column. Values
-  are never converted to dates or seconds implicitly.
-- Units and signal types remain unknown. The viewer does not parse array indices
-  or arbitrary header suffixes as units and does not infer boolean signals from
-  0/1 values. Units and staircase rendering can be set explicitly for display.
-  Unknown units get separate tracks; equal explicitly supplied units may share
-  a track, with at most three series per track and eight selected series overall.
-- Duplicate times retain source-record order and are reported. The original-point
-  lookup chooses the first record at the nearest time and reports duplicate count.
-  Decreasing time is rejected rather than silently sorted or joined misleadingly.
+Most columns are state signals that change a handful of times per case and about
+half never change, so the server parses the file once into a **change-point
+index** per column (record of each value change plus the new value) and caches
+it on disk under `CURVE_CACHE_DIR`, keyed by task, attempt and file identity.
+Source files are never modified.
 
-## Bounds and sampling
+## What the server derives
 
-Preview and direct CSV download are limited to 64 MiB per file. Parsing is streamed
-with an enforced read budget, at most one million data records, 256 columns, 128 Ki
-characters per physical line, and the standard CSV field-size bound. Files exceeding
-the preview limit can still be retrieved through the existing run report download.
-Metadata inspects at most 100 records. Raw pages contain at most 100 records, with
-32 Ki characters per raw record. Requests above limits fail explicitly.
+| Item | Source |
+| --- | --- |
+| Signal kind | `constant` (no change), `discrete` (integers, at most 32 values; 0/1 is drawn as a digital line), `analog` |
+| Judge timeline | the attempt's `jdgrslt.log`: steps with start/end and result; every check with variable, expectation, observation, timing and the time of the verdict line that closed it (`parse_step_results`) |
+| Display name and role | a sealed attempt's pinned procedure (`approved_inputs`: input / expected signals of the test and the subroutines it calls), plus the judge's `Monitoring target` names |
+| Value labels | per variable, the constants the case writes or expects (pinned `constants.json`), plus the macros in the judge's expected values; one value can carry several names |
 
-A curve response contains at most 2,000 shared time records for up to eight signals.
-Within each time bucket the sampler retains first/last records, per-signal minimum
-and maximum records, and a null-gap record. This preserves short extrema better
-than uniform stride sampling, but does not guarantee every rapid transition or gap
-survives. Source record numbers are carried with all plotted values. Duplicate
-records are not merged. The view states whether sampling occurred. Zoom selects a
-shared range; **refine selected range** re-reads and resamples that range server-side.
-Raw cursor lookup scans original records and returns exact original CSV text; the
-raw table and CSV download do not use sampled values.
+Legacy (unsealed) tasks have no pinned procedure, so their names and labels come
+from the judge log only; the status line says so.
 
-All reads, including cursor lookups, remain bounded. Sealed attempts validate the
-committed manifest/outcome identity and the selected CSV digest without scanning
-unrelated model/input artifacts. Missing or corrupt sealed artifacts cannot fall
-back to mutable legacy logs. Legacy tasks use only their established
-`workspace/log/<test_id>/output.csv` location, never an arbitrary stored report path.
-Symlinks/reparse points and unsafe task/file identities are rejected. A task-scoped
-revision prevents combining responses after an artifact changes or a rerun advances.
-Task navigation aborts in-flight requests and discards previous chart, selection,
-units, table, download URL and stale asynchronous responses.
+## Exactness and limits
+
+Series are exact change points. Only when a signal has more change points in the
+requested range than **精确点上限** is it sent as a per-pixel min/max envelope
+(the tooltip says "像素内范围"); zooming in re-requests the range. Cursor values
+(`/values`), edge jumps (`/edge`) and the event list are always answered from the
+exact index. The raw table and the CSV exports read the original file text.
+
+Limits are live settings in **系统管理 → 授权 / 并发** (no restart):
+最大 output.csv (MiB), 精确点上限, 最大泳道数, 索引缓存上限 (MiB).
+
+## Using the view
+
+- Left: variables grouped by name prefix; filter 判定涉及 / 有变化 / 全部; constant
+  variables are folded under 恒定 with their value. The default lanes are the
+  variables the case drives or checks.
+- Lanes: drag a label to reorder, drag its bottom edge to resize, × to remove.
+  Top band: judge steps (failed in red); click a step to zoom to it, double-click
+  to open it in 判定结果. Check markers sit on their lane at the verdict time
+  (◆ passed, ▲ failed); hover for expected/observed.
+- Wheel zooms, drag pans, the minimap selects the window. Click sets cursor A,
+  Shift+click sets B (Δt shown). Select a lane and use ←/→ (Shift for B) to jump to
+  its previous/next change. `0` shows everything, `F` jumps to the first failure.
+- 判定结果 → 曲线 on any step opens the curves focused on that step.
+- 事件列表: every change in time order (lanes / current range filters); 判定检查点:
+  all checks; 原始数据: original records.
+- 对比: another attempt of the task or the latest attempt of another task in the
+  project. Their values are drawn dashed in the same lanes, and the first time each
+  common variable differs is marked (the overall first divergence is listed and
+  its variable added as a lane).
+- 视图: save lanes (by variable name), heights and time range per test case;
+  shared with project members, editable by its author or a project admin.
+  复制链接 copies a URL that restores attempt, lanes, range, cursors and comparison.
+- 导出: the current view as PNG or SVG (same renderer), the selected variables in
+  the current range as CSV (original text), or the original `output.csv`.
+- A running attempt is shown live: it reads the output.csv Silver is writing in
+  the pool run directory (a trailing partial record is ignored) and refreshes every
+  2 s. Whether CsvWriter flushes during a run (`-w 0`) still needs to be confirmed
+  on a real Silver run; if it only writes at the end, the view says that
+  output.csv has not been written yet until the run finishes.
+
+The project HTML qualification report embeds, for each failed case, an SVG of the
+first failed step's window (the checked variables and stimulus inputs).
 
 ## API
 
-All paths are under `/api/v1/projects/<project_id>/tasks/<task_key>/curves`:
+All paths are under `/api/v1/projects/<project_id>/tasks/<task_key>/curves`.
+`run` selects an attempt (default: current); the current attempt of a running task
+is live. Non-live reads may pass `revision` and fail with 409 if it changed.
 
-| Path | Result |
-| --- | --- |
-| base | Column metadata, detected text format, limits and revision |
-| `/data?time=c0&columns=c1,c2` | Shared sampled records, time extent and warning counts |
-| `/data?...&start=1&end=2&limit=1600` | Refined range (limit: 100–2000) |
-| `/point?...&at=1.25` | Nearest original record and exact text cells |
-| `/raw?offset=0&count=100` | Original records, including malformed/non-numeric cells |
-| `/download` | Original bytes as an attachment; parsing is not required |
+| Path | Permission | Result |
+| --- | --- | --- |
+| base | task.view | index metadata, attempts, judge timeline, signal dictionary |
+| `/series?columns=c1,c2&start&end&width` | task.view | change points or envelope per column |
+| `/values?columns&at` | task.view | exact values at a time |
+| `/edge?column&at&dir=1\|-1` | task.view | next / previous change |
+| `/events?columns&start&end&offset&limit` | task.view | changes in time order |
+| `/compare?other=<task_key>&other_run&columns` | task.view | first divergence per common variable |
+| `/raw?offset&count` | task.download | original records |
+| `/export?columns&start&end` | task.download | original text of the selection as CSV |
+| `/download` | task.download | original bytes |
 
-`encoding`, `delimiter` and `revision` may accompany reads. JSON responses are
-`no-store`; raw user text is inserted with `textContent`, not HTML. CSV is downloaded
-as an attachment with `nosniff`. Source files are not modified or annotated by the
-viewer. Spreadsheet formula cells remain original text, so use the usual care when
-opening an untrusted raw CSV in a spreadsheet application.
+Saved views: `GET/POST /api/v1/projects/<id>/curve-views` (`test_id`, `name`,
+`layout: {lanes: [{name, height?}], range?}`), `PUT/DELETE .../curve-views/<view_id>`.

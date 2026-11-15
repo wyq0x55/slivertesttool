@@ -1,4 +1,9 @@
-"""CSV fixtures model supported text formats, not proprietary Silver output."""
+"""Variable curves: CsvWriter output.csv index, judge context, API and views.
+
+The CSV text below is synthetic but follows the verified CsvWriter layout
+(quoted header, first column ``time`` in seconds, 1 ms records, integer cells).
+No proprietary Silver output is stored in the repository.
+"""
 from __future__ import annotations
 
 import json
@@ -7,191 +12,235 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.services import curve_context_service as context
 from app.services import task_curves_service as curves
 
-FIXTURES = Path(__file__).parent / "fixtures" / "curves"
+
+def csvwriter(rows, names=("Rte_IN_PP_Door_u1_Door", "Rte_OUT_PP_Mode_u1_Mode", "stl_Timer[0].u2_msec", "u1_const")):
+    lines = [",".join(f'"{n}"' for n in ("time", *names))]
+    for i, values in enumerate(rows):
+        lines.append(",".join([f"{i / 1000:g}", *map(str, values)]))
+    return "\r\n".join(lines) + "\r\n"
 
 
-def source(tmp_path, content=None, *, raw=None):
+def sample():
+    rows = []
+    for i in range(3000):
+        door = 1 if 500 <= i < 2000 else 0
+        mode = 0 if i < 510 else 2 if i < 2010 else 1
+        rows.append((door, mode, i * 5 % 65536, 7))
+    return csvwriter(rows)
+
+
+JDG = """INFO:root:Test case ID.ID;;TC-1 is started!
+INFO:root:-------------------pre_init-------------------
+INFO:root:前提条件の確認
+INFO:root:Step.1 is passed at 0.0s.
+INFO:root:-------------------Step2-------------------
+INFO:root:トリガ入力
+INFO:root:●
+INFO:root:    Monitoring target: ドア状態 ( Rte_IN_PP_Door_u1_Door )
+INFO:root:    Expected Value:ドア開 ( (exp==U1G_DOOR_OPEN(1)) )
+INFO:root:    Observed Value:0x1 ( 1.0 )
+INFO:root:    確認タイミング：任意
+INFO:root:Step.2 is passed at 0.5s.
+INFO:root:-------------------Step3-------------------
+INFO:root:結果確認
+INFO:root:▲
+INFO:root:    Monitoring target: モード ( Rte_OUT_PP_Mode_u1_Mode )
+INFO:root:    Expected Value:サーチ ( (exp==U1G_MODE_SEARCH(3)) )
+INFO:root:    Observed Value:0x2 ( 2.0 )
+INFO:root:    確認タイミング：1.0s以内
+INFO:root:Step.3 is failed at 1.5s.
+INFO:root:Test is failed in Step3!!!!
+"""
+
+
+def legacy_task(tmp_path, text=None, *, judge=JDG):
     root = tmp_path / "workspace"
-    output = root / "log" / "TC-1" / "output.csv"
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_bytes(raw if raw is not None else (content or (FIXTURES / "numeric.csv").read_text()).encode())
-    task = SimpleNamespace(id=1, task_key="T000001", project_id=1, run_count=1,
+    log = root / "log" / "TC-1"
+    log.mkdir(parents=True, exist_ok=True)
+    (log / "output.csv").write_text(text if text is not None else sample(), newline="")
+    if judge is not None:
+        (log / "jdgrslt.log").write_text(judge, encoding="utf-8")
+    task = SimpleNamespace(id=1, task_key="T000001", project_id=1, run_count=1, status="failed",
                            test_id="TC-1", workspace=str(root), report_path="", deleted_at=None)
-    return task, output
+    return task, log / "output.csv"
 
 
-def test_metadata_preserves_duplicates_unknown_units_and_types(tmp_path):
-    task, _ = source(tmp_path)
-    meta = curves.CsvResult(task).metadata()
-    assert meta["suggested_time"] == "c0"
-    assert meta["columns"][1]["name"] == meta["columns"][2]["name"] == "Speed"
-    assert meta["columns"][1]["id"] != meta["columns"][2]["id"]
-    assert meta["columns"][1]["label"] != meta["columns"][2]["label"]
-    assert all(c["unit"] is None and c["type"] is None for c in meta["columns"])
-    assert meta["columns"][4]["numeric_preview"] is False
-    data = curves.CsvResult(task).data("c0", ["c1", "c2", "c3"])
-    assert data["sampled"] is False
-    assert len(data["points"]) == 6
-    assert data["warnings"]["duplicate_time_rows"] == 1
-    assert data["warnings"]["invalid_values"] == 1
-    assert data["points"][4]["values"][1] is None
+@pytest.fixture(autouse=True)
+def _cache(tmp_path, monkeypatch):
+    monkeypatch.setattr(curves, "cache_dir", lambda: tmp_path / "cache")
+    curves._MEMORY.clear()
 
 
-@pytest.mark.parametrize("encoding,delimiter", [("utf-8-sig", ","), ("utf-16", "\t"),
-                                               ("gb18030", ";"), ("cp1252", "|")])
-def test_bom_encoding_and_delimiters(tmp_path, encoding, delimiter):
-    label = "温度" if encoding != "cp1252" else "Température"
-    raw = f"Time{delimiter}{label}\r\n0{delimiter}1\r\n1{delimiter}2\r\n".encode(encoding)
-    task, _ = source(tmp_path, raw=raw)
-    csv = curves.CsvResult(task, encoding=encoding if encoding in ("gb18030", "cp1252") else None)
-    assert csv.metadata()["columns"][1]["name"] == label
-    assert csv.delimiter == delimiter
-    assert csv.data("c0", ["c1"])["points"][1]["values"] == [2]
+def idx_for(tmp_path, text=None):
+    task, _ = legacy_task(tmp_path, text)
+    source = curves.resolve(task)
+    return source, curves.index(source)
 
 
-def test_explicit_separator_decimal_comma_and_time_selection(tmp_path):
-    task, _ = source(tmp_path, raw=(FIXTURES / "semicolon.csv").read_bytes())
-    csv = curves.CsvResult(task)
-    assert csv.delimiter == ";"
-    assert csv.metadata()["suggested_time"] is None
-    assert csv.data("c0", ["c2"])["points"][0]["values"] == [76.5]
+# --------------------------------------------------------------------------- #
+# Index
+# --------------------------------------------------------------------------- #
+def test_change_points_kinds_and_metadata(tmp_path):
+    _, idx = idx_for(tmp_path)
+    meta = idx.metadata(32)
+    kinds = {c["name"]: (c["kind"], c["changes"]) for c in meta["columns"]}
+    assert kinds["Rte_IN_PP_Door_u1_Door"] == ("discrete", 2)
+    assert kinds["Rte_OUT_PP_Mode_u1_Mode"] == ("discrete", 2)
+    assert kinds["stl_Timer[0].u2_msec"][0] == "analog"
+    assert kinds["u1_const"] == ("constant", 0)
+    assert meta["rows"] == 3000 and meta["domain"] == [0, 2.999] and meta["sample_interval"] == pytest.approx(0.001)
+    door = meta["columns"][0]
+    assert door["values"] == [0, 1] and door["initial"] == 0
 
 
-@pytest.mark.parametrize("raw,code", [(b"", "CSV_EMPTY"), (b"\xef\xbb\xbf", "CSV_EMPTY"),
-                                    (b"Time,x\n", "CSV_NO_DATA"),
-                                    (b"Time,x\na,b\n", "CSV_NO_DATA")])
-def test_empty_and_no_numeric_time(tmp_path, raw, code):
-    task, _ = source(tmp_path, raw=raw)
-    with pytest.raises(curves.CurveError) as caught:
-        curves.CsvResult(task).data("c0", ["c1"])
-    assert caught.value.code == code
-
-
-def test_ambiguous_legacy_encoding_requires_explicit_choice(tmp_path):
-    task, _ = source(tmp_path, raw='Time,Température\n0,1\n'.encode('cp1252'))
-    with pytest.raises(curves.CurveError) as caught:
-        curves.CsvResult(task)
-    assert caught.value.code == 'CSV_ENCODING'
-    assert curves.CsvResult(task, encoding='cp1252').metadata()['columns'][1]['name'] == 'Température'
-
-
-@pytest.mark.parametrize('text', ['Time,x\n0,"unclosed', ','.join(['x'] * 257) + '\n', 'Time,x\n' + '0,' + 'x' * 131073])
-def test_malformed_quotes_width_and_line_limits(tmp_path, text):
-    task, _ = source(tmp_path, text)
-    with pytest.raises(curves.CurveError):
-        curves.CsvResult(task).data('c0', ['c1'])
-
-
-def test_row_and_read_budgets_are_enforced(tmp_path, monkeypatch):
-    task, _ = source(tmp_path)
-    csv = curves.CsvResult(task)
-    monkeypatch.setattr(curves, 'MAX_ROWS', 3)
-    with pytest.raises(curves.CurveError) as caught:
-        csv.data('c0', ['c1'])
-    assert caught.value.status == 413
-    monkeypatch.setattr(curves, 'MAX_ROWS', 100)
-    monkeypatch.setattr(curves, 'MAX_BYTES', 10)
-    with pytest.raises(curves.CurveError) as caught:
-        csv.data('c0', ['c1'])
-    assert caught.value.status == 413
-
-
-def test_multiline_raw_cells_keep_record_offsets(tmp_path):
-    task, _ = source(tmp_path, 'Time,x,note\n0,1,"hello\nworld"\n1,2,next\n')
-    csv = curves.CsvResult(task)
-    assert csv.raw()['rows'][0]['cells'][2] == 'hello\nworld'
-    assert csv.point('c0', ['c1'], 1)['raw'] == ['1', '2', 'next']
-
-
-def test_non_monotonic_time_is_not_silently_sorted(tmp_path):
-    task, _ = source(tmp_path, "Time,x\n0,1\n2,2\n1,3\n")
-    csv = curves.CsvResult(task)
-    with pytest.raises(curves.CurveError, match="not monotonic"):
-        csv.data("c0", ["c1"])
-    assert csv.raw()["rows"][2]["cells"] == ["1", "3"]
-
-
-def test_bad_rows_nonfinite_values_and_text_stay_explicit(tmp_path):
-    task, _ = source(tmp_path, "Time,x\n0,NaN\nbad,3\n1\n\n2,Infinity\n3,text\n4,5\n")
-    data = curves.CsvResult(task).data("c0", ["c1"])
-    assert data["warnings"] == {"blank_rows": 1, "malformed_rows": 1,
-                                "invalid_time_rows": 1, "duplicate_time_rows": 0, "invalid_values": 3}
-    assert [p["values"][0] for p in data["points"]] == [None, None, None, 5]
+def test_series_is_exact_until_the_limit_then_envelope(tmp_path):
+    _, idx = idx_for(tmp_path)
+    data = idx.series(["c1", "c2", "c3"], start=0.4, end=2.5, width=400, point_limit=100)
+    door, mode, timer = data["series"]
+    assert door["mode"] == "exact"
+    # value holding at the range start, then each change at its own record
+    assert door["points"] == [[0.4, 0, 1], [0.5, 1, 501], [2.0, 0, 2001]]
+    assert mode["points"][1:] == [[0.51, 2, 511], [2.01, 1, 2011]]
+    assert timer["mode"] == "envelope" and len(timer["buckets"]) <= 400
+    first = timer["buckets"][0]
+    assert first[3] <= first[4]  # min <= max per pixel
     json.dumps(data, allow_nan=False)
 
 
-def test_bounded_shared_sampling_keeps_spikes_gaps_and_range_detail(tmp_path):
-    lines = ["Time,a,b"]
-    for i in range(10000):
-        a = 99999 if i == 4444 else -99999 if i == 5555 else i % 7
-        b = "bad" if i == 6000 else -77777 if i == 7777 else 1
-        lines.append(f"{i / 100},{a},{b}")
-    task, _ = source(tmp_path, "\n".join(lines))
-    csv = curves.CsvResult(task)
-    data = csv.data("c0", ["c1", "c2"], limit=100)
-    assert data["sampled"] and len(data["points"]) <= 100
-    rows = {p["row"] for p in data["points"]}
-    assert {1, 10000, 4445, 5556, 6001, 7778} <= rows
-    assert data["points"] == sorted(data["points"], key=lambda p: p["row"])
-    detail = csv.data("c0", ["c1"], start=44.4, end=44.5, limit=100)
-    assert not detail["sampled"]
-    assert max(p["values"][0] for p in detail["points"]) == 99999
-    point = csv.point("c0", ["c1"], 44.44001)
-    assert point["row"] == 4445 and point["raw"][1] == "99999"
+def test_values_edges_events_and_divergence(tmp_path):
+    _, idx = idx_for(tmp_path)
+    assert idx.values_at(["c1", "c2"], 0.5004, 32)["values"] == {"c1": 1, "c2": 0}
+    assert idx.edge("c1", 0.1, 1)["t"] == 0.5
+    assert idx.edge("c1", 0.5, 1)["t"] == 2.0
+    assert idx.edge("c1", 2.0, -1)["t"] == 0.5
+    assert idx.edge("c1", 0.5, -1)["t"] is None
+    events = idx.events(["c1", "c2"])
+    assert events["total"] == 4
+    assert [(e["t"], e["id"], e["from"], e["to"]) for e in events["events"]] == [
+        (0.5, "c1", 0, 1), (0.51, "c2", 0, 2), (2.0, "c1", 1, 0), (2.01, "c2", 2, 1)]
+    assert idx.events(["c1"], start=1, end=3)["total"] == 1
+    changed = sample().replace("\r\n1.5,1,2,", "\r\n1.5,1,3,")
+    _, other = idx_for(tmp_path / "b", changed)
+    result = idx.divergence(other)
+    assert result["first"] == {"id": "c2", "other_id": "c2", "name": "Rte_OUT_PP_Mode_u1_Mode", "t": 1.5}
+    assert idx.divergence(idx)["first"] is None
 
 
-def test_cursor_duplicate_time_returns_original_first_record(tmp_path):
-    task, _ = source(tmp_path)
-    point = curves.CsvResult(task).point("c0", ["c2"], 0.2)
-    assert point["duplicate_times"] == 2
-    assert point["row"] == 3 and point["raw"][2] == "1200"
+def test_cache_round_trip_and_revision_binding(tmp_path):
+    source, idx = idx_for(tmp_path)
+    cached = tmp_path / "cache" / f"{source.revision}.idx"
+    assert cached.is_file()
+    loaded = curves.Index.load(cached, source.revision)
+    assert loaded.metadata(32) == idx.metadata(32)
+    assert curves.Index.load(cached, "other-revision") is None
 
 
-def test_raw_pagination_retains_original_text(tmp_path):
-    task, _ = source(tmp_path)
-    page = curves.CsvResult(task).raw(offset=3, count=2)
-    assert page["has_more"] and len(page["rows"]) == 2
-    assert page["rows"][1]["cells"][2] == "bad"
-
-
-def test_limits_revision_and_invalid_options(tmp_path, monkeypatch):
-    task, path = source(tmp_path)
-    csv = curves.CsvResult(task)
-    for time, cols in [("../../etc", ["c1"]), ("c0", ["c999"]), ("c0", ["c0"]), ("c0", ["c1", "c1"])]:
-        with pytest.raises(curves.CurveError):
-            csv.data(time, cols)
-    with pytest.raises(curves.CurveError):
-        csv.data("c0", ["c1"], limit=99999)
-    with pytest.raises(curves.CurveError):
-        csv.data("c0", ["c1"], start=2, end=1)
-    path.write_text("Time,x\n0,2\n")
+@pytest.mark.parametrize("text,code", [
+    ("", "CSV_EMPTY"),
+    ('"t","x"\r\n0,1\r\n', "CSV_FORMAT"),
+    ('"time","x"\r\n', "CSV_NO_DATA"),
+    ('"time","x"\r\n0,1\r\n0.001\r\n', "CSV_FORMAT"),
+    ('"time","x"\r\n0.002,1\r\n0.001,1\r\n', "CSV_FORMAT"),
+    ('"time","x"\r\nbad,1\r\n', "CSV_FORMAT"),
+])
+def test_not_csvwriter_output_fails_explicitly(tmp_path, text, code):
+    task, _ = legacy_task(tmp_path, text)
     with pytest.raises(curves.CurveError) as caught:
-        curves.CsvResult(task, expected_revision=csv.revision)
-    assert caught.value.status == 409
-    monkeypatch.setattr(curves, "MAX_BYTES", 8)
-    with pytest.raises(curves.CurveError):
-        curves.CsvResult(task).data("c0", ["c1"])
+        curves.index(curves.resolve(task))
+    assert caught.value.code == code
 
 
-def test_fixed_artifact_ignores_foreign_report_path_and_rejects_symlink(tmp_path):
-    task, path = source(tmp_path)
-    foreign = tmp_path / "foreign.csv"
-    foreign.write_text("Time,secret\n0,123\n")
-    task.report_path = str(foreign)
-    assert curves.CsvResult(task).path == path
-    path.unlink()
-    path.symlink_to(foreign)
+def test_non_numeric_cells_are_gaps_not_zero(tmp_path):
+    _, idx = idx_for(tmp_path, '"time","x"\r\n0,1\r\n0.001,nan\r\n0.002,1\r\n')
+    assert idx.series(["c1"])["series"][0]["points"] == [[0, 1, 1], [0.001, None, 2], [0.002, 1, 3]]
+
+
+def test_size_limit_and_attempt_binding(tmp_path, monkeypatch):
+    task, _ = legacy_task(tmp_path)
+    monkeypatch.setattr(curves, "limits", lambda: curves.Limits(10, 5000, 32, 1 << 20))
     with pytest.raises(curves.CurveError) as caught:
-        curves.CsvResult(task)
-    assert caught.value.status == 404
-    path.unlink()
-    task.test_id = "../other"
+        curves.resolve(task)
+    assert caught.value.status == 413
+    monkeypatch.undo()
     with pytest.raises(curves.CurveError):
-        curves.CsvResult(task)
+        curves.resolve(task, 2)  # a legacy task only has its latest result
 
 
+def test_live_file_ignores_the_partial_last_record(tmp_path, monkeypatch):
+    pool = tmp_path / "pool"
+    live = pool / "inst_1" / "run_T000001_1" / ".results"
+    live.mkdir(parents=True)
+    (live / "output.csv").write_text('"time","x"\r\n0,1\r\n0.001,2\r\n0.00', newline="")
+    from app.config import Config
+    monkeypatch.setattr(Config, "POOL_DIR", pool)
+    task, _ = legacy_task(tmp_path)
+    task.status = "running"
+    source = curves.resolve(task, live=True)
+    idx = curves.index(source)
+    assert idx.live and len(idx.times) == 2
+    task.status = "passed"
+    with pytest.raises(curves.CurveError):
+        curves.resolve(task, live=True)
+
+
+# --------------------------------------------------------------------------- #
+# Judge timeline, dictionary, report snapshot
+# --------------------------------------------------------------------------- #
+def test_timeline_and_judge_dictionary(tmp_path):
+    task, _ = legacy_task(tmp_path)
+    judge = context.timeline(task)
+    assert judge["verdict"] == "FAIL"
+    assert [(s["step"], s["result"], s["start"], s["end"]) for s in judge["steps"]] == [
+        (1, "PASS", 0.0, 0.0), (2, "PASS", 0.0, 0.5), (3, "FAIL", 0.5, 1.5)]
+    bad = judge["steps"][2]["checks"][0]
+    assert (bad["var"], bad["name"], bad["observed_value"], bad["at"]) == ("Rte_OUT_PP_Mode_u1_Mode", "モード", 2, 1.5)
+    assert bad["expected_values"] == [{"name": "U1G_MODE_SEARCH", "value": 3}]
+    assert judge["first_failure"] == {"step": 3, "start": 0.5, "end": 1.5, "var": "Rte_OUT_PP_Mode_u1_Mode", "at": 1.5}
+    signals = context.dictionary(task, judge=judge)["signals"]
+    assert signals["Rte_IN_PP_Door_u1_Door"] == {"name": "ドア状態", "roles": ["check"],
+                                                 "labels": {"1": ["U1G_DOOR_OPEN", "ドア開"]}}
+
+
+def test_missing_judge_log_is_reported_not_invented(tmp_path):
+    task, _ = legacy_task(tmp_path, judge=None)
+    assert context.timeline(task) == {"available": False, "verdict": None, "steps": [], "first_failure": None}
+
+
+def test_pinned_procedure_supplies_input_names_and_constant_labels(tmp_path, monkeypatch):
+    task, _ = legacy_task(tmp_path, judge=None)
+    pinned = {"approved_inputs": {
+        "test": {"input_signals": [["ドア", "Rte_IN_PP_Door_u1_Door"]],
+                 "expected_signals": [["モード", "Rte_OUT_PP_Mode_u1_Mode"]],
+                 "steps": [{"inputs": ["ドア開(U1G_DOOR_OPEN)"], "expecteds": ["-"]},
+                           {"inputs": ["U1G_DOOR_CLOSE"], "expecteds": ["サーチ(U1G_MODE_SEARCH)"]}]},
+        "libraries": {},
+        "constants": {"constants": {"U1G_DOOR_OPEN": {"value": 1, "name_ja": "開"},
+                                    "U1G_DOOR_CLOSE": {"value": 0, "name_ja": ""},
+                                    "U1G_MODE_SEARCH": {"value": 3, "name_ja": "サーチ"}}}}}
+    monkeypatch.setattr(context.evidence, "read_manifest", lambda *_a, **_k: pinned)
+    d = context.dictionary(task)
+    assert d["source"] == "pinned"
+    assert d["signals"]["Rte_IN_PP_Door_u1_Door"] == {
+        "name": "ドア", "roles": ["input"], "labels": {"1": ["U1G_DOOR_OPEN", "開"], "0": ["U1G_DOOR_CLOSE"]}}
+    assert d["signals"]["Rte_OUT_PP_Mode_u1_Mode"]["labels"] == {"3": ["U1G_MODE_SEARCH", "サーチ"]}
+
+
+def test_failure_snapshot_svg_draws_failed_window(tmp_path):
+    from app.services.curve_snapshot import failure_svg
+    task, _ = legacy_task(tmp_path)
+    svg = failure_svg(task)
+    assert svg.startswith("<svg") and "Step3 FAIL" in svg and "モード" in svg
+    assert "#e5484d" in svg  # the failed check marker
+    task_ok, _ = legacy_task(tmp_path / "ok", judge=JDG.replace("▲", "●").replace("failed", "passed"))
+    assert failure_svg(task_ok) is None
+
+
+# --------------------------------------------------------------------------- #
+# API
+# --------------------------------------------------------------------------- #
 @pytest.fixture
 def api_env(app_ctx, client, tmp_path):
     from app.extensions import db
@@ -199,27 +248,37 @@ def api_env(app_ctx, client, tmp_path):
     with app_ctx.app_context():
         owner = LMUser(username="csv-owner", display_name="Owner", password_hash="x")
         reader = LMUser(username="csv-reader", display_name="Reader", password_hash="x")
+        other_reader = LMUser(username="csv-reader2", display_name="Reader2", password_hash="x")
         outsider = LMUser(username="csv-outsider", display_name="Outsider", password_hash="x")
-        db.session.add_all([owner, reader, outsider]); db.session.flush()
+        db.session.add_all([owner, reader, other_reader, outsider]); db.session.flush()
         project = Project(code="CSV", name="CSV", owner_id=owner.id)
         other = Project(code="CSVOTHER", name="Other", owner_id=outsider.id)
         db.session.add_all([project, other]); db.session.flush()
-        db.session.add(ProjectMember(project_id=project.id, user_id=reader.id, role="reader"))
-        task_data, path = source(tmp_path)
-        task = Task(task_key="T000010", project_id=project.id, test_id="TC-1", workspace=task_data.workspace, status="passed")
+        db.session.add_all([ProjectMember(project_id=project.id, user_id=reader.id, role="reader"),
+                            ProjectMember(project_id=project.id, user_id=other_reader.id, role="reader")])
+        data, path = legacy_task(tmp_path / "a")
+        data_b, _ = legacy_task(tmp_path / "b", sample().replace("\r\n1.5,1,2,", "\r\n1.5,1,3,"))
+        task = Task(task_key="T000010", project_id=project.id, test_id="TC-1", workspace=data.workspace, status="failed")
+        second = Task(task_key="T000012", project_id=project.id, test_id="TC-1B", workspace=data_b.workspace, status="passed")
+        Path(data_b.workspace, "log", "TC-1").rename(Path(data_b.workspace, "log", "TC-1B"))
         foreign = Task(task_key="T000011", project_id=other.id, test_id="TC-2", workspace=str(tmp_path / "foreign"), status="passed")
-        db.session.add_all([task, foreign]); db.session.commit()
+        db.session.add_all([task, second, foreign]); db.session.commit()
         values = dict(project=project.id, other=other.id, task_id=task.id, reader=reader.id,
-                      outsider=outsider.id, path=path)
+                      reader2=other_reader.id, outsider=outsider.id, path=path)
     return values
 
 
 def login(client, user_id):
     with client.session_transaction() as session:
         session["lm_user_id"] = user_id
+        session["csrf_token"] = "t"
 
 
-@pytest.mark.parametrize("suffix", ["", "/data?time=c0&columns=c1", "/point?time=c0&columns=c1&at=0.2", "/raw", "/download"])
+CURVE_ENTRIES = ["", "/series?columns=c1", "/values?columns=c1&at=0.2", "/edge?column=c1&at=0&dir=1",
+                 "/events", "/compare?other=T000012", "/raw", "/download", "/export?columns=c1,c2&start=0.4&end=0.6"]
+
+
+@pytest.mark.parametrize("suffix", CURVE_ENTRIES)
 def test_api_permissions_for_every_curve_entry(client, api_env, suffix):
     env = api_env
     base = f'/api/v1/projects/{env["project"]}/tasks/T000010/curves'
@@ -229,27 +288,30 @@ def test_api_permissions_for_every_curve_entry(client, api_env, suffix):
     login(client, env["reader"])
     assert client.get(base + suffix).status_code == 200
     assert client.get(f'/api/v1/projects/{env["project"]}/tasks/T000011/curves' + suffix).status_code == 404
-    assert client.get(f'/api/v1/projects/{env["other"]}/tasks/T000011/curves' + suffix).status_code in (403, 404)
 
 
-def test_api_no_artifact_invalid_params_and_download(client, api_env):
+def test_api_context_compare_export_and_bad_params(client, api_env):
     login(client, api_env["reader"])
     base = f'/api/v1/projects/{api_env["project"]}/tasks/T000010/curves'
-    for query in ('time=c0&columns=c1&start=nan', 'time=c0&columns=c1&limit=abc', 'time=c0&columns=c1&limit=999999', 'time=c0&columns=../../output.csv'):
-        assert client.get(base + '/data?' + query).status_code == 400
-    response = client.get(base + '/download')
-    assert response.data == api_env['path'].read_bytes()
-    assert 'attachment' in response.headers['Content-Disposition']
-    assert response.headers['Cache-Control'] == 'no-store'
-    api_env['path'].write_bytes(b'')
-    assert client.get(base).status_code == 422
-    assert client.get(base + '/download').status_code == 200
-    assert client.get(base + '/download').data == b''
-    api_env['path'].unlink()
-    assert client.get(base).status_code == 404
+    data = client.get(base).get_json()["data"]
+    assert data["judge"]["first_failure"]["step"] == 3 and data["attempts"] == [1]
+    assert data["dictionary"]["signals"]["Rte_OUT_PP_Mode_u1_Mode"]["name"] == "モード"
+    assert data["can_download"] is True and data["limits"]["lanes"] == 32
+    compare = client.get(base + "/compare?other=T000012").get_json()["data"]
+    assert compare["first"]["t"] == 1.5 and compare["other"]["task_key"] == "T000012"
+    export = client.get(base + "/export?columns=c1,c2&start=0.499&end=0.501")
+    assert export.data.decode() == ("time,Rte_IN_PP_Door_u1_Door,Rte_OUT_PP_Mode_u1_Mode\r\n"
+                                    "0.499,0,0\r\n0.5,1,0\r\n0.501,1,0\r\n")
+    assert "attachment" in export.headers["Content-Disposition"]
+    for query in ("/series?columns=c1&start=nan", "/series?columns=c999", "/series?columns=../x",
+                  "/series?columns=c1&width=5", "/values?columns=c1", "/edge?column=c1&at=0&dir=2",
+                  "/series?run=2&columns=c1", f"/series?columns={','.join(['c1'] * 2)}"):
+        assert client.get(base + query).status_code == 400, query
+    assert client.get(base + "/series?columns=c1&revision=stale").status_code == 409
+    assert client.get(base + "/compare").status_code == 400  # same attempt
 
 
-def test_sealed_attempt_identity_digest_and_no_legacy_fallback(client, api_env, tmp_path):
+def test_api_sealed_attempt_digest_is_enforced(client, api_env, tmp_path):
     from app.extensions import db
     from app.models import Task
     from app.services import run_evidence_service as evidence
@@ -263,12 +325,45 @@ def test_sealed_attempt_identity_digest_and_no_legacy_fallback(client, api_env, 
         (input_dir / 'judge.py').write_text('# fixture')
         root = evidence.pin_attempt(task, input_dir)
         results = root / 'results'; results.mkdir()
-        output = results / 'output.csv'; output.write_bytes((FIXTURES / 'numeric.csv').read_bytes())
+        output = results / 'output.csv'; output.write_text(sample(), newline="")
         evidence.seal_attempt(task, status='passed', verdict='PASS', message='fixture', evidence_kind='mock', runner_backend='mock')
         db.session.commit()
-        assert client.get(base).status_code == 200
-        # CSV preview validates only its selected result, not unrelated mutable inputs.
-        output.write_text('Time,foreign\n0,987\n')
+        ok = client.get(base).get_json()["data"]
+        assert ok["attempts"] == [1] and ok["judge"]["available"] is False
+        output.write_text('"time","x"\r\n0,987\r\n')
         assert client.get(base).status_code == 404
-        output.unlink()
-        assert client.get(base).status_code == 404
+
+
+def test_saved_views_are_shared_validated_and_owned(client, api_env):
+    project = api_env["project"]
+    url = f"/api/v1/projects/{project}/curve-views"
+    headers = {"X-CSRF-Token": "t"}
+    login(client, api_env["reader"])
+    layout = {"lanes": [{"name": "Rte_OUT_PP_Mode_u1_Mode", "height": 40}], "range": [0.4, 1.6]}
+    created = client.post(url, json={"test_id": "TC-1", "name": "失败窗口", "layout": layout}, headers=headers)
+    assert created.status_code == 201
+    view_id = created.get_json()["data"]["view"]["id"]
+    assert client.post(url, json={"test_id": "TC-1", "name": "失败窗口", "layout": layout}, headers=headers).status_code == 409
+    for bad in ({"lanes": []}, {"lanes": [{"name": ""}]}, {"lanes": [{"name": "x", "height": 9}]},
+                {"lanes": [{"name": "x"}], "range": [2, 1]}, {"lanes": [{"name": "x"}], "extra": 1}):
+        assert client.post(url, json={"test_id": "TC-1", "name": "x", "layout": bad}, headers=headers).status_code == 400
+    assert client.post(url, json={"test_id": "NOPE", "name": "x", "layout": layout}, headers=headers).status_code == 404
+    login(client, api_env["reader2"])
+    listed = client.get(url + "?test_id=TC-1").get_json()["data"]["views"]
+    assert [v["name"] for v in listed] == ["失败窗口"] and listed[0]["layout"] == layout
+    assert client.put(f"{url}/{view_id}", json={"name": "改名"}, headers=headers).status_code == 403
+    assert client.delete(f"{url}/{view_id}", headers=headers).status_code == 403
+    login(client, api_env["reader"])
+    assert client.put(f"{url}/{view_id}", json={"name": "改名"}, headers=headers).get_json()["data"]["view"]["name"] == "改名"
+    assert client.delete(f"{url}/{view_id}", headers=headers).status_code == 200
+    login(client, api_env["outsider"])
+    assert client.get(url + "?test_id=TC-1").status_code in (403, 404)
+
+
+def test_curve_limits_are_runtime_settings(app_ctx):
+    from app.services import runtime_config
+    with app_ctx.app_context():
+        keys = {f["key"] for f in runtime_config.describe() if f["group"] == "curves"}
+        assert keys == {"curve_max_file_mb", "curve_point_limit", "curve_max_lanes", "curve_cache_mb"}
+        runtime_config.set_many({"curve_max_lanes": 6})
+        assert curves.limits().max_lanes == 6

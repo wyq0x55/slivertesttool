@@ -305,6 +305,26 @@
       help: "每个任务最多保留的历史事件（日志/进度）条数；每日凌晨自动清理，也可在任务管理中手动清理",
       unit: "条", step: 100,
     },
+    curve_max_file_mb: {
+      label: "变量曲线 · 最大 output.csv",
+      help: "超过此大小的 output.csv 不在变量曲线中解析（仍可通过运行报告下载）",
+      unit: "MiB", step: 1,
+    },
+    curve_point_limit: {
+      label: "变量曲线 · 精确点上限",
+      help: "单个变量在当前区间内的跳变点超过此数时，改为按像素发送最小/最大包络，并在图上标注",
+      unit: "点", step: 500,
+    },
+    curve_max_lanes: {
+      label: "变量曲线 · 最大泳道数",
+      help: "同时显示的变量（泳道）上限，也是保存视图的上限",
+      unit: "条", step: 1,
+    },
+    curve_cache_mb: {
+      label: "变量曲线 · 索引缓存上限",
+      help: "已解析 output.csv 的磁盘索引缓存总大小，超出后按最久未用淘汰",
+      unit: "MiB", step: 16,
+    },
   };
   // The last values fetched from the server, used to compute the dirty set.
   let _rtcServer = {};

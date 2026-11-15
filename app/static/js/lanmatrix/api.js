@@ -16,14 +16,15 @@
     }
   }
 
-  async function request(method, path, { body, raw, query, headers: extraHeaders } = {}) {
+  async function request(method, path, { body, raw, query, headers: extraHeaders, signal } = {}) {
     const headers = { ...(extraHeaders || {}) };
     let url = BASE + path;
     if (query) {
       const qs = new URLSearchParams(query).toString();
       if (qs) url += (url.includes("?") ? "&" : "?") + qs;
     }
-    const opts = { method, headers, credentials: "same-origin" };
+    const opts = { method, headers, credentials: "same-origin", cache: "no-store" };
+    if (signal) opts.signal = signal;
     if (method !== "GET" && method !== "HEAD") {
       headers["X-CSRF-Token"] = csrfToken || "";
     }
@@ -331,6 +332,18 @@
     projectTaskDetail(id, key) { return request("GET", `/projects/${id}/tasks/${key}/detail`); },
     projectTaskStreamUrl(id, key) { return `${BASE}/projects/${id}/tasks/${key}/stream`; },
     projectTaskJdgrslt(id, key) { return request("GET", `/projects/${id}/tasks/${key}/jdgrslt`); },
+    // Variable curves: ``part`` is "" (context) or "/series", "/values", ...
+    taskCurves(id, key, part, query, signal) {
+      return request("GET", `/projects/${id}/tasks/${encodeURIComponent(key)}/curves${part || ""}`, { query, signal });
+    },
+    taskCurvesUrl(id, key, part, query) {
+      const qs = new URLSearchParams(query || {}).toString();
+      return `${BASE}/projects/${id}/tasks/${encodeURIComponent(key)}/curves${part}${qs ? "?" + qs : ""}`;
+    },
+    curveViews(id, testId) { return request("GET", `/projects/${id}/curve-views`, { query: { test_id: testId } }); },
+    createCurveView(id, body) { return request("POST", `/projects/${id}/curve-views`, { body }); },
+    updateCurveView(id, viewId, body) { return request("PUT", `/projects/${id}/curve-views/${viewId}`, { body }); },
+    deleteCurveView(id, viewId) { return request("DELETE", `/projects/${id}/curve-views/${viewId}`); },
     cancelProjectTask(id, key) { return request("POST", `/projects/${id}/tasks/${key}/cancel`, {}); },
     deleteProjectTask(id, key) { return request("DELETE", `/projects/${id}/tasks/${key}`); },
     deleteProjectTasksBatch(id, keys) { return request("POST", `/projects/${id}/tasks/delete_batch`, { body: { keys } }); },

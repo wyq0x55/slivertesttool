@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .ai_draft import AiDraft, AiSignalDict
+from .curve_view import CurveView
 from .api_token import ApiToken
 from .lanmatrix import (
     AuditLog,
@@ -29,6 +30,7 @@ from .task_event import EventType, TaskEvent
 from .ut_pipeline import UtAttempt, UtBatch, UtJob, UtPipelineConfig, UtTarget
 
 __all__ = [
+    "CurveView",
     "Setting",
     "Task",
     "TaskStatus",
