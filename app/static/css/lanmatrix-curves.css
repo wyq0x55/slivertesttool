@@ -55,7 +55,8 @@ body.cv-noscroll { overflow:hidden; }
 .cv-gr > summary, .cv-const > summary { display:flex; align-items:center; gap:6px; cursor:pointer; padding:6px 2px; font-size:12px; font-weight:600; color:var(--text-2); list-style:none; overflow-wrap:anywhere; }
 .cv-gr > summary::before, .cv-const > summary::before { content:"▸"; margin-right:4px; color:var(--text-3); }
 .cv-gr[open] > summary::before, .cv-const[open] > summary::before { content:"▾"; }
-.cv-gr > summary > span:first-child, .cv-const > summary > span:first-child { flex:1; }
+.cv-gr > summary > span:first-child, .cv-const > summary > span:first-child, .cv-gr-name { flex:1; min-width:0; }
+.cv-gr-all { margin:0; accent-color:var(--brand); flex:none; }
 .cv-const { margin-left:10px; }
 .cv-item { display:grid; grid-template-columns:auto 10px minmax(0,1fr); align-items:start; gap:6px; padding:6px 4px; border-radius:6px; cursor:pointer; }
 .cv-item:hover { background:var(--surface); }
@@ -77,6 +78,8 @@ body.cv-noscroll { overflow:hidden; }
 .cv-cur { font-family:var(--mono); font-variant-numeric:tabular-nums; }
 .cv-cur b { font-family:var(--font); margin-right:2px; }
 .cv-cur.a b { color:var(--brand-text); } .cv-cur.b b { color:var(--warn-text); }
+.cv-cur-x { appearance:none; border:0; background:transparent; color:var(--text-3); cursor:pointer; font:inherit; font-size:14px; line-height:1; padding:0 2px; }
+.cv-cur-x:hover { color:var(--danger); }
 .cv-cur.step { font-family:var(--font); color:var(--text-2); }
 .cv-hint { margin-left:auto; font-size:11px; }
 .cv-canvas-wrap { position:relative; min-width:0; }

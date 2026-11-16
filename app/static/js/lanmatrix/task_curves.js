@@ -132,10 +132,11 @@
     $("cv-body").hidden = true; $("cv-lower").hidden = true; $("cv-live").hidden = true;
     $("cv-first-fail").hidden = true; $("cv-compare-note").hidden = true;
     $("cv-run").replaceChildren(); $("cv-compare").replaceChildren(new Option("不对比", ""));
-    $("cv-view").replaceChildren(new Option("默认（判定涉及）", ""));
+    $("cv-view").replaceChildren(new Option("默认（期望优先）", ""));
     $("cv-tree").replaceChildren(); tip.hidden = true;
     ["cv-cur-a", "cv-cur-b", "cv-cur-d"].forEach(id => { $(id).textContent = "—"; });
     $("cv-cur-step").textContent = "";
+    ["cv-clear-a", "cv-clear-b"].forEach(id => { $(id).hidden = true; });
   }
 
   async function load(run, restore) {
@@ -190,7 +191,10 @@
     const judged = judgedNames();
     const role = n => (dict(n) && dict(n).roles) || [];
     let picks = ctx.columns.filter(c => judged.has(c.name));
-    picks.sort((a, b) => (role(a.name).includes("input") ? 0 : 1) - (role(b.name).includes("input") ? 0 : 1));
+    // Expected/check signals first, then stimulus inputs, so the default view
+    // is not filled by inputs before the values the case actually judges.
+    const rank = n => role(n).includes("check") ? 0 : role(n).includes("input") ? 1 : 2;
+    picks.sort((a, b) => rank(a.name) - rank(b.name));
     if (!picks.length) picks = ctx.columns.filter(c => c.kind !== "constant").slice(0, 8);
     lanes = picks.slice(0, ctx.limits.lanes).map(c => ({ id: c.id, name: c.name, height: laneHeight(c) }));
     defaultKey = lanes.map(l => l.name).join(",");
@@ -296,7 +300,25 @@
       const box = document.createElement("details");
       box.className = "cv-gr"; box.open = groups.size <= 6 || cols.some(c => shown.has(c.id)) || Boolean(q);
       const sum = document.createElement("summary");
-      sum.innerHTML = `<span>${esc(name)}</span><span class="submuted">${cols.length}</span>`;
+      const all = document.createElement("input");
+      all.type = "checkbox";
+      all.className = "cv-gr-all";
+      all.title = "选择或取消该分类下的全部变量";
+      all.setAttribute("aria-label", "选择或取消分类 " + name);
+      const picked = cols.filter(c => shown.has(c.id)).length;
+      all.checked = cols.length > 0 && picked === cols.length;
+      all.indeterminate = picked > 0 && picked < cols.length;
+      const halt = ev => ev.stopPropagation();
+      all.addEventListener("mousedown", halt);
+      all.addEventListener("click", halt);
+      all.addEventListener("change", () => setGroup(cols, all.checked));
+      const title = document.createElement("span");
+      title.className = "cv-gr-name";
+      title.textContent = name;
+      const count = document.createElement("span");
+      count.className = "submuted";
+      count.textContent = String(cols.length);
+      sum.append(all, title, count);
       box.append(sum);
       const active = cols.filter(c => c.kind !== "constant"), constant = cols.filter(c => c.kind === "constant");
       active.forEach(c => box.append(item(c, shown, judged)));
@@ -345,6 +367,26 @@
       lanes = lanes.filter(l => l.id !== c.id);
       colorSlots.delete(c.id);
     }
+    markViewDirty(); tree(); requestDraw(true); refreshCursor();
+  }
+
+  function setGroup(cols, on) {
+    const focusId = focusLane >= 0 && lanes[focusLane] ? lanes[focusLane].id : null;
+    if (on) {
+      const ordered = cols.filter(c => c.kind !== "constant").concat(cols.filter(c => c.kind === "constant"));
+      let capped = false;
+      ordered.forEach(c => {
+        if (capped || lanes.some(l => l.id === c.id)) return;
+        if (lanes.length >= ctx.limits.lanes) { capped = true; return; }
+        lanes.push({ id: c.id, name: c.name, height: laneHeight(c) });
+      });
+      if (capped) status("最多同时显示 " + ctx.limits.lanes + " 条泳道（可在系统设置中调整）。");
+    } else {
+      const drop = new Set(cols.map(c => c.id));
+      lanes.forEach(l => { if (drop.has(l.id)) colorSlots.delete(l.id); });
+      lanes = lanes.filter(l => !drop.has(l.id));
+    }
+    focusLane = focusId === null ? -1 : lanes.findIndex(l => l.id === focusId);
     markViewDirty(); tree(); requestDraw(true); refreshCursor();
   }
 
@@ -434,8 +476,8 @@
       if (kind !== "analog" && theirs && theirs.points) theirs.points.forEach(p => { if (p[1] !== null) { min = Math.min(min, p[1]); max = Math.max(max, p[1]); } });
       return {
         id: l.id, display: display(c), subtitle: display(c) !== c.name ? c.name : "",
-        kind: kind === "digital" ? "discrete" : kind === "constant" ? "discrete" : kind,
-        digital: kind === "digital", height: l.height, color: colorFor(l.id),
+        kind: kind === "digital" || kind === "constant" ? "discrete" : kind,
+        height: l.height, color: colorFor(l.id),
         series: mine, other: theirs, min, max, selected: i === focusLane,
         label: v => valueLabel(c, v), checks: checksByVar.get(c.name) || [],
         divergence: divergence.get(l.id),
@@ -524,6 +566,8 @@
     $("cv-cur-a").textContent = fmt(cursors.a);
     $("cv-cur-b").textContent = fmt(cursors.b);
     $("cv-cur-d").textContent = cursors.a !== null && cursors.b !== null ? fmt(Math.abs(cursors.b - cursors.a)) : "—";
+    $("cv-clear-a").hidden = cursors.a === null;
+    $("cv-clear-b").hidden = cursors.b === null;
     const s = cursors.a !== null ? stepAt(cursors.a) : null;
     $("cv-cur-step").textContent = s ? "A 在 Step" + s.step + "（" + (s.result || "—") + "）" + s.title : "";
   }
@@ -618,7 +662,7 @@
       views = data.views || [];
     } catch (_e) { views = []; }
     const sel = $("cv-view");
-    sel.replaceChildren(new Option("默认（判定涉及）", ""));
+    sel.replaceChildren(new Option("默认（期望优先）", ""));
     views.forEach(v => sel.add(new Option(v.name, String(v.id))));
     const wanted = window.LMUrl && LMUrl.get("cview");
     currentView = views.find(v => String(v.id) === wanted) || null;
@@ -984,6 +1028,8 @@
   }
   $("cv-full").addEventListener("click", () => fullscreen(!panel.classList.contains("cv-full")));
   $("cv-fit").addEventListener("click", () => ctx && setView(ctx.domain[0], ctx.domain[1]));
+  $("cv-clear-a").addEventListener("click", () => ctx && setCursor("a", null));
+  $("cv-clear-b").addEventListener("click", () => ctx && setCursor("b", null));
   $("cv-first-fail").addEventListener("click", firstFailure);
   $("cv-run").addEventListener("change", () => { const n = Number($("cv-run").value); load(n, null); });
   $("cv-compare").addEventListener("change", () => setCompare($("cv-compare").value));

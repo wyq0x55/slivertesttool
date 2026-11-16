@@ -229,7 +229,7 @@
           <label class="cv-field">对比 <select id="cv-compare" aria-label="对比对象"><option value="">不对比</option></select></label>
         </div>
         <div class="cv-group">
-          <label class="cv-field">视图 <select id="cv-view" aria-label="已保存视图"><option value="">默认（判定涉及）</option></select></label>
+          <label class="cv-field">视图 <select id="cv-view" aria-label="已保存视图"><option value="">默认（期望优先）</option></select></label>
           <button class="btn small" id="cv-view-save" type="button" title="保存当前泳道为视图（项目成员共享）">保存视图</button>
           <button class="btn small ghost" id="cv-view-delete" type="button" hidden>删除视图</button>
         </div>
@@ -263,11 +263,11 @@
         </aside>
         <div class="cv-main">
           <div class="cv-cursors" id="cv-cursors">
-            <span class="cv-cur a"><b>A</b> <output id="cv-cur-a">—</output></span>
-            <span class="cv-cur b"><b>B</b> <output id="cv-cur-b">—</output></span>
+            <span class="cv-cur a"><b>A</b> <output id="cv-cur-a">—</output><button type="button" class="cv-cur-x" id="cv-clear-a" hidden aria-label="取消光标 A">×</button></span>
+            <span class="cv-cur b"><b>B</b> <output id="cv-cur-b">—</output><button type="button" class="cv-cur-x" id="cv-clear-b" hidden aria-label="取消光标 B">×</button></span>
             <span class="cv-cur d"><b>Δt</b> <output id="cv-cur-d">—</output></span>
             <span class="cv-cur step" id="cv-cur-step"></span>
-            <span class="cv-hint submuted">点击放 A · Shift+点击放 B · 滚轮缩放 · 拖动平移 · ←/→ 跳到所选泳道的上/下一个跳变（Shift 移动 B）</span>
+            <span class="cv-hint submuted">点击放 A · Shift+点击放 B · × 取消光标 · 滚轮缩放 · 拖动平移 · ←/→ 跳到所选泳道的上/下一个跳变（Shift 移动 B）</span>
           </div>
           <div class="cv-canvas-wrap" id="cv-wrap">
             <canvas id="cv-canvas" tabindex="0" role="img" aria-label="变量泳道图：共享时间轴，可键盘操作"></canvas>

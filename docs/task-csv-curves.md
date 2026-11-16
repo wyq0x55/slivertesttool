@@ -29,7 +29,7 @@ Source files are never modified.
 
 | Item | Source |
 | --- | --- |
-| Signal kind | `constant` (no change), `discrete` (integers, at most 32 values; 0/1 is drawn as a digital line), `analog` |
+| Signal kind | `constant` (no change), `discrete` (integers, at most 32 values; 0/1 and multi-value states are both drawn as a thin step line), `analog` |
 | Judge timeline | the attempt's `jdgrslt.log`: steps with start/end and result; every check with variable, expectation, observation, timing and the time of the verdict line that closed it (`parse_step_results`) |
 | Display name and role | a sealed attempt's pinned procedure (`approved_inputs`: input / expected signals of the test and the subroutines it calls), plus the judge's `Monitoring target` names |
 | Value labels | per variable, the constants the case writes or expects (pinned `constants.json`), plus the macros in the judge's expected values; one value can carry several names |
@@ -50,16 +50,19 @@ Limits are live settings in **系统管理 → 授权 / 并发** (no restart):
 
 ## Using the view
 
-- Left: variables grouped by name prefix; filter 判定涉及 / 有变化 / 全部; constant
-  variables are folded under 恒定 with their value. The default lanes are the
-  variables the case drives or checks.
+- Left: variables grouped by name prefix. The checkbox on a category selects or
+  clears every variable in that group (up to the lane limit; changing signals
+  before constants). Filter 判定涉及 / 有变化 / 全部; constant variables are folded
+  under 恒定 with their value. The default view lists expected/check variables
+  first, then stimulus inputs.
 - Lanes: drag a label to reorder, drag its bottom edge to resize, × to remove.
   Top band: judge steps (failed in red); click a step to zoom to it, double-click
   to open it in 判定结果. Check markers sit on their lane at the verdict time
   (◆ passed, ▲ failed); hover for expected/observed.
 - Wheel zooms, drag pans, the minimap selects the window. Click sets cursor A,
-  Shift+click sets B (Δt shown). Select a lane and use ←/→ (Shift for B) to jump to
-  its previous/next change. `0` shows everything, `F` jumps to the first failure.
+  Shift+click sets B (Δt shown). × next to A or B clears that cursor. Select a lane
+  and use ←/→ (Shift for B) to jump to its previous/next change. `0` shows everything,
+  `F` jumps to the first failure.
 - 判定结果 → 曲线 on any step opens the curves focused on that step.
 - 事件列表: every change in time order (lanes / current range filters); 判定检查点:
   all checks; 原始数据: original records.

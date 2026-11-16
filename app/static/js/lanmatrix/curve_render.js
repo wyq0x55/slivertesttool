@@ -5,10 +5,10 @@
  * is exactly what is on screen. The renderer is pure: it draws a layout model
  * built by task_curves.js and never fetches or mutates state.
  *
- * Lanes are logic-analyzer style: 0/1 signals as a digital line, other
- * discrete signals as a "bus" of value segments labelled with the case's
- * constant names, analog signals as a scaled line (or a per-pixel min/max
- * envelope when the server sent one).
+ * Lanes are logic-analyzer style. Analog signals are a scaled line (or a
+ * per-pixel min/max envelope when the server sent one). Discrete signals,
+ * including 0/1 and multi-value states, are a thin step line: the value holds
+ * until the next change. State names stay in the cursor readout and tooltip.
  */
 (function (global) {
   "use strict";
@@ -265,44 +265,21 @@
       flush();
       return;
     }
-    // Discrete: digital (0/1) line or value bus.
-    const segs = [];
+    // Discrete, including multi-value states: a thin step line, not a bus.
+    // The value holds until the next change; nulls break the trace.
+    const ys = yScale(lane, y, h);
+    let run = [];
+    const flush = () => { if (run.length > 1) p.line(run, color, width, dash); run = []; };
     for (let i = 0; i < pts.length; i++) {
-      const a = Math.max(X0 - 2, tx(pts[i][0]));
-      const b = Math.min(X1 + 2, i + 1 < pts.length ? tx(pts[i + 1][0]) : tx(endT));
-      if (b < X0 - 2 || a > X1 + 2) continue;
-      segs.push([a, b, pts[i][1]]);
+      const v = pts[i][1];
+      if (v === null) { flush(); continue; }
+      const x0 = tx(pts[i][0]);
+      const x1 = i + 1 < pts.length ? tx(pts[i + 1][0]) : tx(endT);
+      const yy = ys(v);
+      if (run.length) run.push([x0, run[run.length - 1][1]]);
+      run.push([x0, yy], [x1, yy]);
     }
-    const top = y + 8, bottom = y + h - 9;
-    if (lane.digital) {
-      const line = [];
-      segs.forEach(([a, b, v]) => {
-        const yy = v === null ? (top + bottom) / 2 : v ? top : bottom;
-        if (line.length) line.push([a, yy]); else line.push([a, yy]);
-        line.push([b, yy]);
-        if (v === 1 && !ghost && b - a > 1) p.rect(a, top, b - a, bottom - top, th.fillSoft);
-      });
-      p.line(line, color, width, dash);
-      return;
-    }
-    const mid = (top + bottom) / 2;
-    segs.forEach(([a, b, v]) => {
-      if (v === null) { p.line([[a, mid], [b, mid]], th.text3, 1, [2, 2]); return; }
-      const k = Math.min(4, (b - a) / 2);
-      const poly = [[a, mid], [a + k, top], [b - k, top], [b, mid], [b - k, bottom], [a + k, bottom]];
-      if (ghost) { p.polygon(poly, null, color, 1.2); return; }
-      p.polygon(poly, th.fillSoft, color, 1.5);
-      const label = lane.label ? lane.label(v) : fmtValue(v);
-      const avail = b - a - 2 * k - 4;
-      if (avail > 10) {
-        let text = label;
-        if (p.measure(text, { size: 11, font: th.font }) > avail) text = fmtValue(v);
-        if (p.measure(text, { size: 11, font: th.font }) <= avail) {
-          p.clip(a + k, top, b - a - 2 * k, bottom - top, () =>
-            p.text(Math.max(a + k + 3, X0 + 3), mid, text, { color: th.text, size: 11, font: th.font }));
-        }
-      }
-    });
+    flush();
   }
 
   // ---------------------------------------------------------------- minimap
