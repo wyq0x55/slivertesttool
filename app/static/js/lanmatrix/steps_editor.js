@@ -709,6 +709,9 @@
       if (btn) btn.disabled = true;
       this.errEl.hidden = true;
       try {
+        await this._flushEdit();
+        this._pull();
+        if (typeof this.onPrepare === "function") await this.onPrepare(JSON.stringify(this._serialize()));
         await this.onEnqueue(this.testId);
         this._setStatus("queued");
       } catch (ex) {

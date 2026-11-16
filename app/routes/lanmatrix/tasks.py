@@ -223,6 +223,27 @@ def upload_project_tree(project_id):
     return ok({"created": created, "duplicates": duplicates,
                "errors": errors, "notes": info.get("notes", [])}, status=201)
 
+def _reject_unmaterialized_inputs(project_id, snapshot):
+    """Reject a run whose edited inputs are not yet committed."""
+    from ...services.lanmatrix import run_input_service
+
+    try:
+        run_input_service.assert_materialized(project_id, snapshot)
+    except run_input_service.RunInputsNotMaterialized as exc:
+        db.session.rollback()
+        return err(
+            "COLLAB_INPUTS_NOT_MATERIALIZED",
+            "协同编辑尚未写入数据库，请等待同步后重新运行",
+            details={"conflicts": exc.conflicts}, status=409)
+    except Exception as exc:
+        from ...services.run_evidence_service import EvidenceError
+        if not isinstance(exc, EvidenceError):
+            raise
+        db.session.rollback()
+        return err("VALIDATION_ERROR", "运行输入快照无效", status=400)
+    return None
+
+
 @bp.post("/projects/<int:project_id>/tasks/run-selected")
 @login_required
 def run_selected_tasks(project_id):
@@ -278,6 +299,11 @@ def run_selected_tasks(project_id):
 
     submitter = g.user.username
     created, missing, errors, duplicates = [], [], [], []
+    snapshot = body.get("expected_inputs") if isinstance(body, dict) else None
+    if snapshot is not None:
+        conflict = _reject_unmaterialized_inputs(project.id, snapshot)
+        if conflict is not None:
+            return conflict
     for test_id in selected:
         row = by_test_id.get(test_id)
         if row is None:
@@ -285,6 +311,10 @@ def run_selected_tasks(project_id):
             continue
         committed_attempt = None
         try:
+            if snapshot is not None:
+                conflict = _reject_unmaterialized_inputs(project.id, snapshot)
+                if conflict is not None:
+                    return conflict
             task, started = task_service.upsert_task(
                 task_name=test_id, file_name="(json runner)",
                 submitter=submitter, test_id=test_id,
@@ -367,6 +397,11 @@ def rerun_selected_tasks(project_id):
 
     submitter = g.user.username
     created, skipped, missing, errors = [], [], [], []
+    snapshot = body.get("expected_inputs") if isinstance(body, dict) else None
+    if snapshot is not None:
+        conflict = _reject_unmaterialized_inputs(project.id, snapshot)
+        if conflict is not None:
+            return conflict
     for key in keys:
         task = task_service.get_project_task(project_id, key)
         if task is None:
@@ -387,6 +422,10 @@ def rerun_selected_tasks(project_id):
         sil_ref = (task.sil_relpath or "").strip()
         committed_attempt = None
         try:
+            if snapshot is not None:
+                conflict = _reject_unmaterialized_inputs(project.id, snapshot)
+                if conflict is not None:
+                    return conflict
             # requeue_task (not upsert_task): upsert resolves its target by
             # ``(project_id, test_id)`` and would reset the NEWEST task carrying
             # this test id, which is not necessarily the row the user selected.

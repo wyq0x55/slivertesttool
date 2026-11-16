@@ -1198,6 +1198,42 @@
 
   // Every test-sheet row that owns a non-empty test_id, de-duplicated so a
   // test_id shared by multiple rows only enqueues once.
+
+  async function waitForCommittedEdits() {
+    const active = document.activeElement;
+    if (active && typeof active.blur === "function") active.blur();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    let tries = 50;
+    const busy = () => savingCount > 0 || (grid && (grid.syncing || grid.syncTimer ||
+      grid.structuralPending || (grid.isEditing && grid.isEditing())));
+    while (busy() && tries-- > 0) await new Promise((resolve) => setTimeout(resolve, 100));
+    if (busy()) throw new Error("保存尚未完成，请结束编辑并等待同步后再运行。");
+    if (collabActive() && collabConn !== "connected") {
+      throw new Error("协同连接未同步，请恢复连接后再运行。");
+    }
+  }
+
+  async function executionSnapshot(testIds) {
+    await waitForCommittedEdits();
+    const [tests, libs, constants] = await Promise.all([
+      fetchAllItems("test"), fetchAllItems("lib"), fetchAllItems("const"),
+    ]);
+    const wanted = new Set((testIds || []).map((id) => String(id).trim()));
+    return {
+      tests: tests.filter((item) => wanted.has(rowTestId(item))).map((item) => ({
+        uuid: item.uuid, test_id: rowTestId(item), steps: item.steps,
+      })),
+      lib: libs.map((item) => ({
+        uuid: item.uuid,
+        name: String(item.lib_func || item.lib_name || item.case_id || "").trim(),
+        steps: item.lib_stb, params: item.lib_para || "", init: item.isinit,
+      })),
+      const: constants.map((item) => ({
+        uuid: item.uuid, name: String(item.const_name || "").trim(), value: item.const_value,
+      })),
+    };
+  }
+
   function queueCandidates() {
     const seen = new Set();
     const out = [];
@@ -1391,7 +1427,7 @@
       if (queueError) queueError.hidden = true;
       try {
         const model = (window.LMDefaultModel || "").trim();
-        const payload = { test_ids: testIds };
+        const payload = { test_ids: testIds, expected_inputs: await executionSnapshot(testIds) };
         if (model) payload.model = model;
         const res = await LMApi.runSelectedTasks(pid, payload);
         const created = (res.created || []).length;
@@ -2035,8 +2071,9 @@
             await loadItems();
             toast("步骤明细已保存", true);
           },
+          onPrepare: async (json) => { await saveCell(item, { [stepsKey]: json }); },
           onEnqueue: testId ? (async (tid) => {
-            const payload = { test_ids: [tid] };
+            const payload = { test_ids: [tid], expected_inputs: await executionSnapshot([tid]) };
             const model = (window.LMDefaultModel || "").trim();
             if (model) payload.model = model;
             const res = await LMApi.runSelectedTasks(pid, payload);
