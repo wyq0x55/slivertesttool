@@ -477,10 +477,10 @@ def test_submission_rollback_does_not_block_a_fresh_approved_attempt(submitted):
     assert evidence.read_evidence(task, run_count=1) == original
 
 
-@pytest.mark.parametrize("failure", [None, "error", "cancelled"])
+@pytest.mark.parametrize("failure", [None, "error", "timeout", "cancelled"])
 def test_runner_uses_snapshot_archives_all_outcomes_and_writes_back(submitted, monkeypatch, failure):
     from app.runners import test_runner
-    from app.runners.silver_runner import RunnerCancelled, RunnerError
+    from app.runners.silver_runner import RunnerCancelled, RunnerError, SilverRunner
     from app.services import report_service
     application, task, source, model = submitted
     calls = []
@@ -496,6 +496,11 @@ def test_runner_uses_snapshot_archives_all_outcomes_and_writes_back(submitted, m
         (context.log_dir / "jdgrslt.log").write_text("Test is Passed.", encoding="utf-8")
         if failure == "error":
             raise RunnerError("mock failure")
+        if failure == "timeout":
+            SilverRunner()._execute(SimpleNamespace(
+                set_silver_property=lambda *_args: None,
+                run_until=lambda *_args, **_kwargs: False,
+            ), context)
         if failure == "cancelled":
             raise RunnerCancelled()
 
@@ -503,7 +508,12 @@ def test_runner_uses_snapshot_archives_all_outcomes_and_writes_back(submitted, m
     monkeypatch.setattr(test_runner, "_write_row_result", lambda current, verdict, **kwargs: writes.append(verdict))
     test_runner.execute(application, application.config_obj, task)
     assert len(calls) == 1
-    assert task.result == {None: "PASS", "error": "ERROR", "cancelled": "CANCELLED"}[failure]
+    assert task.result == {
+        None: "PASS", "error": "ERROR", "timeout": "ERROR", "cancelled": "CANCELLED",
+    }[failure]
+    if failure == "timeout":
+        assert task.status == "failed"
+        assert task.message == "timeout"
     assert writes == [task.result]
     data = service().read_evidence(task)
     assert data["outcome"]["verdict"] == task.result

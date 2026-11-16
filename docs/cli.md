@@ -90,6 +90,11 @@ python -m silver_cli token revoke 3 --confirm
   `token create --name agent --days 90 --output agent.token --replace --confirm`
   会签发新 Token，并吊销同名的旧 Token。
 
+License and runtime-configuration writes also require an administrator password
+session with CSRF protection. API tokens receive 403 `PERMISSION_DENIED` for
+`POST /api/v1/admin/license` and `POST /api/v1/admin/runtime-config`, including
+tokens owned by administrators. Administrator tokens can still read these settings.
+
 ## 2. 调用、预演与权限
 
 ```powershell

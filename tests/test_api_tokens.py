@@ -198,3 +198,111 @@ def test_password_reset_revokes_the_users_tokens(app):
                          headers={"X-CSRF-Token": csrf})
     assert reset.status_code == 200
     assert app.test_client().get("/api/v1/projects", headers=_bearer(secret)).status_code == 401
+
+
+def _rollback_read(reader):
+    from app.extensions import db
+
+    db.session.rollback()
+    return reader()
+
+
+def test_admin_token_cannot_change_license_or_runtime_config(app, monkeypatch):
+    """An admin API token may read license and runtime config, but not write them."""
+    from app.routes.lanmatrix import admin_console
+    from app.services import license_service, runtime_config
+
+    _make_admin(app)
+    secret, _ = _issue(app)
+    calls = []
+
+    def _forbid(name):
+        def wrapped(*args, **kwargs):
+            calls.append(name)
+            raise AssertionError(name + " mutated")
+        return wrapped
+
+    monkeypatch.setattr(admin_console.license_service, "set_limit", _forbid("license"))
+    monkeypatch.setattr(admin_console.runtime_config, "set_many", _forbid("runtime"))
+    limit_before = _rollback_read(license_service.get_limit)
+    timeout_before = _rollback_read(lambda: runtime_config.get_int("execution_timeout"))
+    client = app.test_client()
+    headers = _bearer(secret)
+    assert client.get("/api/v1/admin/license", headers=headers).status_code == 200
+    assert client.get("/api/v1/admin/runtime-config", headers=headers).status_code == 200
+    licensed = client.post("/api/v1/admin/license", headers=headers,
+                           json={"count": limit_before + 1})
+    configured = client.post("/api/v1/admin/runtime-config", headers=headers,
+                             json={"changes": {"execution_timeout": timeout_before + 1}})
+    assert licensed.status_code == 403
+    assert configured.status_code == 403
+    assert licensed.get_json()["error"]["code"] == "PERMISSION_DENIED"
+    assert configured.get_json()["error"]["code"] == "PERMISSION_DENIED"
+    assert "API Token" in licensed.get_json()["error"]["message"]
+    assert "API Token" in configured.get_json()["error"]["message"]
+    assert calls == []
+    assert _rollback_read(license_service.get_limit) == limit_before
+    assert _rollback_read(lambda: runtime_config.get_int("execution_timeout")) == timeout_before
+
+
+def test_password_admin_session_can_change_license_and_runtime_config(app):
+    from app.services import license_service, runtime_config
+
+    _make_admin(app)
+    limit_before = _rollback_read(license_service.get_limit)
+    timeout_before = _rollback_read(lambda: runtime_config.get_int("execution_timeout"))
+    next_limit = limit_before + 1
+    next_timeout = timeout_before + 1
+    client = app.test_client()
+    login = client.post("/api/v1/auth/login", json={"username": "agent", "password": "secret"})
+    csrf = login.get_json()["data"]["csrf_token"]
+    headers = {"X-CSRF-Token": csrf}
+    licensed = client.post("/api/v1/admin/license", headers=headers, json={"count": next_limit})
+    configured = client.post("/api/v1/admin/runtime-config", headers=headers,
+                             json={"changes": {"execution_timeout": next_timeout}})
+    assert licensed.status_code == 200
+    assert licensed.get_json()["data"]["count"] == next_limit
+    assert configured.status_code == 200
+    assert configured.get_json()["data"]["values"]["execution_timeout"] == next_timeout
+    assert _rollback_read(license_service.get_limit) == next_limit
+    assert _rollback_read(lambda: runtime_config.get_int("execution_timeout")) == next_timeout
+
+
+def test_non_admin_still_cannot_change_license_or_runtime_config(app, monkeypatch):
+    """Non-admins stay on the existing system-admin denial, with no write."""
+    from app.routes.lanmatrix import admin_console
+    from app.services import license_service, runtime_config
+
+    calls = []
+
+    def _forbid(name):
+        def wrapped(*args, **kwargs):
+            calls.append(name)
+            raise AssertionError(name + " mutated")
+        return wrapped
+
+    monkeypatch.setattr(admin_console.license_service, "set_limit", _forbid("license"))
+    monkeypatch.setattr(admin_console.runtime_config, "set_many", _forbid("runtime"))
+    secret, _ = _issue(app)
+    limit_before = _rollback_read(license_service.get_limit)
+    timeout_before = _rollback_read(lambda: runtime_config.get_int("execution_timeout"))
+    payload_license = {"count": limit_before + 1}
+    payload_runtime = {"changes": {"execution_timeout": timeout_before + 1}}
+    token_client = app.test_client()
+    token_headers = _bearer(secret)
+    token_license = token_client.post("/api/v1/admin/license", headers=token_headers, json=payload_license)
+    token_runtime = token_client.post("/api/v1/admin/runtime-config", headers=token_headers, json=payload_runtime)
+    session_client = app.test_client()
+    login = session_client.post("/api/v1/auth/login", json={"username": "agent", "password": "secret"})
+    csrf = login.get_json()["data"]["csrf_token"]
+    session_headers = {"X-CSRF-Token": csrf}
+    session_license = session_client.post("/api/v1/admin/license", headers=session_headers, json=payload_license)
+    session_runtime = session_client.post("/api/v1/admin/runtime-config", headers=session_headers, json=payload_runtime)
+    for response in (token_license, token_runtime, session_license, session_runtime):
+        body = response.get_json()
+        assert response.status_code == 403
+        assert body["error"]["code"] == "PERMISSION_DENIED"
+        assert body["error"]["message"] == "仅系统管理员可访问"
+    assert calls == []
+    assert _rollback_read(license_service.get_limit) == limit_before
+    assert _rollback_read(lambda: runtime_config.get_int("execution_timeout")) == timeout_before

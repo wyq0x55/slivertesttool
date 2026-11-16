@@ -89,6 +89,7 @@ def admin_get_license():
 
 @bp.post("/admin/license")
 @system_admin_required
+@password_session_required
 def admin_set_license():
     body = request.get_json(silent=True) or {}
     try:
@@ -110,6 +111,7 @@ def admin_get_runtime_config():
 
 @bp.post("/admin/runtime-config")
 @system_admin_required
+@password_session_required
 def admin_set_runtime_config():
     body = request.get_json(silent=True) or {}
     changes = body.get("changes", body)

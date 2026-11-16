@@ -84,6 +84,7 @@ class _Instance:
 
     def run_until(self, condition, timeout=0):
         self.calls.append(("run_until", condition))
+        return True
 
     def __getattr__(self, name):  # add_module/restart/... must not be used
         raise AssertionError(f"unexpected Silver API call: {name}")

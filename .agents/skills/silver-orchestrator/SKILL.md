@@ -1,6 +1,6 @@
 ---
 name: silver-orchestrator
-description: Orchestrate non-trivial Test Platform coding work with a root session, bounded execution subagents, and an independent reviewer on a different model. Use for cross-component work, repository exploration, debugging, parallel workstreams, or changes where independent verification materially helps. Do not use for trivial localized edits.
+description: Orchestrate non-trivial Test Platform coding work with a root session, bounded execution subagents, and an independent reviewer using the root model. Use for cross-component work, repository exploration, debugging, parallel workstreams, or changes where independent verification materially helps. Do not use for trivial localized edits.
 ---
 
 # Test Platform Orchestrator
@@ -26,10 +26,10 @@ Do not spawn roles mechanically. Use only the roles that improve the task.
 - `researcher`: current external/version-specific facts.
 - `reviewer`: independent post-change code review.
 
-Role models are set in `.codex/agents/*.toml`; the reviewer intentionally runs
-on a different model from the execution roles. The root keeps the model
-selected by the current session and owns architecture, decomposition,
-integration, and the final claim.
+All roles, including the independent reviewer, inherit the root session's model
+and reasoning effort. Do not pin model overrides in role files or agent defaults,
+or select a different model in spawn requests. The root owns architecture,
+decomposition, integration, and the final claim.
 
 Useful repository decomposition:
 

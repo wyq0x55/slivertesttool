@@ -417,7 +417,7 @@ class SilverRunner(SilverRunnerBase):
             # Blocking call. A concurrent JobManager.cancel() invokes
             # silver.exit(force=True) from another thread, which unblocks
             # run_until; we then detect the cancel flag below.
-            silver.run_until("isFinished != True", timeout=ctx.timeout)
+            completed = silver.run_until("isFinished != True", timeout=ctx.timeout)
         except (RuntimeError, SystemError, ValueError) as exc:
             if ctx.cancel_event.is_set():
                 raise RunnerCancelled("Cancelled during run.") from exc
@@ -426,6 +426,9 @@ class SilverRunner(SilverRunnerBase):
 
         if ctx.cancel_event.is_set():
             raise RunnerCancelled("Cancelled during run.")
+
+        if not completed:
+            raise RunnerError("timeout")
 
     @staticmethod
     def _import_silver(silver_home: str):

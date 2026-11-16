@@ -1,7 +1,5 @@
 name = "reviewer"
 description = "Independent read-only reviewer for correctness, security, concurrency, data integrity, and architecture regressions."
-model = "gpt-6-astra"
-model_reasoning_effort = "low"
 sandbox_mode = "read-only"
 
 developer_instructions = """

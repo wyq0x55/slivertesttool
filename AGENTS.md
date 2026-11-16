@@ -114,9 +114,9 @@ file remains authoritative if orchestration guidance conflicts with it.
 - Keep architecture and cross-component decisions in the root session.
 - Use read-only exploration before implementation when the ownership boundary is
   not already clear.
-- Subagent models are configured in `.codex/config.toml` and
-  `.codex/agents/*.toml`; the independent code reviewer intentionally runs on a
-  different model from the execution roles.
+- Subagents, including the independent reviewer, inherit the root session's
+  model and reasoning effort. Do not pin model overrides in `.codex/config.toml`
+  or `.codex/agents/*.toml`, or select a different model in spawn requests.
 - Keep at most three subagents active concurrently. Parallelize only independent
   workstreams.
 - Give every writable subagent an explicit file/subsystem ownership boundary;
