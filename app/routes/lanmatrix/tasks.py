@@ -223,6 +223,21 @@ def upload_project_tree(project_id):
     return ok({"created": created, "duplicates": duplicates,
                "errors": errors, "notes": info.get("notes", [])}, status=201)
 
+
+def _logical_test_rows(rows):
+    from ...services.lanmatrix import silver_json_export as sje
+    grouped = {}
+    for row in rows:
+        tid = sje.row_test_id(row)
+        if tid:
+            grouped.setdefault(tid, []).append(row)
+    return grouped
+
+
+def _ambiguous_test_ids(grouped, test_ids):
+    return [test_id for test_id in test_ids if len(grouped.get(test_id, [])) > 1]
+
+
 def _reject_unmaterialized_inputs(project_id, snapshot):
     """Reject a run whose edited inputs are not yet committed."""
     from ...services.lanmatrix import run_input_service
@@ -291,11 +306,19 @@ def run_selected_tasks(project_id):
     const_rows = _rows("const")
     lib_rows = _rows("lib")
     test_rows = _rows("test")
-    by_test_id = {}
-    for row in test_rows:
-        tid = sje.row_test_id(row)
-        if tid:
-            by_test_id.setdefault(tid, row)
+    grouped = _logical_test_rows(test_rows)
+    ordered = []
+    seen = set()
+    for test_id in selected:
+        if test_id not in seen:
+            seen.add(test_id)
+            ordered.append(test_id)
+    selected = ordered
+    ambiguous = _ambiguous_test_ids(grouped, selected)
+    if ambiguous:
+        return err("AMBIGUOUS_TEST_ID", "同一个 test id 对应多行，无法确定要运行的用例",
+                   details={"test_ids": ambiguous}, status=409)
+    by_test_id = {test_id: rows[0] for test_id, rows in grouped.items() if len(rows) == 1}
 
     submitter = g.user.username
     created, missing, errors, duplicates = [], [], [], []
@@ -389,11 +412,16 @@ def rerun_selected_tasks(project_id):
     const_rows = _rows("const")
     lib_rows = _rows("lib")
     test_rows = _rows("test")
-    by_test_id = {}
-    for row in test_rows:
-        tid = sje.row_test_id(row)
-        if tid:
-            by_test_id.setdefault(tid, row)
+    grouped = _logical_test_rows(test_rows)
+    ambiguous = []
+    for key in keys:
+        existing = task_service.get_project_task(project_id, key)
+        if existing is not None and len(grouped.get(existing.test_id, [])) > 1:
+            ambiguous.append(existing.test_id)
+    if ambiguous:
+        return err("AMBIGUOUS_TEST_ID", "同一个 test id 对应多行，无法确定要运行的用例",
+                   details={"test_ids": ambiguous}, status=409)
+    by_test_id = {test_id: rows[0] for test_id, rows in grouped.items() if len(rows) == 1}
 
     submitter = g.user.username
     created, skipped, missing, errors = [], [], [], []
@@ -576,7 +604,7 @@ def project_task_jdgrslt(project_id, task_key):
     )
     content = extract_case_section(raw, task.test_id)
     verdict = task.result
-    if task.status in (TaskStatus.PASSED.value, TaskStatus.FAILED.value):
+    if not str(verdict or '').strip() or str(verdict).strip().upper() == 'UNKNOWN':
         verdict = parse_verdict_text(raw, task.test_id)
     return ok({"available": True, "verdict": verdict,
                "failed_steps": count_failed_steps(raw, task.test_id),

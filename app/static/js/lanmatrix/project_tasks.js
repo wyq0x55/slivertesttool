@@ -897,7 +897,11 @@
     if (!tid) { toast("该任务缺少 test id", false); return; }
     try {
       const items = await fetchTestItems();
-      const row = items.find((it) => String(it.test_id == null ? "" : it.test_id).trim() === tid);
+      const logicalId = (it) => {
+        const direct = it && it.test_id != null ? String(it.test_id).trim() : "";
+        return direct || (it && it.case_id != null ? String(it.case_id).trim() : "");
+      };
+      const row = items.find((it) => logicalId(it) === tid);
       if (!row) {
         toast(`在测试表中未找到 test id「${tid}」对应的行`, false);
         return;

@@ -144,3 +144,24 @@ def test_reordered_library_is_a_conflict(app_ctx, tmp_path):
     assert response.status_code == 409
     with app_ctx.app_context():
         assert Task.query.filter_by(project_id=project_id).count() == 0
+
+
+def test_duplicate_logical_test_id_is_rejected_before_enqueue(app_ctx, tmp_path):
+    from app.extensions import db
+    from app.models import Task, TestItemRow
+
+    project_id, user_id = _project(app_ctx, tmp_path, {"steps": [{"no": 1}]})
+    with app_ctx.app_context():
+        db.session.add(TestItemRow(
+            project_id=project_id, case_id="TC-1B", sheet="test", uuid="test-2",
+            custom_values={"test_id": "TC-1", "steps": {"steps": [{"no": 9}]}}))
+        db.session.commit()
+    client = _client(app_ctx, user_id)
+    response = client.post(
+        f"/api/v1/projects/{project_id}/tasks/run-selected",
+        json={"test_ids": ["TC-1", " TC-1 "], "model": "plant@v1"},
+        headers={"X-CSRF-Token": "collab-csrf"})
+    assert response.status_code == 409
+    assert response.json["error"]["code"] == "AMBIGUOUS_TEST_ID"
+    with app_ctx.app_context():
+        assert Task.query.filter_by(project_id=project_id).count() == 0

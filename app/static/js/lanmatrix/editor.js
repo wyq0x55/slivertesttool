@@ -638,7 +638,7 @@
     const items = sheetItems[currentSheet] || [];
     const idByUuid = {};
     items.forEach((it) => { if (it.uuid) idByUuid[it.uuid] = it.id; });
-    const map = {};
+    const map = Object.create(null);
     Object.keys(remoteRowErrors || {}).forEach((uuid) => {
       const err = remoteRowErrors[uuid];
       if (err && err.sheet && err.sheet !== currentSheet) return;
@@ -996,7 +996,7 @@
   // touches), so ``item.result`` alone can stay stale. We therefore fetch the
   // project's task results over REST (independent of collab) and let them
   // OVERRIDE the row's own result for colouring. See refreshTaskResults().
-  let resultsByTestId = {};
+  let resultsByTestId = Object.create(null);
   function effectiveResult(item) {
     const tid = rowTestId(item);
     if (tid && Object.prototype.hasOwnProperty.call(resultsByTestId, tid)) {
@@ -1238,7 +1238,7 @@
     const seen = new Set();
     const out = [];
     (sheetItems["test"] || []).forEach((it) => {
-      const tid = it && it.test_id != null ? String(it.test_id).trim() : "";
+      const tid = rowTestId(it);
       if (!tid || seen.has(tid)) return;
       seen.add(tid);
       // Use the server-authoritative verdict (same source the row colouring
@@ -2012,8 +2012,7 @@
         if (!stepsKey) { toast("当前 Sheet 无测试手顺字段", false); return; }
         // Enqueue + run-status are only meaningful for test-sheet rows, which
         // carry a ``test_id`` — the key used to enqueue JSON-runner jobs.
-        const testId = (currentSheet === "test" && item && item.test_id != null)
-          ? String(item.test_id).trim() : "";
+        const testId = currentSheet === "test" ? rowTestId(item) : "";
         LMStepsEditor.open(item, {
           fieldKey: stepsKey,
           testId,

@@ -196,3 +196,14 @@ class TestDiscardedInstanceStaysSilent:
             framework.run_cleanup(ctx, 5.0)
         assert "The test was suspended !!!" in caplog.text
         assert "Test is failed in Step3!!!!" in caplog.text
+
+
+def test_case_ids_match_exactly_after_log_wrapper():
+    first = "INFO:root:Test case ID.ID;;TC-1 is started!\nINFO:root:All steps are verified.Test is Passed.\n"
+    second = "INFO:root:Test case ID.ID;;TC-10 is started!\nINFO:root:Test is failed in Step1!!!!\n"
+    assert parse_verdict_text(first + second, "TC-1") == "PASS"
+    assert parse_verdict_text(second + first, "TC-10") == "FAIL"
+    assert parse_verdict_text(first, "TC-10") == "UNKNOWN"
+    assert parse_verdict_text(first, "tc-1") == "UNKNOWN"
+    wrapped = "INFO:root:Test case ID.ID;;ID;;TC-1 is started!\nINFO:root:All steps are verified.Test is Passed.\n"
+    assert parse_verdict_text(wrapped, "ID;;TC-1") == "PASS"

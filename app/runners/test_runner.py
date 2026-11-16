@@ -84,8 +84,8 @@ def extract_case_section(text: str, test_id: str) -> str:
     it presented: wrong in a batch, right when re-run alone. Cutting at the
     verdict makes any such trailing noise unreachable.
 
-    If no per-case markers exist (or the id is not found), the full text is
-    returned.
+    If no per-case markers exist, the full text is returned. Markers that do not
+    name this id produce an empty section instead of another case.
     """
     lines = text.splitlines()
     starts = [i for i, ln in enumerate(lines) if _CASE_START_RE.search(ln)]
@@ -107,11 +107,11 @@ def extract_case_section(text: str, test_id: str) -> str:
         start = starts[idx]
         m = _CASE_START_RE.search(lines[start])
         marker_id = (m.group(1).strip() if m else "")
-        if tid and (marker_id == tid or tid in lines[start] or marker_id in tid):
+        logged_id = marker_id[4:] if marker_id.startswith('ID;;') else marker_id
+        if tid and logged_id == tid:
             nxt = starts[idx + 1] if idx + 1 < len(starts) else len(lines)
             return _section(start, nxt)
-    # Fall back to the last case if the id could not be matched exactly.
-    return _section(starts[-1], len(lines))
+    return ''
 
 
 def count_failed_steps(text: str, test_id: str = "") -> int:
