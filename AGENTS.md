@@ -105,23 +105,20 @@ work on the current branch without another confirmation. Preserve unrelated
 local changes and never force-push unless explicitly requested.
 
 
-## Codex subagent orchestration
+## Agent orchestration
 
-For non-trivial repository work, use the project skill at
-`.agents/skills/silver-orchestrator/SKILL.md`. The repository contract in this
-file remains authoritative if orchestration guidance conflicts with it.
+Use the host's native orchestration only. In T3 Code that is `delegate_task`;
+do not adopt skill-provided dispatchers, orchestrator personas, or
+`/make-plan` → `/do` pipelines. The repository contract in this file remains
+authoritative for how work is bounded and verified.
 
 - Keep architecture and cross-component decisions in the root session.
 - Use read-only exploration before implementation when the ownership boundary is
   not already clear.
-- Subagents, including the independent reviewer, inherit the root session's
-  model and reasoning effort. Do not pin model overrides in `.codex/config.toml`
-  or `.codex/agents/*.toml`, or select a different model in spawn requests.
-- Keep at most three subagents active concurrently. Parallelize only independent
-  workstreams.
-- Give every writable subagent an explicit file/subsystem ownership boundary;
-  do not send two writers into the same files.
-- Verification agents should run the smallest targeted checks that prove the
-  delegated behavior. Full CI remains the pre-merge integration gate.
-- Subagent conclusions are evidence for the root to verify, not a substitute for
+- Do not pin model overrides in `.codex/config.toml` or `.codex/agents/*.toml`.
+- Give every delegated writer an explicit file/subsystem ownership boundary; do
+  not send two writers into the same files.
+- Delegated verification should run the smallest targeted checks that prove the
+  behavior. Full CI remains the pre-merge integration gate.
+- Delegated conclusions are evidence for the root to verify, not a substitute for
   inspecting the final diff or respecting the real-Silver validation boundary.
