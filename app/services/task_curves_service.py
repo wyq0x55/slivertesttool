@@ -163,7 +163,7 @@ def resolve(task, run_count=None, *, live=False, expected_revision=None):
 # Parsing into a change-point index
 # --------------------------------------------------------------------------- #
 def _lines(stream, max_bytes, *, partial_tail):
-    """Decoded physical lines with a read budget; a live file may end mid-line."""
+    """Physical lines and their newline termination, within a read budget."""
     budget = max_bytes
     pending = b""
     while True:
@@ -178,11 +178,11 @@ def _lines(stream, max_bytes, *, partial_tail):
         for line in complete:
             if len(line) > MAX_LINE:
                 raise CurveError("output.csv line exceeds 1 MiB", "CSV_TOO_LARGE", 413)
-            yield line
+            yield line, True
         if len(pending) > MAX_LINE:
             raise CurveError("output.csv line exceeds 1 MiB", "CSV_TOO_LARGE", 413)
     if pending and not partial_tail:
-        yield pending
+        yield pending, False
 
 
 def _decode(line, number):
@@ -233,77 +233,54 @@ class Column:
 class Index:
     """Per-column change points over a shared time array."""
 
-    def __init__(self, revision, header, times, columns, live=False):
+    def __init__(self, revision, header, times, columns, live=False, truncation=None):
         self.revision, self.header, self.times, self.columns = revision, header, times, columns
         self.live = live
+        self.truncation = truncation
 
     # -- construction ----------------------------------------------------- #
     @classmethod
     def parse(cls, source: Source, max_bytes: int) -> "Index":
-        with source.path.open("rb") as stream:
-            lines = _lines(stream, max_bytes, partial_tail=source.live)
-            try:
-                first = next(lines)
-            except StopIteration:
-                raise CurveError("output.csv is empty", "CSV_EMPTY") from None
-            header = next(csv.reader([_decode(first, 1)]))
-            if not header or header[0].strip().lower() != "time":
-                raise CurveError("Not a CsvWriter output.csv: the first column must be \"time\"",
-                                 "CSV_FORMAT")
-            if not 2 <= len(header) <= MAX_COLUMNS:
-                raise CurveError(f"output.csv must have 2 to {MAX_COLUMNS} columns", "CSV_FORMAT")
-            columns = [Column(i, name) for i, name in enumerate(header) if i]
-            times = array("d")
-            last_text = [None] * len(header)
-            width = len(header)
-            last_time = -math.inf
-            for number, raw in enumerate(lines, 2):
-                if not raw.strip():
+        truncation = {}
+        records = _records(source, max_bytes=max_bytes, truncation=truncation)
+        _, header = next(records)
+        columns = [Column(i, name) for i, name in enumerate(header) if i]
+        times = array("d")
+        last_text = [None] * len(header)
+        for _, cells in records:
+            row = len(times)
+            times.append(_float(cells[0]))
+            for column in columns:
+                text = cells[column.index]
+                if text == last_text[column.index]:
                     continue
-                if number - 1 > MAX_ROWS:
-                    raise CurveError("output.csv exceeds the record limit", "CSV_TOO_LARGE", 413)
-                line = _decode(raw, number)
-                cells = line.split(",") if '"' not in line else next(csv.reader([line]))
-                if len(cells) != width:
-                    raise CurveError(f"output.csv record {number} has {len(cells)} fields, expected {width}",
-                                     "CSV_FORMAT")
-                time = _float(cells[0])
-                if math.isnan(time) or time < last_time:
-                    raise CurveError(f"output.csv record {number} has an invalid or decreasing time",
-                                     "CSV_FORMAT")
-                last_time = time
-                row = len(times)
-                times.append(time)
-                for column in columns:
-                    text = cells[column.index]
-                    if text == last_text[column.index]:
-                        continue
-                    last_text[column.index] = text
-                    value = _float(text.strip())
-                    previous = column.values[-1] if column.values else None
-                    if previous is not None and (previous == value or (math.isnan(previous) and math.isnan(value))):
-                        continue
-                    column.rows.append(row)
-                    column.values.append(value)
-                    if math.isnan(value):
-                        column.gaps += 1
-                        continue
-                    column.low = min(column.low, value)
-                    column.high = max(column.high, value)
-                    if column.integer and not value.is_integer():
-                        column.integer = False
-                    if column.distinct is not None:
-                        column.distinct.add(value)
-                        if len(column.distinct) > 64:
-                            column.distinct = None
+                last_text[column.index] = text
+                value = _float(text.strip())
+                previous = column.values[-1] if column.values else None
+                if previous is not None and (previous == value or (math.isnan(previous) and math.isnan(value))):
+                    continue
+                column.rows.append(row)
+                column.values.append(value)
+                if math.isnan(value):
+                    column.gaps += 1
+                    continue
+                column.low = min(column.low, value)
+                column.high = max(column.high, value)
+                if column.integer and not value.is_integer():
+                    column.integer = False
+                if column.distinct is not None:
+                    column.distinct.add(value)
+                    if len(column.distinct) > 64:
+                        column.distinct = None
         if not times:
             raise CurveError("output.csv has no records", "CSV_NO_DATA")
-        return cls(source.revision, header, times, columns, live=source.live)
+        return cls(source.revision, header, times, columns, live=source.live,
+                   truncation=truncation or None)
 
     # -- disk cache ------------------------------------------------------- #
     def dump(self, path: Path):
         meta = {"version": FORMAT_VERSION, "revision": self.revision, "header": self.header,
-                "rows": len(self.times), "columns": []}
+                "rows": len(self.times), "columns": [], "truncation": self.truncation}
         blobs = [self.times.tobytes()]
         for c in self.columns:
             meta["columns"].append({"index": c.index, "n": len(c.rows), "low": _json_number(c.low),
@@ -345,7 +322,8 @@ class Index:
                 if len(times) != meta["rows"]:
                     return None
             os.utime(path)  # LRU by modification time
-            return cls(revision, meta["header"], times, columns)
+            return cls(revision, meta["header"], times, columns,
+                       truncation=meta.get("truncation"))
         except (OSError, ValueError, KeyError, struct.error):
             return None
 
@@ -407,7 +385,8 @@ class Index:
                          "values": [_json_number(v) for v in distinct][:32] if distinct is not None else None})
         return {"revision": self.revision, "rows": len(times), "domain": self.domain(),
                 "sample_interval": step, "time_unit": "s", "live": self.live,
-                "columns": cols, "limits": {"lanes": max_lanes}}
+                "columns": cols, "limits": {"lanes": max_lanes},
+                "truncation": self.truncation}
 
     def series(self, idents, *, start=None, end=None, width=1600, max_lanes=32, point_limit=5000):
         if not 50 <= width <= 8192:
@@ -599,12 +578,48 @@ def _evict(root: Path, budget: int):
 # --------------------------------------------------------------------------- #
 # Original text access (never from the index)
 # --------------------------------------------------------------------------- #
-def _records(source: Source):
-    lim = limits()
+def _records(source: Source, *, max_bytes=None, truncation=None):
+    """Validated records, excluding only an incomplete, unterminated final row."""
+    if max_bytes is None:
+        max_bytes = limits().max_bytes
     with source.path.open("rb") as stream:
-        for number, raw in enumerate(_lines(stream, lim.max_bytes, partial_tail=source.live), 1):
+        width, last_time, samples = None, -math.inf, 0
+        for number, (raw, terminated) in enumerate(
+                _lines(stream, max_bytes, partial_tail=source.live), 1):
+            if number > 1 and not raw.strip():
+                continue
             line = _decode(raw, number)
-            yield number, (line.split(",") if '"' not in line else next(csv.reader([line])))
+            try:
+                cells = line.split(",") if '"' not in line else next(csv.reader([line], strict=True))
+            except csv.Error as exc:
+                raise CurveError(f"output.csv record {number} is not valid CSV", "CSV_FORMAT") from exc
+            if number == 1:
+                if not cells or cells[0].strip().lower() != "time":
+                    raise CurveError("Not a CsvWriter output.csv: the first column must be \"time\"",
+                                     "CSV_FORMAT")
+                width = len(cells)
+                if not 2 <= width <= MAX_COLUMNS:
+                    raise CurveError(f"output.csv must have 2 to {MAX_COLUMNS} columns", "CSV_FORMAT")
+                yield number, cells
+                continue
+            if number - 1 > MAX_ROWS:
+                raise CurveError("output.csv exceeds the record limit", "CSV_TOO_LARGE", 413)
+            time = _float(cells[0])
+            if math.isnan(time) or time < last_time:
+                raise CurveError(f"output.csv record {number} has an invalid or decreasing time",
+                                 "CSV_FORMAT")
+            if len(cells) != width:
+                if not terminated and len(cells) < width and samples:
+                    if truncation is not None:
+                        truncation.update(record=number, fields=len(cells), expected_fields=width)
+                    return
+                raise CurveError(f"output.csv record {number} has {len(cells)} fields, expected {width}",
+                                 "CSV_FORMAT")
+            last_time = time
+            samples += 1
+            yield number, cells
+        if width is None:
+            raise CurveError("output.csv is empty", "CSV_EMPTY")
 
 
 def raw(source: Source, *, offset=0, count=RAW_PAGE):

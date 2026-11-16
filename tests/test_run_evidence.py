@@ -781,6 +781,88 @@ def test_pooled_late_csv_flush_cannot_change_sealed_results(submitted, monkeypat
             writer.close()
 
 
+@pytest.mark.parametrize("failure", [None, "timeout", "cancelled"])
+def test_pooled_model_unloads_before_result_snapshot(submitted, monkeypatch, failure):
+    from app.runners import test_runner
+    from app.runners.silver_runner import RunnerCancelled, RunnerError, SilverRunner
+
+    application, task, _source, _model = submitted
+    runner = SilverRunner()
+    writers = []
+    events = []
+    content = b"time,signal\n0,1\n0.001,2\n"
+
+    def execute(handle, context):
+        (context.log_dir / "jdgrslt.log").write_text("Test is Passed.", encoding="utf-8")
+        writer = (context.log_dir / "output.csv").open("wb")
+        writer.write(content)
+        writers.append(writer)
+        if failure == "timeout":
+            raise RunnerError("timeout")
+        if failure == "cancelled":
+            raise RunnerCancelled()
+
+    def clear():
+        for writer in writers:
+            writer.close()
+        events.append("cleared")
+
+    handle = SimpleNamespace(open=lambda path: None, clear=clear)
+    instance = SimpleNamespace(uid=1, handle=handle, console_log=None)
+    monkeypatch.setattr(runner, "prepare_run_sil", lambda context: context.sil_path)
+    monkeypatch.setattr(runner, "_execute", execute)
+    pool = SimpleNamespace(
+        is_mock=False,
+        configure_and_run=lambda current, context: runner.configure_and_run(current.handle, context),
+        force_stop=lambda current: None,
+        poison=lambda current: events.append("poisoned"),
+    )
+    test_runner.execute(application, application.config_obj, task, pool=pool, instance=instance)
+    sealed = service().read_evidence(task)
+    assert events[0] == "cleared"
+    assert (Path(sealed["archive_path"]) / "results" / "output.csv").read_bytes() == content
+    assert task.result == {None: "PASS", "timeout": "ERROR", "cancelled": "CANCELLED"}[failure]
+    assert all(writer.closed for writer in writers)
+
+
+@pytest.mark.parametrize("clear_raises", [False, True])
+def test_cancellation_during_model_unload_does_not_abort_project(submitted, monkeypatch, clear_raises):
+    from unittest.mock import Mock
+    from app.runners import test_runner
+    from app.runners.silver_runner import SilverRunner
+
+    application, task, _source, _model = submitted
+    runner = SilverRunner()
+    contexts = []
+
+    def execute(handle, context):
+        contexts.append(context)
+        (context.log_dir / "jdgrslt.log").write_text("Test is Passed.", encoding="utf-8")
+
+    def clear():
+        contexts[0].cancel_event.set()
+        if clear_raises:
+            raise RuntimeError("Silver stopped by cancellation")
+
+    handle = SimpleNamespace(open=lambda path: None, clear=clear)
+    instance = SimpleNamespace(uid=1, handle=handle, console_log=None)
+    monkeypatch.setattr(runner, "prepare_run_sil", lambda context: context.sil_path)
+    monkeypatch.setattr(runner, "_execute", execute)
+    abort_queue = Mock()
+    monkeypatch.setattr(test_runner, "_cancel_project_queue_on_error", abort_queue)
+    pool = SimpleNamespace(
+        is_mock=False,
+        configure_and_run=lambda current, context: runner.configure_and_run(current.handle, context),
+        force_stop=lambda current: None,
+        poison=lambda current: None,
+    )
+    test_runner.execute(application, application.config_obj, task, pool=pool, instance=instance)
+    assert task.status == "cancelled"
+    assert task.result == "CANCELLED"
+    assert service().read_evidence(task)["outcome"]["verdict"] == "CANCELLED"
+    abort_queue.assert_not_called()
+
+
 def test_purge_removes_only_its_task_archive_and_soft_delete_preserves_it(tmp_path):
     from app.services import task_service
     task, source, model = prepared(tmp_path)

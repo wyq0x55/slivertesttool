@@ -153,6 +153,66 @@ def test_not_csvwriter_output_fails_explicitly(tmp_path, text, code):
     assert caught.value.code == code
 
 
+@pytest.mark.parametrize("tail", ["0.001", "0.001,", "0.002,"])
+def test_archived_short_unterminated_tail_is_reported_and_shared(tmp_path, tail):
+    text = '"time","x","y"\r\n0,1,2\r\n0.001,3,4\r\n' + tail
+    source, idx = idx_for(tmp_path, text)
+    original = source.path.read_bytes()
+    expected = {"record": 4, "fields": len(tail.split(",")), "expected_fields": 3}
+    assert idx.metadata(32)["truncation"] == expected
+    assert list(idx.times) == [0, 0.001]
+    assert idx.series(["c2"])["series"][0]["points"] == [[0, 2, 1], [0.001, 4, 2]]
+    assert curves.raw(source)["rows"] == [
+        {"row": 1, "cells": ["0", "1", "2"]},
+        {"row": 2, "cells": ["0.001", "3", "4"]},
+    ]
+    assert "".join(curves.export_csv(source, idx, ["c1", "c2"])) == (
+        "time,x,y\r\n0,1,2\r\n0.001,3,4\r\n")
+    loaded = curves.Index.load(tmp_path / "cache" / f"{source.revision}.idx", source.revision)
+    assert loaded.metadata(32) == idx.metadata(32)
+    assert source.path.read_bytes() == original
+
+
+@pytest.mark.parametrize("ending", ["", "\n", "\r\n"])
+def test_complete_final_record_remains_valid_without_newline(tmp_path, ending):
+    source, idx = idx_for(tmp_path, '"time","x"\r\n0,1\r\n0.001,2' + ending)
+    assert list(idx.times) == [0, 0.001]
+    assert idx.metadata(32)["truncation"] is None
+    assert curves.raw(source)["rows"][-1] == {"row": 2, "cells": ["0.001", "2"]}
+    assert "".join(curves.export_csv(source, idx, ["c1"])) == "time,x\r\n0,1\r\n0.001,2\r\n"
+
+
+@pytest.mark.parametrize("data", [
+    b'"time","x","y"\r\n0,1,2\r\n0.001,3\r\n',
+    b'"time","x","y"\r\n0,1,2\r\n0.001,3\r\n0.002,4,5',
+    b'"time","x","y"\r\n0,1,2\r\n0.001,3\n ',
+    b'"time","x","y"\r\n0,1,2\r\n0.001,3,4,5',
+    b'"time","x","y"\r\n0,1,2\r\n0.001,3,4,5\r\n',
+    b'"time","x","y"\r\n0,1,2\r\nbad,3',
+    b'"time","x","y"\r\n0,1,2\r\nnan,3',
+    b'"time","x","y"\r\n0,1,2\r\ninf,3',
+    b'"time","x","y"\r\n0,1,2\r\n,3',
+    b'"time","x","y"\r\n0,1,2\r\n-0.001,3',
+    b'"time","x","y"\r\n0,1,2\r\n0.001,\xff',
+    b'"time","x","y"\r\n0,1,2\r\n0.001,\xff,3\r\n0.002,4,5',
+    b'"time","x","y"\r\n0,1,2\r\n0.001,"3',
+    b'"time","x","y"\r\n0,1',
+])
+def test_tail_recovery_keeps_corruption_strict_for_all_readers(tmp_path, data):
+    task, path = legacy_task(tmp_path, '"time","x","y"\r\n0,1,2\r\n0.001,3,4\r\n')
+    source = curves.resolve(task)
+    idx = curves.Index.parse(source, len(data) + 1024)
+    path.write_bytes(data)
+    for read in (
+        lambda: curves.Index.parse(source, len(data)),
+        lambda: curves.raw(source),
+        lambda: list(curves.export_csv(source, idx, ["c1", "c2"])),
+    ):
+        with pytest.raises(curves.CurveError) as caught:
+            read()
+        assert caught.value.code == "CSV_FORMAT"
+
+
 def test_non_numeric_cells_are_gaps_not_zero(tmp_path):
     _, idx = idx_for(tmp_path, '"time","x"\r\n0,1\r\n0.001,nan\r\n0.002,1\r\n')
     assert idx.series(["c1"])["series"][0]["points"] == [[0, 1, 1], [0.001, None, 2], [0.002, 1, 3]]

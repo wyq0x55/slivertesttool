@@ -314,7 +314,8 @@ class SilverRunner(SilverRunnerBase):
         model (:meth:`prepare_run_sil`) and loaded with a single ``open()``,
         which also switches the model if needed and drops the previous run's
         modules. The caller publishes the handle (``ctx.on_start``) and returns
-        the instance afterwards.
+        the instance afterwards. Clear the model before returning so native
+        writers finish before the caller snapshots the results.
         """
         run_sil = self.prepare_run_sil(ctx)
         if ctx.cancel_event.is_set():
@@ -322,7 +323,21 @@ class SilverRunner(SilverRunnerBase):
         logger.info("Reusing pooled Silver instance for test '%s' "
                     "(loading '%s')", ctx.test_id, run_sil)
         self.open_model(silver, run_sil)
-        self._execute(silver, ctx)
+        completed = False
+        try:
+            self._execute(silver, ctx)
+            completed = True
+        finally:
+            try:
+                silver.clear()
+            except Exception as exc:
+                if completed:
+                    if ctx.cancel_event.is_set():
+                        raise RunnerCancelled("Cancelled during model unload.") from exc
+                    raise RunnerError(f"Failed to unload Silver model: {exc}") from exc
+                logger.warning("Silver model cleanup failed after execution failure: %s", exc)
+        if ctx.cancel_event.is_set():
+            raise RunnerCancelled("Cancelled during model unload.")
 
     def prepare_run_sil(self, ctx: RunContext) -> Path:
         """Write ``ctx.log_dir/run.sil``: the model plus this job's modules.
@@ -413,6 +428,14 @@ class SilverRunner(SilverRunnerBase):
         if ctx.cancel_event.is_set():
             raise RunnerCancelled("Cancelled before run.")
 
+        console = ctx.console_log or (ctx.log_dir / "Console.log")
+        try:
+            console_offset = console.stat().st_size
+        except FileNotFoundError:
+            console_offset = 0
+        except OSError:
+            console_offset = None
+
         try:
             # Blocking call. A concurrent JobManager.cancel() invokes
             # silver.exit(force=True) from another thread, which unblocks
@@ -427,8 +450,27 @@ class SilverRunner(SilverRunnerBase):
         if ctx.cancel_event.is_set():
             raise RunnerCancelled("Cancelled during run.")
 
-        if not completed:
+        if not completed and not self._judge_stopped(ctx, console, console_offset):
             raise RunnerError("timeout")
+
+    @staticmethod
+    def _judge_stopped(ctx: RunContext, console: Path, offset: Optional[int]) -> bool:
+        """Recognize this run's normal DLL_END, which run_until also returns as False."""
+        if offset is None:
+            return False
+        module = "silver_json_runner.py" if (
+            ctx.run_dir / ctx.test_id / "silver_json_runner.py"
+        ).is_file() else "judge.py"
+        record = (
+            f"WARNING Silver: Simulation ended by 'Python.dll: {module} (Python3)' "
+            "during modify_outputs()"
+        ).encode("ascii")
+        try:
+            with console.open("rb") as stream:
+                stream.seek(offset)
+                return any(line.rstrip(b"\r\n") == record for line in stream)
+        except OSError:
+            return False
 
     @staticmethod
     def _import_silver(silver_home: str):

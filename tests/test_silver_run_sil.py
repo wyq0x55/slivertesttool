@@ -86,6 +86,9 @@ class _Instance:
         self.calls.append(("run_until", condition))
         return True
 
+    def clear(self):
+        self.calls.append(("clear",))
+
     def __getattr__(self, name):  # add_module/restart/... must not be used
         raise AssertionError(f"unexpected Silver API call: {name}")
 
@@ -110,7 +113,8 @@ def test_pooled_run_loads_the_configuration_once(tmp_path):
 
     assert instance.calls == [("open", "run.sil"),
                               ("property", "scriptingApiLogDisabled"),
-                              ("run_until", "isFinished != True")]
+                              ("run_until", "isFinished != True"),
+                              ("clear",)]
     assert model.read_bytes() == original  # pinned evidence stays untouched
     out = ET.fromstring((log_dir / "run.sil").read_bytes())
     lines = [m.findtext("sil-line") for m in out.find("modules").findall("module")]
