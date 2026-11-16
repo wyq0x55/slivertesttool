@@ -84,7 +84,7 @@ def attempt_dir(task, run_count=None, *, workspace=None):
     return checked_path(base, base / ".evidence" / key / str(attempt))
 
 
-def result_file(task, name, *, max_bytes):
+def result_file(task, name, *, max_bytes, run_count=None):
     """Resolve one bounded result without hashing unrelated model/input files.
 
     Sealed attempts retain their committed manifest/outcome identity and the
@@ -93,12 +93,15 @@ def result_file(task, name, *, max_bytes):
     """
     task = _task(task)
     validate_segment(name)
-    root = attempt_dir(task)
+    current = task.run_count or 1
+    count = current if run_count is None else run_count
+    root = attempt_dir(task, count)
     sealed = (root.parent.exists()
               or ".evidence" in Path(task.report_path or "").parts)
     expected_digest = None
+    if not sealed and count != current:
+        raise EvidenceError("Legacy tasks keep only their latest result")
     if sealed:
-        count = task.run_count or 1
         # Bound metadata before the existing identity helpers read/hash it.
         for filename in ("manifest.json", "outcome.json"):
             meta = checked_path(root, root / filename, exists=True)
@@ -140,6 +143,40 @@ def result_file(task, name, *, max_bytes):
         if digest.hexdigest() != expected_digest:
             raise EvidenceError("Result file hash integrity check failed")
     return path
+
+
+def read_manifest(task, run_count=None):
+    """The committed manifest of one attempt, without hashing inputs or model.
+
+    Only the manifest digest and identity are checked; callers that need the
+    pinned files themselves use :func:`read_evidence`.
+    """
+    task = _task(task)
+    attempt = (task.run_count or 1) if run_count is None else run_count
+    root = attempt_dir(task, attempt)
+    meta = checked_path(root, root / "manifest.json", exists=True)
+    if not meta.is_file() or meta.stat().st_size > 16 * 1024 * 1024:
+        raise EvidenceError("Manifest is missing or exceeds the read limit")
+    _check_identity(task, root, attempt)
+    manifest = _read_json(root, "manifest.json")
+    expected = (task.id, task.task_key, attempt, task.project_id, task.test_id)
+    actual = tuple(manifest.get(key) for key in
+                   ("task_id", "task_key", "run_count", "project_id", "test_id"))
+    if manifest.get("schema") != 1 or actual != expected:
+        raise EvidenceError("Evidence attempt identity mismatch")
+    return manifest
+
+
+def sealed_attempts(task):
+    """Run counts of this task's attempts that have a committed outcome."""
+    from ..models import RunEvidence, Task
+    task = _task(task)
+    if not isinstance(task, Task):
+        return []
+    rows = (RunEvidence.query.filter(RunEvidence.task_id == task.id,
+                                     RunEvidence.outcome_sha256 != "")
+            .order_by(RunEvidence.run_count.asc()).all())
+    return [row.run_count for row in rows]
 
 
 def _digest(path):

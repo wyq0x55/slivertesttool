@@ -153,7 +153,11 @@ def _case(task) -> dict:
     else:
         result = "T.B.D"
     rows = parse_judge_rows(raw, task.test_id)
-    return {"id": task.test_id, "name": source.get("test_name") or source.get("title") or task.task_name or task.test_id,
+    waveform = None
+    if result == "Failed":
+        from .curve_snapshot import failure_svg
+        waveform = failure_svg(task, attempt if data else None)
+    return {"waveform": waveform, "id": task.test_id, "name": source.get("test_name") or source.get("title") or task.task_name or task.test_id,
             "purpose": source.get("purpose") or "-", "category": source.get("category_name") or "-",
             "status": result, "rows": rows}
 

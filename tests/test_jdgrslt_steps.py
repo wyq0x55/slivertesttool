@@ -43,11 +43,13 @@ def test_steps_carry_results_descriptions_and_checks():
         (1, "PASS", "0.0s"), (2, "PASS", "0.006s"), (3, "FAIL", "2.001s")]
     assert steps[0]["phase"] == "pre_init" and steps[0]["description"] == ["前提条件の確認"]
     assert steps[1]["checks"] == [{"ok": True, "target": "State ( u1_state )", "expected": "Ready ( (exp==READY(1)) )",
-                                   "observed": "0x1 ( 1.0 )", "timing": "任意"}]
+                                   "observed": "0x1 ( 1.0 )", "timing": "任意", "at": 0.006}]
     sub, failed = steps[2]["checks"]
-    assert (sub["subroutine"], sub["subroutine_step"], sub["ok"]) == ("SetTrigger", 1, True)
+    assert (sub["subroutine"], sub["subroutine_step"], sub["ok"], sub["at"]) == ("SetTrigger", 1, True, 0.006)
     assert failed == {"ok": False, "target": "Output ( u1_out )", "expected": "ON ( (exp==ON(1)) )",
-                      "observed": "0x0 ( 0.0 )", "timing": "2.0s以内"}
+                      "observed": "0x0 ( 0.0 )", "timing": "2.0s以内", "at": 2.001}
+    assert steps[2]["lines"][0] == "INFO:root:トリガ入力"
+    assert steps[2]["lines"][-1] == "INFO:root:Test is failed in Step3!!!!"
     assert steps[2]["description"] == ["トリガ入力"]
 
 

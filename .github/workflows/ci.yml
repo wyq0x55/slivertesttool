@@ -16,7 +16,8 @@ permissions:
 jobs:
   backend:
     name: Backend / PostgreSQL + mock
-    runs-on: ubuntu-latest
+    # ubuntu-latest moved to 26.04, which has no 3.10.18 build for setup-python.
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
 
     services:

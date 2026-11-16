@@ -393,6 +393,18 @@ class Config:
     # task back to this many rows. Hot-reloadable via ``runtime_config``.
     TASK_EVENT_RETENTION = int(os.environ.get("TASK_EVENT_RETENTION", "5000"))
 
+    # --- Variable curves (task output.csv viewer) ---
+    # Defaults only: each value is adjustable live from the admin console.
+    #: Largest output.csv the viewer indexes, in MiB.
+    CURVE_MAX_FILE_MB = _as_int(os.environ.get("CURVE_MAX_FILE_MB"), 128)
+    #: Exact change points returned per signal before a min/max envelope is sent.
+    CURVE_POINT_LIMIT = _as_int(os.environ.get("CURVE_POINT_LIMIT"), 5000)
+    #: Signals the viewer may show at once.
+    CURVE_MAX_LANES = _as_int(os.environ.get("CURVE_MAX_LANES"), 32)
+    #: Disk budget of the parsed-index cache, in MiB.
+    CURVE_CACHE_MB = _as_int(os.environ.get("CURVE_CACHE_MB"), 512)
+    CURVE_CACHE_DIR = Path(os.environ.get("CURVE_CACHE_DIR", INSTANCE_DIR / "cache" / "curves"))
+
     @classmethod
     def ensure_dirs(cls) -> None:
         for path in (
@@ -403,5 +415,6 @@ class Config:
             cls.MODEL_DIR,
             cls.POOL_DIR,
             cls.LOG_DIR,
+            cls.CURVE_CACHE_DIR,
         ):
             Path(path).mkdir(parents=True, exist_ok=True)

@@ -535,6 +535,7 @@
   let detailKey = null;
   let detailStream = null;
   let judgeContent = "";
+  let judgeSteps = [];
 
   // Task detail is an inline view (not a dialog): opening it hides the list
   // (its head + body) and reveals the detail section; closing reverses that.
@@ -738,68 +739,6 @@
   function stripLogPrefix(s) {
     return s.replace(/^\s*(?:INFO|DEBUG|WARNING|WARN|ERROR|CRITICAL)(?::[^:]*:|\s+\S+:)\s?/i, "");
   }
-  // The main step divider "-------------------Step3-------------------". It must
-  // NOT match a subroutine sub-header
-  // "------------------- Subroutine(Foo) Step3-------------------", so we anchor
-  // "Step" right after the leading dashes (the subroutine form has a name there).
-  const STEP_DIVIDER = /^-{3,}\s*Step\.?(\d+)\s*-{3,}$/i;
-  // A *main* step verdict starts with "Step.N is …"; a subroutine verdict
-  // ("<Subroutine> Step.2 is …") does not, so anchoring excludes it.
-  const STEP_VERDICT = /^Step\.(\d+)\s+is\s+(passed|failed)/i;
-
-  // Parse jdgrslt.log into per-step groups. A step is opened by its main divider
-  // "-------------------StepN-------------------" (preferred) or, as a fallback,
-  // by its "Step.N is passed/failed" verdict line. Every line up to the next
-  // divider — the detail block (● / ▲ checks) and the verdict — attaches to that
-  // step, so a step's block no longer bleeds into the previous one. A group's
-  // result is fail if any of its lines matches FAIL_LINE, else pass if any
-  // matches PASS_LINE. Lines before the first step are kept as a preamble.
-  function parseJudgeSteps(text) {
-    const steps = [], byNum = new Map(), preamble = [];
-    let cur = null;
-    const group = (n) => {
-      if (byNum.has(n)) return byNum.get(n);
-      const g = { n: n, lines: [], result: "" };
-      byNum.set(n, g); steps.push(g); return g;
-    };
-    text.split(/\r?\n/).forEach((raw) => {
-      const line = raw.replace(/\s+$/, "");
-      if (line === "") return;
-      const bare = stripLogPrefix(line);
-      const md = bare.match(STEP_DIVIDER);
-      if (md && !/Subroutine/i.test(bare)) {
-        cur = group(md[1]);   // divider is structural — not part of the body
-        return;
-      }
-      const mv = bare.match(STEP_VERDICT);
-      if (mv) { cur = group(mv[1]); }   // fallback / result anchor for this step
-      if (cur) {
-        cur.lines.push(line);
-        if (FAIL_LINE.test(line)) cur.result = "fail";
-        else if (PASS_LINE.test(line) && cur.result !== "fail") cur.result = "pass";
-      } else {
-        preamble.push(line);
-      }
-    });
-    return { steps: steps, preamble: preamble };
-  }
-  // Best-effort title for a step: the leading header lines that describe its
-  // purpose — the category ("前提条件の確認") and the comment ("Step2 …") that
-  // the runner logs right after the divider — joined together. Structural noise
-  // (dividers, subroutine headers, ● / ▲ check markers, detail lines, verdict)
-  // ends the header block.
-  function stepTitle(s) {
-    const noise = /^(?:-{3,}|[●▲]$|Monitoring target|Expected Value|Observed Value|確認タイミング|Step\.\d+\s+is\s+)/i;
-    const parts = [];
-    for (const raw of s.lines) {
-      const t = stripLogPrefix(raw).trim();
-      if (!t) continue;
-      if (noise.test(t)) { if (parts.length) break; continue; }
-      parts.push(t);
-      if (parts.length >= 3) break;
-    }
-    return parts.length ? parts.join("　").slice(0, 120) : ("步骤 " + s.n);
-  }
   // Render a step body, highlighting each failed check block (opened by "▲")
   // in red and dimming passed ones (opened by "●"). A block runs until the next
   // marker, divider or verdict line.
@@ -809,7 +748,7 @@
       const t = stripLogPrefix(raw).trim();
       if (t === "▲") mode = "fail";
       else if (t === "●") mode = "pass";
-      else if (STEP_DIVIDER.test(t) || /^Step\.\d+\s+is\s+(passed|failed)/i.test(t)) mode = "";
+      else if (/^-{3,}.*-{3,}$/.test(t) || /Step\.\d+\s+is\s+(passed|failed)/i.test(t)) mode = "";
       const cls = mode === "fail" ? "jck jck-fail" : (mode === "pass" ? "jck jck-pass" : "");
       out += cls ? `<span class="${cls}">${esc(raw)}</span>\n` : (esc(raw) + "\n");
     });
@@ -821,6 +760,12 @@
     return '<span class="jbadge none">— 待判定</span>';
   }
 
+  // Steps are structured server-side (jdgrslt endpoint ``steps``); each keeps
+  // its raw log lines, so the body shows exactly what the judge wrote.
+  function judgeTitle(s) {
+    const text = (s.description || []).slice(0, 3).join("　").slice(0, 120);
+    return text || (s.phase ? s.phase : "步骤 " + s.step);
+  }
   function renderJudge() {
     const el = $("lm-d-judge");
     const failOnly = $("lm-d-failonly").checked;
@@ -828,42 +773,57 @@
       el.innerHTML = '<div class="jempty">（空）</div>';
       return;
     }
-    const parsed = parseJudgeSteps(judgeContent);
-    // No recognizable steps → fall back to the raw log so nothing is hidden.
-    if (!parsed.steps.length) {
+    // No recognizable steps → show the raw log so nothing is hidden.
+    if (!judgeSteps.length) {
       el.innerHTML = '<pre class="jraw"></pre>';
       el.querySelector(".jraw").textContent = judgeContent;
       return;
     }
-    const rows = parsed.steps.filter((s) => !failOnly || s.result === "fail");
+    const rows = judgeSteps.filter((s) => !failOnly || s.result === "FAIL");
     if (!rows.length) {
       el.innerHTML = '<div class="jempty">无失败步骤。</div>';
       return;
     }
-    el.innerHTML = rows.map((s) =>
-      `<div class="jstep ${s.result || "none"}">
+    el.innerHTML = rows.map((s) => {
+      const r = s.result === "FAIL" ? "fail" : s.result === "PASS" ? "pass" : "";
+      return `<div class="jstep ${r || "none"}" data-step="${esc(s.step)}">
          <div class="jhead" role="button" tabindex="0" aria-expanded="false">
            <svg class="jchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
-           <span class="ji">Step.${esc(s.n)}</span>
-           <span class="jt">${esc(stepTitle(s))}</span>
-           ${stepBadge(s.result)}
+           <span class="ji">Step.${esc(s.step)}</span>
+           <span class="jt">${esc(judgeTitle(s))}</span>
+           ${s.at ? `<span class="submuted">${esc(s.at)}</span>` : ""}
+           ${stepBadge(r)}
+           <button class="btn small ghost jcurve" type="button" title="在变量曲线中定位该步骤">曲线</button>
          </div>
-         <pre class="jbody" hidden>${bodyHtml(s.lines)}</pre>
-       </div>`).join("");
+         <pre class="jbody" hidden>${bodyHtml(s.lines || [])}</pre>
+       </div>`;
+    }).join("");
     el.querySelectorAll(".jstep .jhead").forEach((h) => {
       const step = h.parentElement;
-      const toggle = () => {
+      const toggle = (open) => {
         const body = step.querySelector(".jbody");
-        body.hidden = !body.hidden;
+        body.hidden = open === undefined ? !body.hidden : !open;
         step.classList.toggle("open", !body.hidden);
         h.setAttribute("aria-expanded", body.hidden ? "false" : "true");
       };
-      h.addEventListener("click", toggle);
+      step._toggle = toggle;
+      h.addEventListener("click", (e) => { if (!e.target.closest(".jcurve")) toggle(); });
       h.addEventListener("keydown", (e) => {
+        if (e.target.closest(".jcurve")) return;
         if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
       });
+      h.querySelector(".jcurve").addEventListener("click", () =>
+        document.dispatchEvent(new CustomEvent("lm-curves-focus-step", { detail: { step: step.dataset.step } })));
     });
   }
+  // The curve view asks to show one step here (double-click on its step band).
+  document.addEventListener("lm-judge-focus-step", (ev) => {
+    $("lm-result-tab").click();
+    $("lm-d-failonly").checked = false;
+    renderJudge();
+    const node = $("lm-d-judge").querySelector(`.jstep[data-step="${CSS.escape(String(ev.detail.step))}"]`);
+    if (node) { node._toggle(true); node.scrollIntoView({ block: "center" }); node.classList.add("jflash"); setTimeout(() => node.classList.remove("jflash"), 1600); }
+  });
   async function loadJudge() {
     if (!detailKey) return;
     const hint = $("lm-d-judge-hint");
@@ -871,11 +831,13 @@
       const data = await LMApi.projectTaskJdgrslt(pid, detailKey);
       if (!data.available) {
         judgeContent = "";
+        judgeSteps = [];
         hint.textContent = data.message || "暂无判定结果。";
         $("lm-d-judge").textContent = "";
         return;
       }
       judgeContent = data.content || "";
+      judgeSteps = data.steps || [];
       const fails = typeof data.failed_steps === "number"
         ? data.failed_steps
         : judgeContent.split(/\r?\n/).filter((l) => classifyLine(l) === "step-fail").length;

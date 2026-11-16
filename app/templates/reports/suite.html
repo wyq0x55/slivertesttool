@@ -73,6 +73,12 @@
       {% endfor %}
     </table>
   </div>
+  {% if case.waveform %}
+  <div class="Indentation">
+    <p class="DefaultCell"><b>Failure window</b> (output.csv, first failed step; dots mark judged checks)</p>
+    {{ case.waveform }}
+  </div>
+  {% endif %}
 </div>
 {% endfor %}
 {% endblock %}

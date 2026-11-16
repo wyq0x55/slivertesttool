@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from markupsafe import Markup
 
 
 _TEMPLATE_DIRECTORY = Path(__file__).resolve().parents[1] / "templates" / "reports"
@@ -89,6 +90,8 @@ def _case_view(case, index):
         **{key: _text(case.get(key)) for key in ("id", "name", "purpose", "category")},
         "anchor": f"case-{index}", "status": status,
         "result_class": result_class, "heading_class": heading_class, "rows": rows,
+        # Built by curve_snapshot from escaped parts only.
+        "waveform": Markup(case["waveform"]) if case.get("waveform") else None,
     }
 
 
