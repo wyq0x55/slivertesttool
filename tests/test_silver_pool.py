@@ -10,13 +10,18 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 try:  # pytest is optional; the module also runs standalone (see __main__).
     import pytest
 except Exception:  # noqa: BLE001
     pytest = None
 
-from app.runners.silver_pool import InstanceDriver, SilverInstancePool
+from app.runners.silver_pool import (
+    InstanceDriver, MockInstanceDriver, RealInstanceDriver, SilverInstancePool,
+)
+from app.runners.silver_runner import SilverRunner
 
 
 class FakeDriver(InstanceDriver):
@@ -48,6 +53,9 @@ class FakeDriver(InstanceDriver):
                 from app.runners.silver_runner import RunnerCancelled
                 raise RunnerCancelled("cancelled")
             time.sleep(0.005)
+
+    def is_alive(self, handle):
+        return handle["alive"]
 
     def dispose(self, handle):
         with self._lock:
@@ -179,6 +187,153 @@ def test_grow_prewarms_more():
     assert pool.stats()["idle"] == 3
 
 
+def test_dead_idle_instances_are_replaced_without_capacity_leak():
+    driver = FakeDriver()
+    pool = _make_pool(driver, target=2)
+    pool.prewarm()
+    first, second = pool._idle
+    first.handle["alive"] = False
+    second.handle["alive"] = False
+    borrowed = pool.acquire(Path("model.sil"))
+    assert borrowed not in (first, second)
+    assert driver.disposed == 2
+    assert driver.created == 3
+    assert pool.stats() == {"target": 2, "size": 1, "idle": 0, "in_use": 1, "closed": False}
+    pool.release(borrowed)
+    assert pool.stats()["size"] == 1
+
+
+def test_liveness_probe_error_retires_the_instance():
+    driver = FakeDriver()
+    pool = _make_pool(driver, target=1)
+    pool.prewarm()
+
+    def fail(handle):
+        raise RuntimeError("probe failed")
+
+    driver.is_alive = fail
+    replacement = pool.acquire(Path("model.sil"))
+    assert driver.disposed == 1
+    assert replacement.handle["alive"] is True
+    pool.release(replacement)
+
+
+def test_replacement_creation_failure_preserves_capacity():
+    driver = FakeDriver()
+    pool = _make_pool(driver, target=1)
+    pool.prewarm()
+    pool._idle[0].handle["alive"] = False
+
+    def fail(sil_path, console_log):
+        raise RuntimeError("cannot launch")
+
+    driver.create = fail
+    try:
+        pool.acquire(Path("model.sil"))
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("creation failure must propagate")
+    assert pool.stats() == {"target": 1, "size": 0, "idle": 0, "in_use": 0, "closed": False}
+
+
+def test_eviction_cannot_exceed_target_or_dispose_twice():
+    driver = FakeDriver()
+    pool = _make_pool(driver, target=1)
+    pool.prewarm()
+    pool._idle[0].handle["alive"] = False
+    started = threading.Event()
+    release_probe = threading.Event()
+    original = driver.is_alive
+
+    def pause(handle):
+        started.set()
+        release_probe.wait(2)
+        return original(handle)
+
+    driver.is_alive = pause
+    result = {}
+
+    def borrow():
+        result["instance"] = pool.acquire(Path("model.sil"))
+
+    borrower = threading.Thread(target=borrow)
+    borrower.start()
+    assert started.wait(2)
+    prewarmer = threading.Thread(target=pool.prewarm)
+    prewarmer.start()
+    time.sleep(0.05)
+    assert driver.created == 1
+    release_probe.set()
+    borrower.join()
+    prewarmer.join()
+    assert result["instance"].handle["alive"] is True
+    assert driver.disposed == 1
+    assert driver.created == 2
+    assert pool.stats()["size"] <= 1
+    pool.release(result["instance"])
+
+
+def test_shutdown_during_eviction_disposes_once():
+    driver = FakeDriver()
+    pool = _make_pool(driver, target=1)
+    pool.prewarm()
+    pool._idle[0].handle["alive"] = False
+    started = threading.Event()
+    release_probe = threading.Event()
+
+    def pause(handle):
+        started.set()
+        release_probe.wait(2)
+        return False
+
+    driver.is_alive = pause
+    result = {}
+
+    def borrow():
+        result["instance"] = pool.acquire(Path("model.sil"), poll=0.01)
+
+    borrower = threading.Thread(target=borrow)
+    borrower.start()
+    assert started.wait(2)
+    release_probe.set()
+    pool.shutdown()
+    borrower.join()
+    assert result["instance"] is None
+    assert driver.disposed == 1
+    assert pool.stats()["size"] == 0
+
+
+def test_confirmed_dead_silver_cleanup_skips_remote_exit():
+    class CallbackServer:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    class Process:
+        def poll(self):
+            return 1
+
+        def wait(self):
+            return 1
+
+    class Handle:
+        def __init__(self):
+            self.process = Process()
+            self.callback_server = CallbackServer()
+            self.exit_called = False
+
+        def exit(self, force=False):
+            self.exit_called = True
+
+    handle = Handle()
+    SilverRunner._safe_dispose(handle)
+    assert handle.callback_server.closed is True
+    assert handle.exit_called is False
+
+
 def test_shutdown_disposes_everything():
     driver = FakeDriver()
     pool = _make_pool(driver, target=3)
@@ -189,6 +344,342 @@ def test_shutdown_disposes_everything():
     # Acquiring from a closed pool yields nothing.
     assert pool.acquire(Path("model.sil"), poll=0.01,
                         should_cancel=lambda: False) is None
+
+
+def test_dead_idle_instance_is_disposed_before_replacement():
+    driver = FakeDriver()
+    pool = _make_pool(driver, target=1)
+    pool.prewarm()
+    stale = pool._idle[-1]
+    stale.handle["alive"] = False
+
+    replacement = pool.acquire(Path("model.sil"), blocking=False)
+
+    assert replacement is not stale
+    assert replacement.handle["alive"]
+    assert replacement.uid == stale.uid
+    assert driver.created == 2
+    assert driver.disposed == 1
+    assert pool.stats() == {"target": 1, "size": 1, "idle": 0,
+                            "in_use": 1, "closed": False}
+    pool.release(replacement)
+
+
+def test_acquire_discards_multiple_stale_candidates_before_healthy_idle():
+    driver = FakeDriver()
+    pool = _make_pool(driver, target=3)
+    pool.prewarm()
+    healthy, dead, poisoned = pool._idle
+    dead.handle["alive"] = False
+    pool.poison(poisoned)
+    driver.is_alive = Mock(wraps=driver.is_alive)
+
+    borrowed = pool.acquire(Path("model.sil"), blocking=False)
+
+    assert borrowed is healthy
+    assert driver.created == 3
+    assert driver.disposed == 2
+    assert driver.is_alive.call_count == 2
+    assert pool.stats()["size"] == 1
+    pool.release(borrowed)
+
+
+def test_probe_error_discards_candidate_and_retries():
+    driver = FakeDriver()
+    pool = _make_pool(driver, target=1)
+    pool.prewarm()
+    stale = pool._idle[-1]
+    driver.is_alive = Mock(side_effect=RuntimeError("probe failed"))
+
+    replacement = pool.acquire(Path("model.sil"))
+
+    assert replacement is not stale
+    assert driver.created == 2
+    assert driver.disposed == 1
+    assert not stale.handle["alive"]
+    pool.release(replacement)
+
+
+def test_replacement_creation_failure_propagates_without_retry():
+    driver = FakeDriver()
+    pool = _make_pool(driver, target=1)
+    pool.prewarm()
+    pool._idle[-1].handle["alive"] = False
+    failure = RuntimeError("launch failed")
+    driver.create = Mock(side_effect=failure)
+
+    with pytest.raises(RuntimeError) as caught:
+        pool.acquire(Path("model.sil"))
+
+    assert caught.value is failure
+    driver.create.assert_called_once()
+    assert driver.disposed == 1
+    assert pool.stats() == {"target": 1, "size": 0, "idle": 0,
+                            "in_use": 0, "closed": False}
+    driver.create = FakeDriver.create.__get__(driver)
+    replacement = pool.acquire(Path("model.sil"))
+    assert replacement.uid == 1
+    pool.release(replacement)
+
+
+class BlockingDisposeDriver(FakeDriver):
+    def __init__(self):
+        super().__init__()
+        self.dispose_started = threading.Event()
+        self.allow_dispose = threading.Event()
+        self.disposing = []
+
+    def dispose(self, handle):
+        with self._lock:
+            self.disposing.append(handle)
+        self.dispose_started.set()
+        assert self.allow_dispose.wait(5)
+        super().dispose(handle)
+
+
+def _start_call(callback):
+    outcome = {}
+
+    def call():
+        try:
+            outcome["value"] = callback()
+        except BaseException as error:
+            outcome["error"] = error
+
+    thread = threading.Thread(target=call, daemon=True)
+    thread.start()
+    return thread, outcome
+
+
+def _finish_call(thread, outcome):
+    thread.join(5)
+    assert not thread.is_alive()
+    assert "error" not in outcome, outcome.get("error")
+    return outcome["value"]
+
+
+def test_stale_disposal_holds_capacity_and_uid_until_finished():
+    driver = BlockingDisposeDriver()
+    pool = _make_pool(driver, target=1)
+    pool.prewarm()
+    stale = pool._idle[-1]
+    stale.handle["alive"] = False
+    thread, outcome = _start_call(lambda: pool.acquire(Path("model.sil")))
+    try:
+        assert driver.dispose_started.wait(2)
+        assert pool.stats()["size"] == 1
+        assert pool.stats()["in_use"] == 0
+        assert pool.acquire(Path("model.sil"), blocking=False) is None
+        assert pool.prewarm() == 0
+        assert driver.created == 1
+        pool.set_target(2)
+        concurrent = pool.acquire(Path("model.sil"), blocking=False)
+        assert concurrent.uid != stale.uid
+        assert pool.stats()["size"] == 2
+    finally:
+        driver.allow_dispose.set()
+    replacement = _finish_call(thread, outcome)
+    assert replacement.uid == stale.uid
+    assert replacement.uid != concurrent.uid
+    assert len(driver.disposing) == 1
+    pool.release(replacement)
+    pool.release(concurrent)
+
+
+def test_shutdown_during_stale_disposal_does_not_dispose_twice():
+    driver = BlockingDisposeDriver()
+    pool = _make_pool(driver, target=1)
+    pool.prewarm()
+    stale = pool._idle[-1]
+    stale.handle["alive"] = False
+    thread, outcome = _start_call(lambda: pool.acquire(Path("model.sil")))
+    try:
+        assert driver.dispose_started.wait(2)
+        pool.shutdown()
+        pool.shutdown()
+        pool.release(stale)
+        assert pool.stats()["size"] == 1
+        assert len(driver.disposing) == 1
+    finally:
+        driver.allow_dispose.set()
+    assert _finish_call(thread, outcome) is None
+    assert driver.created == 1
+    assert driver.disposed == 1
+    assert pool.stats() == {"target": 0, "size": 0, "idle": 0,
+                            "in_use": 0, "closed": True}
+
+
+def test_cancellation_during_stale_disposal_stops_replacement():
+    driver = BlockingDisposeDriver()
+    pool = _make_pool(driver, target=1)
+    pool.prewarm()
+    pool._idle[-1].handle["alive"] = False
+    cancelled = threading.Event()
+    thread, outcome = _start_call(
+        lambda: pool.acquire(Path("model.sil"), should_cancel=cancelled.is_set))
+    try:
+        assert driver.dispose_started.wait(2)
+        cancelled.set()
+    finally:
+        driver.allow_dispose.set()
+    assert _finish_call(thread, outcome) is None
+    assert driver.created == 1
+    assert driver.disposed == 1
+    assert pool.stats()["size"] == 0
+
+
+def test_shrink_during_stale_disposal_keeps_needed_healthy_instance():
+    driver = BlockingDisposeDriver()
+    pool = _make_pool(driver, target=2)
+    pool.prewarm()
+    healthy, stale = pool._idle
+    stale.handle["alive"] = False
+    thread, outcome = _start_call(lambda: pool.acquire(Path("model.sil")))
+    try:
+        assert driver.dispose_started.wait(2)
+        pool.set_target(1)
+        assert len(driver.disposing) == 1
+        assert pool.stats()["idle"] == 1
+    finally:
+        driver.allow_dispose.set()
+    assert _finish_call(thread, outcome) is healthy
+    pool.release(healthy)
+    assert driver.created == 2
+    assert driver.disposed == 1
+    assert pool.stats() == {"target": 1, "size": 1, "idle": 1,
+                            "in_use": 0, "closed": False}
+
+
+def test_shrink_to_zero_during_stale_disposal_stops_replacement():
+    driver = BlockingDisposeDriver()
+    pool = _make_pool(driver, target=1)
+    pool.prewarm()
+    pool._idle[-1].handle["alive"] = False
+    thread, outcome = _start_call(
+        lambda: pool.acquire(Path("model.sil"), blocking=False))
+    try:
+        assert driver.dispose_started.wait(2)
+        pool.set_target(0)
+    finally:
+        driver.allow_dispose.set()
+    assert _finish_call(thread, outcome) is None
+    assert driver.created == 1
+    assert driver.disposed == 1
+    assert pool.stats()["size"] == 0
+
+
+def test_poisoned_release_holds_capacity_and_survives_shutdown():
+    driver = BlockingDisposeDriver()
+    pool = _make_pool(driver, target=1)
+    borrowed = pool.acquire(Path("model.sil"))
+    pool.poison(borrowed)
+    thread, outcome = _start_call(lambda: pool.release(borrowed))
+    try:
+        assert driver.dispose_started.wait(2)
+        assert pool.stats()["size"] == 1
+        assert pool.acquire(Path("model.sil"), blocking=False) is None
+        pool.release(borrowed)
+        pool.shutdown()
+        pool.release(borrowed)
+        assert len(driver.disposing) == 1
+    finally:
+        driver.allow_dispose.set()
+    _finish_call(thread, outcome)
+    assert driver.disposed == 1
+    assert pool.stats()["size"] == 0
+
+
+def test_shrink_disposal_holds_capacity_and_survives_shutdown():
+    driver = BlockingDisposeDriver()
+    pool = _make_pool(driver, target=1)
+    pool.prewarm()
+    thread, outcome = _start_call(lambda: pool.set_target(0))
+    try:
+        assert driver.dispose_started.wait(2)
+        pool.set_target(1)
+        assert pool.stats()["size"] == 1
+        assert pool.acquire(Path("model.sil"), blocking=False) is None
+        pool.shutdown()
+        assert len(driver.disposing) == 1
+    finally:
+        driver.allow_dispose.set()
+    _finish_call(thread, outcome)
+    assert driver.disposed == 1
+    assert pool.stats()["size"] == 0
+
+
+def test_shutdown_then_late_release_does_not_dispose_or_recycle_uid_twice():
+    driver = FakeDriver()
+    pool = _make_pool(driver, target=1)
+    borrowed = pool.acquire(Path("model.sil"))
+    pool.shutdown()
+    pool.release(borrowed)
+    pool.release(borrowed)
+    assert driver.disposed == 1
+    assert pool.stats()["size"] == 0
+    assert pool._slots.acquire() == borrowed.uid
+    assert pool._slots.acquire() != borrowed.uid
+
+
+def test_real_driver_liveness_uses_local_process_poll_only():
+    process = Mock()
+    process.poll.return_value = None
+    handle = SimpleNamespace(process=process, target=Mock())
+    driver = RealInstanceDriver()
+    assert driver.is_alive(handle)
+    process.poll.return_value = 0
+    assert not driver.is_alive(handle)
+    process.poll.return_value = 1
+    assert not driver.is_alive(handle)
+    assert handle.target.mock_calls == []
+
+
+def test_mock_driver_liveness_tracks_handle_alive():
+    driver = MockInstanceDriver(delay_seconds=0)
+    handle = driver.create(Path("model.sil"), Path("mock"))
+    assert driver.is_alive(handle)
+    driver.dispose(handle)
+    assert not driver.is_alive(handle)
+
+
+def test_dead_sdk_cleanup_skips_remote_exit_and_reaps_process():
+    process = Mock()
+    process.poll.return_value = 1
+    handle = SimpleNamespace(
+        process=process, callback_server=Mock(), exit=Mock(), target=Mock())
+    SilverRunner._safe_dispose(handle)
+    handle.exit.assert_not_called()
+    assert handle.target.mock_calls == []
+    handle.callback_server.close.assert_called_once_with()
+    process.wait.assert_called_once_with()
+
+
+def test_dead_sdk_cleanup_reaps_even_when_callback_close_fails():
+    process = Mock()
+    process.poll.return_value = 0
+    handle = SimpleNamespace(
+        process=process, callback_server=Mock(), exit=Mock())
+    handle.callback_server.close.side_effect = RuntimeError("callback close failed")
+    SilverRunner._safe_dispose(handle)
+    handle.exit.assert_not_called()
+    process.wait.assert_called_once_with()
+
+
+def test_live_sdk_cleanup_uses_existing_exit():
+    process = Mock()
+    process.poll.return_value = None
+    handle = SimpleNamespace(process=process, callback_server=Mock(), exit=Mock())
+    SilverRunner._safe_dispose(handle)
+    handle.exit.assert_called_once_with(force=True)
+    handle.callback_server.close.assert_not_called()
+
+
+def test_sdk_cleanup_probe_error_still_attempts_exit():
+    process = Mock()
+    process.poll.side_effect = RuntimeError("probe failed")
+    handle = SimpleNamespace(process=process, callback_server=Mock(), exit=Mock())
+    SilverRunner._safe_dispose(handle)
+    handle.exit.assert_called_once_with(force=True)
 
 
 # --------------------------------------------------------------------------- #

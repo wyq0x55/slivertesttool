@@ -500,6 +500,22 @@ class SilverRunner(SilverRunnerBase):
     @staticmethod
     def _safe_dispose(silver) -> None:
         """Exit the Silver instance (LocalSilverNative.exit closes everything)."""
+        process = getattr(silver, "process", None)
+        try:
+            exited = process is not None and process.poll() is not None
+        except Exception:
+            exited = False
+        if exited:
+            try:
+                silver.callback_server.close()
+            except Exception:
+                logger.exception("Error closing callback server for exited Silver process")
+            finally:
+                try:
+                    process.wait()
+                except Exception:
+                    logger.exception("Error reaping exited Silver process")
+            return
         exit_fn = getattr(silver, "exit", None)
         if callable(exit_fn):
             try:

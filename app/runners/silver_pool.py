@@ -72,6 +72,10 @@ class InstanceDriver:
     def create(self, sil_path: Path, console_log: Path) -> Any:  # pragma: no cover
         raise NotImplementedError
 
+    def is_alive(self, handle: Any) -> bool:  # pragma: no cover
+        """Probe local process liveness without calling the remote Silver API."""
+        raise NotImplementedError
+
     def configure_and_run(self, handle: Any, ctx: RunContext) -> None:  # pragma: no cover
         raise NotImplementedError
 
@@ -97,6 +101,9 @@ class RealInstanceDriver(InstanceDriver):
     def configure_and_run(self, handle: Any, ctx: RunContext) -> None:
         self._runner.configure_and_run(handle, ctx)
 
+    def is_alive(self, handle: Any) -> bool:
+        return handle.process.poll() is None
+
     def dispose(self, handle: Any) -> None:
         SilverRunner._safe_dispose(handle)
 
@@ -117,6 +124,9 @@ class MockInstanceDriver(InstanceDriver):
 
     def configure_and_run(self, handle: Any, ctx: RunContext) -> None:
         self._runner.configure_and_run(handle, ctx)
+
+    def is_alive(self, handle: Any) -> bool:
+        return handle.alive
 
     def dispose(self, handle: Any) -> None:
         exit_fn = getattr(handle, "exit", None)
@@ -195,6 +205,7 @@ class SilverInstancePool:
         self._cond = threading.Condition()
         self._idle: List[PooledInstance] = []
         self._live: set[PooledInstance] = set()  # every created, not-yet-disposed instance
+        self._retiring: set[PooledInstance] = set()
         self._size = 0          # live instances (idle + busy + reserved)
         self._in_use = 0        # currently borrowed
         self._target = 0        # desired number of instances (== license count)
@@ -231,9 +242,9 @@ class SilverInstancePool:
         surplus: List[PooledInstance] = []
         with self._cond:
             self._target = target
-            while self._size > self._target and self._idle:
+            while self._size - len(self._retiring) > self._target and self._idle:
                 inst = self._idle.pop()
-                self._size -= 1
+                self._retiring.add(inst)
                 surplus.append(inst)
             self._cond.notify_all()
         for inst in surplus:
@@ -312,6 +323,7 @@ class SilverInstancePool:
         should_cancel = should_cancel or (lambda: False)
         while True:
             reserve_uid: Optional[int] = None
+            stale: Optional[PooledInstance] = None
             with self._cond:
                 if self._closed:
                     return None
@@ -319,9 +331,18 @@ class SilverInstancePool:
                     return None
                 if self._idle:
                     inst = self._idle.pop()
-                    self._in_use += 1
-                    return inst
-                if self._size < self._target:
+                    try:
+                        alive = not inst.poisoned and self._driver.is_alive(inst.handle)
+                    except Exception:
+                        logger.exception("Liveness probe failed for Silver instance uid=%s", inst.uid)
+                        alive = False
+                    if alive:
+                        self._in_use += 1
+                        return inst
+                    inst.poison()
+                    self._retiring.add(inst)
+                    stale = inst
+                elif self._size < self._target:
                     self._size += 1
                     reserve_uid = self._slots.acquire()
                 elif not blocking:
@@ -329,6 +350,9 @@ class SilverInstancePool:
                 else:
                     self._cond.wait(timeout=poll)
                     continue
+            if stale is not None:
+                self._dispose(stale)
+                continue
             # Slow path: create a new instance outside the lock.
             try:
                 inst = self._make_instance(reserve_uid, Path(sil_path))
@@ -366,9 +390,12 @@ class SilverInstancePool:
         """
         dispose_it = False
         with self._cond:
+            if inst not in self._live or inst in self._retiring or inst in self._idle:
+                return
             self._in_use = max(0, self._in_use - 1)
-            if inst.poisoned or self._size > self._target or self._closed:
-                self._size = max(0, self._size - 1)
+            if (inst.poisoned or self._size - len(self._retiring) > self._target
+                    or self._closed):
+                self._retiring.add(inst)
                 dispose_it = True
             else:
                 self._idle.append(inst)
@@ -378,7 +405,8 @@ class SilverInstancePool:
 
     def poison(self, inst: PooledInstance) -> None:
         """Mark an instance unusable so :meth:`release` disposes it."""
-        inst.poison()
+        with self._cond:
+            inst.poison()
 
     def force_stop(self, inst: PooledInstance) -> None:
         """Force-terminate the instance's current run (used on cancellation)."""
@@ -400,9 +428,8 @@ class SilverInstancePool:
             self._closed = True
             self._target = 0
             instances = list(self._live)
+            self._retiring.update(instances)
             self._idle.clear()
-            self._live.clear()
-            self._size = 0
             self._in_use = 0
             self._cond.notify_all()
         for inst in instances:
@@ -441,7 +468,9 @@ class SilverInstancePool:
 
     def _dispose(self, inst: PooledInstance) -> None:
         with self._cond:
-            self._live.discard(inst)
+            if inst not in self._live:
+                return
+            self._live.remove(inst)
         try:
             self._driver.dispose(inst.handle)
         except Exception:  # noqa: BLE001 - best effort cleanup
@@ -449,7 +478,11 @@ class SilverInstancePool:
         finally:
             # Recycle the slot so its ``inst_<uid>`` folder can be reused by the
             # next instance the pool creates, keeping the label set bounded.
-            self._slots.release(inst.uid)
+            with self._cond:
+                self._slots.release(inst.uid)
+                self._retiring.discard(inst)
+                self._size -= 1
+                self._cond.notify_all()
 
 
 # --------------------------------------------------------------------------- #
