@@ -18,9 +18,9 @@ For service deployments you can still run them independently (after a one-off
     python run_web.py        # web only
     python run_worker.py     # exactly one worker
 
-Run a single worker only: at start-up the worker resets the license counter and
-treats every in-flight run, AI job and unit-test job as orphaned by a previous
-worker, so a second worker would corrupt the work of the first.
+Run a single worker only. It takes a PostgreSQL session advisory lock before
+resetting the license counter or treating in-flight work as orphaned. A second
+worker exits immediately instead of corrupting the first worker's state.
 
 Set ``START_WORKER=0`` to have this launcher start the web server only.
 """

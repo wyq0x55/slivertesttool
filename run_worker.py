@@ -6,6 +6,10 @@ Consumes tasks from the PostgreSQL-backed Huey queue and runs them via the
 Silver backend. In split-process deployments, run ``python manage.py bootstrap``
 once before starting this worker.
 
+Run exactly one worker. It takes a PostgreSQL session advisory lock before
+resetting the license counter or recovering in-flight work. A second worker
+exits before it can change that state.
+
 Pre-warmed pool
 ---------------
 When ``SILVER_POOL_ENABLED`` is on (the default), the worker launches
@@ -20,6 +24,7 @@ limit, and the pool is disposed cleanly on shutdown.
 from __future__ import annotations
 
 import atexit
+import signal
 import logging
 import threading
 
@@ -103,25 +108,108 @@ def _bind_to_kill_on_close_job() -> None:
         _silver_job = job
 
 
+
+def _require_worker_ownership() -> None:
+    """Stop startup once this process no longer owns the runtime lock."""
+    from app.services import worker_lock
+
+    if not worker_lock.ownership_is_current() or process_guard.is_shutting_down():
+        logger.error("Worker no longer holds the runtime lock; refusing further startup.")
+        raise SystemExit(1)
+
+
+def recover_owned_work(app, prewarm=None):
+    """Recover interrupted work only while this process still owns the lock."""
+    _require_worker_ownership()
+    with app.app_context():
+        return _recover_owned_work(app, prewarm)
+
+
+def _recover_owned_work(app, prewarm=None):
+    from app.services import worker_lock
+    from app.services.ai import jobs as ai_jobs
+
+    _require_worker_ownership()
+    with worker_lock.ownership_guard() as owned:
+        if not owned:
+            raise SystemExit(1)
+        ai_jobs.recover(tasks.publish_ai_generation, startup=True)
+    _require_worker_ownership()
+    recovery = tasks.recover_run_attempts(startup=True)
+    if recovery["errors"]:
+        logger.warning("Startup run recovery failed: %s", recovery["errors"])
+    _require_worker_ownership()
+    from app.jobqueue import ut_tasks
+    ut_recovery = ut_tasks.recover_interrupted_jobs()
+    if ut_recovery["interrupted"] or ut_recovery["stopped"]:
+        logger.warning("Unit-test jobs interrupted by the previous worker: %s", ut_recovery)
+    _require_worker_ownership()
+    if prewarm is not None:
+        prewarm()
+
+
+def begin_worker_ownership(app):
+    """Take the single-worker lock before resetting shared runtime state.
+
+    A second worker fails here, before the license counter is cleared or any
+    in-flight run is treated as interrupted.
+    """
+    from app.services import license_service, worker_lock
+
+    with app.app_context():
+        lock = worker_lock.acquire()
+        try:
+            with worker_lock.ownership_guard() as owned:
+                if not owned:
+                    raise SystemExit(1)
+                license_service.reset_in_use()
+        except BaseException:
+            lock.release()
+            raise
+        return lock
+
+
 def main() -> None:
     # Before any Silver instance can be launched, so all of them join the job.
     _bind_to_kill_on_close_job()
     app = tasks._get_app()
     config = app.config_obj
-    from app.services import license_service
+    from app.services import license_service, worker_lock
 
-    # Recover the in-use counter in case a previous worker crashed mid-run.
-    with app.app_context():
-        license_service.reset_in_use()
-        from app.services.ai import jobs as ai_jobs
-        ai_jobs.recover(tasks.publish_ai_generation, startup=True)
-        recovery = tasks.recover_run_attempts(startup=True)
-        if recovery["errors"]:
-            logger.warning("Startup run recovery failed: %s", recovery["errors"])
-    from app.jobqueue import ut_tasks
-    ut_recovery = ut_tasks.recover_interrupted_jobs()
-    if ut_recovery["interrupted"] or ut_recovery["stopped"]:
-        logger.warning("Unit-test jobs interrupted by the previous worker: %s", ut_recovery)
+    stop_reconcile = threading.Event()
+    try:
+        lock = begin_worker_ownership(app)
+    except worker_lock.WorkerAlreadyRunning:
+        logger.error(
+            "Another worker already holds the runtime lock; "
+            "exiting before license reset or run recovery."
+        )
+        raise SystemExit(1)
+    # Release only at process exit, after the later pool-shutdown hook. atexit
+    # runs last-registered first, and the pool hook is registered below.
+    atexit.register(lock.release)
+    consumer_box = {}
+
+    def _lost_runtime_lock() -> None:
+        process_guard.begin_shutdown()
+        stop_reconcile.set()
+        logger.critical(
+            "Lost the worker runtime lock; stopping this worker without acquiring another."
+        )
+        consumer = consumer_box.get("consumer")
+        if consumer is None:
+            return
+        try:
+            consumer._handle_stop_signal(signal.SIGTERM, None)
+        except Exception:
+            logger.exception("Could not stop the consumer after losing the worker lock")
+
+    lock.supervise(_lost_runtime_lock)
+
+    # The previous owner is gone. Only this process may now reclaim its slots
+    # and decide which in-flight attempts were interrupted. Each stage stops
+    # if supervision reports that the lock session has disappeared.
+    recover_owned_work(app)
 
     # Pool infrastructure is started whenever the runner backend supports it, so
     # the reconcile loop is always present to honour a *live* enable/disable of
@@ -130,8 +218,6 @@ def main() -> None:
     # whether instances are actually pre-warmed.
     backend = (config.RUNNER_BACKEND or "").strip().lower()
     pool_supported = backend in ("silver", "mock")
-    stop_reconcile = threading.Event()
-
     if pool_supported:
         from app.jobqueue.tasks import get_pool
         from app.services import runtime_config
@@ -159,6 +245,7 @@ def main() -> None:
             draining = license_service.is_draining()
 
         if pool_enabled and prewarm and not draining:
+            _require_worker_ownership()
             pool.set_target(limit)
             warmed = pool.prewarm()
             print(f"Pre-warmed {warmed} Silver instance(s); pool={pool.stats()}")
@@ -184,11 +271,13 @@ def main() -> None:
         consumer._handle_stop_signal(signum, frame)
 
     process_guard.install_break_handler(_on_break)
+    consumer_box["consumer"] = consumer
+    if process_guard.is_shutting_down():
+        raise SystemExit(1)
     try:
         consumer.run()
     finally:
         stop_reconcile.set()
-
 
 if __name__ == "__main__":
     main()

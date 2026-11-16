@@ -24,6 +24,7 @@ from sqlalchemy import text
 
 from ..extensions import db
 from ..models import Setting
+from . import worker_lock
 
 
 def _get_int(key: str, default: int = 0) -> int:
@@ -118,16 +119,20 @@ def try_acquire() -> bool:
         "AND COALESCE((SELECT CAST(value AS INTEGER) FROM app_settings "
         "WHERE key = :draining), 0) = 0"
     )
-    result = db.session.execute(
-        stmt,
-        {
-            "inuse": Setting.LICENSE_INUSE,
-            "limit": Setting.LICENSE_LIMIT,
-            "draining": Setting.LICENSE_DRAINING,
-        },
-    )
-    db.session.commit()
-    return result.rowcount == 1
+    with worker_lock.ownership_guard() as owned:
+        if not owned:
+            db.session.rollback()
+            return False
+        result = db.session.execute(
+            stmt,
+            {
+                "inuse": Setting.LICENSE_INUSE,
+                "limit": Setting.LICENSE_LIMIT,
+                "draining": Setting.LICENSE_DRAINING,
+            },
+        )
+        db.session.commit()
+        return result.rowcount == 1
 
 
 def release() -> None:
@@ -137,8 +142,12 @@ def release() -> None:
         "SET value = GREATEST(CAST(value AS INTEGER) - 1, 0) "
         "WHERE key = :inuse"
     )
-    db.session.execute(stmt, {"inuse": Setting.LICENSE_INUSE})
-    db.session.commit()
+    with worker_lock.ownership_guard() as owned:
+        if not owned:
+            db.session.rollback()
+            return
+        db.session.execute(stmt, {"inuse": Setting.LICENSE_INUSE})
+        db.session.commit()
 
 
 def reset_in_use() -> None:

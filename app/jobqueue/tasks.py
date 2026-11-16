@@ -227,19 +227,24 @@ def _reschedule(task_pk: int, run_count: int, delay: float) -> None:
 
 def _claim_run(database, task_pk: int, expected_run_count: int):
     from ..models import Task, TaskStatus
+    from ..services import worker_lock
 
-    task = (Task.query.filter_by(id=task_pk, run_count=expected_run_count,
-                                 status=TaskStatus.QUEUED.value, deleted_at=None,
-                                 cancel_requested=False)
-            .populate_existing().with_for_update().first())
-    if task is None:
-        database.session.rollback()
-        return None
-    task.status = TaskStatus.RUNNING.value
-    task.started_at = _utcnow()
-    task.message = "Running on Silver."
-    database.session.commit()
-    return task
+    with worker_lock.ownership_guard() as owned:
+        if not owned:
+            database.session.rollback()
+            return None
+        task = (Task.query.filter_by(id=task_pk, run_count=expected_run_count,
+                                     status=TaskStatus.QUEUED.value, deleted_at=None,
+                                     cancel_requested=False)
+                .populate_existing().with_for_update().first())
+        if task is None:
+            database.session.rollback()
+            return None
+        task.status = TaskStatus.RUNNING.value
+        task.started_at = _utcnow()
+        task.message = "Running on Silver."
+        database.session.commit()
+        return task
 
 
 @huey.task()
@@ -304,10 +309,12 @@ def _run_pooled_attempt(app, pool, task_pk, expected_run_count, sil_path, lease)
     from ..extensions import db
     from ..models import Task, TaskStatus
     from ..runners import test_runner
-    from ..services import event_service, license_service
+    from ..services import event_service, license_service, worker_lock
 
     # --- Phase 1: borrow a pooled instance, cancellable while queued. ---
     def _should_cancel() -> bool:
+        if worker_lock.ownership_was_lost():
+            return True
         lease.renew()
         with app.app_context():
             db.session.expire_all()
@@ -355,13 +362,15 @@ def _run_pooled_attempt(app, pool, task_pk, expected_run_count, sil_path, lease)
         except Exception as exc:  # noqa: BLE001
             logger.exception("run_task failed for pk=%s", task_pk)
             db.session.rollback()
-            task = db.session.get(Task, task_pk)
-            if (claimed and task is not None and task.run_count == expected_run_count
-                    and not TaskStatus(task.status).is_final and not _has_pending_outcome(task_pk, expected_run_count)):
-                task.status = TaskStatus.FAILED.value
-                task.message = f"Internal error: {exc}"
-                task.finished_at = _utcnow()
-                db.session.commit()
+            with worker_lock.ownership_guard() as owned:
+                if owned:
+                    task = db.session.get(Task, task_pk)
+                    if (claimed and task is not None and task.run_count == expected_run_count
+                            and not TaskStatus(task.status).is_final and not _has_pending_outcome(task_pk, expected_run_count)):
+                        task.status = TaskStatus.FAILED.value
+                        task.message = f"Internal error: {exc}"
+                        task.finished_at = _utcnow()
+                        db.session.commit()
         finally:
             try:
                 if acquired:
@@ -406,11 +415,13 @@ def _wait_for_dedicated_license(app, db, task_pk, expected_run_count, lease) -> 
     already has enough waiting threads).
     """
     from ..models import Task, TaskStatus
-    from ..services import license_service
+    from ..services import license_service, worker_lock
 
     waiting = False
     try:
         while True:
+            if worker_lock.ownership_was_lost():
+                return False
             lease.renew()
             db.session.expire_all()
             task = db.session.get(Task, task_pk)
@@ -426,6 +437,8 @@ def _wait_for_dedicated_license(app, db, task_pk, expected_run_count, lease) -> 
                 return False
             if license_service.try_acquire():
                 return True
+            if worker_lock.ownership_was_lost():
+                return False
             if not waiting:
                 waiting = _try_enter_wait(app)
                 if not waiting:
@@ -441,7 +454,7 @@ def _run_dedicated_attempt(app, db, task_pk, expected_run_count) -> None:
     """Phase 2 of the classic path: run, always releasing the license slot."""
     from ..models import Task, TaskStatus
     from ..runners import test_runner
-    from ..services import event_service, license_service
+    from ..services import event_service, license_service, worker_lock
 
     # Reserve a bounded, reused run-folder slot so the classic path also
     # labels its directory ``inst_<n>`` (recycled on release) instead of a
@@ -460,13 +473,15 @@ def _run_dedicated_attempt(app, db, task_pk, expected_run_count) -> None:
     except Exception as exc:  # noqa: BLE001
         logger.exception("run_task failed for pk=%s", task_pk)
         db.session.rollback()
-        task = db.session.get(Task, task_pk)
-        if (claimed and task is not None and task.run_count == expected_run_count
-                and not TaskStatus(task.status).is_final and not _has_pending_outcome(task_pk, expected_run_count)):
-            task.status = TaskStatus.FAILED.value
-            task.message = f"Internal error: {exc}"
-            task.finished_at = _utcnow()
-            db.session.commit()
+        with worker_lock.ownership_guard() as owned:
+            if owned:
+                task = db.session.get(Task, task_pk)
+                if (claimed and task is not None and task.run_count == expected_run_count
+                        and not TaskStatus(task.status).is_final and not _has_pending_outcome(task_pk, expected_run_count)):
+                    task.status = TaskStatus.FAILED.value
+                    task.message = f"Internal error: {exc}"
+                    task.finished_at = _utcnow()
+                    db.session.commit()
     finally:
         dedicated_allocator().release(slot)
         license_service.release()
@@ -630,12 +645,17 @@ def prune_task_events_job() -> None:
 
 def _mark_cancelled(db, task) -> None:
     from ..models import TaskStatus
+    from ..services import worker_lock
 
-    if not TaskStatus(task.status).is_final:
-        task.status = TaskStatus.CANCELLED.value
-        task.message = "Cancelled by user."
-        task.finished_at = _utcnow()
-        db.session.commit()
+    with worker_lock.ownership_guard() as owned:
+        if not owned:
+            db.session.rollback()
+            return
+        if not TaskStatus(task.status).is_final:
+            task.status = TaskStatus.CANCELLED.value
+            task.message = "Cancelled by user."
+            task.finished_at = _utcnow()
+            db.session.commit()
 
 
 # Registers the unit-test pipeline tasks with the same Huey instance so the

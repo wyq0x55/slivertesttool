@@ -8,10 +8,22 @@ from types import SimpleNamespace
 from ..extensions import db
 from ..models import RunEvidence, Task, TaskStatus
 from . import run_evidence_service as evidence
+from . import worker_lock
 from .lanmatrix import run_writeback_service
 
 
 def finalise_attempt(task_id, run_count, status, verdict, message, *, writeback=None, trusted_outcome=True) -> bool:
+    with worker_lock.ownership_guard() as owned:
+        if not owned:
+            db.session.rollback()
+            return False
+        return _finalise_owned_attempt(
+            task_id, run_count, status, verdict, message,
+            writeback=writeback, trusted_outcome=trusted_outcome,
+        )
+
+
+def _finalise_owned_attempt(task_id, run_count, status, verdict, message, *, writeback=None, trusted_outcome=True) -> bool:
     try:
         task = Task.query.filter_by(id=task_id).populate_existing().with_for_update().first()
         if task is None or task.deleted_at is not None or (task.run_count or 1) != run_count:

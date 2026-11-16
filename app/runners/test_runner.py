@@ -24,7 +24,7 @@ from typing import Any
 
 from ..extensions import db
 from ..models import Task, TaskStatus, TestItemRow
-from ..services import event_service, report_service, runtime_config, task_service
+from ..services import event_service, report_service, runtime_config, task_service, worker_lock
 from ..services import run_evidence_service as evidence
 from . import process_guard, run_layout
 from .silver_runner import (
@@ -329,8 +329,8 @@ def _fail_internal(task: Task, exc: Exception) -> None:
     # Terminal events before the final-status flip (see the cancel path).
     event_service.emit_error(task, f"Internal error: {exc}")
     event_service.emit_result(task, "failed", f"Internal error: {exc}")
-    _finalise(task, TaskStatus.FAILED, f"Internal error: {exc}", verdict="ERROR")
-    _cancel_project_queue_on_error(task, f"Internal error: {exc}")
+    if _finalise(task, TaskStatus.FAILED, f"Internal error: {exc}", verdict="ERROR"):
+        _cancel_project_queue_on_error(task, f"Internal error: {exc}")
 
 
 def execute(app, config, task: Task, pool=None, instance=None,
@@ -519,11 +519,10 @@ def _execute_backend(app, config, task: Task, pool=None, instance=None,
         finish_logs()
         if pooled and not pool.is_mock:
             pool.poison(instance)
-        if process_guard.is_shutting_down():
-            # The worker is disposing Silver under this run. That is an
-            # interruption, not an ERROR: leave the attempt RUNNING (no verdict,
-            # no project-queue cancel) for startup recovery, exactly as a run
-            # cut off by a killed worker is handled.
+        if process_guard.is_shutting_down() or worker_lock.ownership_was_lost():
+            # Shutdown, or loss of the single-worker lock, is an interruption
+            # rather than an ERROR. Leave the attempt RUNNING (no verdict and
+            # no project-queue cancel) for the next owner's startup recovery.
             logger.warning("Task %s interrupted by worker shutdown: %s", task.task_key, exc)
             return
         if not isinstance(exc, RunnerError):
@@ -532,20 +531,33 @@ def _execute_backend(app, config, task: Task, pool=None, instance=None,
         # Terminal events before the final-status flip (see cancel path above).
         event_service.emit_error(task, str(exc))
         event_service.emit_result(task, "failed", str(exc))
-        _finalise(task, TaskStatus.FAILED, str(exc), verdict="ERROR")
         # An ERROR is an environment problem, not a test-logic failure: abort the
         # rest of THIS project's queue so it does not keep failing (other
-        # projects are untouched).
-        _cancel_project_queue_on_error(task, str(exc))
+        # projects are untouched). A lost runtime lock must not reach this
+        # mutation; _finalise reports that by returning false.
+        if _finalise(task, TaskStatus.FAILED, str(exc), verdict="ERROR"):
+            _cancel_project_queue_on_error(task, str(exc))
         return
     finally:
         finish_logs()
         evidence.checked_path(config.POOL_DIR, run_dir)
         shutil.rmtree(run_dir, ignore_errors=True)
 
+    if worker_lock.ownership_was_lost():
+        logger.warning(
+            "Task %s abandoned after the worker lost its runtime lock", task.task_key
+        )
+        return
+
     event_service.emit_progress(task, 90)
 
     verdict = _parse_verdict(log_dir, task.test_id)
+    if worker_lock.ownership_was_lost():
+        db.session.rollback()
+        logger.warning(
+            "Task %s abandoned after the worker lost its runtime lock", task.task_key
+        )
+        return
     task.report_path = str(root)
     db.session.add(task)
     db.session.commit()
@@ -578,10 +590,25 @@ def _slice_console(source: Path, start_offset: int, dest: Path) -> None:
 def _cancel_project_queue_on_error(task: Task, detail: str) -> None:
     """Cancel the rest of ``task``'s project queue after an environment error.
 
+    A worker that has lost its runtime lock must not cancel work that may now
+    belong to the successor.
+
     Only the SAME project's still-queued tasks are cancelled; other projects and
     already-running/finished tasks are left untouched. Best-effort: a failure
     here must never mask the original error, so it is logged and swallowed.
     """
+    with worker_lock.ownership_guard() as owned:
+        if owned:
+            _cancel_owned_project_queue(task, detail)
+
+
+def _cancel_owned_project_queue(task: Task, detail: str) -> None:
+    if worker_lock.ownership_was_lost():
+        logger.warning(
+            "Not cancelling the project queue for task %s after the runtime lock was lost",
+            task.task_key,
+        )
+        return
     try:
         reason = (
             "Cancelled: environment error in this project's queue "
@@ -601,12 +628,29 @@ def _cancel_project_queue_on_error(task: Task, detail: str) -> None:
             "Failed to cancel project queue after error on task %s", task.task_key)
 
 
-def _finalise(task: Task, status: TaskStatus, message: str, verdict: str, *, archive=True) -> None:
+def _finalise(task: Task, status: TaskStatus, message: str, verdict: str, *, archive=True) -> bool:
+    with worker_lock.ownership_guard() as owned:
+        if not owned:
+            db.session.rollback()
+            return False
+        return _finalise_owned(task, status, message, verdict, archive=archive)
+
+
+def _finalise_owned(task: Task, status: TaskStatus, message: str, verdict: str, *, archive=True) -> bool:
+    if worker_lock.ownership_was_lost():
+        db.session.rollback()
+        logger.warning(
+            "Task %s left running after the worker lost its runtime lock", task.task_key
+        )
+        return False
     task_id = task.id
     run_count = getattr(task, "_attempt_run_count", task.run_count or 1)
     if archive:
         try:
             existing = evidence.read_evidence(task, run_count)["outcome"]
+            if worker_lock.ownership_was_lost():
+                db.session.rollback()
+                return False
             if existing is None:
                 evidence.seal_attempt(task, status=status.value, verdict=verdict, message=message,
                                       evidence_kind=getattr(task, "_evidence_kind", "unclassified"),
@@ -621,9 +665,11 @@ def _finalise(task: Task, status: TaskStatus, message: str, verdict: str, *, arc
         else:
             db.session.commit()
     from ..services.run_finalisation_service import finalise_attempt
-    if finalise_attempt(task_id, run_count, status.value, verdict, message,
-                        writeback=_write_row_result, trusted_outcome=archive):
+    finalised = finalise_attempt(task_id, run_count, status.value, verdict, message,
+                                writeback=_write_row_result, trusted_outcome=archive)
+    if finalised:
         _notify_submitter(task, status, verdict)
+    return finalised
 
 
 def _notify_submitter(task: Task, status: TaskStatus, verdict: str) -> None:
