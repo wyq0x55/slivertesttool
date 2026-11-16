@@ -26,14 +26,14 @@ def _selected(project_id: int, ids: Any) -> list[TestItemRow]:
     if (not isinstance(ids, list) or not ids or len(ids) > MAX_SELECTED
             or any(type(item_id) is not int or item_id < 1 for item_id in ids)
             or len(set(ids)) != len(ids)):
-        raise ValueError(f"item_ids must contain 1-{MAX_SELECTED} distinct positive integers")
+        raise ValueError(f"item_ids 必须包含 1-{MAX_SELECTED} 个互不相同的正整数")
     rows = TestItemRow.query.filter(
         TestItemRow.project_id == project_id, TestItemRow.id.in_(ids),
         TestItemRow.sheet == "test", TestItemRow.deleted_at.is_(None),
     ).all()
     by_id = {row.id: row for row in rows}
     if len(by_id) != len(ids):
-        raise ValueError("Selected test rows are missing, deleted, or outside this project")
+        raise ValueError("所选测试行不存在、已删除或不属于该项目")
     return [by_id[item_id] for item_id in ids]
 
 
@@ -76,7 +76,7 @@ def _sources(payload: dict, provenance: list[dict]) -> None:
         if value is None:
             continue
         if not isinstance(value, str) or len(value) > MAX_SOURCE_CHARS:
-            raise ValueError(f"{key} must be text of at most {MAX_SOURCE_CHARS} characters")
+            raise ValueError(f"{key} 必须是不超过 {MAX_SOURCE_CHARS} 个字符的文本")
         provenance.append({"kind": kind, "name": str(payload.get("source_name") or key)[:256],
                            "revision": str(payload.get("source_revision") or "")[:256],
                            "sha256": _digest(value)})
@@ -85,7 +85,7 @@ def _sources(payload: dict, provenance: list[dict]) -> None:
             or any(not isinstance(name, str) or not isinstance(content, str)
                    for name, content in files.items())
             or sum(len(content) for content in files.values()) > MAX_SOURCE_CHARS):
-        raise ValueError("source_files must contain at most 32 bounded text excerpts")
+        raise ValueError("source_files 最多包含 32 段受限文本摘录")
     for name, content in files.items():
         provenance.append({"kind": "submitted_source", "name": name[:256],
                            "revision": str(payload.get("source_revision") or "")[:256],
@@ -97,17 +97,17 @@ def _failure_context(project_id, row, payload, provenance):
 
     key = payload.get("task_key")
     if not isinstance(key, str) or not key.strip():
-        raise ValueError("Failure analysis requires an archived task_key")
+        raise ValueError("失败分析需要已归档的 task_key")
     task = Task.query.filter_by(project_id=project_id, task_key=key, deleted_at=None).first()
     if task is None:
-        raise ValueError("Archived task is unavailable in this project")
+        raise ValueError("归档任务在该项目中不可用")
     data = read_evidence(task, payload.get("run_count"))
     if data["outcome"] is None:
-        raise ValueError("Failure analysis requires sealed run evidence")
+        raise ValueError("失败分析需要已封存的运行证据")
     approved = data["approved_inputs"]
     saved_row = approved.get("row") or {}
     if saved_row.get("id") != row.id or saved_row.get("uuid") != row.uuid or not isinstance(approved.get("test"), dict):
-        raise ValueError("Archived approved inputs do not belong to the selected matrix row")
+        raise ValueError("归档的已批准输入不属于所选矩阵行")
     payload["task_key"] = task.task_key
     payload["run_count"] = data["run_count"]
     payload["viewpoint"] = {key: saved_row.get(key) or "" for key in ("title", "module", "precondition")}
@@ -135,7 +135,7 @@ def build_payload(project_id: int, scenario: str, submitted: dict[str, Any]) -> 
     if (not isinstance(arguments, list) or len(arguments) > 64
             or any(not isinstance(argument, str) or not _SAFE_COMPILER_ARG.fullmatch(argument)
                    for argument in arguments)):
-        raise ValueError("compile_args supports bounded -D/-U definitions and C language standards only")
+        raise ValueError("compile_args 仅支持受限的 -D/-U 定义和 C 语言标准")
     provenance: list[dict] = []
     if "doc" in payload and "doc_text" not in payload:
         payload["doc_text"] = payload.pop("doc")
@@ -188,11 +188,11 @@ def build_payload(project_id: int, scenario: str, submitted: dict[str, Any]) -> 
 
     model_id = payload.get("model_id")
     if model_id is not None and (type(model_id) is not int or model_id < 1):
-        raise ValueError("model_id must be a positive integer")
+        raise ValueError("model_id 必须是正整数")
     model = None if scenario == "failure" else (db.session.get(ProjectModel, model_id) if model_id else
              ProjectModel.query.filter_by(project_id=project_id, is_current=True, deprecated_at=None).first())
     if scenario != "failure" and model_id and (model is None or model.project_id != project_id or model.deprecated_at is not None):
-        raise ValueError("Saved model is unavailable in this project")
+        raise ValueError("已保存模型在该项目中不可用")
     model_context = None
     payload["current_sbs"] = ""
     payload["sbs_text"] = ""
@@ -206,7 +206,7 @@ def build_payload(project_id: int, scenario: str, submitted: dict[str, Any]) -> 
             model_context["sbs_sha256"] = saved["version"]
         provenance.append({"kind": "saved_model", **model_context})
     if scenario == "sbs" and (model_context is None or "sbs_sha256" not in model_context):
-        raise ValueError("SBS proposals require a saved bundle model")
+        raise ValueError("SBS 提议需要已保存的 bundle 模型")
 
     if scenario == "procedure":
         payload.pop("viewpoint", None)

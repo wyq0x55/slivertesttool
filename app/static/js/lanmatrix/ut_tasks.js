@@ -677,6 +677,14 @@
     $("ut-d-review").textContent = job.reviewed_at
       ? "审核人 #" + job.reviewed_by + " · " + U.time(job.reviewed_at) +
         (job.review_note ? " · " + job.review_note : "") : "—";
+    var trace = job.review_trace, machine = trace && trace.machine;
+    if (machine && machine.attempt_id === job.current_attempt_id) {
+      $("ut-d-review").textContent += (trace.human_override ? " · 人工覆盖" : "") +
+        " · 审核前机器结论：" + (machine.machine_verdict || "UNKNOWN") +
+        " / " + (machine.gate_code || "UNKNOWN") +
+        " · 未关闭缺口：" + (machine.open_gap_count == null ? "UNKNOWN" : machine.open_gap_count) +
+        " · 期望值来源：" + (machine.expected_value_source || "UNKNOWN");
+    }
     $("ut-d-updated").textContent = U.time(job.updated_at);
     $("ut-d-reason").textContent = job.reason || "—";
     var info = U.gateInfo(job);

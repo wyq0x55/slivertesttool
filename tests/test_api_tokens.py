@@ -1,29 +1,14 @@
 """Personal API tokens: issue with a password session, then act as the owner without one."""
 
 import datetime as dt
-import importlib
-import os
-import tempfile
-from pathlib import Path
 
 import pytest
 
 
 @pytest.fixture()
-def app():
-    root = Path(tempfile.mkdtemp(prefix="api_tokens_"))
-    keys = ("DATABASE_URL", "SECRET_KEY", "WORKSPACE_DIR", "RUNNER_BACKEND", "GLOBAL_LOGIN_REQUIRED", "HUEY_IMMEDIATE")
-    old = {key: os.environ.get(key) for key in keys}
-    os.environ.update(DATABASE_URL=f"sqlite:///{root / 'tokens.db'}", SECRET_KEY="tokens-test",
-                      WORKSPACE_DIR=str(root / "ws"), RUNNER_BACKEND="mock",
-                      GLOBAL_LOGIN_REQUIRED="1", HUEY_IMMEDIATE="1")
-    import app.config as config_mod
-    import app as app_pkg
-    importlib.reload(config_mod)
-    importlib.reload(app_pkg)
-    application = app_pkg.create_app()
-    from app.bootstrap import bootstrap_app
-    bootstrap_app(application)
+def app(app_ctx):
+    application = app_ctx
+    application.config["GLOBAL_LOGIN_REQUIRED"] = True
     with application.app_context():
         from app.extensions import db
         from app.models import LMUser, Project, ProjectMember
@@ -39,11 +24,6 @@ def app():
         db.session.commit()
         application._project_id = project.id
         yield application
-    for key, value in old.items():
-        if value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = value
 
 
 def _issue(app, days=30):
@@ -189,6 +169,7 @@ def test_password_reset_revokes_the_users_tokens(app):
     agent = LMUser.query.filter_by(username="agent").one()
     admin = LMUser.query.filter_by(username="admin").one()
     admin.set_password("admin-pass")
+    admin.must_change_password = False
     from app.extensions import db
     db.session.commit()
     client = app.test_client()

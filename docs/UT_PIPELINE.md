@@ -84,6 +84,26 @@ threads are needed for asynchronous overlap. Per-step timing separates waits,
 actual requests and shared/nested intervals. The details page also provides
 measured C0/C1/MC/DC and per-line evidence with unknowns left unmeasured.
 
+Review stores a candidate-bound `review_trace` in the job generation metadata
+before changing review state or invalidating machine evidence. The snapshot
+retains the attempt ID, CSV SHA-256, machine verdict, gate code and reason,
+gap counts, expected-value lineage and reviewer decision. Human approval does
+not erase the machine gate. An incomplete report keeps the open gap count
+unknown rather than reporting zero.
+
+Approved CSV exports include these facts in both `manifest.json` and
+`manifest.csv`, together with `stub_mode` and the post-review verdict.
+`trace_status=CAPTURED_BEFORE_REVIEW` identifies a matching saved snapshot;
+historical approvals without one use `CURRENT_EVIDENCE_ONLY`. That label
+does not claim to reconstruct evidence available at the time of approval.
+
+Silver calls run through an owned process with one absolute monotonic deadline
+covering launch, model configuration, execution and IPC transfer. Timeout or
+cancellation terminates the owned process tree. Cleanup failures retain
+ownership for retry and keep pool capacity reserved until termination is
+confirmed. ut-agent subprocesses use the same containment boundary, including
+descendants that inherit stdout/stderr pipes.
+
 ## Verification
 
 Run focused PostgreSQL lifecycle/configuration tests and frontend regressions,

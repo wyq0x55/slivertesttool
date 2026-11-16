@@ -5,6 +5,7 @@ Split out of the former monolithic ``service`` module."""
 from __future__ import annotations
 
 import re as _re
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from ...extensions import db
@@ -277,6 +278,43 @@ def admin_delete_user(actor: LMUser, user_id: int) -> None:
     audit.record("user.delete", actor_id=actor.id, object_type="user",
                  object_id=username)
     db.session.commit()
+
+
+def change_password(user: LMUser, current_password: str, new_password: str) -> LMUser:
+    """Replace the signed-in user's password and clear a forced change.
+
+    The current password is required so a stolen session cannot keep the
+    default administrator password. Tokens issued under the old password are
+    revoked; the caller must already be a password session, not an API token.
+    """
+    if not isinstance(current_password, str) or not isinstance(new_password, str):
+        raise ServiceError("密码必须是字符串", code="VALIDATION_ERROR")
+    user = (LMUser.query.filter_by(id=user.id).populate_existing()
+            .with_for_update().one())
+    now = datetime.now(timezone.utc)
+    if user.locked_until and user.locked_until.replace(tzinfo=timezone.utc) > now:
+        raise ServiceError("账号已被临时锁定，请稍后再试", code="ACCOUNT_LOCKED")
+    if not user.check_password(current_password):
+        user.failed_logins = (user.failed_logins or 0) + 1
+        if user.failed_logins >= settings.LOCK_THRESHOLD:
+            user.locked_until = now + timedelta(minutes=settings.LOCK_MINUTES)
+            user.failed_logins = 0
+        db.session.commit()
+        raise ServiceError("当前密码不正确", code="INVALID_CREDENTIALS")
+    if len(new_password) < settings.PASSWORD_MIN_LEN:
+        raise ServiceError(f"密码长度至少 {settings.PASSWORD_MIN_LEN} 位",
+                           code="VALIDATION_ERROR")
+    if new_password == (current_password or ""):
+        raise ServiceError("新密码不能与当前密码相同", code="VALIDATION_ERROR")
+    user.set_password(new_password)
+    user.must_change_password = False
+    user.failed_logins = 0
+    user.locked_until = None
+    api_token_service.revoke_all(user, actor_id=user.id)
+    audit.record("user.password_change", actor_id=user.id, object_type="user",
+                 object_id=user.username, new_value={"must_change_password": False})
+    db.session.commit()
+    return user
 
 
 def _guard_last_admin(user: LMUser) -> None:

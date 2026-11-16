@@ -189,3 +189,42 @@ def test_shutdown_flag(monkeypatch):
     assert not process_guard.is_shutting_down()
     process_guard.begin_shutdown()
     assert process_guard.is_shutting_down()
+
+
+@windows_only
+@pytest.mark.parametrize("stage", ["TerminateJobObject", "QueryInformationJobObject"])
+def test_job_cleanup_failure_preserves_handle_for_retry(monkeypatch, stage):
+    calls = []
+
+    class Kernel:
+        failed = False
+
+        def TerminateJobObject(self, handle, code):
+            calls.append("terminate")
+            if stage == "TerminateJobObject" and not self.failed:
+                self.failed = True
+                return False
+            return True
+
+        def QueryInformationJobObject(self, *args):
+            calls.append("query")
+            if stage == "QueryInformationJobObject" and not self.failed:
+                self.failed = True
+                return False
+            return True
+
+        def CloseHandle(self, handle):
+            calls.append("close")
+            return True
+
+    kernel = Kernel()
+    monkeypatch.setattr(process_guard, "_kernel32", lambda: kernel)
+    monkeypatch.setattr(process_guard, "_last_error", lambda name: OSError(name))
+    job = process_guard.KillOnCloseJob(123)
+    with pytest.raises(OSError, match=stage):
+        job.close()
+    assert job._handle == 123
+    assert "close" not in calls
+    job.close()
+    assert job._handle is None
+    assert calls[-1] == "close"

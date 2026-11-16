@@ -93,7 +93,8 @@ function harness(configure = true, config = { manifest_document: manifest() }, s
       else if (opts.method === "GET") data = current;
       else if (url.endsWith("/manifest/validate")) { validations.push(body); data = { sha256: "validated-sha", baseline: "baseline" }; }
       else { writes.push(body); data = current = { ...body, manifest_path: "server/sha.json", manifest_sha256: "saved-sha" }; }
-      return { status: apiError ? 422 : 200, json: async () => apiError ? { success: false, error: apiError } : { success: true, data } };
+      return { status: apiError ? 422 : 200, text: async () => JSON.stringify(
+        apiError ? { success: false, error: apiError } : { success: true, data }) };
     } });
   for (const filename of ["api.js", "ut_binding.js"]) {
     vm.runInContext(fs.readFileSync(path.join(base, "app/static/js/lanmatrix", filename), "utf8"), context);

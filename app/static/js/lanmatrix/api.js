@@ -39,9 +39,14 @@
       if (!resp.ok) throw new ApiError("HTTP_" + resp.status, "请求失败", null, resp.status);
       return resp;
     }
+    const rawBody = await resp.text();
+    if (!rawBody) throw new ApiError("BAD_RESPONSE", "服务器无响应", null, resp.status);
     let payload = null;
-    try { payload = await resp.json(); } catch (e) { payload = null; }
-    if (!payload) throw new ApiError("BAD_RESPONSE", "服务器无响应", null, resp.status);
+    try { payload = JSON.parse(rawBody); } catch (e) { payload = null; }
+    if (!payload || typeof payload !== "object" || typeof payload.success !== "boolean") {
+      throw new ApiError("BAD_RESPONSE", "服务器返回了非 JSON 响应（HTTP " + resp.status + "）",
+        rawBody.slice(0, 500), resp.status);
+    }
     if (!payload.success) {
       const err = payload.error || {};
       throw new ApiError(err.code || "ERROR", err.message || "操作失败", err.details, resp.status);
@@ -70,6 +75,13 @@
     },
     async me() {
       const data = await request("GET", "/auth/me");
+      csrfToken = data.csrf_token;
+      return data.user;
+    },
+    async changePassword(currentPassword, newPassword) {
+      const data = await request("POST", "/me/password", {
+        body: { current_password: currentPassword, new_password: newPassword },
+      });
       csrfToken = data.csrf_token;
       return data.user;
     },

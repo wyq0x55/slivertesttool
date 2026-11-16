@@ -63,6 +63,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     app.register_blueprint(lanmatrix_pages_bp)
 
     _install_auth_gate(app)
+    _install_api_errors(app)
 
     @app.context_processor
     def _inject_globals() -> dict:
@@ -71,6 +72,26 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     _install_static_compression(app)
 
     return app
+
+
+def _install_api_errors(app: Flask) -> None:
+    from flask import request
+    from werkzeug.exceptions import HTTPException, InternalServerError
+
+    from .routes.lanmatrix._base import _http_error, _unexpected
+
+    @app.errorhandler(HTTPException)
+    def api_http_error(exc):
+        if request.path == "/api/v1" or request.path.startswith("/api/v1/"):
+            return _http_error(exc)
+        return exc.get_response()
+
+    @app.errorhandler(Exception)
+    def api_internal_error(exc):
+        if request.path == "/api/v1" or request.path.startswith("/api/v1/"):
+            return _unexpected(exc)
+        app.logger.exception("Unhandled request error")
+        return InternalServerError().get_response()
 
 
 def _install_static_compression(app: Flask) -> None:
@@ -202,9 +223,6 @@ def _install_auth_gate(app: Flask) -> None:
     ``next`` param); unauthenticated API/SSE requests get a 401 JSON envelope so
     the browser fetch layer can react without parsing an HTML redirect.
     """
-    if not app.config.get("GLOBAL_LOGIN_REQUIRED", True):
-        return
-
     from urllib.parse import quote
 
     from flask import jsonify, redirect, request
@@ -226,15 +244,32 @@ def _install_auth_gate(app: Flask) -> None:
 
     @app.before_request
     def _require_login():  # noqa: ANN202
-        if app.config.get("TESTING"):
-            return None
         endpoint = request.endpoint or ""
         if endpoint in open_endpoints:
             return None
         # Allow blueprint-specific static handlers and 404s to pass through.
         if endpoint.endswith(".static") or endpoint == "":
             return None
-        if _current_user() is not None:
+        if request.path.startswith("/api/"):
+            from .routes.lanmatrix._base import current_user
+            user = current_user()
+        else:
+            user = _current_user()
+        if user is not None and user.must_change_password and endpoint not in {
+                "lanmatrix_auth.change_password", "lanmatrix_auth.me",
+                "lanmatrix_auth.logout", "lanmatrix_pages.password",
+                "lanmatrix_pages.logout"}:
+            if request.path.startswith("/api/"):
+                return jsonify(
+                    success=False, data=None,
+                    error={"code": "PASSWORD_CHANGE_REQUIRED",
+                           "message": "请先修改初始密码后再继续使用", "details": None},
+                    request_id="req-authgate",
+                ), 403
+            return redirect("/lanmatrix/password")
+        if user is not None:
+            return None
+        if not app.config.get("GLOBAL_LOGIN_REQUIRED", True) or app.config.get("TESTING"):
             return None
         if request.path.startswith("/api/"):
             from .routes.lanmatrix._base import bearer_token, current_user

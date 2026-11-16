@@ -179,6 +179,21 @@ def test_periodic_recovery_preserves_live_unsealed_running_attempt(recovery_cont
 
 
 @pytest.mark.parametrize("startup", [False, True])
+def test_missing_evidence_is_failed_only_during_startup(recovery_context, startup):
+    from app.models import Task
+    from app.services.run_finalisation_service import finalise_attempt
+    from app.extensions import db
+
+    task = make_attempt(recovery_context, 1, status="running", kind="unpinned")
+    identity = (task.id, task.run_count)
+    result = interrupted(finalise_attempt, startup=startup)
+    assert not result["errors"]
+    current = db.session.get(Task, identity[0])
+    assert current.status == ("failed" if startup else "running")
+    assert result["recovered"] == ([identity] if startup else [])
+
+
+@pytest.mark.parametrize("startup", [False, True])
 @pytest.mark.parametrize("status,verdict", [("passed", "PASS"), ("failed", "FAIL"), ("failed", "ERROR"),
                                             ("failed", "UNKNOWN"), ("cancelled", "CANCELLED")])
 def test_trusted_sealed_crash_reconciles_via_callback(recovery_context, startup, status, verdict):
@@ -237,7 +252,7 @@ def test_interrupted_never_finalises_nonrunning_attempt(recovery_context, status
     finalise.assert_not_called()
 
 
-@pytest.mark.parametrize("change", ["deleted", "new_attempt", "unpinned"])
+@pytest.mark.parametrize("change", ["deleted"])
 def test_interrupted_never_finalises_ineligible_attempt(recovery_context, change):
     from app.extensions import db
 
@@ -250,6 +265,25 @@ def test_interrupted_never_finalises_ineligible_attempt(recovery_context, change
     finalise = Mock(return_value=True)
     assert interrupted(finalise, startup=True)["recovered"] == []
     finalise.assert_not_called()
+
+
+@pytest.mark.parametrize("change", ["new_attempt", "unpinned"])
+def test_startup_recovers_current_unpinned_attempt(recovery_context, change):
+    from app.extensions import db
+    from app.models import RunEvidence
+
+    task = make_attempt(recovery_context, 1, status="running",
+                        kind="unpinned" if change == "unpinned" else "generated")
+    if change == "new_attempt":
+        task.run_count = 2
+    db.session.commit()
+    finalise = Mock(return_value=True)
+    identity = (task.id, task.run_count)
+    assert interrupted(finalise, startup=True)["recovered"] == [identity]
+    assert finalise.call_args.args[:4] == (*identity, "failed", "ERROR")
+    assert finalise.call_args.kwargs == {"trusted_outcome": False}
+    if change == "new_attempt":
+        assert db.session.get(RunEvidence, (task.id, 1)).finalised is False
 
 
 @pytest.mark.parametrize("startup", [False, True])

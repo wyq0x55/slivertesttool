@@ -33,6 +33,7 @@ is the generator's own evidence and does not change with appended rows.
 
 from __future__ import annotations
 
+from copy import deepcopy
 import hashlib
 import json
 import re
@@ -932,6 +933,108 @@ def _job_gaps(job: UtJob, attempt: UtAttempt, *, through_seq: int | None = None)
     return gap_status(attempt.check or {}, revisers, attempt.csv_sha256, attempt.execution)
 
 
+def _expected_value_trace(attempt: UtAttempt, attempts: dict[int, UtAttempt]) -> dict[str, Any]:
+    lineage, seen, cursor = [], set(), attempt
+    complete = True
+    while cursor is not None:
+        if cursor.id in seen:
+            complete = False
+            break
+        seen.add(cursor.id)
+        lineage.append(cursor)
+        parent = (cursor.reviser or {}).get("parent_attempt_id")
+        if parent is None:
+            break
+        previous = attempts.get(parent)
+        if previous is None or previous.job_id != attempt.job_id or previous.seq >= cursor.seq:
+            complete = False
+            break
+        cursor = previous
+    lineage.reverse()
+    baseline = (lineage[0] if lineage and lineage[0].origin == UtAttempt.ORIGIN_GENERATOR
+                and (lineage[0].reviser or {}).get("parent_attempt_id") is None else None)
+    complete = complete and baseline is not None
+    sources = []
+    source = "UNKNOWN"
+    for item in lineage:
+        metadata = item.reviser or {}
+        if "host_retry_of" in metadata:
+            parent = attempts.get(metadata.get("parent_attempt_id"))
+            if (parent is not None and metadata["host_retry_of"] == parent.id
+                    and item.csv_sha256 == parent.csv_sha256):
+                continue
+            source, complete = "UNKNOWN", False
+            continue
+        if item.origin == UtAttempt.ORIGIN_GENERATOR:
+            source = "GENERATOR"
+        elif item.origin == UtAttempt.ORIGIN_HUMAN:
+            source = "HUMAN"
+        elif item.origin == UtAttempt.ORIGIN_HOST_DERIVED:
+            receipt = metadata.get("typed_candidate") or {}
+            parent = attempts.get(metadata.get("parent_attempt_id"))
+            valid = (parent is not None
+                     and metadata.get("oracle_source") == "IMPLEMENTATION_DERIVED"
+                     and receipt.get("contract") == "ut-agent.host-typed-candidate/1"
+                     and receipt.get("expected_value_source") == "IMPLEMENTATION_DERIVED"
+                     and receipt.get("sha256") == item.csv_sha256
+                     and receipt.get("source_candidate_sha256") == parent.csv_sha256
+                     and metadata.get("from_sha256") == parent.csv_sha256)
+            source = "IMPLEMENTATION_DERIVED" if valid else "UNKNOWN"
+            complete = complete and valid
+        elif item.origin != UtAttempt.ORIGIN_LLM:
+            source, complete = "UNKNOWN", False
+        if item.origin != UtAttempt.ORIGIN_LLM:
+            sources.append({"attempt_id": item.id, "seq": item.seq, "origin": item.origin,
+                            "csv_sha256": item.csv_sha256, "source": source,
+                            "created_by": item.created_by})
+    return {
+        "expected_value_source": source if complete else "UNKNOWN",
+        "expected_value_lineage": sources,
+        "expected_value_lineage_complete": complete,
+        "baseline": ({"attempt_id": baseline.id, "seq": baseline.seq,
+                      "csv_sha256": baseline.csv_sha256, "source": "GENERATOR"} if baseline else None),
+    }
+
+
+def candidate_trace(job: UtJob, attempt: UtAttempt) -> dict[str, Any]:
+    """Capture machine facts before a review can invalidate evidence."""
+    check = attempt.check or {}
+    report = diagnostic.gap_report(check)
+    gaps = _job_gaps(job, attempt)
+    unresolved = diagnostic.report_records(check, "unresolved")
+    witnessed = _verified_obligation_ids(check, attempt.csv_sha256, attempt.execution)
+    remaining = [item for item in unresolved
+                 if item.get("gap_class") != _MISSING_CASE or item.get("obligation_id") not in witnessed
+                 or (isinstance(item.get("requirement"), dict)
+                     and item["requirement"].get("configuration_status") == "NEEDS_REVIEW")]
+    pending = diagnostic.report_records(check, "output_pending")
+    known = report["details_complete"] and report["output_pending_reported"]
+    attempts = {item.id: item for item in UtAttempt.query.filter_by(job_id=job.id)
+                if item.seq <= attempt.seq}
+    return {
+        "attempt_id": attempt.id, "csv_sha256": attempt.csv_sha256,
+        "state": job.state, "gate_code": job.gate_code or "", "gate_reason": job.reason or "",
+        "machine_verdict": job.last_verdict or "", "attempt_verdict": attempt.verdict or "",
+        "open_gap_count": len(remaining) + len(pending) if known else None,
+        "gap_counts": {
+            "status": "COMPLETE" if known else "UNKNOWN",
+            "details_complete": report["details_complete"],
+            "reported_unresolved": report["reported_unresolved"],
+            "supplied_unresolved": report["supplied_unresolved"],
+            "reported_output_pending": report["reported_output_pending"],
+            "supplied_output_pending": report["supplied_output_pending"],
+            "output_pending_reported": report["output_pending_reported"],
+            "remaining_supplied": len(remaining),
+            "missing": gaps["missing"], "witnessed": gaps["witnessed"],
+            "claimed": gaps["claimed"], "declined": gaps["declined"],
+            "unproven": gaps["unproven"], "repair_open": len(gaps["open"]),
+            "configuration_conflicts": gaps["configuration_conflicts"],
+            "errors": report["errors"],
+        },
+        **_expected_value_trace(attempt, attempts),
+    }
+
+
 
 
 def _history_item(item: UtAttempt) -> dict[str, Any]:
@@ -1304,10 +1407,11 @@ def review(project_id: int, job_id: int, decision: str, user_id: int, note: str 
     if (expected_attempt_id is not _EXPECTED_ATTEMPT_UNSET
             and expected_attempt_id != job.current_attempt_id):
         raise VersionConflict(expected_attempt_id or 0, job.current_attempt_id or 0, job.to_dict())
+    attempt = db.session.get(UtAttempt, job.current_attempt_id) if job.current_attempt_id else None
+    evidence_gate = None
     if decision == "approve":
         if job.current_attempt_id is None:
             raise ServiceError("没有可通过的候选 CSV", code="INVALID_STATE")
-        attempt = db.session.get(UtAttempt, job.current_attempt_id)
         if attempt is None or not attempt.csv_path:
             raise ServiceError("没有可通过的候选 CSV", code="INVALID_STATE")
         try:
@@ -1326,25 +1430,40 @@ def review(project_id: int, job_id: int, decision: str, user_id: int, note: str 
         if (job.state != UtJob.AWAITING_REVIEW or evidence_gate or
                 job.gate_code in {GateCode.INTEGRITY_ERROR, GateCode.CONFIGURATION_CONFLICT, GateCode.REPORT_INCOMPLETE}) and not note:
             raise ServiceError("机器校验未通过的候选需要填写审核意见才能通过", code="VALIDATION_ERROR")
+    elif not note:
+        raise ServiceError("驳回必须填写原因", code="VALIDATION_ERROR")
+    machine = candidate_trace(job, attempt) if attempt else {
+        "attempt_id": None, "state": job.state, "gate_code": job.gate_code or "",
+        "gate_reason": job.reason or "", "machine_verdict": job.last_verdict or "",
+    }
+    if decision == "approve":
         if evidence_gate and evidence_gate[2] == GateCode.INTEGRITY_ERROR:
             attempt.check = _integrity_check(attempt.check or {}, evidence_gate[1])
             attempt.verdict = job.last_verdict = "BLOCKED"
         _set_state(job, UtJob.APPROVED)
     else:
-        if not note:
-            raise ServiceError("驳回必须填写原因", code="VALIDATION_ERROR")
         _set_state(job, UtJob.REJECTED)
     job.reviewed_by = user_id
     job.reviewed_at = _utcnow()
     job.review_note = note
-    # The gate reason explained why the job waited; once decided it is stale.
-    job.reason = ""
-    job.gate_code = ""
+    # Keep the machine gate. Approval records a human decision; it does not
+    # erase why the candidate stopped or which obligations were still open.
     approved = job.state == UtJob.APPROVED
+    trace = {"machine": machine, "decision": decision, "reviewed_by": user_id,
+             "reviewed_at": _iso(job.reviewed_at), "note": note,
+             "human_override": approved and (
+                 machine["state"] != UtJob.AWAITING_REVIEW
+                 or machine["gate_code"] != GateCode.MACHINE_PASS
+                 or machine["machine_verdict"] != "PASS" or evidence_gate is not None),
+             "review_gate": ({"code": evidence_gate[2], "reason": evidence_gate[1]}
+                             if evidence_gate else None)}
+    job.generation = {**(job.generation or {}), "review_trace": deepcopy(trace)}
     audit.record("ut.job.approve" if approved else "ut.job.reject", actor_id=user_id,
                  object_type="ut_job", object_id=job.id, project_id=project_id,
+                 old_value=machine,
                  new_value={"attempt_id": job.current_attempt_id,
-                            "verdict": job.last_verdict or None, "note": note})
+                            "verdict": job.last_verdict or None, "note": note,
+                            "review_trace": trace})
     _notify_requester(job, notify_svc.REVIEW_APPROVED if approved else notify_svc.REVIEW_REJECTED,
                       "单元测试审核通过" if approved else "单元测试审核驳回", note, actor_id=user_id)
     db.session.commit()

@@ -24,6 +24,13 @@ class ApplyError(RuntimeError):
     pass
 
 
+class DraftTransitionError(ValueError):
+    def __init__(self, message: str, *, status: int = 409, details=None):
+        super().__init__(message)
+        self.status = status
+        self.details = details
+
+
 def lock_draft(draft_id: int) -> AiDraft | None:
     with db.session.no_autoflush:
         return (AiDraft.query.filter_by(id=draft_id).populate_existing()
@@ -34,12 +41,61 @@ def _json_object(raw, name):
     try:
         value = json.loads(raw) if raw else {}
     except (ValueError, TypeError) as exc:
-        raise ApplyError(f"Invalid {name}; regenerate this draft") from exc
+        raise ApplyError(f"{name}无效，请重新生成该草稿") from exc
     if not isinstance(value, dict):
-        raise ApplyError(f"Invalid {name}; regenerate this draft")
+        raise ApplyError(f"{name}无效，请重新生成该草稿")
     return value
 
 
+def update_draft(draft_id: int, output) -> AiDraft:
+    draft = lock_draft(draft_id)
+    if draft is None:
+        raise DraftTransitionError("草稿不存在", status=404)
+    if draft.status not in (AiDraft.STATUS_PENDING, AiDraft.STATUS_ERROR):
+        db.session.rollback()
+        raise DraftTransitionError(f"草稿当前状态（{draft.status}）不可编辑", status=409)
+    if not isinstance(output, dict):
+        db.session.rollback()
+        raise DraftTransitionError("output 必须是对象", status=400)
+    try:
+        payload = _json_object(draft.input_json, "生成输入")
+    except ApplyError as exc:
+        db.session.rollback()
+        raise DraftTransitionError(str(exc), status=400) from exc
+    problems = validators.validate_output(draft.scenario, payload, output)
+    if problems:
+        db.session.rollback()
+        raise DraftTransitionError("输出校验未通过", status=400, details=problems)
+    draft.output_json = json.dumps(output, ensure_ascii=False, indent=2)
+    try:
+        meta = json.loads(draft.meta_json) if draft.meta_json else {}
+    except (ValueError, TypeError):
+        meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
+    meta["edited"] = True
+    draft.meta_json = json.dumps(meta, ensure_ascii=False)
+    db.session.commit()
+    return draft
+
+
+def reject_draft(draft_id: int, note, reviewer) -> AiDraft:
+    draft = lock_draft(draft_id)
+    if draft is None:
+        raise DraftTransitionError("草稿不存在", status=404)
+    if draft.status not in (AiDraft.STATUS_PENDING, AiDraft.STATUS_ERROR):
+        db.session.rollback()
+        raise DraftTransitionError(f"草稿已处理（{draft.status}）", status=409)
+    note = str(note or "").strip()
+    if not note:
+        db.session.rollback()
+        raise DraftTransitionError("驳回必须填写原因（note）", status=400)
+    draft.status = AiDraft.STATUS_REJECTED
+    draft.review_note = note
+    draft.reviewed_by = reviewer.id
+    draft.reviewed_at = datetime.datetime.utcnow()
+    db.session.commit()
+    return draft
 def _guard_row_writes(project_id):
     if not current_app.config.get("COLLAB_REST_GUARD", True):
         return
@@ -47,9 +103,9 @@ def _guard_row_writes(project_id):
     try:
         active = presence.is_collab_active(project_id)
     except Exception as exc:
-        raise ApplyError("Collaboration state unavailable; approval is blocked") from exc
+        raise ApplyError("协作状态不可用，已阻止通过") from exc
     if active:
-        raise ApplyError("Active collaboration owns row mutations; approval is blocked")
+        raise ApplyError("协作进行中，行变更由协作拥有，已阻止通过")
 
 
 def _lock_items(project, snapshots, dependencies):
@@ -57,7 +113,7 @@ def _lock_items(project, snapshots, dependencies):
     for entry in dependencies:
         identity, version = entry["id"], entry["version"]
         if identity in versions and versions[identity] != version:
-            raise ApplyError("Inconsistent generation source versions; regenerate this draft")
+            raise ApplyError("生成来源版本不一致，请重新生成该草稿")
         versions[identity] = version
     if not versions:
         return {}
@@ -68,7 +124,7 @@ def _lock_items(project, snapshots, dependencies):
         row = by_id.get(identity)
         if (row is None or row.project_id != project.id or row.deleted_at is not None
                 or identity in snapshots and row.sheet != "test" or row.version != version):
-            raise ApplyError(f"Generation item {identity} is stale, deleted or unavailable; regenerate this draft")
+            raise ApplyError(f"生成项 {identity} 已过期、已删除或不可用，请重新生成该草稿")
     return by_id
 
 
@@ -80,7 +136,7 @@ def _check_dictionary(project_id, context):
      .populate_existing().with_for_update().all())
     actual = context_digest(signal_dict.entries_for(project_id))
     if actual != context["signal_dict_sha256"]:
-        raise ApplyError("Signal dictionary changed; regenerate this draft")
+        raise ApplyError("信号字典已变化，请重新生成该草稿")
 
 
 def _lock_model(project, payload, scenario):
@@ -91,37 +147,37 @@ def _lock_model(project, payload, scenario):
         try:
             _failure_context(project.id, row, dict(payload), sources)
         except (ValueError, OSError) as exc:
-            raise ApplyError(f"Archived evidence is no longer available: {exc}") from exc
+            raise ApplyError(f"归档证据已不可用：{exc}") from exc
         original = [entry for entry in payload["_context"].get("provenance", []) if entry.get("kind") == "run_attempt"]
         if len(original) != 1 or original != sources:
-            raise ApplyError("Archived evidence changed; regenerate this draft")
+            raise ApplyError("归档证据已变化，请重新生成该草稿")
         return None
     snapshot = payload["_context"].get("model")
     if snapshot is None:
         if scenario == "sbs" or payload.get("model_id") is not None:
-            raise ApplyError("Missing saved-model generation snapshot; regenerate this draft")
+            raise ApplyError("缺少已保存模型的生成快照，请重新生成该草稿")
         return None
     if (not isinstance(snapshot, dict) or type(snapshot.get("id")) is not int
             or snapshot["id"] < 1 or not isinstance(snapshot.get("name"), str)
             or not isinstance(snapshot.get("version"), str)
             or payload.get("model_id") != snapshot["id"]):
-        raise ApplyError("Invalid saved-model generation identity; regenerate this draft")
+        raise ApplyError("已保存模型的生成标识无效，请重新生成该草稿")
     model = (ProjectModel.query.filter_by(id=snapshot["id"]).populate_existing()
              .with_for_update().first())
     if (model is None or model.project_id != project.id or model.deprecated_at is not None
             or model.name != snapshot["name"] or (model.version or "") != snapshot["version"]):
-        raise ApplyError("Saved model changed or is unavailable; regenerate this draft")
+        raise ApplyError("已保存模型已变化或不可用，请重新生成该草稿")
     if model.kind == "bundle":
         expected_sha = snapshot.get("sbs_sha256")
         saved = sbs_service.read_sbs(project.id, model.name, model_id=model.id)
         if not expected_sha or saved["version"] != expected_sha:
-            raise ApplyError("Saved SBS changed or has no generation hash; regenerate this draft")
+            raise ApplyError("已保存 SBS 已变化或没有生成哈希，请重新生成该草稿")
         if scenario == "sbs":
             base = payload.get("current_sbs")
             if not isinstance(base, str) or sbs_service._sha(base) != expected_sha:
-                raise ApplyError("SBS base does not match the generation snapshot; regenerate this draft")
+                raise ApplyError("SBS 基线与生成快照不一致，请重新生成该草稿")
     elif scenario == "sbs":
-        raise ApplyError("SBS approval requires a saved bundle model")
+        raise ApplyError("通过 SBS 需要已保存的 bundle 模型")
     return model
 
 
@@ -130,7 +186,7 @@ def _require_fields(project, sheet, keys):
                 if spec.sheet == sheet and not spec.is_readonly}
     missing = set(keys) - writable
     if missing:
-        raise ApplyError("Required writable asset fields are unavailable: " + ", ".join(sorted(missing)))
+        raise ApplyError("缺少必需的可写字段：" + ", ".join(sorted(missing)))
 
 
 def _provenance(draft, payload):
@@ -147,22 +203,22 @@ def apply_draft(draft: AiDraft, reviewer, refs: list[str] | None = None) -> dict
     try:
         draft = lock_draft(draft.id)
         if draft is None or draft.status not in (AiDraft.STATUS_PENDING, AiDraft.STATUS_ERROR):
-            raise ApplyError("Draft is missing or already processed")
+            raise ApplyError("草稿不存在或已处理")
         project = (Project.query.filter_by(id=draft.project_id).populate_existing()
                    .with_for_update().first())
         if project is None or project.deleted_at is not None:
-            raise ApplyError("Project is unavailable")
+            raise ApplyError("项目不可用")
         permissions.require("item.edit", service.role_in_project(project.id, reviewer),
                             is_system_admin=reviewer.is_system_admin)
         if not project.is_editable:
-            raise ApplyError("Project is not editable")
-        payload = _json_object(draft.input_json, "generation input")
-        output = _json_object(draft.output_json, "output")
+            raise ApplyError("项目不可编辑")
+        payload = _json_object(draft.input_json, "生成输入")
+        output = _json_object(draft.output_json, "输出")
         problems = validators.validate_output(draft.scenario, payload, output, refs=refs, for_apply=True)
         if problems:
             raise ApplyError("; ".join(problems))
         if payload["_context"]["project_id"] != project.id:
-            raise ApplyError("Generation context belongs to another project")
+            raise ApplyError("生成上下文属于其他项目")
         if draft.scenario in ("viewpoint", "procedure", "lib"):
             _guard_row_writes(project.id)
         snapshots, _problems = item_snapshots(draft.scenario, payload, output, refs)
@@ -178,7 +234,7 @@ def apply_draft(draft: AiDraft, reviewer, refs: list[str] | None = None) -> dict
             names = {str(row.get_field("lib_func") or row.get_field("lib_name") or row.case_id or "").strip()
                      for row in existing_rows}
             if output["lib_name"] in names:
-                raise ApplyError("Library name already exists")
+                raise ApplyError("子程序名称已存在")
         evidence = _provenance(draft, payload)
         applier = {"viewpoint": _apply_viewpoint, "procedure": _apply_procedure,
                    "sbs": _apply_sbs, "lib": _apply_lib, "failure": _apply_failure}[draft.scenario]
@@ -194,7 +250,7 @@ def apply_draft(draft: AiDraft, reviewer, refs: list[str] | None = None) -> dict
         return result
     except ServiceError as exc:
         db.session.rollback()
-        raise ApplyError(f"Asset service rejected approval: {exc}") from exc
+        raise ApplyError(f"资产服务拒绝通过：{exc}") from exc
     except Exception:
         db.session.rollback()
         raise
@@ -252,7 +308,7 @@ def _apply_sbs(draft, reviewer, project, payload, output, rows, snapshots, model
     content = (base_content + "\n\n" if base_content else "") + output["sbs_additions"]
     encoded = content.encode("utf-8", "surrogatepass")
     if len(encoded) > sbs_service.MAX_SBS_BYTES:
-        raise ApplyError("SBS candidate exceeds the size limit")
+        raise ApplyError("SBS 候选内容超过大小限制")
     revision = SbsRevision(project_id=project.id, model_id=model.id, filename=f"ai-draft-{draft.id}.sbs",
                            content=content, sha256=hashlib.sha256(encoded).hexdigest(), size=len(encoded), author_id=reviewer.id)
     db.session.add(revision)

@@ -18,7 +18,9 @@ Both backends implement :meth:`SilverRunnerBase.run`, which receives a
 
 from __future__ import annotations
 
+import contextvars
 import logging
+import multiprocessing
 import os
 import shutil
 import sys
@@ -28,7 +30,180 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from app.runners.process_guard import (
+    kill_process_tree, pid_is_running, require_process_job, retain_cleanup,
+    release_cleanup, retry_pending_cleanup,
+)
+
 logger = logging.getLogger("silver.runner")
+_launch_deadline = contextvars.ContextVar("silver_launch_deadline", default=None)
+
+
+def _silver_worker(connection, silver_home: str, options: dict) -> None:
+    """Keep all native API calls inside a process that can be terminated."""
+    if os.name != "nt":
+        os.setsid()
+    connection.send(("ready", None))
+    try:
+        connection.recv()
+        native, _pyro = SilverRunner._import_silver(silver_home)
+        silver = native(**options)
+        connection.send(("ok", silver.process.pid))
+        while True:
+            if not connection.poll(0.1):
+                if silver.process.poll() is not None:
+                    return
+                continue
+            name, args, kwargs = connection.recv()
+            try:
+                result = getattr(silver, name)(*args, **kwargs)
+                connection.send(("ok", result))
+            except Exception as exc:
+                connection.send(("error", f"{type(exc).__name__}: {exc}"))
+            if name == "exit":
+                return
+    except EOFError:
+        pass
+    except Exception as exc:
+        connection.send(("error", f"{type(exc).__name__}: {exc}"))
+    finally:
+        connection.close()
+
+
+class _SilverProcess:
+    """Expose the local liveness interface used by the instance pool."""
+
+    def __init__(self, owner) -> None:
+        self.owner = owner
+
+    def poll(self):
+        owner = self.owner
+        if owner._worker.exitcode is not None:
+            return owner._worker.exitcode
+        if owner._native_pid is not None and not pid_is_running(owner._native_pid):
+            return 1
+        return None
+
+    def wait(self):
+        self.owner.stop()
+        return self.owner._worker.exitcode
+
+
+class _SilverSession:
+    """Synchronous API proxy with an absolute deadline and tree ownership."""
+
+    def __init__(self, silver_home: str, options: dict, deadline: float) -> None:
+        retry_pending_cleanup()
+        context = multiprocessing.get_context("spawn")
+        self._connection, remote = context.Pipe()
+        self._worker = context.Process(
+            target=_silver_worker, args=(remote, silver_home, options))
+        self._job = None
+        self._native_pid = None
+        self._deadline = deadline
+        self._lock = threading.Lock()
+        self._stop_lock = threading.Lock()
+        self.process = _SilverProcess(self)
+        self._worker.start()
+        remote.close()
+        try:
+            self._job = require_process_job(self._worker.pid)
+            self._receive()
+            self._transport(lambda: self._connection.send("start"))
+            self._native_pid = self._receive()
+        except BaseException as failure:
+            try:
+                self.stop()
+            except Exception as cleanup:
+                raise SilverLaunchCleanupError(
+                    f"Silver launch failed and cleanup is unconfirmed: {cleanup}",
+                    self,
+                ) from failure
+            raise
+
+    def _receive(self):
+        try:
+            status, value = self._transport(self._connection.recv)
+        except (EOFError, OSError) as exc:
+            raise RunnerError("Silver API process exited") from exc
+        if status == "error":
+            raise RunnerError(f"Execution error: {value}")
+        return value
+
+    def _transport(self, operation):
+        completed = threading.Event()
+        result = []
+        failures = []
+
+        def transfer():
+            try:
+                result.append(operation())
+            except BaseException as exc:
+                failures.append(exc)
+            finally:
+                completed.set()
+
+        threading.Thread(target=transfer, daemon=True, name="silver-ipc").start()
+        while True:
+            remaining = self._deadline - time.monotonic()
+            if remaining <= 0:
+                raise RunnerError("timeout")
+            if completed.wait(min(0.05, remaining)):
+                if failures:
+                    raise failures[0]
+                return result[0]
+
+    def call(self, name, *args, **kwargs):
+        remaining = max(0, self._deadline - time.monotonic())
+        if not self._lock.acquire(timeout=remaining):
+            raise RunnerError("timeout")
+        try:
+            try:
+                if time.monotonic() >= self._deadline:
+                    raise RunnerError("timeout")
+                self._transport(lambda: self._connection.send((name, args, kwargs)))
+                return self._receive()
+            except (EOFError, OSError) as exc:
+                self.stop()
+                raise RunnerError("Silver API process exited") from exc
+            except BaseException:
+                self.stop()
+                raise
+        finally:
+            self._lock.release()
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return lambda *args, **kwargs: self.call(name, *args, **kwargs)
+
+    def stop(self, *, close_connection: bool = True) -> None:
+        if not self._stop_lock.acquire(timeout=5):
+            raise RunnerError("Silver API cleanup is still in progress")
+        try:
+            failures = []
+            actions = []
+            if os.name != "nt" or self._job is not None:
+                actions.append(lambda: kill_process_tree(self._worker.pid, self._job))
+            actions.extend((
+                lambda: self._worker.kill() if self._worker.is_alive() else None,
+                lambda: self._worker.join(timeout=2),
+            ))
+            if close_connection:
+                actions.append(self._connection.close)
+            for action in actions:
+                try:
+                    action()
+                except Exception as exc:
+                    failures.append(exc)
+            if self._worker.is_alive():
+                failures.append(RunnerError("Silver API process could not be reaped"))
+            if failures:
+                retain_cleanup(self, self.stop)
+                raise RunnerError("Silver API cleanup failed; ownership retained") from failures[0]
+            release_cleanup(self)
+        finally:
+            self._stop_lock.release()
 
 
 @dataclass
@@ -91,6 +266,18 @@ class RunContext:
 
 class RunnerError(Exception):
     """Raised when a test execution fails irrecoverably."""
+
+
+class SilverLaunchCleanupError(RunnerError):
+    """A failed launch whose owned process still needs cleanup."""
+
+    def __init__(self, message: str, handle) -> None:
+        super().__init__(message)
+        self.handle = handle
+
+
+# Used only when a call has no job timeout and EXECUTION_TIMEOUT is unset.
+_DEFAULT_SILVER_CALL_TIMEOUT = 1000
 
 
 class RunnerCancelled(Exception):
@@ -196,7 +383,25 @@ class SilverRunner(SilverRunnerBase):
     """
 
     # ---------------------- lifecycle helpers ------------------------------- #
-    def launch(self, sil_path: Path, gui: bool, console_log: Path) -> Any:
+    @staticmethod
+    def _call_timeout(explicit: Optional[int] = None) -> int:
+        """Per-call ceiling for Silver launch, open, and exit.
+
+        A job supplies its execution timeout. Pool warmup and model generation
+        have no job, so they use ``EXECUTION_TIMEOUT`` and otherwise a named
+        one-call ceiling. ``timeout=1000`` is no longer buried in each call.
+        """
+        if explicit is not None and explicit > 0:
+            return int(explicit)
+        raw = os.environ.get("EXECUTION_TIMEOUT", "")
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = 0
+        return value if value > 0 else _DEFAULT_SILVER_CALL_TIMEOUT
+
+    def launch(self, sil_path: Path, gui: bool, console_log: Path,
+               call_timeout: Optional[int] = None) -> Any:
         """Launch a Silver instance opened on *sil_path*.
 
         Used both for the dedicated-instance path and to pre-warm pool
@@ -210,23 +415,23 @@ class SilverRunner(SilverRunnerBase):
         if not Path(sil_path).is_file():
             raise RunnerError(f"SIL model not found: {sil_path}")
 
-        LocalSilverNative, _Pyro4 = self._import_silver(silver_home)
-
         console_log = Path(console_log)
         console_log.parent.mkdir(parents=True, exist_ok=True)
         console_log.write_text("", encoding="utf-8")
 
         logger.info("Launching Silver instance on model '%s'", sil_path)
-        silver = LocalSilverNative(
+        bound = self._call_timeout(call_timeout)
+        deadline = _launch_deadline.get() or (time.monotonic() + bound)
+        silver = _SilverSession(silver_home, dict(
             sil=str(sil_path),
-            timeout=1000,
+            timeout=bound,
             stopped=True,
             speedup=False,
             gui=gui,
             args=[f"-l {console_log}"],
             silent=False,
             backend="native",
-        )
+        ), deadline)
         return silver
 
     @staticmethod
@@ -259,19 +464,18 @@ class SilverRunner(SilverRunnerBase):
         sil_path = Path(sil_path)
         sil_path.parent.mkdir(parents=True, exist_ok=True)
 
-        LocalSilverNative, _Pyro4 = self._import_silver(silver_home)
-
         sil_line = f"{dll_ref} -S {sbs_ref}"
         logger.info("Generating .sil '%s' with module '%s'", sil_path, sil_line)
-        silver = LocalSilverNative(
+        bound = self._call_timeout(None)
+        silver = _SilverSession(silver_home, dict(
             sil=None,
-            timeout=1000,
+            timeout=bound,
             stopped=True,
             speedup=False,
             gui=False,
             silent=True,
             backend="native",
-        )
+        ), time.monotonic() + bound)
         try:
             moduleuuid = silver.add_module(index=index, sil_line=sil_line)
             silver.set_module_property(moduleuuid, "remote_cluster", "host32")
@@ -298,11 +502,14 @@ class SilverRunner(SilverRunnerBase):
 
         # Launch directly on the fully configured model so Silver initializes
         # the simulation exactly once.
-        silver = self.launch(run_sil, ctx.gui, console_log)
-        # Publish the handle so the JobManager can force-stop this run.
-        if ctx.on_start is not None:
-            ctx.on_start(silver)
+        token = _launch_deadline.set(time.monotonic() + self._call_timeout(ctx.timeout))
         try:
+            silver = self.launch(run_sil, ctx.gui, console_log)
+        finally:
+            _launch_deadline.reset(token)
+        try:
+            if ctx.on_start is not None:
+                ctx.on_start(silver)
             self._execute(silver, ctx)
         finally:
             self._safe_dispose(silver)
@@ -322,7 +529,14 @@ class SilverRunner(SilverRunnerBase):
             raise RunnerCancelled("Cancelled before configuration.")
         logger.info("Reusing pooled Silver instance for test '%s' "
                     "(loading '%s')", ctx.test_id, run_sil)
-        self.open_model(silver, run_sil)
+        if isinstance(silver, _SilverSession):
+            silver._deadline = time.monotonic() + self._call_timeout(ctx.timeout)
+        try:
+            self.open_model(silver, run_sil)
+        except RunnerError as exc:
+            if ctx.cancel_event.is_set():
+                raise RunnerCancelled("Cancelled during configuration.") from exc
+            raise
         completed = False
         try:
             self._execute(silver, ctx)
@@ -423,8 +637,6 @@ class SilverRunner(SilverRunnerBase):
 
     def _execute(self, silver: Any, ctx: RunContext) -> None:
         """Run the loaded configuration to completion."""
-        silver.set_silver_property("scriptingApiLogDisabled", True)
-
         if ctx.cancel_event.is_set():
             raise RunnerCancelled("Cancelled before run.")
 
@@ -437,13 +649,13 @@ class SilverRunner(SilverRunnerBase):
             console_offset = None
 
         try:
-            # Blocking call. A concurrent JobManager.cancel() invokes
-            # silver.exit(force=True) from another thread, which unblocks
-            # run_until; we then detect the cancel flag below.
+            silver.set_silver_property("scriptingApiLogDisabled", True)
             completed = silver.run_until("isFinished != True", timeout=ctx.timeout)
-        except (RuntimeError, SystemError, ValueError) as exc:
+        except (RunnerError, RuntimeError, SystemError, ValueError) as exc:
             if ctx.cancel_event.is_set():
                 raise RunnerCancelled("Cancelled during run.") from exc
+            if isinstance(exc, RunnerError):
+                raise
             logger.warning("Silver run raised %s: %s", type(exc).__name__, exc)
             raise RunnerError(f"Execution error: {exc}") from exc
 
@@ -500,6 +712,17 @@ class SilverRunner(SilverRunnerBase):
     @staticmethod
     def _safe_dispose(silver) -> None:
         """Exit the Silver instance (LocalSilverNative.exit closes everything)."""
+        if isinstance(silver, _SilverSession):
+            try:
+                silver._deadline = min(silver._deadline, time.monotonic() + 5)
+                if silver.process.poll() is None and silver._lock.acquire(blocking=False):
+                    silver._lock.release()
+                    silver.exit(force=True)
+            except Exception:
+                logger.warning("Silver exit failed; terminating its owned process tree")
+            finally:
+                silver.stop()
+            return
         process = getattr(silver, "process", None)
         try:
             exited = process is not None and process.poll() is not None
@@ -536,6 +759,9 @@ class SilverRunner(SilverRunnerBase):
     @staticmethod
     def force_stop(silver) -> None:
         """Force-terminate a running Silver instance (called on cancellation)."""
+        if isinstance(silver, _SilverSession):
+            silver.stop(close_connection=False)
+            return
         try:
             silver.exit(force=True)
         except Exception as exc:  # noqa: BLE001

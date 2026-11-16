@@ -3,30 +3,14 @@
 from __future__ import annotations
 
 import datetime as _dt
-import io
-import json
 import secrets
-import zipfile
-from pathlib import Path
 
-from flask import (
-    Blueprint, Response, current_app, g, request, send_file, session,
-    stream_with_context,
-)
+from flask import Blueprint, Response, g, request, session
 
 from ...extensions import db
-from ...models import DataJob, FieldDefinition, LMUser, Project, Task, TaskStatus
-from ...services import (
-    event_service, license_service, report_service,
-    task_service, upload_service,
-)
-from ...services.upload_service import UploadError
-from ...services.lanmatrix import (
-    dbadmin, excel_service, fields, permissions, service, settings,
-)
+from ...services.lanmatrix import fields, service, settings
 from ._base import (
-    ok, err, current_user, login_required, system_admin_required,
-    register_common, _project_and_role, _client_ip,
+    ok, err, login_required, register_common, password_session_required,
     _LOCK_THRESHOLD, _LOCK_MINUTES,
 )
 
@@ -113,6 +97,27 @@ def logout():
     session.clear()
     return ok({"logged_out": True})
 
+
+@bp.post("/me/password")
+@login_required
+@password_session_required
+def change_password():
+    """Self-service password change. Required before any other use when the account is flagged."""
+    from ...services.lanmatrix import users_service
+    from ...services.lanmatrix.errors import ServiceError
+
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return err("BAD_REQUEST", "请求必须是 JSON 对象", status=400)
+    try:
+        user = users_service.change_password(
+            g.user, body.get("current_password", ""), body.get("new_password", ""))
+    except ServiceError as exc:
+        status = {"INVALID_CREDENTIALS": 401, "ACCOUNT_LOCKED": 423}.get(exc.code, 400)
+        return err(exc.code, str(exc), status=status)
+    session["csrf_token"] = secrets.token_hex(16)
+    return ok({"user": user.to_dict(), "csrf_token": session["csrf_token"]})
+
 @bp.get("/auth/me")
 @login_required
 def me():
@@ -126,10 +131,15 @@ def download_cli():
     with ``python silver-cli.pyz --help``. It holds no credentials or server
     data, so it is public like ``/health``.
     """
-    from silver_cli.bundle import build
-    return Response(build(), mimetype="application/zip",
-                    headers={"Content-Disposition": 'attachment; filename="silver-cli.pyz"',
-                             "X-Content-Type-Options": "nosniff"})
+    from silver_cli.bundle import cached_build
+    response = Response(cached_build(), mimetype="application/zip",
+                        headers={"Content-Disposition": 'attachment; filename="silver-cli.pyz"',
+                                 "X-Content-Type-Options": "nosniff"})
+    response.add_etag()
+    response.cache_control.public = True
+    response.cache_control.max_age = 0
+    response.cache_control.must_revalidate = True
+    return response.make_conditional(request)
 
 
 @bp.get("/health")

@@ -268,6 +268,8 @@ class UtJob(db.Model):
             "reviewed_by": self.reviewed_by,
             "reviewed_at": _iso(self.reviewed_at),
             "review_note": self.review_note,
+            "review_trace": ((self.generation or {}).get("review_trace")
+                             if self.state in (self.APPROVED, self.REJECTED) else None),
             "stop_requested": self.stop_requested_at is not None and self.state in self.ACTIVE,
             "superseded_by": self.superseded_by,
         }

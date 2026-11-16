@@ -29,7 +29,7 @@ def test_shared_validator_blocks_non_executable_values_and_timing(value, timing)
     problems = validators.validate_output("procedure", payload(),
                                           {"procedures": [{"ref": "R1", "steps_doc": document(value, timing)}]})
     assert problems
-    assert any("Runner" in problem or "timing" in problem for problem in problems)
+    assert any("运行器" in problem or "timing" in problem for problem in problems)
 
 
 def test_shared_validation_uses_snapshot_constants_not_names_only():

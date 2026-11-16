@@ -18,6 +18,7 @@ from . import provider
 
 AI_CONCURRENCY = 2
 LEASE_SECONDS = 900
+_AUTOMATIC_RECOVERY_LIMIT = 3
 _slots = threading.BoundedSemaphore(AI_CONCURRENCY)
 _ownership_lock = threading.Lock()
 _owners: dict[threading.Thread, list] = {}
@@ -49,11 +50,12 @@ def _locked(draft_id: int) -> AiDraft | None:
     return AiDraft.query.filter_by(id=draft_id).populate_existing().with_for_update().first()
 
 
-def prepare(draft: AiDraft) -> str:
+def prepare(draft: AiDraft, *, recovery_count: int = 0) -> str:
     meta = metadata(draft)
     attempt = uuid.uuid4().hex
     meta["job"] = {"attempt": attempt, "state": "queued", "heartbeat": _now(),
-                   "concurrency": AI_CONCURRENCY, "chunk_size": 8, "max_rounds": 3}
+                   "concurrency": AI_CONCURRENCY, "chunk_size": 8, "max_rounds": 3,
+                   "recovery_count": recovery_count}
     meta.pop("progress", None)
     meta.pop("provider_provenance", None)
     _save(draft, meta)
@@ -204,7 +206,7 @@ def cancel(draft_id: int) -> AiDraft:
     draft = _locked(draft_id)
     if draft is None or draft.status != AiDraft.STATUS_RUNNING:
         db.session.rollback()
-        raise ValueError("Only running generation can be cancelled")
+        raise ValueError("只能取消正在生成的草稿")
     meta = metadata(draft)
     meta.setdefault("job", {}).update(state="cancelled", heartbeat=_now())
     _save(draft, meta)
@@ -217,7 +219,7 @@ def retry(draft_id: int) -> AiDraft:
     draft = _locked(draft_id)
     if draft is None or draft.status not in (AiDraft.STATUS_ERROR, AiDraft.STATUS_CANCELLED):
         db.session.rollback()
-        raise ValueError("Only failed or cancelled generation can be retried")
+        raise ValueError("只能重试失败或已取消的生成")
     prepare(draft)
     db.session.commit()
     return draft
@@ -261,18 +263,29 @@ def recover(publish: Callable[[int], object], *, startup: bool = False) -> int:
         heartbeat = job.get("heartbeat")
         expired = not isinstance(heartbeat, (int, float)) or now - heartbeat > LEASE_SECONDS
         attempt = job.get("attempt")
-        if startup:
-            prepare(draft)
-            queued.append(draft.id)
-        elif job.get("state") == "queued":
-            if not isinstance(attempt, str) or not attempt:
-                prepare(draft)
-                queued.append(draft.id)
-            elif _publication_due(job, now):
-                queued.append(draft.id)
-        elif expired and not _is_active(draft.id, attempt):
-            prepare(draft)
-            queued.append(draft.id)
+        requeue = startup or (
+            job.get("state") == "queued" and (
+                not isinstance(attempt, str) or not attempt or _publication_due(job, now))
+        ) or (job.get("state") != "queued" and expired and not _is_active(draft.id, attempt))
+        if not requeue:
+            continue
+        count = job.get("recovery_count", 0)
+        count = count if type(count) is int and count >= 0 else 0
+        if count >= _AUTOMATIC_RECOVERY_LIMIT:
+            job.update(state="failed", heartbeat=_now())
+            meta["job"] = job
+            _save(draft, meta)
+            draft.status = AiDraft.STATUS_ERROR
+            draft.error = "自动恢复已达 3 次上限，请人工重试"
+            continue
+        count += 1
+        if startup or not isinstance(attempt, str) or not attempt or job.get("state") != "queued":
+            prepare(draft, recovery_count=count)
+        else:
+            job["recovery_count"] = count
+            meta["job"] = job
+            _save(draft, meta)
+        queued.append(draft.id)
     db.session.commit()
     for draft_id in queued:
         try:

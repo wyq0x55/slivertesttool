@@ -249,6 +249,7 @@ def _client(args, operation=None):
         url, entry = credentials.saved(args.url)
         if entry and not getattr(args, "password_login", False):
             args.url, token = url, entry["token"]
+            args.allow_http = bool(args.allow_http or entry.get("allow_http") is True)
             args.saved_login = True
     if not args.url:
         raise CliError("URL_REQUIRED", "Set SILVER_CLI_URL, pass --url, or run login first.", 2)

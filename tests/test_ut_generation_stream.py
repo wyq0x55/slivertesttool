@@ -140,11 +140,17 @@ child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(20)'])
 Path(sys.argv[1]).write_text(str(child.pid))
 time.sleep(20)
 """
-    run = subprocess.run
-    kill_group = getattr(os, "killpg", None)
-    monkeypatch.setattr(bridge.subprocess, "run", lambda *args, **kwargs: subprocess.CompletedProcess(args, 1))
-    if kill_group is not None:
-        monkeypatch.setattr(bridge.os, "killpg", lambda *args: None)
+    owned_children = []
+    spawn = bridge.UtAgentBridge._popen
+    terminate = bridge.UtAgentBridge._kill_tree
+
+    def capture(*args):
+        child = spawn(*args)
+        owned_children.append(child)
+        return child
+
+    monkeypatch.setattr(bridge.UtAgentBridge, "_popen", staticmethod(capture))
+    monkeypatch.setattr(bridge.UtAgentBridge, "_kill_tree", staticmethod(lambda _child: None))
     started = time.monotonic()
     try:
         with pytest.raises(bridge.BridgeError, match="cleanup could not drain"):
@@ -153,12 +159,9 @@ time.sleep(20)
                 1, tmp_path / "ready", tmp_path, lambda _: pytest.fail("No completed unit exists"))
         assert time.monotonic() - started < 7
     finally:
-        if pid_file.is_file():
-            pid = int(pid_file.read_text())
-            if os.name == "nt":
-                run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, check=False, timeout=5)
-            else:
-                os.kill(pid, signal.SIGKILL)
+        for child in owned_children:
+            terminate(child)
+            child.communicate(timeout=5)
 
 
 def test_existing_receipts_are_rejected_before_starting_another_generator(tmp_path, monkeypatch):

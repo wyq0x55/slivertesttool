@@ -43,6 +43,7 @@ from typing import Any, Callable, List, Optional
 from .silver_runner import (
     MockSilverRunner,
     RunContext,
+    SilverLaunchCleanupError,
     SilverRunner,
 )
 from .slots import SlotAllocator
@@ -59,6 +60,15 @@ class _PoolClosed(Exception):
     orphan that shutdown never sees -- leaking the license/process. The creator
     raises this so the borrow/pre-warm caller unwinds its slot reservation.
     """
+
+
+class _LaunchFailure(Exception):
+    """A launch error with the reservation outcome for its caller."""
+
+    def __init__(self, original: Exception, retained: bool) -> None:
+        super().__init__(str(original))
+        self.original = original
+        self.retained = retained
 
 
 # --------------------------------------------------------------------------- #
@@ -206,6 +216,7 @@ class SilverInstancePool:
         self._idle: List[PooledInstance] = []
         self._live: set[PooledInstance] = set()  # every created, not-yet-disposed instance
         self._retiring: set[PooledInstance] = set()
+        self._disposing: set[PooledInstance] = set()
         self._size = 0          # live instances (idle + busy + reserved)
         self._in_use = 0        # currently borrowed
         self._target = 0        # desired number of instances (== license count)
@@ -257,6 +268,7 @@ class SilverInstancePool:
         repeatedly; already-satisfied targets create nothing. When no default
         model is available yet, creation is skipped and retried later.
         """
+        self._retry_retiring()
         created = 0
         while True:
             with self._cond:
@@ -278,11 +290,14 @@ class SilverInstancePool:
             try:
                 inst = self._make_instance(uid, Path(sil))
             except _PoolClosed:
-                # Pool shut down during creation; handle already disposed.
-                self._slots.release(uid)
-                with self._cond:
-                    self._size = max(0, self._size - 1)
-                    self._cond.notify_all()
+                break
+            except _LaunchFailure as failure:
+                if not failure.retained:
+                    self._slots.release(uid)
+                    with self._cond:
+                        self._size = max(0, self._size - 1)
+                        self._cond.notify_all()
+                logger.exception("Failed to pre-warm Silver instance %s", uid)
                 break
             except Exception:  # noqa: BLE001
                 logger.exception("Failed to pre-warm Silver instance %s", uid)
@@ -322,6 +337,7 @@ class SilverInstancePool:
         """
         should_cancel = should_cancel or (lambda: False)
         while True:
+            self._retry_retiring()
             reserve_uid: Optional[int] = None
             stale: Optional[PooledInstance] = None
             with self._cond:
@@ -357,13 +373,14 @@ class SilverInstancePool:
             try:
                 inst = self._make_instance(reserve_uid, Path(sil_path))
             except _PoolClosed:
-                # Pool shut down during creation; _make_instance already disposed
-                # the handle. Undo our slot/size reservation and abandon the borrow.
-                self._slots.release(reserve_uid)
-                with self._cond:
-                    self._size = max(0, self._size - 1)
-                    self._cond.notify_all()
                 return None
+            except _LaunchFailure as failure:
+                if not failure.retained:
+                    self._slots.release(reserve_uid)
+                    with self._cond:
+                        self._size = max(0, self._size - 1)
+                        self._cond.notify_all()
+                raise failure.original
             except Exception:  # noqa: BLE001
                 self._slots.release(reserve_uid)
                 with self._cond:
@@ -442,14 +459,23 @@ class SilverInstancePool:
         console_log: Optional[Path] = None
         if not self._driver.is_mock:
             console_log = self._pool_dir / f"inst_{uid}" / "Console.log"
-        handle = self._driver.create(Path(sil_path), console_log or Path("mock"))
+        try:
+            handle = self._driver.create(Path(sil_path), console_log or Path("mock"))
+        except SilverLaunchCleanupError as failure:
+            inst = PooledInstance(uid=uid, handle=failure.handle, console_log=console_log)
+            with self._cond:
+                self._live.add(inst)
+                self._retiring.add(inst)
+            self._dispose(inst)
+            raise _LaunchFailure(failure, retained=inst in self._live) from failure
         logger.info("Created Silver instance uid=%s (mock=%s)", uid, self._driver.is_mock)
         inst = PooledInstance(uid=uid, handle=handle, console_log=console_log)
         with self._cond:
+            self._live.add(inst)
             if self._closed:
                 closed = True
+                self._retiring.add(inst)
             else:
-                self._live.add(inst)
                 closed = False
         if closed:
             # The pool was shut down while we were creating this instance outside
@@ -458,30 +484,38 @@ class SilverInstancePool:
             # the handle immediately and signal the caller to abandon the borrow.
             logger.info(
                 "Discarding Silver instance uid=%s created during shutdown", uid)
-            try:
-                self._driver.dispose(handle)
-            except Exception:  # noqa: BLE001 - best effort cleanup
-                logger.exception(
-                    "Error disposing orphan Silver instance uid=%s", uid)
+            self._dispose(inst)
             raise _PoolClosed()
         return inst
 
+    def _retry_retiring(self) -> None:
+        with self._cond:
+            pending = list(self._retiring - self._disposing)
+        for inst in pending:
+            self._dispose(inst)
+
     def _dispose(self, inst: PooledInstance) -> None:
         with self._cond:
-            if inst not in self._live:
+            if inst not in self._live or inst in self._disposing:
                 return
-            self._live.remove(inst)
+            self._retiring.add(inst)
+            self._disposing.add(inst)
+        disposed = False
         try:
             self._driver.dispose(inst.handle)
+            disposed = True
         except Exception:  # noqa: BLE001 - best effort cleanup
             logger.exception("Error disposing Silver instance uid=%s", inst.uid)
         finally:
             # Recycle the slot so its ``inst_<uid>`` folder can be reused by the
             # next instance the pool creates, keeping the label set bounded.
             with self._cond:
-                self._slots.release(inst.uid)
-                self._retiring.discard(inst)
-                self._size -= 1
+                self._disposing.discard(inst)
+                if disposed:
+                    self._live.remove(inst)
+                    self._slots.release(inst.uid)
+                    self._retiring.discard(inst)
+                    self._size -= 1
                 self._cond.notify_all()
 
 

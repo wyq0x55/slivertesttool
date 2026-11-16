@@ -22,7 +22,8 @@ import secrets
 import uuid
 from typing import Any, Optional
 
-from flask import g, jsonify, request, session
+from flask import current_app, g, jsonify, request, session
+from werkzeug.exceptions import HTTPException
 
 from ...extensions import db  # noqa: F401  (re-exported for route modules)
 from ...services.lanmatrix import permissions, service, settings
@@ -206,12 +207,31 @@ def current_user() -> Optional[LMUser]:
     return resolved
 
 
+_PASSWORD_CHANGE_ALLOWED = {
+    "lanmatrix_auth.change_password",
+    "lanmatrix_auth.me",
+    "lanmatrix_auth.logout",
+}
+
+
+def password_change_blocked(user) -> Optional[tuple]:
+    """403 when *user* still has to replace the initial password."""
+    if user is None or not user.must_change_password:
+        return None
+    if request.endpoint in _PASSWORD_CHANGE_ALLOWED:
+        return None
+    return err("PASSWORD_CHANGE_REQUIRED", "请先修改初始密码后再继续使用", status=403)
+
+
 def login_required(fn):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         user = current_user()
         if user is None:
             return err("UNAUTHENTICATED", "未登录或会话已过期", status=401)
+        blocked = password_change_blocked(user)
+        if blocked is not None:
+            return blocked
         g.user = user
         return fn(*args, **kwargs)
     return wrapper
@@ -226,6 +246,9 @@ def system_admin_required(fn):
             return err("UNAUTHENTICATED", "未登录或会话已过期", status=401)
         if not user.is_system_admin:
             return err("PERMISSION_DENIED", "仅系统管理员可访问", status=403)
+        blocked = password_change_blocked(user)
+        if blocked is not None:
+            return blocked
         g.user = user
         return fn(*args, **kwargs)
     return wrapper
@@ -260,6 +283,9 @@ def bootstrap_admin_required(fn):
         user = current_user()
         if user is None:
             return err("UNAUTHENTICATED", "未登录或会话已过期", status=401)
+        blocked = password_change_blocked(user)
+        if blocked is not None:
+            return blocked
         if not user.is_bootstrap_admin:
             return err("PERMISSION_DENIED", "仅系统 admin 账户可访问", status=403)
         if g.get("via_token"):
@@ -323,6 +349,24 @@ def _service_err(exc):
     return err(exc.code, str(exc), details=exc.details, status=status)
 
 
+def _http_error(exc: HTTPException):
+    code = (exc.name or "HTTP_ERROR").upper().replace(" ", "_")
+    envelope, status = err(code, exc.description or "请求失败", status=exc.code or 500)
+    response = exc.get_response()
+    response.set_data(envelope.get_data())
+    response.content_type = "application/json"
+    response.status_code = status
+    return response
+
+
+def _unexpected(exc: Exception):
+    if isinstance(exc, HTTPException):
+        return _http_error(exc)
+    current_app.logger.exception("Unhandled API error")
+    db.session.rollback()
+    return err("INTERNAL_ERROR", "服务器内部错误", status=500)
+
+
 def register_common(bp) -> None:
     """Attach the shared CSRF guard and error handlers to *bp*.
 
@@ -334,6 +378,8 @@ def register_common(bp) -> None:
     bp.register_error_handler(PermissionDenied, _perm)
     bp.register_error_handler(VersionConflict, _conflict)
     bp.register_error_handler(ServiceError, _service_err)
+    bp.register_error_handler(HTTPException, _http_error)
+    bp.register_error_handler(Exception, _unexpected)
 
 
 # ``LMUser`` is only needed for the :func:`current_user` return annotation; the

@@ -55,12 +55,17 @@ def test_rejected_rows_are_feedback_not_a_stall(env, monkeypatch):
     assert job["state"] == "needs_human" and job["gate_code"] == "OPEN_GAPS_EXHAUSTED"
 
 
-def test_every_gate_carries_a_code_and_a_decision_clears_it(env, monkeypatch):
+def test_every_gate_carries_a_code_and_a_decision_keeps_it(env, monkeypatch):
     targets = _configure(env)
     [passed] = _enqueue(env, targets["f"])
-    assert _job(env, passed)["gate_code"] == "MACHINE_PASS"
+    before = _job(env, passed)
+    assert before["gate_code"] == "MACHINE_PASS"
     status, body = env.call("post", f"/jobs/{passed}/review", json={"decision": "approve"})
-    assert status == 200 and body["data"]["gate_code"] is None
+    assert status == 200 and body["data"]["gate_code"] == "MACHINE_PASS"
+    assert body["data"]["reason"] == before["reason"]
+    machine = body["data"]["review_trace"]["machine"]
+    assert (machine["gate_code"], machine["gate_reason"]) == ("MACHINE_PASS", before["reason"])
+    assert machine["machine_verdict"] == "PASS"
 
     env.bridge.execution_status = "BLOCKED"
     [blocked] = _enqueue(env, targets["g"])

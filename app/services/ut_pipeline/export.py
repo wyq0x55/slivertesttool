@@ -25,12 +25,16 @@ from ...models import LMUser, UtAttempt, UtBatch, UtJob
 from ...models.lanmatrix import _iso, _utcnow
 from ..lanmatrix import audit
 from ..lanmatrix.errors import ServiceError
+from . import pipeline
 
 _MANIFEST_COLUMNS = (
     "function", "source_rel", "unit_rel", "file", "job_id", "batch_id", "attempt_seq",
     "origin", "csv_sha256", "machine_verdict", "repair_rounds", "approved_by", "approved_at",
     "review_note", "test_rules_ref", "generator_commit", "superseded_by",
     "execution_backend", "evidence_source", "counts_as_target_evidence", "delivery_validated",
+    "gate_code", "gate_reason", "open_gap_count", "expected_value_source", "stub_mode",
+    "trace_status", "human_override", "gap_counts", "expected_value_lineage",
+    "expected_value_lineage_complete", "baseline", "review_trace", "post_review_verdict",
 )
 
 
@@ -51,6 +55,26 @@ def approved_jobs(project_id: int, batch_id: Optional[int] = None) -> list[UtJob
     for job in query.order_by(UtJob.id):
         latest[job.target_id] = job
     return sorted(latest.values(), key=lambda job: (job.target.row_no if job.target else 0, job.id))
+
+
+
+def _approval_trace(job: UtJob, attempt: UtAttempt, config: dict) -> dict[str, Any]:
+    """Facts the approval must not discard: why it gated, and where expectations came from."""
+    trace = (job.generation or {}).get("review_trace")
+    machine = (trace or {}).get("machine") or {}
+    captured = (machine.get("attempt_id") == attempt.id
+                and machine.get("csv_sha256") == attempt.csv_sha256)
+    facts = machine if captured else pipeline.candidate_trace(job, attempt)
+    return {
+        **{key: facts[key] for key in (
+            "gate_code", "gate_reason", "machine_verdict", "open_gap_count", "gap_counts",
+            "expected_value_source", "expected_value_lineage", "expected_value_lineage_complete", "baseline")},
+        "trace_status": "CAPTURED_BEFORE_REVIEW" if captured else "CURRENT_EVIDENCE_ONLY",
+        "review_trace": trace if captured else None,
+        "human_override": trace["human_override"] if captured else None,
+        "post_review_verdict": job.last_verdict or "",
+        "stub_mode": str((config or {}).get("stub_mode") or ""),
+    }
 
 
 def build_archive(project_id: int, user_id: int, batch_id: Optional[int] = None) -> tuple[bytes, str]:
@@ -85,6 +109,7 @@ def build_archive(project_id: int, user_id: int, batch_id: Optional[int] = None)
             continue
         provenance = (batches.get(job.batch_id).provenance or {}) if job.batch_id in batches else {}
         reviewer = reviewers.get(job.reviewed_by)
+        config = (batches.get(job.batch_id).config_snapshot or {}) if job.batch_id in batches else {}
         path = _archive_path(target.source_rel if target else "", name)
         entries.append((path, data, {
             "function": name,
@@ -104,6 +129,7 @@ def build_archive(project_id: int, user_id: int, batch_id: Optional[int] = None)
             "test_rules_ref": provenance.get("test_rules_ref") or "",
             "generator_commit": provenance.get("generator_commit") or "",
             "superseded_by": job.superseded_by,
+            **_approval_trace(job, attempt, config),
         }))
         if (attempt.execution or {}).get("evidence_source") == "HOST_EXECUTION":
             entries[-1][2].update(
@@ -126,7 +152,9 @@ def build_archive(project_id: int, user_id: int, batch_id: Optional[int] = None)
     table = io.StringIO()
     writer = csv.DictWriter(table, fieldnames=_MANIFEST_COLUMNS, extrasaction="ignore")
     writer.writeheader()
-    writer.writerows(meta for _, _, meta in entries)
+    writer.writerows({key: json.dumps(value, ensure_ascii=False, sort_keys=True)
+                     if isinstance(value, (dict, list)) else value
+                     for key, value in meta.items()} for _, _, meta in entries)
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:

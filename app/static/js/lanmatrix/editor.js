@@ -1907,7 +1907,10 @@
   // classic REST + polling path, unchanged.
   async function tryStartCollab() {
     if (!collabAvailable) return;
-    if (!window.LMCollabController || !window.LMCollab) return;
+    if (!window.LMCollabController || !window.LMCollab) {
+      setCollabStatus("实时协同不可用 · 当前使用普通编辑");
+      return;
+    }
     try {
       const ctrl = window.LMCollabController.create({
         pid, api: LMApi, sheets: SHEET_KEYS, rowPrefix: ROW_ARRAY_PREFIX,
@@ -1945,8 +1948,12 @@
         collabConn = "connected";
         renderCollabStatus();
         toast("已连接实时协同，多人编辑将实时同步", true);
+      } else {
+        setCollabStatus("实时协同连接失败 · 当前使用普通编辑");
       }
-    } catch (_e) { /* stay on REST */ }
+    } catch (_e) {
+      setCollabStatus("实时协同连接失败 · 当前使用普通编辑");
+    }
   }
 
   // NOTE: the collapsible left navigation rail is now global (base_lm.html) and

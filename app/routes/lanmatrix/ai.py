@@ -182,43 +182,19 @@ def get_draft(draft_id: int):
 @login_required
 def update_draft(draft_id: int):
     """Inline edit: fix the last 5% of an output, then approve as a whole."""
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return err("BAD_REQUEST", "请求必须是 JSON 对象", status=400)
     draft = db.session.get(AiDraft, draft_id)
     if draft is None:
         return err("NOT_FOUND", "草稿不存在", status=404)
     _require_edit(draft.project_id)
-    project_id = draft.project_id
-    draft = ai_apply.lock_draft(draft_id)
-    if draft is None:
-        return err("NOT_FOUND", "草稿不存在", status=404)
-    if draft.project_id != project_id:
-        _require_edit(draft.project_id)
-    if draft.status not in (AiDraft.STATUS_PENDING, AiDraft.STATUS_ERROR):
-        return err("BAD_REQUEST", f"草稿当前状态（{draft.status}）不可编辑",
-                   status=409)
-    body = request.get_json(silent=True) or {}
-    if not isinstance(body, dict):
-        return err("BAD_REQUEST", "Request body must be an object", status=400)
     output = body.get("output")
-    if not isinstance(output, dict):
-        return err("BAD_REQUEST", "output 必须是对象", status=400)
-    from ...services.ai.validators import validate_output
     try:
-        payload = json.loads(draft.input_json) if draft.input_json else {}
-    except (ValueError, TypeError):
-        return err("BAD_REQUEST", "Invalid generation input; regenerate this draft", status=400)
-    problems = validate_output(draft.scenario, payload, output)
-    if problems:
-        return err("BAD_REQUEST", "Output validation failed", details=problems, status=400)
-    draft.output_json = json.dumps(output, ensure_ascii=False, indent=2)
-    try:
-        meta = json.loads(draft.meta_json) if draft.meta_json else {}
-    except (ValueError, TypeError):
-        meta = {}
-    if not isinstance(meta, dict):
-        meta = {}
-    meta["edited"] = True
-    draft.meta_json = json.dumps(meta, ensure_ascii=False)
-    db.session.commit()
+        draft = ai_apply.update_draft(draft_id, output=output)
+    except ai_apply.DraftTransitionError as exc:
+        code = "NOT_FOUND" if exc.status == 404 else "BAD_REQUEST"
+        return err(code, str(exc), details=exc.details, status=exc.status)
     return ok(draft.to_dict())
 
 
@@ -231,12 +207,12 @@ def approve_draft(draft_id: int):
     _require_edit(draft.project_id)
     body = request.get_json(silent=True) or {}
     if not isinstance(body, dict):
-        return err("BAD_REQUEST", "Request body must be an object", status=400)
+        return err("BAD_REQUEST", "请求必须是 JSON 对象", status=400)
     refs = body.get("refs")
     if "refs" in body and (not isinstance(refs, list) or not refs
                             or not all(isinstance(ref, str) and ref.strip() for ref in refs)
                             or len(set(refs)) != len(refs)):
-        return err("BAD_REQUEST", "refs must be nonempty, unique strings", status=400)
+        return err("BAD_REQUEST", "refs 必须是非空且不重复的字符串", status=400)
     if draft.status == AiDraft.STATUS_RUNNING:
         return err("BAD_REQUEST", "草稿仍在生成中，请稍候", status=409)
     if draft.scenario in ("viewpoint", "procedure", "lib"):
@@ -255,32 +231,20 @@ def approve_draft(draft_id: int):
 @bp.post("/drafts/<int:draft_id>/reject")
 @login_required
 def reject_draft(draft_id: int):
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return err("BAD_REQUEST", "请求必须是 JSON 对象", status=400)
     draft = db.session.get(AiDraft, draft_id)
     if draft is None:
         return err("NOT_FOUND", "草稿不存在", status=404)
     _require_edit(draft.project_id)
-    project_id = draft.project_id
-    draft = ai_apply.lock_draft(draft_id)
-    if draft is None:
-        return err("NOT_FOUND", "草稿不存在", status=404)
-    if draft.project_id != project_id:
-        _require_edit(draft.project_id)
-    if draft.status not in (AiDraft.STATUS_PENDING, AiDraft.STATUS_ERROR):
-        return err("BAD_REQUEST", f"草稿已处理（{draft.status}）", status=409)
-    body = request.get_json(silent=True) or {}
-    if not isinstance(body, dict):
-        return err("BAD_REQUEST", "Request body must be an object", status=400)
-    note = str(body.get("note") or "").strip()
-    if not note:
-        return err("BAD_REQUEST", "驳回必须填写原因（note）", status=400)
-    draft.status = AiDraft.STATUS_REJECTED
-    draft.review_note = note
-    draft.reviewed_by = g.user.id
-    draft.reviewed_at = datetime.datetime.utcnow()
-    db.session.commit()
+    note = body.get("note")
+    try:
+        draft = ai_apply.reject_draft(draft_id, note=note, reviewer=g.user)
+    except ai_apply.DraftTransitionError as exc:
+        code = "NOT_FOUND" if exc.status == 404 else "BAD_REQUEST"
+        return err(code, str(exc), details=exc.details, status=exc.status)
     return ok({"draft_id": draft.id, "status": draft.status})
-
-
 @bp.post("/drafts/<int:draft_id>/cancel")
 @login_required
 def cancel_draft(draft_id: int):

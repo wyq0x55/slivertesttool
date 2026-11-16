@@ -142,5 +142,7 @@ def test_queueing_a_function_again_supersedes_its_older_job(env):
 
     status, body = env.call("post", f"/jobs/{new}/review", json={"decision": "approve"})
     assert status == 200
-    # A decided job no longer carries the reason it was waiting for.
-    assert body["data"]["state"] == "approved" and body["data"]["reason"] is None
+    assert body["data"]["state"] == "approved"
+    machine = body["data"]["review_trace"]["machine"]
+    assert body["data"]["reason"] == machine["gate_reason"]
+    assert body["data"]["gate_code"] == machine["gate_code"] == "MACHINE_PASS"

@@ -343,9 +343,6 @@ def generate_sbs(payload: dict[str, Any]) -> base.GenerationResult:
     source_files: dict[str, str] = payload.get("source_files") or {}
     if not source_files:
         raise ValueError("source_files（源码文件）不能为空")
-    index = c_index.index_source(source_files,
-                                 compile_args=payload.get("compile_args"))
-    known_variables = set(index["variables"])
     per_file_budget = max(1, _MAX_SOURCE_CHARS // len(source_files))
     source_context = "\n\n".join(
         "// " + name + "\n" + _clip(content, per_file_budget)
@@ -375,7 +372,6 @@ def generate_lib(payload: dict[str, Any]) -> base.GenerationResult:
     if not procedures:
         raise ValueError("procedures（被标注的手顺）不能为空")
     existing = set(payload.get("existing_lib_names") or [])
-    item_ids = {p.get("item_id") for p in procedures if isinstance(p, dict)}
 
     def build(feedback: list[str]):
         return prompts.lib_messages(

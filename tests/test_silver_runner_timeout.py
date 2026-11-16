@@ -181,3 +181,14 @@ def test_pooled_cleanup_failure_preserves_execution_outcome(context, monkeypatch
     else:
         assert caught.value is expected
     handle.clear.assert_called_once_with()
+
+
+def test_on_start_failure_still_disposes(context, monkeypatch):
+    runner = SilverRunner()
+    handle = SimpleNamespace(exit=Mock())
+    monkeypatch.setattr(runner, "prepare_run_sil", lambda _context: context.sil_path)
+    monkeypatch.setattr(runner, "launch", lambda *_args: handle)
+    context.on_start = Mock(side_effect=RuntimeError("callback failed"))
+    with pytest.raises(RuntimeError, match="callback failed"):
+        runner.run(context)
+    handle.exit.assert_called_once_with(force=True)

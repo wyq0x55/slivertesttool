@@ -21,7 +21,9 @@ except Exception:  # noqa: BLE001
 from app.runners.silver_pool import (
     InstanceDriver, MockInstanceDriver, RealInstanceDriver, SilverInstancePool,
 )
-from app.runners.silver_runner import SilverRunner
+from app.runners.silver_runner import (
+    RunnerError, SilverLaunchCleanupError, SilverRunner,
+)
 
 
 class FakeDriver(InstanceDriver):
@@ -82,9 +84,111 @@ def test_prewarm_creates_target_idle_instances():
     assert driver.created == 3
     stats = pool.stats()
     assert stats == {"target": 3, "size": 3, "idle": 3, "in_use": 0, "closed": False}
-    # Idempotent: warming again creates nothing.
     assert pool.prewarm() == 0
     assert driver.created == 3
+
+
+def test_failed_disposal_keeps_capacity_and_uid_until_retry():
+    driver = FakeDriver()
+    pool = _make_pool(driver, target=1)
+    instance = pool.acquire(Path("model.sil"))
+    original = driver.dispose
+    driver.dispose = Mock(side_effect=OSError("injected termination failure"))
+    instance.poison()
+    pool.release(instance)
+    assert instance in pool._live
+    assert instance in pool._retiring
+    assert pool.stats()["size"] == 1
+    assert pool.acquire(Path("model.sil"), blocking=False) is None
+    assert driver.created == 1
+    driver.dispose = original
+    replacement = pool.acquire(Path("model.sil"), blocking=False)
+    assert replacement.uid == instance.uid
+    assert replacement is not instance
+    assert instance not in pool._live
+    pool.release(replacement)
+    pool.shutdown()
+
+
+@pytest.mark.parametrize("entry", ["prewarm", "acquire"])
+def test_failed_launch_cleanup_keeps_reservation_until_retry(entry):
+    class FailedLaunchDriver(FakeDriver):
+        def __init__(self):
+            super().__init__()
+            self.launch_handle = {"alive": True}
+            self.fail_launch = True
+            self.fail_dispose = True
+
+        def create(self, sil_path, console_log):
+            if self.fail_launch:
+                self.fail_launch = False
+                raise SilverLaunchCleanupError("launch failed", self.launch_handle)
+            return super().create(sil_path, console_log)
+
+        def dispose(self, handle):
+            if handle is self.launch_handle and self.fail_dispose:
+                self.fail_dispose = False
+                raise OSError("injected termination failure")
+            return super().dispose(handle)
+
+    driver = FailedLaunchDriver()
+    pool = _make_pool(driver, target=1)
+    if entry == "prewarm":
+        assert pool.prewarm() == 0
+    else:
+        with pytest.raises(RunnerError, match="launch failed"):
+            pool.acquire(Path("model.sil"))
+    assert pool.stats()["size"] == 1
+    assert driver.created == 0
+    if entry == "prewarm":
+        assert pool.prewarm() == 1
+        pool.shutdown()
+    else:
+        instance = pool.acquire(Path("model.sil"), blocking=False)
+        assert instance is not None
+        pool.release(instance)
+        pool.shutdown()
+    assert not driver.launch_handle["alive"]
+    assert driver.created == 1
+
+
+def test_shutdown_retries_failed_cleanup_without_releasing_ownership():
+    driver = FakeDriver()
+    pool = _make_pool(driver, target=1)
+    instance = pool.acquire(Path("model.sil"))
+    original = driver.dispose
+    driver.dispose = Mock(side_effect=OSError("injected query failure"))
+    pool.shutdown()
+    assert pool.stats()["size"] == 1
+    assert instance in pool._live
+    pool.release(instance)
+    assert pool.stats()["size"] == 1
+    driver.dispose = original
+    pool.shutdown()
+    assert pool.stats()["size"] == 0
+    assert instance not in pool._live
+    assert not instance.handle["alive"]
+
+
+def test_creation_during_shutdown_retains_failed_cleanup():
+    driver = FakeDriver()
+    pool = _make_pool(driver, target=1)
+    original_create = driver.create
+    original_dispose = driver.dispose
+
+    def create(sil_path, console_log):
+        pool.shutdown()
+        return original_create(sil_path, console_log)
+
+    driver.create = create
+    driver.dispose = Mock(side_effect=OSError("injected orphan cleanup failure"))
+    assert pool.acquire(Path("model.sil")) is None
+    assert pool.stats()["size"] == 1
+    assert len(pool._live) == 1
+    driver.dispose = original_dispose
+    pool.shutdown()
+    assert pool.stats()["size"] == 0
+    assert not pool._live
 
 
 def test_acquire_reuses_instances():

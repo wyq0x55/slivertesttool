@@ -245,7 +245,7 @@ def extract_json(text: str) -> Any:
     first balanced ``{...}`` / ``[...]`` span.
     """
     if text is None:
-        raise ValueError("empty model reply")
+        raise ValueError("模型回复为空")
     candidate = text.strip()
     try:
         return json.loads(candidate)
@@ -284,4 +284,4 @@ def extract_json(text: str) -> Any:
                         return json.loads(candidate[start:i + 1])
                     except ValueError:
                         break
-    raise ValueError("model reply contains no parsable JSON")
+    raise ValueError("模型回复中没有可解析的 JSON")

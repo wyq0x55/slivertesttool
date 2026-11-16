@@ -673,9 +673,9 @@ def test_approval_rejects_project_frozen_after_generation(approval_env, scenario
         client, headers = login(env)
         response = client.post(f"/api/v1/ai/drafts/{draft.id}/approve", headers=headers, json={})
         assert response.status_code == 409, response.get_json()
-        assert "editable" in response.get_json()["error"]["message"]
+        assert "不可编辑" in response.get_json()["error"]["message"]
     else:
-        with pytest.raises(ai_apply.ApplyError, match="editable"):
+        with pytest.raises(ai_apply.ApplyError, match="不可编辑"):
             ai_apply.apply_draft(draft, env["user"])
     db.session.expire_all()
     assert approval_snapshot() == before

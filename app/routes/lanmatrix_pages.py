@@ -72,12 +72,39 @@ def _inject_project():
     }
 
 
+@pages_bp.before_request
+def _force_password_change():
+    """Keep a default-password session on the change form until it is replaced."""
+    user = _current_user()
+    if user is None or not user.must_change_password:
+        return None
+    if request.endpoint in {
+            "lanmatrix_pages.password", "lanmatrix_pages.logout", "lanmatrix_pages.login"}:
+        return None
+    return redirect(url_for("lanmatrix_pages.password"))
+
+
 @pages_bp.get("/login")
 def login():
-    if _current_user() is not None:
-        return redirect(url_for("lanmatrix_pages.projects"))
+    user = _current_user()
+    if user is not None:
+        target = "lanmatrix_pages.password" if user.must_change_password else "lanmatrix_pages.projects"
+        return redirect(url_for(target))
     return render_template(
         "lanmatrix/login.html", allow_registration=settings.ALLOW_REGISTRATION)
+
+
+@pages_bp.get("/password")
+def password():
+    """Self-service password change, and the only page while a change is required."""
+    user = _current_user()
+    if user is None:
+        return redirect(url_for("lanmatrix_pages.login"))
+    return render_template(
+        "lanmatrix/password.html",
+        password_min_len=settings.PASSWORD_MIN_LEN,
+        must_change=bool(user.must_change_password),
+    )
 
 
 @pages_bp.get("/register")

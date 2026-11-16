@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import zipfile
+from functools import lru_cache
 from pathlib import Path
 
 _PACKAGE = Path(__file__).resolve().parent
@@ -32,3 +33,17 @@ def build() -> bytes:
             if path.is_file() and path.suffix in {".py", ".json"}:
                 archive.writestr(_entry(f"silver_cli/{path.name}"), path.read_bytes())
     return b"#!/usr/bin/env python3\n" + buffer.getvalue()
+
+
+@lru_cache(maxsize=1)
+def _cached_build(signature: tuple) -> bytes:
+    return build()
+
+
+def cached_build() -> bytes:
+    signature = tuple(
+        (path.name, path.stat().st_mtime_ns, path.stat().st_size)
+        for path in sorted(_PACKAGE.iterdir())
+        if path.is_file() and path.suffix in {".py", ".json"}
+    )
+    return _cached_build(signature)

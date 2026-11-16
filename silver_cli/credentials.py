@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import json
 import os
+import base64
+import subprocess
+import tempfile
 from pathlib import Path
 
 
@@ -35,14 +38,46 @@ def load() -> dict:
     return data
 
 
+def _protect(target: Path) -> None:
+    if os.name != "nt":
+        target.chmod(0o600)
+        return
+    script = """
+$ErrorActionPreference = 'Stop'
+Import-Module "$PSHOME/Modules/Microsoft.PowerShell.Security/Microsoft.PowerShell.Security.psd1"
+$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+$security = [System.Security.AccessControl.FileSecurity]::new()
+$security.SetOwner($identity)
+$security.SetAccessRuleProtection($true, $false)
+$rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+    $identity, [System.Security.AccessControl.FileSystemRights]::FullControl,
+    [System.Security.AccessControl.AccessControlType]::Allow)
+$security.SetAccessRule($rule)
+Set-Acl -LiteralPath $env:SILVER_CLI_CREDENTIAL_PATH -AclObject $security
+"""
+    environment = os.environ.copy()
+    environment["SILVER_CLI_CREDENTIAL_PATH"] = str(target.resolve())
+    command = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    powershell = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    subprocess.run(
+        [str(powershell), "-NoProfile", "-NonInteractive", "-EncodedCommand", command],
+        env=environment, check=True, capture_output=True, timeout=15,
+        creationflags=subprocess.CREATE_NO_WINDOW)
+
+
 def _write(data: dict) -> None:
     target = path()
     target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_name(target.name + ".tmp")
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        json.dump(data, handle, ensure_ascii=False, indent=1)
-    os.replace(temporary, target)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=".credentials-", dir=target.parent)
+    temporary = Path(temporary_name)
+    os.close(descriptor)
+    try:
+        _protect(temporary)
+        with temporary.open("w", encoding="utf-8") as handle:
+            json.dump(data, handle, ensure_ascii=False, indent=1)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def saved(url: str | None) -> tuple[str | None, dict | None]:

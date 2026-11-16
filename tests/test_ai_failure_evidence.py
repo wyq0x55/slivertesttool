@@ -98,7 +98,7 @@ def test_failure_context_can_analyze_old_attempt_after_retest(archived):
         "item_id": row.id, "task_key": task.task_key, "run_count": 1})
     assert second["steps_doc"] == original["steps_doc"]
     assert second["log_text"] == original["log_text"]
-    with pytest.raises(ValueError, match="sealed"):
+    with pytest.raises(ValueError, match="封存"):
         context.build_payload(archived["project_id"], "failure", {"item_id": row.id, "task_key": task.task_key})
 
 

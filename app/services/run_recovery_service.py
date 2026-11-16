@@ -150,8 +150,18 @@ def recover_interrupted_attempts(finalise, *, startup=False, limit=100):
         try:
             task = _current_attempt(identity, TaskStatus.RUNNING.value)
             record = db.session.get(RunEvidence, identity, populate_existing=True) if task else None
-            if record is None or not record.manifest_sha256 or getattr(record, "finalised", False):
+            if task is None or (record is not None and record.finalised):
                 result["skipped"].append(identity)
+                continue
+            if record is None or not record.manifest_sha256:
+                if startup and not (record and record.outcome_sha256):
+                    changed = finalise(
+                        *identity, TaskStatus.FAILED.value, "ERROR",
+                        "Interrupted before run evidence was committed; manual retry required.",
+                        trusted_outcome=False)
+                    result["recovered" if changed else "skipped"].append(identity)
+                else:
+                    result["skipped"].append(identity)
                 continue
             arguments = None
             try:

@@ -60,9 +60,8 @@ re-export.
   * `parse_workbook(source, *, source_filename="") -> dict`
   * `build_workbook(matrix: dict) -> openpyxl.Workbook`
   * `MatrixExcelError`
-* `app/services/matrix_service.py` — persistence bridge: `import_workbook`,
-  `export_workbook`, `list_matrices`, `get_by_key`, `delete_matrix`,
-  `next_matrix_key` (`M{id:06d}`).
+* `app/services/lanmatrix/testmatrix_bridge.py` — persistence bridge: `import_workbook`,
+  `export_workbook`.
 
 Only items that have a procedure block get a detail sheet block on export;
 summary-only items (e.g. priority `不要` / result `-`) are written to the summary

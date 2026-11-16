@@ -1032,6 +1032,7 @@ def login_command(args):
     data = _call(client, "me.me_create_token",
                  body={"name": name, "expires_days": args.days, "replace": True})["data"]
     location = credentials.save(args.url, {"token": data["token"], "username": args.username,
+                                           "allow_http": bool(args.allow_http),
                                            "token_id": data["info"]["id"], "expires_at": data["info"]["expires_at"]})
     return _ok({"logged_in": True, "server": args.url.rstrip("/"), "username": args.username,
                 "token": data["info"], "saved_to": str(location),
@@ -1046,7 +1047,8 @@ def logout_command(args):
     url, entry = credentials.saved(args.url)
     if not entry:
         return _ok({"logged_out": False, "message": "No saved login for this server."})
-    client = Client(url, timeout=args.timeout, allow_http=args.allow_http)
+    client = Client(url, timeout=args.timeout,
+                    allow_http=bool(args.allow_http or entry.get("allow_http") is True))
     client.use_token(entry["token"])
     revoked = True
     try:

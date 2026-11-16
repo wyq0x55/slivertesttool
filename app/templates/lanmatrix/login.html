@@ -43,9 +43,13 @@ document.getElementById('lm-login-form').addEventListener('submit', async (e) =>
   const err = document.getElementById('lm-login-error');
   err.hidden = true;
   try {
-    await LMApi.login(
+    const user = await LMApi.login(
       document.getElementById('lm-username').value.trim(),
       document.getElementById('lm-password').value);
+    if (user && user.must_change_password) {
+      window.location = LM.urls.password;
+      return;
+    }
     const params = new URLSearchParams(window.location.search);
     let next = params.get('next');
     if (!next || !next.startsWith('/') || next.startsWith('//') || next.indexOf('/lanmatrix/login') === 0) {

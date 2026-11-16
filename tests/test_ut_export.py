@@ -42,9 +42,19 @@ def test_approved_csvs_ship_with_a_manifest(env):
     assert entry["job_id"] == second and entry["origin"] == "GENERATOR"
     assert entry["csv_sha256"] == hashlib.sha256(GOOD).hexdigest()
     assert entry["machine_verdict"] == "PASS" and entry["test_rules_ref"] == "universal-test-rules@1"
+    assert entry["gate_code"] == "MACHINE_PASS"
+    assert entry["open_gap_count"] is None
+    assert entry["gap_counts"]["status"] == "UNKNOWN"
+    assert entry["gap_counts"]["reported_unresolved"] == 0
+    assert entry["expected_value_source"] == "GENERATOR" and entry["stub_mode"]
+    assert entry["baseline"]["csv_sha256"] == hashlib.sha256(GOOD).hexdigest()
+    assert entry["trace_status"] == "CAPTURED_BEFORE_REVIEW"
+    assert entry["human_override"] is False
     assert entry["approved_by"] and entry["approved_at"]
     rows = list(csv.DictReader(io.StringIO(archive.read("manifest.csv").decode("utf-8-sig"))))
     assert [row["function"] for row in rows] == ["f"]
+    assert json.loads(rows[0]["review_trace"]) == entry["review_trace"]
+    assert json.loads(rows[0]["gap_counts"]) == entry["gap_counts"]
     assert pending not in [entry["job_id"] for entry in manifest["files"]]
 
 

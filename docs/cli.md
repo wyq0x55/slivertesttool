@@ -70,6 +70,18 @@ python -m silver_cli logout                 # 吊销并删除本机保存的 Tok
 
 ### 个人 API Token（推荐给 Agent 和脚本）
 
+Accounts marked `must_change_password` must replace their initial password at
+`/lanmatrix/password` before issuing tokens or using business APIs. A password
+session can call `POST /api/v1/me/password` with `current_password` and
+`new_password` plus its CSRF token. The response supplies a fresh CSRF token;
+all previously issued API tokens are revoked. API tokens cannot change passwords.
+
+Saved logins record `--allow-http` separately for each server. This consent is
+reused only for that server and is never applied to a different URL. On Windows,
+credential files use a protected DACL granting access only to the current user;
+if the ACL cannot be applied, no token is written. CLI downloads support ETag
+revalidation and reuse a cached archive until its source files change.
+
 用账号密码登录一次签发 Token，之后只设置 `SILVER_CLI_TOKEN`，不再需要密码，
 也不会因为频繁登录触发账号锁定：
 

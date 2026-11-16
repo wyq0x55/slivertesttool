@@ -644,6 +644,22 @@
    "summary": "restore from trash"
   },
   {
+   "body_fields": [
+    "current_password",
+    "new_password"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "auth.change_password",
+   "path": "/api/v1/me/password",
+   "path_params": {},
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Self-service password change. Required before any other use when the account is flagged."
+  },
+  {
    "body_fields": [],
    "file_fields": [],
    "form_fields": [],
@@ -2599,6 +2615,7 @@
   },
   {
    "body_fields": [
+    "expected_inputs",
     "task_keys"
    ],
    "file_fields": [],
@@ -2616,6 +2633,7 @@
   },
   {
    "body_fields": [
+    "expected_inputs",
     "model",
     "test_ids"
    ],

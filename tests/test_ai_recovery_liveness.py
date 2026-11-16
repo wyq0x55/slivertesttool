@@ -271,3 +271,24 @@ def test_bounded_recovery_reaches_drafts_after_200_leased_predecessors(app_ctx, 
         assert jobs.recover(published.append) == 0
         assert jobs.recover(published.append) == 1
         assert published == [last_id]
+
+
+def test_automatic_recovery_stops_after_three_durable_attempts(app_ctx, project_env, recovery_clock):
+    from app.extensions import db
+    from app.models import AiDraft
+    from app.services.ai import jobs
+
+    with app_ctx.app_context():
+        draft_id, _attempt = _draft(app_ctx, project_env)
+        published = []
+        for _turn in range(3):
+            assert jobs.recover(published.append) == 1
+        assert jobs.recover(published.append) == 0
+        draft = db.session.get(AiDraft, draft_id)
+        assert draft.status == "error"
+        assert draft.error == "自动恢复已达 3 次上限，请人工重试"
+        assert jobs.metadata(draft)["job"]["recovery_count"] == 3
+        assert published == [draft_id, draft_id, draft_id]
+        jobs.retry(draft_id)
+        assert jobs.metadata(db.session.get(AiDraft, draft_id))["job"]["recovery_count"] == 0
+        assert jobs.recover(published.append) == 1

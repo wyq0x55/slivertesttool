@@ -11,7 +11,6 @@ list of human-readable problems that get appended to the next round's prompt.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -105,7 +104,3 @@ def _safe_validate(validate: Validator, parsed: Any) -> list[str]:
     if problems is None:
         return []
     return [str(p) for p in problems]
-
-
-def dumps(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, indent=2)

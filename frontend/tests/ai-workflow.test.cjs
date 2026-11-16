@@ -233,7 +233,7 @@ test("cancel and retry API use CSRF POST envelopes and return the same draft", a
   const context = vm.createContext({ window, document: environment.document, URLSearchParams, FormData,
     fetch: async (url, options) => {
       requests.push({ url, options });
-      return { ok: true, status: 200, json: async () => ({ success: true,
+      return { ok: true, status: 200, text: async () => JSON.stringify({ success: true,
         data: url.endsWith("/me") ? { user: {}, csrf_token: "csrf-test" } : draft(7, "cancelled") }) };
     },
   });

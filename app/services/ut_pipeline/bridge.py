@@ -9,13 +9,16 @@ from __future__ import annotations
 
 import json
 import os
-import signal
 import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
+
+from app.runners.process_guard import (
+    kill_process_tree, popen_owned, release_cleanup, retain_cleanup,
+)
 
 CONTRACT = "ut-agent.bridge/1"
 
@@ -62,8 +65,11 @@ class UtAgentBridge:
         command = [python, "-m", "ut_agent", "bridge", *args]
         try:
             if on_unit is None:
-                proc = subprocess.run(command, cwd=root, env=env, capture_output=True,
-                                      timeout=timeout, check=False)
+                # subprocess.run(timeout=) kills only the direct child. On
+                # Windows the grandchildren keep the captured pipes open, so
+                # the timeout wait itself never returns. Own the process and
+                # kill the tree before draining.
+                proc = self._wait(self._popen(command, root, env), command, timeout)
             else:
                 directory = Path(args[args.index("--unit-ready-dir") + 1])
                 output = Path(args[args.index("--out") + 1])
@@ -88,6 +94,51 @@ class UtAgentBridge:
         return document
 
     @staticmethod
+    def _popen(command, root, env) -> subprocess.Popen:
+        return popen_owned(
+            command, cwd=root, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    @staticmethod
+    def _kill_tree(child: subprocess.Popen) -> None:
+        kill_process_tree(child.pid, getattr(child, "_owned_job", None))
+
+    @staticmethod
+    def _cleanup(child, *, drain=False):
+        failures = []
+        try:
+            UtAgentBridge._kill_tree(child)
+        except Exception as exc:
+            failures.append(exc)
+            for action in (child.kill, lambda: child.wait(timeout=2)):
+                try:
+                    action()
+                except Exception as fallback:
+                    failures.append(fallback)
+        if drain:
+            try:
+                child.communicate(timeout=2)
+            except Exception as exc:
+                failures.append(exc)
+        if failures:
+            retain_cleanup(child, lambda: UtAgentBridge._cleanup(child, drain=True))
+            raise BridgeError(
+                "ut-agent cleanup could not drain or confirm termination; ownership retained"
+            ) from failures[0]
+        release_cleanup(child)
+
+    def _wait(self, child: subprocess.Popen, command, timeout: int) -> subprocess.CompletedProcess:
+        try:
+            stdout, stderr = child.communicate(timeout=timeout)
+        except BaseException as failure:
+            try:
+                self._cleanup(child, drain=True)
+            except BridgeError as cleanup:
+                raise BridgeError(f"{failure}; {cleanup}") from failure
+            raise
+        self._cleanup(child)
+        return subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
+
+    @staticmethod
     def _stream_units(command, root, env, timeout, directory, output, on_unit):
         from .generated_unit import read_receipt
 
@@ -105,8 +156,7 @@ class UtAgentBridge:
                 on_unit(receipt)
                 seen.add(path.name)
 
-        child = subprocess.Popen(command, cwd=root, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                 start_new_session=os.name != "nt")
+        child = UtAgentBridge._popen(command, root, env)
         try:
             while True:
                 consume()
@@ -118,31 +168,17 @@ class UtAgentBridge:
                 except subprocess.TimeoutExpired:
                     continue
                 consume()
-                return subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
+                break
         except BaseException as failure:
             # Pool workers inherit the output pipes. Killing only their
             # parent can leave communicate() waiting for live descendants.
-            if child.poll() is None:
-                if os.name == "nt":
-                    try:
-                        subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"],
-                                       capture_output=True, check=False, timeout=5)
-                    except (OSError, subprocess.TimeoutExpired):
-                        child.kill()
-                else:
-                    try:
-                        os.killpg(child.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-            child.kill()
             try:
-                child.communicate(timeout=2)
-            except subprocess.TimeoutExpired:
-                # Do not enter Popen.__exit__ or close reader-owned pipes here:
-                # either can wait indefinitely when OS tree termination fails.
-                raise BridgeError(f"{failure}; generation cleanup could not drain descendant pipes; "
-                                  "check remaining generation processes") from failure
+                UtAgentBridge._cleanup(child, drain=True)
+            except BridgeError as cleanup:
+                raise BridgeError(f"{failure}; {cleanup}") from failure
             raise
+        UtAgentBridge._cleanup(child)
+        return subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
 
     @staticmethod
     def _manifest(manifest: str) -> list[str]:

@@ -30,7 +30,7 @@ def validate_runtime(payload, documents, *, candidate=None) -> list[str]:
             try:
                 exporter.build_documents(_row({"steps": document}), constants, libraries)
             except (ConversionError, ValueError, TypeError, KeyError, AttributeError) as exc:
-                problems.append(f"Runner conversion document {position}: {exc}")
+                problems.append(f"运行器转换文档 {position}：{exc}")
         return problems
     except (TypeError, ValueError, KeyError, AttributeError) as exc:
-        return [f"Runner input snapshot is invalid: {exc}"]
+        return [f"运行器输入快照无效：{exc}"]

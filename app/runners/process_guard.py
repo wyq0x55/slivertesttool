@@ -24,8 +24,8 @@ Two pieces are provided:
     happens even when the owner is killed with ``TerminateProcess``. This is
     the backstop for the cases a graceful stop cannot cover.
 
-Everything is best effort and a no-op off Windows: a guard that cannot be set
-up is logged and skipped, never allowed to stop the platform from starting.
+The platform startup guard is best effort. Owned execution requires Windows
+job containment before descendants start; POSIX execution uses process groups.
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 
 logger = logging.getLogger("silver.process_guard")
 
@@ -49,6 +50,30 @@ _PROCESS_SET_QUOTA = 0x0100
 
 
 _shutting_down = threading.Event()
+_pending_cleanup = {}
+_cleanup_lock = threading.Lock()
+
+
+def retain_cleanup(owner, cleanup) -> None:
+    with _cleanup_lock:
+        _pending_cleanup[id(owner)] = (owner, cleanup)
+
+
+def release_cleanup(owner) -> None:
+    with _cleanup_lock:
+        _pending_cleanup.pop(id(owner), None)
+
+
+def retry_pending_cleanup() -> None:
+    with _cleanup_lock:
+        pending = list(_pending_cleanup.values())
+    for owner, cleanup in pending:
+        try:
+            cleanup()
+        except Exception:
+            logger.exception("Owned process cleanup retry failed")
+        else:
+            release_cleanup(owner)
 
 
 def begin_shutdown() -> None:
@@ -155,13 +180,39 @@ def install_break_handler(handler) -> bool:
 class KillOnCloseJob:
     """A Windows Job Object whose processes die with its last handle.
 
-    Keep the instance referenced for the owner's whole lifetime: the handle is
-    deliberately never closed explicitly, so the kernel closes it when the
-    owning process exits (cleanly or not) and terminates the job's processes.
+    Successful close confirms termination before releasing the handle. Failed
+    cleanup retains the handle for retry. Owner exit also closes the handle
+    through the kernel, terminating any remaining assigned processes.
     """
 
     def __init__(self, handle) -> None:
         self._handle = handle
+        self._close_lock = threading.Lock()
+
+    def close(self) -> None:
+        """Terminate all assigned processes and release the job handle."""
+        with self._close_lock:
+            if self._handle is not None:
+                import ctypes
+
+                kernel32 = _kernel32()
+                if not kernel32.TerminateJobObject(self._handle, 1):
+                    raise _last_error("TerminateJobObject")
+                deadline = time.monotonic() + 5
+                while True:
+                    accounting = _BasicAccountingInformation()
+                    if not kernel32.QueryInformationJobObject(
+                            self._handle, 1, ctypes.byref(accounting),
+                            ctypes.sizeof(accounting), None):
+                        raise _last_error("QueryInformationJobObject")
+                    if accounting.ActiveProcesses == 0:
+                        break
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("Owned process tree did not terminate")
+                    time.sleep(0.01)
+                if not kernel32.CloseHandle(self._handle):
+                    raise _last_error("CloseHandle")
+                self._handle = None
 
     @classmethod
     def create(cls) -> "KillOnCloseJob | None":
@@ -216,6 +267,69 @@ class KillOnCloseJob:
         return False
 
 
+def require_process_job(pid: int) -> KillOnCloseJob | None:
+    """Bind a gated child before it can start descendants; fail closed."""
+    if not IS_WINDOWS:
+        return None
+    job = KillOnCloseJob.create()
+    if job is None or not job.assign_pid(pid):
+        if job is not None:
+            job.close()
+        raise OSError(f"Could not contain child process {pid}")
+    return job
+
+
+def kill_process_tree(pid: int, job: KillOnCloseJob | None = None) -> None:
+    """Kill an owned tree even when its original parent has already exited."""
+    if IS_WINDOWS:
+        if job is None:
+            raise OSError(f"Process {pid} has no Windows job ownership")
+        job.close()
+    else:
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+def popen_owned(command, **kwargs) -> subprocess.Popen:
+    """Start a contained command without a Windows spawn/assignment race."""
+    retry_pending_cleanup()
+    if not IS_WINDOWS:
+        return subprocess.Popen(command, start_new_session=True, **kwargs)
+    gate = (
+        "import subprocess,sys; "
+        "sys.stdin.buffer.read(1) == b'!' or sys.exit(1); "
+        "sys.exit(subprocess.call(sys.argv[1:]))"
+    )
+    child = subprocess.Popen(
+        [sys.executable, "-c", gate, *command], stdin=subprocess.PIPE, **kwargs)
+    try:
+        child._owned_job = require_process_job(child.pid)
+        child.stdin.write(b"!")
+        child.stdin.flush()
+        child.stdin.close()
+        child.stdin = None
+        return child
+    except BaseException:
+        job = getattr(child, "_owned_job", None)
+        try:
+            if job is not None:
+                job.close()
+        except Exception:
+            retain_cleanup(child, lambda: kill_process_tree(child.pid, job))
+            logger.exception("Could not close failed child ownership")
+        finally:
+            actions = (child.kill, lambda: child.wait(timeout=2),
+                       lambda: child.stdin.close() if child.stdin is not None else None)
+            for action in actions:
+                try:
+                    action()
+                except Exception:
+                    logger.exception("Failed child cleanup stage")
+        raise
+
+
 def _kernel32():
     import ctypes
     from ctypes import wintypes
@@ -228,6 +342,11 @@ def _kernel32():
         wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD)
     kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
     kernel32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+    kernel32.TerminateJobObject.restype = wintypes.BOOL
+    kernel32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    kernel32.QueryInformationJobObject.restype = wintypes.BOOL
+    kernel32.QueryInformationJobObject.argtypes = (
+        wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD, wintypes.LPVOID)
     kernel32.OpenProcess.restype = wintypes.HANDLE
     kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
     kernel32.GetCurrentProcess.restype = wintypes.HANDLE
@@ -247,6 +366,18 @@ def _last_error(call: str) -> OSError:
 if IS_WINDOWS:
     import ctypes as _ctypes
     from ctypes import wintypes as _wintypes
+
+    class _BasicAccountingInformation(_ctypes.Structure):
+        _fields_ = [
+            ("TotalUserTime", _ctypes.c_longlong),
+            ("TotalKernelTime", _ctypes.c_longlong),
+            ("ThisPeriodTotalUserTime", _ctypes.c_longlong),
+            ("ThisPeriodTotalKernelTime", _ctypes.c_longlong),
+            ("TotalPageFaultCount", _wintypes.DWORD),
+            ("TotalProcesses", _wintypes.DWORD),
+            ("ActiveProcesses", _wintypes.DWORD),
+            ("TotalTerminatedProcesses", _wintypes.DWORD),
+        ]
 
     class _BasicLimitInformation(_ctypes.Structure):
         _fields_ = [
