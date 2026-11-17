@@ -55,11 +55,15 @@ export default defineConfig({
     "process.env": "{}",
     global: "globalThis",
   },
+  esbuild: {
+    legalComments: "none",
+    drop: ["debugger"],
+  },
   build: {
     outDir: resolve(__dirname, "../app/static/vendor/sbs"),
     emptyOutDir: false, // keep the vendored grammar + language-configuration
     cssCodeSplit: false,
-    target: "es2018",
+    target: "es2020",
     minify: true,
     lib: {
       entry: resolve(__dirname, "src/sbs_editor.ts"),

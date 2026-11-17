@@ -550,6 +550,31 @@ def _apply_materialized_values(item: TestItemRow, state: dict[str, Any]) -> None
         item.set_field(key, value)
 
 
+def _row_needs_materialize(item: Optional[TestItemRow], state: dict[str, Any],
+                           *, row_order: int) -> bool:
+    """Return False when *item* is live at *row_order* and already matches *state*.
+
+    Mirrors :func:`_apply_materialized_values` and :meth:`TestItemRow.set_field`
+    without touching the ORM session or opening a ``SAVEPOINT``, eliminating
+    thousands of no-op ``SAVEPOINT`` / ``RELEASE SAVEPOINT`` round-trips during
+    periodic whole-sheet CRDT flushes.
+    """
+    if item is None or item.deleted_at is not None or item.row_order != row_order:
+        return True
+    cv = item.custom_values or {}
+    for key, value in state.items():
+        if key in _MATERIALIZE_SKIP:
+            continue
+        col = item._SYSTEM_COLUMN.get(key)
+        if col is not None:
+            expected = "" if (value is None and col in item._NOT_NULL_STR_COLUMNS) else value
+            if getattr(item, col) != expected:
+                return True
+        elif key not in cv or cv[key] != value:
+            return True
+    return False
+
+
 def materialize_create(user: LMUser, project: Project, state: dict[str, Any],
                        *, sheet: Optional[str] = None,
                        row_order: Optional[int] = None,
@@ -702,6 +727,10 @@ def materialize_sheet(user: LMUser, project: Project, sheet: str,
         seen.add(row_uuid)
         if row_uuid in pending:
             state = {**state, **pending[row_uuid]}
+        item = existing.get(row_uuid)
+        if not _row_needs_materialize(item, state, row_order=index):
+            unchanged += 1
+            continue
         # Non-blocking validation: live collaboration means rows are constantly
         # mid-edit, so required-but-blank is tolerated (enforce_required=False);
         # only hard errors (bad number/date/enum) mark the cell.
@@ -715,7 +744,6 @@ def materialize_sheet(user: LMUser, project: Project, sheet: str,
             failed += 1
             continue
         row_actor = by_uuid.get(row_uuid) or user
-        item = existing.get(row_uuid)
         try:
             with db.session.begin_nested():
                 if item is None:

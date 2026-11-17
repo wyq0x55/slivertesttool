@@ -10,8 +10,24 @@ from __future__ import annotations
 import json
 from typing import Optional
 
+import sqlalchemy as sa
+
 from ..extensions import db
 from ..models import EventType, Task, TaskEvent, TaskStatus
+
+TASK_EVENTS_CHANNEL = "silver_task_events"
+
+
+def notify_task(task_id: int) -> None:
+    """Queue a PostgreSQL NOTIFY inside the current transaction (no-op on SQLite)."""
+    try:
+        if db.engine.dialect.name == "postgresql":
+            db.session.execute(
+                sa.text("SELECT pg_notify(:ch, :payload)"),
+                {"ch": TASK_EVENTS_CHANNEL, "payload": str(int(task_id))},
+            )
+    except Exception:  # noqa: BLE001 - best-effort wakeup hint
+        pass
 
 
 def emit(
@@ -28,6 +44,7 @@ def emit(
         payload_json=json.dumps(payload, ensure_ascii=False) if payload else "",
     )
     db.session.add(event)
+    notify_task(task.id)
     db.session.commit()
     return event
 
@@ -57,6 +74,7 @@ def emit_logs(task: Task, messages) -> int:
         )
         for m in msgs
     ])
+    notify_task(task.id)
     db.session.commit()
     return len(msgs)
 

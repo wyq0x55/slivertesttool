@@ -16,10 +16,11 @@ therefore runs with no external ``Lib`` folders present.
 
 How it works
 ------------
-1. :func:`discover_search_paths` executes only the *prelude* of the judge (the
-   statements before the first local import) with the Silver packages stubbed
-   out, and records every directory the judge appends to ``sys.path``. Those are
-   the library search roots.
+1. :func:`discover_search_paths` statically analyses the *prelude* of the judge
+   (the statements before the first local import) via :mod:`ast` without
+   executing any user code, evaluating ``__file__``, ``os.path`` and
+   :class:`pathlib.Path` expressions passed to ``sys.path``. Those resolved
+   directories form the library search roots.
 2. :func:`bundle_judge` walks the import graph starting from the judge, resolves
    each imported name against the search roots, and embeds the source of every
    resolvable (local) module. Names that cannot be resolved locally -- stdlib,
@@ -27,23 +28,6 @@ How it works
 3. The embedded sources are attached through a tiny :mod:`importlib` meta-path
    finder emitted at the top of the output, so ``from X import *`` and package
    imports keep working exactly as before.
-
-Trust boundary (READ BEFORE "fixing" the ``exec`` calls)
---------------------------------------------------------
-:func:`discover_search_paths` runs the judge's prelude via ``exec`` and the
-generated bundle runs embedded modules via ``exec``. This is **by design**: a
-``judge.py`` *is* the user's own executable test logic — the same file is later
-handed to the Silver runner and executed with full privileges regardless. These
-``exec`` calls therefore add no new capability beyond running the test itself.
-
-Because arbitrary Python cannot be meaningfully sandboxed (``__builtins__``
-restriction is trivially bypassable via ``().__class__.__mro__`` gadget chains),
-we do NOT pretend to sandbox it. Instead the security control is at the
-*ingress*: judge files are trusted inputs authored/reviewed by the project's own
-testers, uploaded only by authenticated users, and must be treated with the same
-trust as any code committed to this repository. Do not expose this bundler to
-anonymous/untrusted upload paths. If that ever changes, the fix is process-level
-isolation (a locked-down subprocess / container), not a fake in-process sandbox.
 """
 
 from __future__ import annotations
@@ -53,7 +37,7 @@ import base64
 import os
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 __all__ = [
     "bundle_judge",
@@ -70,7 +54,7 @@ __all__ = [
 # bootstrap) is re-processed instead of blindly kept -- otherwise a judge that
 # was bundled by a buggy earlier version could never be fixed by re-uploading.
 _BUNDLE_MARKER_BASE = "preprocessed by SilverTestApp's judge-bundler"
-_BUNDLE_VERSION = "2"
+_BUNDLE_VERSION = "3"
 _BUNDLE_MARKER = (
     "# This judge.py was preprocessed by SilverTestApp's judge-bundler "
     "(v" + _BUNDLE_VERSION + ")."
@@ -159,23 +143,314 @@ def _local_candidate(node: ast.AST) -> Optional[str]:
     return None
 
 
-def _make_silver_stub(name: str) -> "object":
-    import types
+_UNRESOLVED = object()
+_OS_MOD = object()
+_OS_PATH_MOD = object()
+_SYS_MOD = object()
+_SYS_PATH = object()
+_PATHLIB_MOD = object()
+_PATH_CTOR = object()
 
-    mod = types.ModuleType(name)
-    mod.__path__ = []  # mark as package so submodule imports resolve
-    mod.__all__ = []
-    return mod
+_SAFE_OS_PATH_FUNCS = {
+    "abspath": os.path.abspath,
+    " basename".strip(): os.path.basename,
+    "dirname": os.path.dirname,
+    "expanduser": os.path.expanduser,
+    "join": os.path.join,
+    "normcase": os.path.normcase,
+    "normpath": os.path.normpath,
+    "realpath": os.path.realpath,
+}
+
+
+class _StaticSysPathEvaluator:
+    """Pure-AST evaluator for ``sys.path`` mutations in a judge prelude."""
+
+    _MAX_STEPS = 512
+
+    def __init__(self, judge_path: Path) -> None:
+        self._judge_path = judge_path
+        self._env: Dict[str, Any] = {
+            "__file__": str(judge_path),
+            "__name__": "__judge_prelude__",
+        }
+        self.entries: List[str] = []
+        self._steps = 0
+
+    def run(self, statements: List[ast.stmt]) -> None:
+        for stmt in statements:
+            if self._steps >= self._MAX_STEPS:
+                break
+            self._exec_stmt(stmt)
+
+    def _exec_stmt(self, node: ast.stmt) -> None:
+        self._steps += 1
+        if self._steps > self._MAX_STEPS:
+            return
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                self._bind_import(alias.name, alias.asname)
+        elif isinstance(node, ast.ImportFrom):
+            self._bind_import_from(node)
+        elif isinstance(node, ast.Assign):
+            val = self._eval(node.value)
+            for target in node.targets:
+                self._assign_target(target, val)
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            self._assign_target(node.target, self._eval(node.value))
+        elif isinstance(node, ast.AugAssign):
+            self._exec_aug_assign(node)
+        elif isinstance(node, ast.Expr):
+            self._eval(node.value)
+        elif isinstance(node, ast.Try):
+            self.run(node.body)
+            for handler in node.handlers:
+                self.run(handler.body)
+            self.run(node.orelse)
+            self.run(node.finalbody)
+        elif isinstance(node, ast.If):
+            cond = self._eval(node.test)
+            if isinstance(cond, bool):
+                self.run(node.body if cond else node.orelse)
+            else:
+                self.run(node.body)
+                self.run(node.orelse)
+        elif isinstance(node, ast.For) and isinstance(node.target, ast.Name):
+            seq = self._eval(node.iter)
+            if isinstance(seq, (list, tuple)) and len(seq) <= 32:
+                for item in seq:
+                    self._env[node.target.id] = item
+                    self.run(node.body)
+
+    def _bind_import(self, name: str, asname: Optional[str]) -> None:
+        if name == "os":
+            self._env[asname or "os"] = _OS_MOD
+        elif name == "os.path":
+            if asname:
+                self._env[asname] = _OS_PATH_MOD
+            else:
+                self._env["os"] = _OS_MOD
+        elif name == "sys":
+            self._env[asname or "sys"] = _SYS_MOD
+        elif name == "pathlib":
+            self._env[asname or "pathlib"] = _PATHLIB_MOD
+
+    def _bind_import_from(self, node: ast.ImportFrom) -> None:
+        mod = node.module or ""
+        for alias in node.names:
+            bound = alias.asname or alias.name
+            if mod == "os":
+                if alias.name == "path":
+                    self._env[bound] = _OS_PATH_MOD
+                elif alias.name in ("sep", "pardir", "curdir", "name", "fspath"):
+                    self._env[bound] = getattr(os, alias.name)
+            elif mod in ("os.path", "posixpath", "ntpath"):
+                if alias.name in _SAFE_OS_PATH_FUNCS:
+                    self._env[bound] = _SAFE_OS_PATH_FUNCS[alias.name]
+            elif mod == "sys":
+                if alias.name == "path":
+                    self._env[bound] = _SYS_PATH
+                elif alias.name == "platform":
+                    self._env[bound] = sys.platform
+            elif mod == "pathlib":
+                if alias.name in ("Path", "PurePath", "PosixPath", "WindowsPath"):
+                    self._env[bound] = _PATH_CTOR
+
+    def _assign_target(self, target: ast.expr, val: Any) -> None:
+        if val is _UNRESOLVED:
+            return
+        if isinstance(target, ast.Name):
+            self._env[target.id] = val
+        elif isinstance(target, (ast.Tuple, ast.List)) and isinstance(val, (tuple, list)):
+            if len(target.elts) == len(val):
+                for sub_t, sub_v in zip(target.elts, val):
+                    self._assign_target(sub_t, sub_v)
+
+    def _exec_aug_assign(self, node: ast.AugAssign) -> None:
+        if not isinstance(node.op, ast.Add):
+            return
+        rhs = self._eval(node.value)
+        lhs = self._eval(node.target)
+        if lhs is _SYS_PATH and isinstance(rhs, (list, tuple)):
+            for item in rhs:
+                self._record_path(item, insert_at=None)
+        elif isinstance(node.target, ast.Name) and isinstance(lhs, str) and isinstance(rhs, str):
+            self._env[node.target.id] = lhs + rhs
+
+    def _record_path(self, value: Any, *, insert_at: Optional[int]) -> None:
+        if isinstance(value, (str, Path)):
+            text = str(value)
+            if not text:
+                return
+            if insert_at is not None and insert_at <= 0:
+                self.entries.insert(0, text)
+            else:
+                self.entries.append(text)
+
+    def _eval(self, node: ast.expr) -> Any:
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, (str, int, bool)) or node.value is None:
+                return node.value
+            return _UNRESOLVED
+        if isinstance(node, ast.Name):
+            if node.id == "str":
+                return str
+            return self._env.get(node.id, _UNRESOLVED)
+        if isinstance(node, ast.JoinedStr):
+            parts: List[str] = []
+            for val in node.values:
+                if isinstance(val, ast.Constant) and isinstance(val.value, str):
+                    parts.append(val.value)
+                elif isinstance(val, ast.FormattedValue) and val.format_spec is None:
+                    inner = self._eval(val.value)
+                    if not isinstance(inner, (str, Path, int)):
+                        return _UNRESOLVED
+                    parts.append(str(inner))
+                else:
+                    return _UNRESOLVED
+            return "".join(parts)
+        if isinstance(node, ast.List):
+            items = [self._eval(e) for e in node.elts]
+            return items if all(x is not _UNRESOLVED for x in items) else _UNRESOLVED
+        if isinstance(node, ast.Tuple):
+            items = [self._eval(e) for e in node.elts]
+            return tuple(items) if all(x is not _UNRESOLVED for x in items) else _UNRESOLVED
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+            operand = self._eval(node.operand)
+            return -operand if type(operand) is int else _UNRESOLVED
+        if isinstance(node, ast.Compare) and len(node.ops) == 1 and len(node.comparators) == 1:
+            left = self._eval(node.left)
+            right = self._eval(node.comparators[0])
+            if left is not _UNRESOLVED and right is not _UNRESOLVED:
+                if isinstance(node.ops[0], ast.Eq):
+                    return left == right
+                if isinstance(node.ops[0], ast.NotEq):
+                    return left != right
+            return _UNRESOLVED
+        if isinstance(node, ast.BinOp):
+            left = self._eval(node.left)
+            right = self._eval(node.right)
+            if isinstance(node.op, ast.Div) and isinstance(left, Path) and isinstance(right, (str, Path)):
+                return left / right
+            if isinstance(node.op, ast.Add):
+                if isinstance(left, str) and isinstance(right, str):
+                    return left + right
+                if isinstance(left, list) and isinstance(right, list):
+                    return left + right
+            return _UNRESOLVED
+        if isinstance(node, ast.Subscript):
+            base = self._eval(node.value)
+            if base is _UNRESOLVED:
+                return _UNRESOLVED
+            if isinstance(node.slice, ast.Slice):
+                lo = self._eval(node.slice.lower) if node.slice.lower else None
+                hi = self._eval(node.slice.upper) if node.slice.upper else None
+                if (lo is None or type(lo) is int) and (hi is None or type(hi) is int):
+                    try:
+                        return base[slice(lo, hi)]
+                    except Exception:
+                        return _UNRESOLVED
+                return _UNRESOLVED
+            idx = self._eval(node.slice)
+            if type(idx) is int:
+                try:
+                    return base[idx]
+                except Exception:
+                    return _UNRESOLVED
+            return _UNRESOLVED
+        if isinstance(node, ast.Attribute):
+            return self._eval_attr(self._eval(node.value), node.attr)
+        if isinstance(node, ast.Call):
+            return self._eval_call(node)
+        return _UNRESOLVED
+
+    def _eval_attr(self, owner: Any, attr: str) -> Any:
+        if owner is _OS_MOD:
+            if attr == "path":
+                return _OS_PATH_MOD
+            if attr in ("sep", "pardir", "curdir", "name", "fspath"):
+                return getattr(os, attr)
+        elif owner is _OS_PATH_MOD:
+            return _SAFE_OS_PATH_FUNCS.get(attr, _UNRESOLVED)
+        elif owner is _SYS_MOD:
+            if attr == "path":
+                return _SYS_PATH
+            if attr == "platform":
+                return sys.platform
+        elif owner is _PATHLIB_MOD:
+            if attr in ("Path", "PurePath", "PosixPath", "WindowsPath"):
+                return _PATH_CTOR
+        elif owner is _SYS_PATH:
+            if attr in ("append", "insert", "extend"):
+                return (_SYS_PATH, attr)
+        elif isinstance(owner, Path):
+            if attr == "parent":
+                return owner.parent
+            if attr == "parents":
+                return tuple(owner.parents)
+            if attr in ("name", "stem", "suffix"):
+                return getattr(owner, attr)
+            if attr in ("resolve", "absolute", "expanduser", "as_posix", "joinpath"):
+                return (owner, attr)
+        return _UNRESOLVED
+
+    def _eval_call(self, node: ast.Call) -> Any:
+        if any(isinstance(arg, ast.Starred) for arg in node.args):
+            return _UNRESOLVED
+        if any(kw.arg is None for kw in node.keywords):
+            return _UNRESOLVED
+        func = self._eval(node.func)
+        if func is _UNRESOLVED:
+            return _UNRESOLVED
+        args = [self._eval(arg) for arg in node.args]
+        if any(arg is _UNRESOLVED for arg in args):
+            return _UNRESOLVED
+        if func is _PATH_CTOR:
+            if all(isinstance(a, (str, Path)) for a in args):
+                return Path(*args) if args else Path(".")
+            return _UNRESOLVED
+        if func is str and len(args) == 1 and isinstance(args[0], (str, Path, int)):
+            return str(args[0])
+        if func is os.fspath and len(args) == 1 and isinstance(args[0], (str, Path)):
+            return os.fspath(args[0])
+        if callable(func) and func in _SAFE_OS_PATH_FUNCS.values():
+            if not node.keywords and args and all(isinstance(a, (str, Path)) for a in args):
+                try:
+                    return func(*[str(a) for a in args])
+                except Exception:
+                    return _UNRESOLVED
+            return _UNRESOLVED
+        if isinstance(func, tuple) and len(func) == 2:
+            receiver, method = func
+            if receiver is _SYS_PATH:
+                if method == "append" and len(args) == 1:
+                    self._record_path(args[0], insert_at=None)
+                elif method == "insert" and len(args) == 2 and type(args[0]) is int:
+                    self._record_path(args[1], insert_at=args[0])
+                elif method == "extend" and len(args) == 1 and isinstance(args[0], (list, tuple)):
+                    for item in args[0]:
+                        self._record_path(item, insert_at=None)
+                return None
+            if isinstance(receiver, Path):
+                if method in ("resolve", "absolute"):
+                    return Path(os.path.abspath(receiver))
+                if method == "expanduser":
+                    return Path(os.path.expanduser(str(receiver)))
+                if method == "as_posix":
+                    return receiver.as_posix()
+                if method == "joinpath" and all(isinstance(a, (str, Path)) for a in args):
+                    return receiver.joinpath(*args)
+        return _UNRESOLVED
 
 
 def discover_search_paths(judge_path: Path,
                           source: Optional[str] = None) -> List[Path]:
     """Discover the library directories a judge adds to ``sys.path``.
 
-    The judge's prelude (everything up to its first local import) is executed in
-    an isolated namespace with the Silver packages stubbed out; every directory
-    appended to ``sys.path`` during that execution is returned (in order, only
-    existing directories). *source*, when given, is parsed instead of the file's
+    The judge's prelude (everything up to its first local import) is statically
+    evaluated via :mod:`ast` with zero dynamic code execution; every directory
+    added to ``sys.path`` is returned (in order, only existing directories).
+    *source*, when given, is parsed instead of the file's
     current contents (used when re-bundling a stale bundle from its recovered
     original).
     """
@@ -191,44 +466,21 @@ def discover_search_paths(judge_path: Path,
         if _local_candidate(node) is not None:
             boundary = i
             break
-    prelude = ast.Module(body=tree.body[:boundary], type_ignores=[])
-    ast.fix_missing_locations(prelude)
+    evaluator = _StaticSysPathEvaluator(judge_path)
+    evaluator.run(tree.body[:boundary])
 
-    stub_names = [
-        "synopsys", "synopsys.silver", "synopsys.util", "synopsys.util.scheduler",
-        "qtronic", "qtronic.silver", "qtronic.util", "qtronic.util.scheduler",
-    ]
-    saved_modules = {n: sys.modules.get(n) for n in stub_names}
-    saved_path = list(sys.path)
     added: List[Path] = []
-    try:
-        for n in stub_names:
-            sys.modules[n] = _make_silver_stub(n)
-        namespace = {
-            "__name__": "__judge_prelude__",
-            "__file__": str(judge_path),
-            "__builtins__": __builtins__,
-        }
-        code = compile(prelude, f"<prelude:{judge_path.name}>", "exec")
+    for entry in evaluator.entries:
         try:
-            exec(code, namespace)  # noqa: S102 - user's own trusted judge prelude
-        except Exception as exc:  # noqa: BLE001 - best-effort discovery
-            raise BundleError(
-                f"could not evaluate library paths from {judge_path.name}: {exc}"
-            ) from exc
-        for entry in sys.path:
-            if entry in saved_path:
-                continue
             p = Path(entry)
-            if p.is_dir() and p not in added:
-                added.append(p.resolve())
-    finally:
-        sys.path[:] = saved_path
-        for n, prev in saved_modules.items():
-            if prev is None:
-                sys.modules.pop(n, None)
-            else:
-                sys.modules[n] = prev
+            if not p.is_absolute():
+                p = (judge_path.parent / p)
+            if p.is_dir():
+                resolved = p.resolve()
+                if resolved not in added:
+                    added.append(resolved)
+        except OSError:
+            continue
     return added
 
 
@@ -334,6 +586,7 @@ _BOOTSTRAP_TEMPLATE = '''\
 import sys as _sys
 import os as _os
 import base64 as _base64
+import linecache as _linecache
 import importlib.util as _ilu
 import importlib.abc as _ila
 
@@ -360,13 +613,28 @@ class _BundledLoader(_ila.Loader):
     def create_module(self, spec):
         return None
 
+    def get_source(self, fullname):
+        if fullname == self._fullname:
+            return self._source
+        info = _BUNDLED_MODULES.get(fullname)
+        if info is None:
+            return None
+        return _base64.b64decode(info[0]).decode("utf-8")
+
     def exec_module(self, module):
         # Give the embedded module a ``__file__`` in the judge's directory so
         # code relying on ``__file__`` (path math, ``sys.path`` tweaks) works.
         if getattr(module, "__file__", None) is None:
             leaf = self._fullname.rsplit(".", 1)[-1]
             module.__file__ = _os.path.join(_JUDGE_DIR, leaf + ".py")
-        code = compile(self._source, "<bundled:%s>" % self._fullname, "exec")
+        origin = "<bundled:%s>" % self._fullname
+        _linecache.cache[origin] = (
+            len(self._source),
+            None,
+            self._source.splitlines(True),
+            origin,
+        )
+        code = compile(self._source, origin, "exec")
         exec(code, module.__dict__)
 
 

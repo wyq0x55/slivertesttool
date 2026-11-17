@@ -46,14 +46,15 @@ from flask import current_app
 from sqlalchemy import func
 
 from ...extensions import db
-from ...models import UtAttempt, UtBatch, UtJob, UtPipelineConfig, UtTarget
+from ...models import LMUser, UtAttempt, UtBatch, UtJob, UtPipelineConfig, UtTarget
 from ...models.ut_pipeline import GateCode
 from ...models.lanmatrix import _iso, _utcnow
 from ..ai.provider import ProviderError
 from ..lanmatrix import audit
 from ..lanmatrix import notification_service as notify_svc
 from ..lanmatrix.errors import ServiceError, VersionConflict
-from . import binding, diagnostic, host, host_candidate, repair, repair_source, timing
+from ..lanmatrix.permissions import PermissionDenied
+from . import binding, diagnostic, host, host_candidate, repair, repair_source, server_paths, timing
 from .bridge import BridgeError, BridgeSettings, UtAgentBridge
 
 # Shared extraction is serialised; LLVM executions and model calls can overlap.
@@ -64,6 +65,12 @@ _CONFIG_TEXT_FIELDS = ("manifest_path", "index_csv", "product_root",
                        "repair_model", "stub_mode",
                        "stub_model", "host_clang", "host_llvm_cov", "host_llvm_profdata",
                        "host_profile_runtime")
+_TOOLCHAIN_DEFAULTS: dict[str, frozenset[str]] = {
+    "host_clang": frozenset({"clang", "clang.exe"}),
+    "host_llvm_cov": frozenset({"llvm-cov", "llvm-cov.exe"}),
+    "host_llvm_profdata": frozenset({"llvm-profdata", "llvm-profdata.exe"}),
+    "host_profile_runtime": frozenset({""}),
+}
 _REQUIRED_FIELDS = ("manifest_path", "index_csv", "product_root")
 _JOB_LIST_LIMIT = 500
 
@@ -125,11 +132,15 @@ def require_config(project_id: int) -> UtPipelineConfig:
 def save_config(project_id: int, values: dict[str, Any], user_id: int) -> UtPipelineConfig:
     existing = get_config(project_id)
     before = existing.to_dict() if existing else None
+    actor = db.session.get(LMUser, user_id) if user_id else None
+    is_admin = bool(actor and actor.is_system_admin)
     normalized = {}
     for key in _CONFIG_TEXT_FIELDS:
         if key in values:
             if not isinstance(values[key], str):
                 raise ServiceError(f"{key} must be a string", code="VALIDATION_ERROR")
+            if any(ch in values[key] for ch in ("\x00", "\r", "\n")):
+                raise ServiceError(f"{key} contains invalid control characters", code="VALIDATION_ERROR")
             value = values[key].strip()
             limit = 128 if key in ("stub_model", "repair_model") else 1024
             if len(value) > limit:
@@ -144,12 +155,41 @@ def save_config(project_id: int, values: dict[str, Any], user_id: int) -> UtPipe
     for key in ("host_clang", "host_llvm_cov", "host_llvm_profdata"):
         if key in normalized and not normalized[key]:
             raise ServiceError(f"{key} must not be empty", code="VALIDATION_ERROR")
+    allowed_toolchains = {
+        str(item).strip()
+        for item in (current_app.config.get("UT_ALLOWED_TOOLCHAINS") or ())
+        if str(item).strip()
+    }
+    for key, defaults in _TOOLCHAIN_DEFAULTS.items():
+        if key not in normalized:
+            continue
+        val = normalized[key]
+        unchanged = existing is not None and val == getattr(existing, key, None)
+        whitelisted = val in defaults or val in allowed_toolchains
+        if allowed_toolchains and not (unchanged or whitelisted):
+            raise PermissionDenied(f"{key} 不在服务端允许的工具链白名单（UT_ALLOWED_TOOLCHAINS）内")
+        if not is_admin and not (unchanged or whitelisted):
+            raise PermissionDenied("仅系统管理员或服务端白名单可自定义宿主机编译器与覆盖率工具路径")
     for key, low, high in (("max_repair_rounds", 0, 20), ("stub_max_rounds", 1, 5)):
         if key in values:
             value = values[key]
             if type(value) is not int or not low <= value <= high:
                 raise ServiceError(f"{key} must be an integer from {low} to {high}", code="VALIDATION_ERROR")
             normalized[key] = value
+    explicit_roots = server_paths.parse_roots(current_app.config.get("UT_ALLOWED_SOURCE_ROOTS"))
+    if not is_admin or explicit_roots:
+        source_roots = (explicit_roots
+                        if explicit_roots
+                        else server_paths.configured_roots(current_app.config, project_id=project_id))
+        for key in ("product_root", "index_csv"):
+            val = normalized.get(key)
+            if val and not (existing is not None and val == getattr(existing, key, None)):
+                server_paths.assert_allowed_path(val, source_roots, exists=False)
+        raw_manifest = normalized.get("manifest_path")
+        if ("manifest_document" not in values and raw_manifest
+                and not (existing is not None and raw_manifest == getattr(existing, "manifest_path", None))):
+            manifest_roots = [*source_roots, _workspace() / f"p{project_id}" / "manifests"]
+            server_paths.assert_allowed_path(raw_manifest, manifest_roots, exists=False)
     if "manifest_document" in values:
         if normalized.get("manifest_path"):
             raise ServiceError("请提交清单内容，不要同时提交服务器清单路径", code="VALIDATION_ERROR")

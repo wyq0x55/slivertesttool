@@ -532,6 +532,25 @@ def project_task_stream(project_id, task_key):
     except (TypeError, ValueError):
         last_id = 0
 
+    sse_base = (getattr(cfg, "COLLAB_SSE_BASE_URL", "") or "").strip().rstrip("/")
+    if sse_base and request.args.get("direct") != "1":
+        from urllib.parse import urlencode
+        from flask import redirect
+        from ...collab import tokens as collab_tokens
+
+        token = collab_tokens.mint_sse(
+            current_app.config["SECRET_KEY"],
+            user_id=g.user.id,
+            project_id=project_id,
+            task_id=task_pk,
+            task_key=task.task_key,
+        )
+        qs = urlencode({"token": token, **({"last_id": last_id} if last_id else {})})
+        return redirect(
+            f"{sse_base}/sse/tasks/{project_id}/{task.task_key}?{qs}",
+            code=307,
+        )
+
     @stream_with_context
     def generate():
         nonlocal last_id

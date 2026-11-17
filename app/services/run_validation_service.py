@@ -6,13 +6,10 @@ import ast
 import json
 import math
 import operator
-import re
-import unicodedata
-from functools import partial
-from functools import lru_cache
+from functools import lru_cache, partial
 from pathlib import Path
 
-from ..runners.silver_json import silver_test_framework as framework
+from ..runners.silver_json import step_parser
 
 
 class ConversionError(ValueError):
@@ -35,34 +32,29 @@ def _bounded_binary(kind, operation, left, right):
     return result
 
 
+_OP_ATTRS = {
+    ast.Add: "add",
+    ast.Sub: "sub",
+    ast.Mult: "mul",
+    ast.Div: "truediv",
+    ast.Mod: "mod",
+    ast.Pow: "pow",
+    ast.FloorDiv: "floordiv",
+    ast.BitAnd: "and_",
+    ast.BitOr: "or_",
+    ast.BitXor: "xor",
+    ast.LShift: "lshift",
+    ast.RShift: "rshift",
+}
+
+
 @lru_cache(maxsize=1)
 def _parser():
-    root = Path(__file__).resolve().parents[1] / "runners" / "silver_json"
-    functions = {
-        "_const_value", "_const_name_ja", "_split_operator", "_looks_like_interval",
-        "_parse_interval", "_eval_node", "_eval_expr", "_resolve_single",
-        "_resolve_value", "_resolve_arg", "build_steps", "_param_names",
+    bin_ops = {
+        kind: partial(_bounded_binary, kind, getattr(operator, attr))
+        for kind, attr in _OP_ATTRS.items()
     }
-    assignments = {"_BIN_OPS", "_UNARY_OPS", "_OP_PREFIXES", "_INTERVAL_RE",
-                   "_INF_LO", "_INF_HI", "_LABEL_EXPR_RE"}
-    namespace = {"ast": ast, "_operator": operator, "re": re,
-                 "unicodedata": unicodedata,
-                 **{name: getattr(framework, name)
-                    for name in ("Assign", "Call", "SubCall", "Check", "Step")}}
-    builtin_tree = ast.parse((root / "framework_builtins.py").read_text(encoding="utf-8"))
-    magic = next(node for node in builtin_tree.body
-                 if isinstance(node, ast.ClassDef) and node.name == "MagicList")
-    exec(compile(ast.Module(body=[magic], type_ignores=[]), str(root), "exec"), namespace)
-    tree = ast.parse((root / "silver_json_runner.py").read_text(encoding="utf-8"))
-    selected = [node for node in tree.body
-                if (isinstance(node, ast.FunctionDef) and node.name in functions)
-                or (isinstance(node, ast.Assign) and any(
-                    isinstance(target, ast.Name) and target.id in assignments
-                    for target in node.targets))]
-    exec(compile(ast.Module(body=selected, type_ignores=[]), str(root), "exec"), namespace)
-    namespace["_BIN_OPS"] = {kind: partial(_bounded_binary, kind, operation)
-                             for kind, operation in namespace["_BIN_OPS"].items()}
-    return namespace
+    return step_parser.make_parser(bin_ops=bin_ops)
 
 
 def _finite(value, label):

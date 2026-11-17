@@ -117,7 +117,8 @@ class PgYStore(BaseYStore):
         async lock and an app context."""
         from ..extensions import db
         from ..models import CollabDoc
-        rows = (CollabDoc.query.filter_by(project_id=self._pid)
+        rows = (db.session.query(CollabDoc.update, CollabDoc.ts)
+                .filter_by(project_id=self._pid)
                 .order_by(CollabDoc.seq.asc()).all())
         if len(rows) < 2:
             return
@@ -126,14 +127,18 @@ class PgYStore(BaseYStore):
         # single list makes the Rust side try to read that list as one update,
         # panicking with "'bytes' object cannot be interpreted as an integer"
         # (src/update.rs) once there are >=2 rows to compact. Spread the updates.
-        merged = merge_updates(*[bytes(r.update) for r in rows])
-        latest_ts = rows[-1].ts
-        for r in rows:
-            db.session.delete(r)
-        db.session.flush()
-        db.session.add(CollabDoc(project_id=self._pid, seq=1,
-                                 update=merged, doc_metadata=None, ts=latest_ts))
-        db.session.commit()
+        merged = merge_updates(*[bytes(update) for update, _ts in rows])
+        latest_ts = rows[-1][1]
+        try:
+            CollabDoc.query.filter_by(project_id=self._pid).delete(
+                synchronize_session=False)
+            db.session.add(CollabDoc(project_id=self._pid, seq=1,
+                                     update=merged, doc_metadata=None, ts=latest_ts))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            self._next_seq = None
+            raise
         self._next_seq = 2          # the whole log is now the single seq=1 row
 
 

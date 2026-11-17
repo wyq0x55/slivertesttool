@@ -468,9 +468,11 @@ def _execute_backend(app, config, task: Task, pool=None, instance=None,
     try:
         eff_gui = runtime_config.get_bool("silver_gui")
         eff_timeout = runtime_config.get_int("execution_timeout")
+        eff_max_csv_bytes = runtime_config.get_int("silver_max_csv_bytes")
     except Exception:  # noqa: BLE001 - defensive: never break a run on config read
         eff_gui = config.SILVER_GUI
         eff_timeout = config.EXECUTION_TIMEOUT
+        eff_max_csv_bytes = getattr(config, "SILVER_MAX_CSV_BYTES", 0)
 
     ctx = RunContext(
         test_id=task.test_id,
@@ -483,6 +485,7 @@ def _execute_backend(app, config, task: Task, pool=None, instance=None,
         on_start=_on_start,
         reload_model=pooled,
         console_log=console_path,
+        max_csv_bytes=eff_max_csv_bytes,
     )
 
     if pooled:

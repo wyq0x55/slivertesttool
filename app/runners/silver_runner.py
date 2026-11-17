@@ -18,10 +18,12 @@ Both backends implement :meth:`SilverRunnerBase.run`, which receives a
 
 from __future__ import annotations
 
+import concurrent.futures
 import contextvars
 import logging
 import multiprocessing
 import os
+import queue
 import shutil
 import sys
 import threading
@@ -30,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from app.runners.process_guard import (
+from .process_guard import (
     kill_process_tree, pid_is_running, require_process_job, retain_cleanup,
     release_cleanup, retry_pending_cleanup,
 )
@@ -89,6 +91,49 @@ class _SilverProcess:
         return self.owner._worker.exitcode
 
 
+class _IpcWorker:
+    """Single-thread daemon executor for deadline-bounded pipe I/O."""
+
+    def __init__(self) -> None:
+        self._queue: queue.SimpleQueue = queue.SimpleQueue()
+        self._closed = False
+        self._thread = threading.Thread(
+            target=self._loop, daemon=True, name="silver-ipc"
+        )
+        self._thread.start()
+
+    def _loop(self) -> None:
+        while True:
+            item = self._queue.get()
+            if item is None:
+                return
+            fn, fut = item
+            if not fut.set_running_or_notify_cancel():
+                continue
+            try:
+                fut.set_result(fn())
+            except BaseException as exc:
+                fut.set_exception(exc)
+
+    def run(self, fn: Callable[[], Any], timeout: float) -> Any:
+        if timeout <= 0:
+            raise RunnerError("timeout")
+        if self._closed:
+            raise RunnerError("Silver API process exited")
+        fut: concurrent.futures.Future = concurrent.futures.Future()
+        self._queue.put((fn, fut))
+        try:
+            return fut.result(timeout=timeout)
+        except concurrent.futures.TimeoutError as exc:
+            fut.cancel()
+            raise RunnerError("timeout") from exc
+
+    def close(self) -> None:
+        if not self._closed:
+            self._closed = True
+            self._queue.put(None)
+
+
 class _SilverSession:
     """Synchronous API proxy with an absolute deadline and tree ownership."""
 
@@ -103,6 +148,8 @@ class _SilverSession:
         self._deadline = deadline
         self._lock = threading.Lock()
         self._stop_lock = threading.Lock()
+        self._stopped = threading.Event()
+        self._ipc = _IpcWorker()
         self.process = _SilverProcess(self)
         self._worker.start()
         remote.close()
@@ -123,6 +170,14 @@ class _SilverSession:
 
     def _receive(self):
         try:
+            while True:
+                if self._stopped.is_set():
+                    raise RunnerError("Silver API process exited")
+                remaining = self._deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RunnerError("timeout")
+                if self._connection.poll(min(0.25, remaining)):
+                    break
             status, value = self._transport(self._connection.recv)
         except (EOFError, OSError) as exc:
             raise RunnerError("Silver API process exited") from exc
@@ -131,27 +186,8 @@ class _SilverSession:
         return value
 
     def _transport(self, operation):
-        completed = threading.Event()
-        result = []
-        failures = []
-
-        def transfer():
-            try:
-                result.append(operation())
-            except BaseException as exc:
-                failures.append(exc)
-            finally:
-                completed.set()
-
-        threading.Thread(target=transfer, daemon=True, name="silver-ipc").start()
-        while True:
-            remaining = self._deadline - time.monotonic()
-            if remaining <= 0:
-                raise RunnerError("timeout")
-            if completed.wait(min(0.05, remaining)):
-                if failures:
-                    raise failures[0]
-                return result[0]
+        remaining = self._deadline - time.monotonic()
+        return self._ipc.run(operation, remaining)
 
     def call(self, name, *args, **kwargs):
         remaining = max(0, self._deadline - time.monotonic())
@@ -181,6 +217,7 @@ class _SilverSession:
         if not self._stop_lock.acquire(timeout=5):
             raise RunnerError("Silver API cleanup is still in progress")
         try:
+            self._stopped.set()
             failures = []
             actions = []
             if os.name != "nt" or self._job is not None:
@@ -190,6 +227,7 @@ class _SilverSession:
                 lambda: self._worker.join(timeout=2),
             ))
             if close_connection:
+                actions.append(self._ipc.close)
                 actions.append(self._connection.close)
             for action in actions:
                 try:
@@ -262,6 +300,7 @@ class RunContext:
     on_start: Optional[Callable[[Any], None]] = None
     reload_model: bool = False
     console_log: Optional[Path] = None
+    max_csv_bytes: int = 0
 
 
 class RunnerError(Exception):
@@ -574,6 +613,10 @@ class SilverRunner(SilverRunnerBase):
         # instead of failing to open a non-existent file in ``logs``.
         testcase_dir = ctx.run_dir / ctx.test_id
         signal_list = testcase_dir / "output.txt"
+        if not signal_list.is_file():
+            model_signal_list = ctx.sil_path.parent / "output.txt"
+            if model_signal_list.is_file():
+                signal_list = model_signal_list
         judge_py = testcase_dir / "judge.py"
         jdgrslt = ctx.log_dir / "jdgrslt.log"
 
@@ -664,6 +707,22 @@ class SilverRunner(SilverRunnerBase):
 
         if not completed and not self._judge_stopped(ctx, console, console_offset):
             raise RunnerError("timeout")
+        self._enforce_csv_budget(ctx)
+
+    @staticmethod
+    def _enforce_csv_budget(ctx: RunContext) -> None:
+        if not ctx.max_csv_bytes or ctx.max_csv_bytes <= 0:
+            return
+        output_csv = ctx.log_dir / "output.csv"
+        try:
+            size = output_csv.stat().st_size if output_csv.is_file() else 0
+        except OSError:
+            size = 0
+        if size > ctx.max_csv_bytes:
+            raise RunnerError(
+                f"output.csv size ({size} bytes) exceeds limit ({ctx.max_csv_bytes} bytes); "
+                "provide an output.txt signal allowlist or increase SILVER_MAX_CSV_BYTES."
+            )
 
     @staticmethod
     def _judge_stopped(ctx: RunContext, console: Path, offset: Optional[int]) -> bool:
@@ -843,6 +902,7 @@ class MockSilverRunner(SilverRunnerBase):
             "time,signal_a,signal_b\n0.000,0,0\n0.001,1,0\n0.002,1,1\n",
             encoding="utf-8",
         )
+        SilverRunner._enforce_csv_budget(ctx)
         (ctx.log_dir / "output.txt").write_text(
             "time signal_a signal_b\n0.000 0 0\n0.001 1 0\n0.002 1 1\n",
             encoding="utf-8",

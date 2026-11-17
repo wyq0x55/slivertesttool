@@ -35,12 +35,14 @@ from itsdangerous import BadData, URLSafeTimedSerializer
 # Namespaces the signature so these tokens can never be confused with Flask's
 # session cookie (which uses the same SECRET_KEY but a different salt).
 _SALT = "lm-collab-ws-v1"
+_SSE_SALT = "lm-sse-v1"
 
 # TTL 收敛：前端已实现静默续签（collab.js `_scheduleTokenRenewal`），会在
 # 到期前 ~45 s 自动换新 token，因此不再需要 8 小时的超长有效期来容忍断线重连。
 # 收敛到 2 小时：既能覆盖续签定时器偶发失败/系统休眠唤醒的窗口，又把「token
 # 被截获后可用时长」显著缩短。隔夜标签页由续签接管，不再依赖 token 本身的长 TTL。
 DEFAULT_MAX_AGE = 7200  # 2 小时，单位秒
+DEFAULT_SSE_MAX_AGE = 3600  # 1 hour for task SSE stream handoff
 
 
 def _serializer(secret_key: str) -> URLSafeTimedSerializer:
@@ -71,4 +73,39 @@ def verify(secret_key: str, token: str, *,
         # BadData is the base of BadSignature/SignatureExpired AND BadPayload;
         # catching it also rejects truncated/garbage tokens that would otherwise
         # surface as an unhandled 500 on the collab handshake.
+        return None
+
+
+def mint_sse(
+    secret_key: str,
+    *,
+    user_id: int,
+    project_id: int,
+    task_id: int,
+    task_key: str,
+) -> str:
+    """Sign a short-lived token granting SSE read access to one task stream."""
+    payload: dict[str, Any] = {
+        "uid": int(user_id),
+        "pid": int(project_id),
+        "tid": int(task_id),
+        "key": str(task_key),
+    }
+    return URLSafeTimedSerializer(secret_key, salt=_SSE_SALT).dumps(payload)
+
+
+def verify_sse(
+    secret_key: str,
+    token: str,
+    *,
+    max_age: int = DEFAULT_SSE_MAX_AGE,
+) -> dict[str, Any] | None:
+    """Verify a signed task-SSE token and return its payload, or ``None``."""
+    if not token:
+        return None
+    try:
+        return URLSafeTimedSerializer(secret_key, salt=_SSE_SALT).loads(
+            token, max_age=max_age
+        )
+    except BadData:
         return None

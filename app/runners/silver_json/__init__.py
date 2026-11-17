@@ -29,6 +29,7 @@ FRAMEWORK_FILES: tuple[str, ...] = (
     "silver_json_runner.py",
     "silver_test_framework.py",
     "framework_builtins.py",
+    "step_parser.py",
 )
 
 

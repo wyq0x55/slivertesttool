@@ -144,7 +144,7 @@ class TestJudgeBundler(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             judge = _make_project(Path(tmp))
             fresh = judge_bundler.bundle_judge(judge)
-            stale = fresh.replace(" (v2).", ".").replace(
+            stale = fresh.replace(f" (v{judge_bundler._BUNDLE_VERSION}).", ".").replace(
                 "_JUDGE_DIR = _os.path.dirname(_JUDGE_FILE)", "")
             self.assertTrue(judge_bundler.is_bundled(stale))
             self.assertFalse(judge_bundler.is_current_bundle(stale))
@@ -184,6 +184,62 @@ class TestJudgeBundler(unittest.TestCase):
 
             source, error = judge_bundler.bundle_judge_or_original(judge)
             self.assertIsNone(error)
+
+    def test_discover_search_paths_never_executes_prelude_code(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            judge = _make_project(root)
+            side_effect = root / "pwned.txt"
+            judge.write_text(
+                "from pathlib import Path\n"
+                "import sys\n"
+                f"open({str(side_effect)!r}, 'w').write('executed')\n"
+                "while True:\n"
+                "    pass\n"
+                "sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'Lib'))\n"
+                "from Common_Constant import *\n",
+                encoding="utf-8",
+            )
+            dirs = judge_bundler.discover_search_paths(judge)
+            self.assertFalse(side_effect.exists(), "prelude I/O must not execute")
+            self.assertTrue(any(d.name == "Lib" for d in dirs), dirs)
+
+    def test_bundled_loader_exposes_source_in_tracebacks(self) -> None:
+        import traceback
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tc = root / "TC"
+            tc.mkdir()
+            lib = root / "Lib"
+            lib.mkdir()
+            (lib / "HelperCalc.py").write_text(
+                "def explode():\n"
+                "    sentinel_bad_line = 1 / 0\n"
+                "    return sentinel_bad_line\n",
+                encoding="utf-8",
+            )
+            judge = tc / "judge.py"
+            judge.write_text(
+                "import os, sys\n"
+                "sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'Lib'))\n"
+                "from HelperCalc import explode\n",
+                encoding="utf-8",
+            )
+            bundled = judge_bundler.bundle_judge(judge)
+            ns: dict = {"__name__": "judge_tb_test", "__file__": str(judge)}
+            exec(compile(bundled, str(judge), "exec"), ns)  # noqa: S102
+            loader = sys.modules["HelperCalc"].__loader__
+            self.assertIn("sentinel_bad_line = 1 / 0", loader.get_source("HelperCalc"))
+            try:
+                ns["explode"]()
+            except ZeroDivisionError:
+                formatted = traceback.format_exc()
+            else:
+                self.fail("Expected ZeroDivisionError")
+            self.assertIn("<bundled:HelperCalc>", formatted)
+            self.assertIn("sentinel_bad_line = 1 / 0", formatted)
+            sys.modules.pop("HelperCalc", None)
 
 
 if __name__ == "__main__":

@@ -56,3 +56,52 @@ def test_large_json_is_gzipped_and_round_trips(client):
 def test_other_responses_are_left_plain(client, path, headers):
     resp = client.get(path, headers=headers)
     assert "Content-Encoding" not in resp.headers
+
+
+def test_static_wasm_is_gzipped(client):
+    resp = client.get("/static/vendor/sbs/onig.wasm", headers=GZIP)
+    assert resp.status_code == 200
+    assert resp.headers.get("Content-Encoding") == "gzip"
+    raw = client.get("/static/vendor/sbs/onig.wasm").data
+    assert len(resp.data) < len(raw) * 0.5
+    assert gzip.decompress(resp.data) == raw
+
+
+def test_static_sidecar_gz_is_served_when_fresh_and_ignored_when_stale(tmp_path):
+    import os
+    import app as app_pkg
+    from app.config import Config
+
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
+    asset = static_dir / "bundle.js"
+    payload_v1 = ("const alpha = 'hello world '; \n" * 200).encode("utf-8")
+    asset.write_bytes(payload_v1)
+    sidecar = static_dir / "bundle.js.gz"
+    precompressed = gzip.compress(payload_v1, compresslevel=9)
+    sidecar.write_bytes(precompressed)
+    mtime = asset.stat().st_mtime
+    os.utime(sidecar, (mtime + 5, mtime + 5))
+
+    class SidecarConfig(Config):
+        TESTING = True
+        SECRET_KEY = "sidecar-test"
+        GLOBAL_LOGIN_REQUIRED = False
+        INSTANCE_DIR = tmp_path / "instance"
+        SQLALCHEMY_DATABASE_URI = "postgresql+psycopg2://invalid:invalid@127.0.0.1:1/never-connect"
+
+    application = app_pkg.create_app(SidecarConfig)
+    application.static_folder = str(static_dir)
+    c = application.test_client()
+    resp = c.get("/static/bundle.js", headers=GZIP)
+    assert resp.status_code == 200
+    assert resp.headers.get("Content-Encoding") == "gzip"
+    assert resp.data == precompressed
+    assert gzip.decompress(resp.data) == payload_v1
+
+    # Make source newer than sidecar: stale sidecar must not serve old bytes
+    payload_v2 = ("const beta = 'updated bundle '; \n" * 220).encode("utf-8")
+    asset.write_bytes(payload_v2)
+    os.utime(asset, (mtime + 20, mtime + 20))
+    resp2 = c.get("/static/bundle.js", headers=GZIP)
+    assert gzip.decompress(resp2.data) == payload_v2

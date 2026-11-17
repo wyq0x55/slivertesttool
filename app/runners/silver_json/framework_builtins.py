@@ -25,18 +25,14 @@ except ImportError:
         Variable = None  # allows import under unit tests without Silver
 
 
-# --------------------------------------------------------------------------- #
-# CustomClass.py  ->  MagicList
-# --------------------------------------------------------------------------- #
-class MagicList(list):
-    """A list that compares equal to any element it contains."""
-    def __eq__(self, other):
-        return other in self
+_here = os.path.dirname(os.path.abspath(__file__))
+if _here not in sys.path:
+    sys.path.insert(0, _here)
 
-    def __ne__(self, other):
-        return other not in self
-
-    __hash__ = None
+try:
+    from .step_parser import MagicList
+except ImportError:
+    from step_parser import MagicList
 
 
 # --------------------------------------------------------------------------- #

@@ -178,6 +178,8 @@ class PooledInstance:
     handle: Any
     console_log: Optional[Path]
     poisoned: bool = field(default=False)
+    runs: int = field(default=0)
+    retire_on_release: bool = field(default=False)
 
     def poison(self) -> None:
         self.poisoned = True
@@ -207,6 +209,8 @@ class SilverInstancePool:
         driver: InstanceDriver,
         pool_dir: Path,
         default_sil_getter: Callable[[], Optional[Path]] | None = None,
+        *,
+        max_runs: int = 0,
     ) -> None:
         self._driver = driver
         self._pool_dir = Path(pool_dir)
@@ -220,6 +224,7 @@ class SilverInstancePool:
         self._size = 0          # live instances (idle + busy + reserved)
         self._in_use = 0        # currently borrowed
         self._target = 0        # desired number of instances (== license count)
+        self._max_runs = max(0, int(max_runs))
         self._closed = False
         # Instance uids double as the run-folder label (``inst_<uid>``). A slot
         # allocator recycles released numbers so the labels stay bounded to
@@ -259,6 +264,26 @@ class SilverInstancePool:
                 surplus.append(inst)
             self._cond.notify_all()
         for inst in surplus:
+            self._dispose(inst)
+
+    def set_max_runs(self, max_runs: int) -> None:
+        """Set the per-instance run limit before automatic retirement (0 = unlimited)."""
+        max_runs = max(0, int(max_runs))
+        expired: List[PooledInstance] = []
+        with self._cond:
+            self._max_runs = max_runs
+            if max_runs > 0 and self._idle:
+                kept: List[PooledInstance] = []
+                for inst in self._idle:
+                    if inst.runs >= max_runs:
+                        inst.poison()
+                        self._retiring.add(inst)
+                        expired.append(inst)
+                    else:
+                        kept.append(inst)
+                self._idle = kept
+            self._cond.notify_all()
+        for inst in expired:
             self._dispose(inst)
 
     def prewarm(self) -> int:
@@ -326,6 +351,8 @@ class SilverInstancePool:
         should_cancel: Callable[[], bool] | None = None,
         poll: float = 0.5,
         blocking: bool = True,
+        *,
+        clean_room: bool = False,
     ) -> Optional[PooledInstance]:
         """Borrow an idle instance, blocking until one is free.
 
@@ -334,30 +361,59 @@ class SilverInstancePool:
         becomes true while waiting (the job was cancelled before it started).
         With ``blocking=False`` it also returns ``None`` instead of waiting when
         no instance is idle and the pool is already at its target size.
+        When ``clean_room=True``, only a cold instance (``runs == 0``) is lent,
+        retiring a warm idle instance if needed to stay within ``target``, and
+        marking the borrowed instance for retirement on release.
         """
         should_cancel = should_cancel or (lambda: False)
         while True:
             self._retry_retiring()
+            if should_cancel():
+                return None
             reserve_uid: Optional[int] = None
             stale: Optional[PooledInstance] = None
+            candidate: Optional[PooledInstance] = None
             with self._cond:
                 if self._closed:
                     return None
-                if should_cancel():
-                    return None
-                if self._idle:
+                if clean_room:
+                    # Prefer an already-poisoned entry for immediate cleanup, else
+                    # look for a cold (runs == 0) idle instance.
+                    if self._idle and self._idle[-1].poisoned:
+                        inst = self._idle.pop()
+                        self._retiring.add(inst)
+                        stale = inst
+                    else:
+                        cold_idx = next(
+                            (i for i in range(len(self._idle) - 1, -1, -1)
+                             if not self._idle[i].poisoned and self._idle[i].runs == 0),
+                            None,
+                        )
+                        if cold_idx is not None:
+                            candidate = self._idle.pop(cold_idx)
+                        elif self._size < self._target:
+                            self._size += 1
+                            reserve_uid = self._slots.acquire()
+                        elif self._idle:
+                            # Evict one warm idle instance to free capacity for a
+                            # cold instance without exceeding the license target.
+                            warm = self._idle.pop()
+                            warm.poison()
+                            self._retiring.add(warm)
+                            stale = warm
+                        elif not blocking:
+                            return None
+                        else:
+                            self._cond.wait(timeout=poll)
+                            continue
+                elif self._idle:
                     inst = self._idle.pop()
-                    try:
-                        alive = not inst.poisoned and self._driver.is_alive(inst.handle)
-                    except Exception:
-                        logger.exception("Liveness probe failed for Silver instance uid=%s", inst.uid)
-                        alive = False
-                    if alive:
-                        self._in_use += 1
-                        return inst
-                    inst.poison()
-                    self._retiring.add(inst)
-                    stale = inst
+                    if inst.poisoned or (self._max_runs > 0 and inst.runs >= self._max_runs):
+                        inst.poison()
+                        self._retiring.add(inst)
+                        stale = inst
+                    else:
+                        candidate = inst
                 elif self._size < self._target:
                     self._size += 1
                     reserve_uid = self._slots.acquire()
@@ -366,6 +422,30 @@ class SilverInstancePool:
                 else:
                     self._cond.wait(timeout=poll)
                     continue
+            if candidate is not None:
+                try:
+                    alive = self._driver.is_alive(candidate.handle)
+                except Exception:
+                    logger.exception(
+                        "Liveness probe failed for Silver instance uid=%s", candidate.uid
+                    )
+                    alive = False
+                with self._cond:
+                    if (self._closed or candidate in self._retiring
+                            or candidate not in self._live):
+                        stale = candidate
+                    elif not alive or candidate.poisoned:
+                        candidate.poison()
+                        self._retiring.add(candidate)
+                        stale = candidate
+                    elif self._size - len(self._retiring) > self._target:
+                        self._retiring.add(candidate)
+                        stale = candidate
+                    else:
+                        if clean_room:
+                            candidate.retire_on_release = True
+                        self._in_use += 1
+                        return candidate
             if stale is not None:
                 self._dispose(stale)
                 continue
@@ -394,6 +474,8 @@ class SilverInstancePool:
                     # shutdown already released its slot and zeroed the counters.
                     self._cond.notify_all()
                     return None
+                if clean_room:
+                    inst.retire_on_release = True
                 self._in_use += 1
             return inst
 
@@ -410,7 +492,9 @@ class SilverInstancePool:
             if inst not in self._live or inst in self._retiring or inst in self._idle:
                 return
             self._in_use = max(0, self._in_use - 1)
-            if (inst.poisoned or self._size - len(self._retiring) > self._target
+            if (inst.poisoned or inst.retire_on_release
+                    or (self._max_runs > 0 and inst.runs >= self._max_runs)
+                    or self._size - len(self._retiring) > self._target
                     or self._closed):
                 self._retiring.add(inst)
                 dispose_it = True
@@ -431,7 +515,14 @@ class SilverInstancePool:
 
     def configure_and_run(self, inst: PooledInstance, ctx: RunContext) -> None:
         """Run one job on the borrowed instance (delegates to the driver)."""
-        self._driver.configure_and_run(inst.handle, ctx)
+        with self._cond:
+            inst.runs += 1
+            max_runs = self._max_runs
+        try:
+            self._driver.configure_and_run(inst.handle, ctx)
+        finally:
+            if max_runs > 0 and inst.runs >= max_runs:
+                self.poison(inst)
 
     # ---------------------- shutdown ---------------------------------------- #
     def shutdown(self) -> None:

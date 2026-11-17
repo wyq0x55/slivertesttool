@@ -101,7 +101,11 @@ def browse_server_paths(project_id: int):
     path = request.args.get("path", "")
     if len(path) > 4096:
         raise RequestParamError("参数 path 过长", param="path")
-    return ok(server_paths.browse(path, arg_str("kind", "directory", allowed=server_paths.KINDS)))
+    return ok(server_paths.browse(
+        path,
+        arg_str("kind", "directory", allowed=server_paths.KINDS),
+        project_id=project_id,
+    ))
 
 
 @bp.post("/targets/import")

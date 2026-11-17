@@ -84,13 +84,16 @@ def _reconcile_loop(app, config, stop: threading.Event) -> None:
     while not stop.is_set():
         interval = 5.0
         try:
+            max_runs = int(getattr(config, "SILVER_MAX_RUNS_PER_INSTANCE", 50) or 0)
             with app.app_context():
                 limit = license_service.get_limit()
                 draining = license_service.is_draining()
                 pool_enabled = runtime_config.get_bool("silver_pool_enabled")
                 prewarm = runtime_config.get_bool("silver_pool_prewarm")
                 interval = runtime_config.get_float("silver_pool_reconcile_seconds")
+                max_runs = runtime_config.get_int("silver_max_runs_per_instance")
             pool.set_target(limit if pool_enabled and not draining else 0)
+            pool.set_max_runs(max_runs)
             if pool_enabled and prewarm and not draining:
                 pool.prewarm()
         except Exception:  # noqa: BLE001 - reconciler must never die

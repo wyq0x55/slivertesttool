@@ -27,6 +27,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import select
+import threading
 import time
 from urllib.parse import parse_qs
 
@@ -45,6 +48,7 @@ _log = logging.getLogger("collab.server")
 # lock before allocating queue IDs, so later committed entries have larger IDs.
 # The receipt is persisted atomically with fields in a full Doc update.
 _WRITEBACK_RECEIPTS_KEY = "server_writeback_receipts"
+_SSE_PATH_RE = re.compile(r"^/sse/tasks/(\d+)/([A-Za-z0-9_.-]+)$")
 
 
 def _room_from_scope(scope: dict) -> str:
@@ -55,6 +59,91 @@ def _token_from_scope(scope: dict) -> str:
     qs = parse_qs((scope.get("query_string") or b"").decode("latin-1"))
     vals = qs.get("token") or qs.get("access_token") or []
     return vals[0] if vals else ""
+
+
+class _TaskEventHub:
+    """Fan-out PostgreSQL LISTEN/NOTIFY wakeups to async SSE subscribers."""
+
+    def __init__(self, flask_app) -> None:
+        self._app = flask_app
+        self._lock = threading.Lock()
+        self._subscribers: dict[int, set[tuple[asyncio.AbstractEventLoop, asyncio.Event]]] = {}
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def subscribe(self, task_id: int, loop: asyncio.AbstractEventLoop) -> asyncio.Event:
+        ev = asyncio.Event()
+        with self._lock:
+            self._subscribers.setdefault(int(task_id), set()).add((loop, ev))
+            if self._thread is None or not self._thread.is_alive():
+                self._stop.clear()
+                self._thread = threading.Thread(
+                    target=self._listen_loop, daemon=True, name="sse-pg-listen"
+                )
+                self._thread.start()
+        return ev
+
+    def unsubscribe(self, task_id: int, loop: asyncio.AbstractEventLoop, ev: asyncio.Event) -> None:
+        with self._lock:
+            bucket = self._subscribers.get(int(task_id))
+            if bucket is not None:
+                bucket.discard((loop, ev))
+                if not bucket:
+                    self._subscribers.pop(int(task_id), None)
+            if not self._subscribers:
+                self._stop.set()
+
+    def shutdown(self) -> None:
+        self._stop.set()
+
+    def _wake(self, task_id: int) -> None:
+        with self._lock:
+            targets = list(self._subscribers.get(int(task_id), ()))
+        for loop, ev in targets:
+            try:
+                loop.call_soon_threadsafe(ev.set)
+            except RuntimeError:
+                pass
+
+    def _listen_loop(self) -> None:
+        from ..extensions import db
+        from ..services.event_service import TASK_EVENTS_CHANNEL
+
+        raw_conn = None
+        try:
+            with self._app.app_context():
+                if db.engine.dialect.name != "postgresql":
+                    return
+                raw_conn = db.engine.raw_connection()
+            dbapi_conn = getattr(raw_conn, "driver_connection", None) or getattr(
+                raw_conn, "connection", raw_conn
+            )
+            dbapi_conn.autocommit = True
+            cur = dbapi_conn.cursor()
+            cur.execute(f"LISTEN {TASK_EVENTS_CHANNEL};")
+            cur.close()
+            while not self._stop.is_set():
+                with self._lock:
+                    if not self._subscribers:
+                        break
+                ready, _, _ = select.select([dbapi_conn], [], [], 1.0)
+                if not ready:
+                    continue
+                dbapi_conn.poll()
+                while dbapi_conn.notifies:
+                    note = dbapi_conn.notifies.pop(0)
+                    try:
+                        self._wake(int(note.payload))
+                    except (TypeError, ValueError):
+                        continue
+        except Exception:  # noqa: BLE001 - fallback polling still delivers events
+            _log.debug("PostgreSQL LISTEN loop stopped; SSE using poll fallback", exc_info=True)
+        finally:
+            if raw_conn is not None:
+                try:
+                    raw_conn.close()
+                except Exception:  # noqa: BLE001
+                    pass
 
 
 class CollabWebsocketServer(WebsocketServer):
@@ -486,6 +575,7 @@ def build_asgi_app(flask_app):
     """
     secret_key = flask_app.config["SECRET_KEY"]
     ws_server = CollabWebsocketServer(flask_app)
+    sse_hub = _TaskEventHub(flask_app)
 
     async def on_connect(message: dict, scope: dict):
         # Return a TRUTHY value to close/reject the socket, falsy to accept it.
@@ -513,14 +603,133 @@ def build_asgi_app(flask_app):
         })
         await send({"type": "http.response.body", "body": body})
 
+    def _header(scope: dict, name: bytes) -> str:
+        for k, v in scope.get("headers") or ():
+            if k.lower() == name:
+                return v.decode("latin-1")
+        return ""
+
+    def _fetch_sse_batch_sync(task_pk: int, last_id: int) -> tuple[list[tuple[int, str]], bool]:
+        from ..extensions import db
+        from ..models import Task, TaskStatus
+        from ..services import event_service
+
+        with flask_app.app_context():
+            try:
+                events = event_service.fetch_since(task_pk, last_id, limit=500)
+                frames = [(ev.id, event_service.format_sse(ev)) for ev in events]
+                current = db.session.get(Task, task_pk)
+                is_final = current is None or TaskStatus(current.status).is_final
+                if is_final:
+                    tail_after = frames[-1][0] if frames else last_id
+                    tail = event_service.fetch_since(task_pk, tail_after, limit=500)
+                    frames.extend((ev.id, event_service.format_sse(ev)) for ev in tail)
+                return frames, is_final
+            finally:
+                db.session.remove()
+
+    async def _serve_task_sse(scope: dict, receive, send, project_id: int, task_key: str) -> None:
+        payload = tokens.verify_sse(secret_key, _token_from_scope(scope))
+        if (
+            not payload
+            or payload.get("pid") != project_id
+            or payload.get("key") != task_key
+        ):
+            await _http_reply(send, 401, b"Unauthorized SSE token\n")
+            return
+        task_pk = int(payload["tid"])
+        qs = parse_qs((scope.get("query_string") or b"").decode("latin-1"))
+        raw_last = _header(scope, b"last-event-id") or (qs.get("last_id") or ["0"])[0]
+        try:
+            last_id = int(raw_last or 0)
+        except (TypeError, ValueError):
+            last_id = 0
+
+        cfg = getattr(flask_app, "config_obj", None)
+        poll = float(getattr(cfg, "SSE_POLL_SECONDS", flask_app.config.get("SSE_POLL_SECONDS", 2.0)) or 2.0)
+        heartbeat = float(getattr(cfg, "SSE_HEARTBEAT_SECONDS", flask_app.config.get("SSE_HEARTBEAT_SECONDS", 15.0)) or 15.0)
+        max_seconds = float(getattr(cfg, "SSE_MAX_STREAM_SECONDS", flask_app.config.get("SSE_MAX_STREAM_SECONDS", 1800.0)) or 0.0)
+
+        headers = [
+            (b"content-type", b"text/event-stream; charset=utf-8"),
+            (b"cache-control", b"no-cache"),
+            (b"x-accel-buffering", b"no"),
+        ]
+        origin = _header(scope, b"origin")
+        if origin:
+            headers.append((b"access-control-allow-origin", origin.encode("latin-1")))
+            headers.append((b"access-control-allow-credentials", b"true"))
+            headers.append((b"vary", b"Origin"))
+
+        await send({"type": "http.response.start", "status": 200, "headers": headers})
+
+        loop = asyncio.get_running_loop()
+        wake_ev = sse_hub.subscribe(task_pk, loop)
+        started = time.monotonic()
+        since_beat = 0.0
+        disconnected = False
+
+        async def _watch_disconnect() -> None:
+            nonlocal disconnected
+            while not disconnected:
+                msg = await receive()
+                if msg.get("type") == "http.disconnect":
+                    disconnected = True
+                    wake_ev.set()
+                    return
+
+        watcher = asyncio.create_task(_watch_disconnect())
+        try:
+            while not disconnected:
+                wake_ev.clear()
+                frames, is_final = await anyio.to_thread.run_sync(
+                    _fetch_sse_batch_sync, task_pk, last_id
+                )
+                if frames:
+                    chunk = "".join(text for _, text in frames).encode("utf-8")
+                    last_id = frames[-1][0]
+                    await send({"type": "http.response.body", "body": chunk, "more_body": True})
+                    since_beat = 0.0
+                if is_final:
+                    await send({
+                        "type": "http.response.body",
+                        "body": b"event: end\ndata: {}\n\n",
+                        "more_body": False,
+                    })
+                    return
+                if max_seconds and (time.monotonic() - started) >= max_seconds:
+                    await send({
+                        "type": "http.response.body",
+                        "body": b'event: end\ndata: {"reason":"stream-timeout"}\n\n',
+                        "more_body": False,
+                    })
+                    return
+                wait_slice = max(0.05, min(poll, heartbeat - since_beat))
+                try:
+                    await asyncio.wait_for(wake_ev.wait(), timeout=wait_slice)
+                except asyncio.TimeoutError:
+                    since_beat += wait_slice
+                    if since_beat >= heartbeat and not disconnected:
+                        since_beat = 0.0
+                        await send({
+                            "type": "http.response.body",
+                            "body": b": keep-alive\n\n",
+                            "more_body": True,
+                        })
+        finally:
+            disconnected = True
+            watcher.cancel()
+            sse_hub.unsubscribe(task_pk, loop, wake_ev)
+
     async def app(scope: dict, receive, send):
         if scope["type"] == "http":
-            # This ASGI app speaks WebSocket only. A plain HTTP request reaching
-            # here almost always means uvicorn accepted the connection but had NO
-            # WebSocket library, so it downgraded the client's `Upgrade` request
-            # to ordinary HTTP. Reply with a clear message instead of crashing
-            # with "ASGI callable returned without starting response" (500).
             path = scope.get("path") or "/"
+            sse_match = _SSE_PATH_RE.match(path)
+            if sse_match and (scope.get("method") or "GET").upper() == "GET":
+                await _serve_task_sse(
+                    scope, receive, send, int(sse_match.group(1)), sse_match.group(2)
+                )
+                return
             if path == "/" or path == "/healthz":
                 await _http_reply(send, 200, b"collab server up (websocket only)\n")
             else:
@@ -545,6 +754,7 @@ def build_asgi_app(flask_app):
                     _log.info("collab websocket server started")
                     await send({"type": "lifespan.startup.complete"})
                 elif message["type"] == "lifespan.shutdown":
+                    sse_hub.shutdown()
                     try:
                         await ws_server.__aexit__(None, None, None)
                     except Exception:  # pragma: no cover

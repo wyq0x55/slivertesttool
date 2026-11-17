@@ -125,3 +125,43 @@ def test_pooled_run_loads_the_configuration_once(tmp_path):
     assert params["TESTCASE"] == str(case / "testcase_TC1.json")
     assert params["OUTPUTTXT"] == str(case / "output.txt")
     assert params["SIlVER"] == str(model)
+
+
+def test_prepare_run_sil_uses_model_dir_output_txt_fallback(tmp_path):
+    case = tmp_path / "inputs" / "TC1"
+    case.mkdir(parents=True)
+    (case / "silver_json_runner.py").write_text("", encoding="utf-8")
+    (case / "testcase_TC1.json").write_text("{}", encoding="utf-8")
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    model = model_dir / "RWS.sil"
+    model.write_bytes(MODEL)
+    model_signals = model_dir / "output.txt"
+    model_signals.write_text("veh_speed\n", encoding="utf-8")
+
+    log_dir = tmp_path / "logs"
+    ctx = RunContext(test_id="TC1", run_dir=tmp_path / "inputs", log_dir=log_dir,
+                     sil_path=model, gui=False, timeout=5)
+    run_sil = SilverRunner().prepare_run_sil(ctx)
+    out = ET.fromstring(run_sil.read_bytes())
+    params = {p.findtext("name"): p.findtext("value") for p in out.find("parameters")}
+    assert params["OUTPUTTXT"] == str(model_signals)
+
+
+def test_csv_budget_guard_rejects_oversized_output_csv(tmp_path):
+    case = tmp_path / "inputs" / "TC1"
+    case.mkdir(parents=True)
+    (case / "silver_json_runner.py").write_text("", encoding="utf-8")
+    (case / "testcase_TC1.json").write_text("{}", encoding="utf-8")
+    model = tmp_path / "model" / "RWS.sil"
+    model.parent.mkdir()
+    model.write_bytes(MODEL)
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    (log_dir / "output.csv").write_bytes(b"x" * 2048)
+    ctx = RunContext(test_id="TC1", run_dir=tmp_path / "inputs", log_dir=log_dir,
+                     sil_path=model, gui=False, timeout=5,
+                     reload_model=True, max_csv_bytes=1024)
+
+    with pytest.raises(RunnerError, match="output.csv size"):
+        SilverRunner().configure_and_run(_Instance(), ctx)

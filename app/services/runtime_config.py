@@ -70,10 +70,19 @@ FIELDS: List[FieldSpec] = [
         min=0.5, max=3600, group="pool",
     ),
     FieldSpec(
+        "silver_max_runs_per_instance", "int", "SILVER_MAX_RUNS_PER_INSTANCE",
+        min=0, max=100_000, group="pool",
+    ),
+    FieldSpec("silver_clean_room", "bool", "SILVER_CLEAN_ROOM", group="pool"),
+    FieldSpec(
         "execution_timeout", "int", "EXECUTION_TIMEOUT",
         min=1, max=86400, group="runner",
     ),
     FieldSpec("silver_gui", "bool", "SILVER_GUI", group="runner"),
+    FieldSpec(
+        "silver_max_csv_bytes", "int", "SILVER_MAX_CSV_BYTES",
+        min=0, max=68_719_476_736, group="runner",
+    ),
     FieldSpec(
         "task_event_retention", "int", "TASK_EVENT_RETENTION",
         min=100, max=1_000_000, group="maintenance",

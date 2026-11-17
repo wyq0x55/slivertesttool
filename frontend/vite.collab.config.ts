@@ -23,11 +23,15 @@ export default defineConfig({
     "process.env": "{}",
     global: "globalThis",
   },
+  esbuild: {
+    legalComments: "none",
+    drop: ["debugger"],
+  },
   build: {
     outDir: resolve(__dirname, "../app/static/vendor/collab"),
     emptyOutDir: false, // keep README.md and any hand-vendored assets
     cssCodeSplit: false,
-    target: "es2018",
+    target: "es2020",
     minify: true,
     lib: {
       entry: resolve(__dirname, "src/collab.ts"),

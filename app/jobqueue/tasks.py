@@ -120,6 +120,16 @@ def get_pool(app, config):
     )
     pool = _get_pool(driver, Path(config.POOL_DIR), _default_sil)
     pool.set_target(_current_pool_target(app))
+    if hasattr(pool, "set_max_runs"):
+        max_runs = int(getattr(config, "SILVER_MAX_RUNS_PER_INSTANCE", 50) or 0)
+        try:
+            from ..services import runtime_config
+
+            with app.app_context():
+                max_runs = runtime_config.get_int("silver_max_runs_per_instance")
+        except Exception:  # noqa: BLE001
+            pass
+        pool.set_max_runs(max_runs)
     return pool
 
 
@@ -192,9 +202,10 @@ def _wait_capacity(app) -> int:
     from ..services import license_service
 
     workers = max(1, int(getattr(app.config_obj, "HUEY_WORKERS", 16) or 1))
+    reserved = max(1, int(getattr(app.config_obj, "HUEY_RESERVED_WORKERS", 1) or 1))
     with app.app_context():
         limit = max(1, license_service.get_limit())
-    return max(1, min(limit, workers - limit - 1))
+    return max(1, min(limit, workers - limit - reserved))
 
 
 def _try_enter_wait(app) -> bool:
@@ -223,6 +234,53 @@ def _reschedule(task_pk: int, run_count: int, delay: float) -> None:
     except Exception:  # noqa: BLE001 - recovery republishes a lost attempt
         db.session.rollback()
         logger.exception("Task retry publication failed for pk=%s", task_pk)
+
+
+def _wake_next_queued_run(app) -> None:
+    """Immediately dispatch the oldest waiting queued run when a slot frees.
+
+    Overflow attempts sit on Huey's schedule for ``_OVERFLOW_RETRY_SECONDS`` so
+    they do not occupy consumer threads. Waking the head queued attempt on slot
+    release eliminates the 30s idle bubble between back-to-back batches.
+    """
+    if huey.immediate:
+        return
+    try:
+        from ..extensions import db
+        from ..models import Task, TaskStatus
+        from ..services import license_service, worker_lock
+
+        if worker_lock.ownership_was_lost():
+            return
+        with app.app_context():
+            if license_service.is_draining():
+                return
+            pending_args = {
+                tuple(t.args)
+                for t in huey.pending()
+                if isinstance(t, run_task.task_class)
+            }
+            candidates = (
+                Task.query.filter_by(
+                    status=TaskStatus.QUEUED.value,
+                    deleted_at=None,
+                    cancel_requested=False,
+                )
+                .order_by(Task.id.asc())
+                .limit(8)
+                .all()
+            )
+            db.session.rollback()
+            for candidate in candidates:
+                identity = (candidate.id, candidate.run_count)
+                if identity in pending_args:
+                    return
+                if dispatch_lease_is_live(candidate.id, candidate.run_count):
+                    continue
+                run_task.schedule(args=identity, delay=0)
+                return
+    except Exception:  # noqa: BLE001 - best-effort wakeup
+        logger.debug("Immediate queue wakeup skipped", exc_info=True)
 
 
 def _claim_run(database, task_pk: int, expected_run_count: int):
@@ -324,9 +382,19 @@ def _run_pooled_attempt(app, pool, task_pk, expected_run_count, sil_path, lease)
                     or t.status != TaskStatus.QUEUED.value or t.run_count != expected_run_count)
 
     waiting = _try_enter_wait(app)
+    clean_room = bool(getattr(app.config_obj, "SILVER_CLEAN_ROOM", False))
+    try:
+        from ..services import runtime_config
+
+        with app.app_context():
+            clean_room = runtime_config.get_bool("silver_clean_room")
+    except Exception:  # noqa: BLE001
+        pass
+    acquire_kw = {"clean_room": True} if clean_room else {}
     try:
         instance = pool.acquire(sil_path, should_cancel=_should_cancel,
-                                poll=_LICENSE_POLL_SECONDS, blocking=waiting)
+                                poll=_LICENSE_POLL_SECONDS, blocking=waiting,
+                                **acquire_kw)
     finally:
         if waiting:
             _leave_wait()
@@ -377,6 +445,8 @@ def _run_pooled_attempt(app, pool, task_pk, expected_run_count, sil_path, lease)
                     license_service.release()
             finally:
                 pool.release(instance)
+            if claimed:
+                _wake_next_queued_run(app)
 
 
 def _run_task_dedicated(app, config, task_pk: int, expected_run_count=None) -> None:
@@ -485,6 +555,8 @@ def _run_dedicated_attempt(app, db, task_pk, expected_run_count) -> None:
     finally:
         dedicated_allocator().release(slot)
         license_service.release()
+        if claimed:
+            _wake_next_queued_run(app)
 
 
 def publish_ai_generation(draft_pk: int) -> None:

@@ -786,6 +786,56 @@ def test_sdk_cleanup_probe_error_still_attempts_exit():
     handle.exit.assert_called_once_with(force=True)
 
 
+def test_max_runs_retires_and_replaces_aged_instance():
+    driver = FakeDriver()
+    pool = _make_pool(driver, target=1)
+    pool.set_max_runs(2)
+    pool.prewarm()
+
+    first = pool.acquire(Path("model.sil"))
+    pool.configure_and_run(first, _ctx())
+    pool.release(first)
+    assert driver.disposed == 0
+    assert pool.stats()["idle"] == 1
+
+    second = pool.acquire(Path("model.sil"))
+    assert second is first
+    pool.configure_and_run(second, _ctx())
+    pool.release(second)
+    assert driver.disposed == 1
+    assert pool.stats()["idle"] == 0
+
+    third = pool.acquire(Path("model.sil"))
+    assert third is not first
+    assert third.runs == 0
+    assert driver.created == 2
+    pool.release(third)
+
+
+def test_clean_room_evicts_warm_instance_and_retires_after_run():
+    driver = FakeDriver()
+    pool = _make_pool(driver, target=1)
+    pool.prewarm()
+
+    warm = pool.acquire(Path("model.sil"))
+    pool.configure_and_run(warm, _ctx())
+    pool.release(warm)
+    assert warm.runs == 1
+    assert pool.stats()["idle"] == 1
+
+    cold = pool.acquire(Path("model.sil"), clean_room=True)
+    assert cold is not warm
+    assert cold.runs == 0
+    assert driver.disposed == 1
+    assert driver.created == 2
+    assert pool.stats()["size"] == 1
+
+    pool.configure_and_run(cold, _ctx())
+    pool.release(cold)
+    assert driver.disposed == 2
+    assert pool.stats()["size"] == 0
+
+
 # --------------------------------------------------------------------------- #
 # helpers
 # --------------------------------------------------------------------------- #

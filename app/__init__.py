@@ -8,15 +8,23 @@ run.py entry point performs that bootstrap once before spawning children.
 
 from __future__ import annotations
 
-from flask import Flask
+from typing import TYPE_CHECKING
 
-from .config import Config
-from .extensions import configure_utc_connections, db
+if TYPE_CHECKING:
+    from flask import Flask
+    from .config import Config
 
 __version__ = "2.13.0"
 
 
-def create_app(config_object: type[Config] = Config) -> Flask:
+def create_app(config_object: type[Config] | None = None) -> Flask:
+    from flask import Flask
+
+    from .config import Config as _DefaultConfig
+    from .extensions import configure_utc_connections, db
+
+    if config_object is None:
+        config_object = _DefaultConfig
     app = Flask(
         __name__,
         instance_path=str(config_object.INSTANCE_DIR),
@@ -114,14 +122,17 @@ def _install_static_compression(app: Flask) -> None:
 
     from flask import request, url_for
 
-    static_root = _Path(app.static_folder).resolve()
     revision_cache: dict[str, tuple[int, int, str]] = {}
     gzip_cache: dict[str, tuple[str, bytes]] = {}
     min_size = 2048
 
+    def _static_root() -> _Path:
+        return _Path(app.static_folder).resolve()
+
     def _revision(filename: str) -> str:
         """Return a short content revision, recomputing after a file change."""
         try:
+            static_root = _static_root()
             target = (static_root / filename).resolve()
             target.relative_to(static_root)
             st = target.stat()
@@ -190,7 +201,7 @@ def _install_static_compression(app: Flask) -> None:
                 # Unversioned (e.g. url() inside a stylesheet) or stale: revalidate.
                 resp.headers["Cache-Control"] = "no-cache"
 
-            if not path.endswith((".js", ".css", ".json", ".svg", ".map")):
+            if not path.endswith((".js", ".css", ".json", ".svg", ".map", ".wasm")):
                 return resp
             if resp.status_code != 200:
                 return resp
@@ -203,12 +214,37 @@ def _install_static_compression(app: Flask) -> None:
             hit = gzip_cache.get(path)
             if hit is not None and hit[0] == change_key:
                 gz = hit[1]
-            else:
+                closer = getattr(resp.response, "close", None)
+                if callable(closer):
+                    closer()
                 resp.direct_passthrough = False
-                data = resp.get_data()
-                if len(data) < min_size:
+            else:
+                if clen is not None and clen < min_size:
                     return resp
-                gz = _gzip.compress(data, compresslevel=6)
+                gz = None
+                try:
+                    static_root = _static_root()
+                    src_file = (static_root / filename).resolve()
+                    src_file.relative_to(static_root)
+                    sidecar = src_file.parent / (src_file.name + ".gz")
+                    if (sidecar.is_file()
+                            and not sidecar.is_symlink()
+                            and sidecar.stat().st_mtime_ns >= src_file.stat().st_mtime_ns
+                            and src_file.stat().st_size >= min_size):
+                        gz = sidecar.read_bytes()
+                except (OSError, ValueError):
+                    gz = None
+                if gz is not None:
+                    closer = getattr(resp.response, "close", None)
+                    if callable(closer):
+                        closer()
+                    resp.direct_passthrough = False
+                else:
+                    resp.direct_passthrough = False
+                    data = resp.get_data()
+                    if len(data) < min_size:
+                        return resp
+                    gz = _gzip.compress(data, compresslevel=6)
                 gzip_cache[path] = (change_key, gz)
 
             _send_gzipped(resp, gz)

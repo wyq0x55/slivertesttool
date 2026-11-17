@@ -51,8 +51,10 @@ Everything here is read-only.
 from __future__ import annotations
 
 import logging
-from collections import OrderedDict, defaultdict
+from collections import defaultdict
 from typing import Optional
+
+from sqlalchemy import case, literal
 
 from ...extensions import db
 from ...models import LMUser, Project, TestItemRow, TestRunRecord
@@ -233,30 +235,30 @@ def trend(project_id: int, *, limit: int = MAX_TREND_POINTS) -> dict:
     produced an executed outcome, so the line is monotonic and reads as
     "how much of the matrix has ever been covered".
     """
-    rows = (
-        TestRunRecord.query.filter(
+    case_key = _case_key_expr()
+    first_runs = (
+        db.session.query(
+            db.func.min(TestRunRecord.executed_on).label("first_day"),
+        )
+        .filter(
             TestRunRecord.project_id == project_id,
             TestRunRecord.outcome.in_(EXECUTED_OUTCOMES),
             TestRunRecord.executed_on != "",
         )
-        .with_entities(
-            TestRunRecord.executed_on,
-            TestRunRecord.row_uuid,
-            TestRunRecord.test_id,
+        .group_by(case_key)
+        .subquery()
+    )
+    day_counts = (
+        db.session.query(
+            first_runs.c.first_day,
+            db.func.count().label("cnt"),
         )
-        .order_by(TestRunRecord.executed_on.asc())
+        .group_by(first_runs.c.first_day)
+        .order_by(first_runs.c.first_day.asc())
         .all()
     )
 
-    first_seen: dict[str, str] = {}
-    for executed_on, row_uuid, test_id in rows:
-        key = row_uuid or f"tid:{test_id}"
-        if key not in first_seen:
-            first_seen[key] = executed_on
-
-    per_day: dict[str, int] = defaultdict(int)
-    for day in first_seen.values():
-        per_day[day] += 1
+    per_day: dict[str, int] = {day: int(cnt) for day, cnt in day_counts}
 
     dates = sorted(per_day)
     if len(dates) > limit:
@@ -293,35 +295,136 @@ def by_version(project_id: int, *, limit: int = MAX_VERSIONS) -> dict:
     keeps a release timeline readable without assuming a version-number format
     the project may not follow.
     """
-    rows = (
-        TestRunRecord.query.filter(
+    raw_ver_rows = (
+        db.session.query(
+            TestRunRecord.model_version,
+            db.func.min(TestRunRecord.executed_at),
+            db.func.min(TestRunRecord.id),
+        )
+        .filter(
             TestRunRecord.project_id == project_id,
             TestRunRecord.outcome.in_(OUTCOMES),
         )
-        .with_entities(
-            TestRunRecord.model_version,
-            TestRunRecord.row_uuid,
-            TestRunRecord.test_id,
-            TestRunRecord.outcome,
-            TestRunRecord.executed_at,
-        )
-        .order_by(TestRunRecord.executed_at.asc())
+        .group_by(TestRunRecord.model_version)
         .all()
     )
+    if not raw_ver_rows:
+        return {
+            "versions": [],
+            "series": {k: [] for k in OUTCOMES},
+            "folded": 0,
+        }
+    first_by_label: dict[str, tuple] = {}
+    has_untrimmed = False
+    for raw_ver, min_at, min_id in raw_ver_rows:
+        raw_str = raw_ver or ""
+        stripped = raw_str.strip()
+        if stripped != raw_str:
+            has_untrimmed = True
+        label = stripped or "(未标注)"
+        stamp = (min_at, min_id)
+        if label not in first_by_label or stamp < first_by_label[label]:
+            first_by_label[label] = stamp
+    versions = [
+        lbl for lbl, _ in sorted(first_by_label.items(), key=lambda kv: kv[1])
+    ]
 
-    order: "OrderedDict[str, None]" = OrderedDict()
-    latest: dict[tuple[str, str], str] = {}
-    for version, row_uuid, test_id, outcome, _executed_at in rows:
-        label = (version or "").strip() or "(未标注)"
-        order.setdefault(label, None)
-        key = (label, row_uuid or f"tid:{test_id}")
-        latest[key] = outcome  # ordered ascending, so the last write wins
+    if db.engine.dialect.name == "postgresql" and not has_untrimmed:
+        uuid_sub = (
+            db.session.query(
+                TestRunRecord.model_version.label("raw_ver"),
+                TestRunRecord.outcome.label("outcome"),
+            )
+            .distinct(TestRunRecord.model_version, TestRunRecord.row_uuid)
+            .filter(
+                TestRunRecord.project_id == project_id,
+                TestRunRecord.outcome.in_(OUTCOMES),
+                TestRunRecord.row_uuid.isnot(None),
+                TestRunRecord.row_uuid != "",
+            )
+            .order_by(
+                TestRunRecord.model_version.asc(),
+                TestRunRecord.row_uuid.asc(),
+                TestRunRecord.executed_at.desc(),
+                TestRunRecord.id.desc(),
+            )
+            .subquery()
+        )
+        tid_sub = (
+            db.session.query(
+                TestRunRecord.model_version.label("raw_ver"),
+                TestRunRecord.outcome.label("outcome"),
+            )
+            .distinct(TestRunRecord.model_version, TestRunRecord.test_id)
+            .filter(
+                TestRunRecord.project_id == project_id,
+                TestRunRecord.outcome.in_(OUTCOMES),
+                db.or_(
+                    TestRunRecord.row_uuid.is_(None),
+                    TestRunRecord.row_uuid == "",
+                ),
+            )
+            .order_by(
+                TestRunRecord.model_version.asc(),
+                TestRunRecord.test_id.asc(),
+                TestRunRecord.executed_at.desc(),
+                TestRunRecord.id.desc(),
+            )
+            .subquery()
+        )
+        raw_buckets = [
+            *db.session.query(
+                uuid_sub.c.raw_ver, uuid_sub.c.outcome, db.func.count(),
+            ).group_by(uuid_sub.c.raw_ver, uuid_sub.c.outcome).all(),
+            *db.session.query(
+                tid_sub.c.raw_ver, tid_sub.c.outcome, db.func.count(),
+            ).group_by(tid_sub.c.raw_ver, tid_sub.c.outcome).all(),
+        ]
+        bucket_rows = [
+            (((rv or "").strip() or "(未标注)"), outcome, cnt)
+            for rv, outcome, cnt in raw_buckets
+        ]
+    else:
+        case_key = _case_key_expr()
+        trimmed_ver = db.func.trim(db.func.coalesce(TestRunRecord.model_version, ""))
+        ver_label = case(
+            (trimmed_ver != "", trimmed_ver),
+            else_=literal("(未标注)"),
+        )
+        ranked = (
+            db.session.query(
+                ver_label.label("label"),
+                TestRunRecord.outcome.label("outcome"),
+                db.func.row_number().over(
+                    partition_by=(ver_label, case_key),
+                    order_by=(
+                        TestRunRecord.executed_at.desc(),
+                        TestRunRecord.id.desc(),
+                    ),
+                ).label("rn"),
+            )
+            .filter(
+                TestRunRecord.project_id == project_id,
+                TestRunRecord.outcome.in_(OUTCOMES),
+            )
+            .subquery()
+        )
+        bucket_rows = (
+            db.session.query(
+                ranked.c.label,
+                ranked.c.outcome,
+                db.func.count().label("cnt"),
+            )
+            .filter(ranked.c.rn == 1)
+            .group_by(ranked.c.label, ranked.c.outcome)
+            .all()
+        )
 
     tally: dict[str, dict[str, int]] = defaultdict(lambda: {k: 0 for k in OUTCOMES})
-    for (label, _case), outcome in latest.items():
-        tally[label][outcome] += 1
+    for label, outcome, cnt in bucket_rows:
+        if outcome in tally[label]:
+            tally[label][outcome] += int(cnt)
 
-    versions = list(order)
     folded: list[str] = []
     if len(versions) > limit:
         # Fold the oldest tail rather than truncating it: dropping data silently
@@ -340,6 +443,20 @@ def by_version(project_id: int, *, limit: int = MAX_VERSIONS) -> dict:
         "series": {k: [tally[v][k] for v in versions] for k in OUTCOMES},
         "folded": len(folded),
     }
+
+
+def _case_key_expr():
+    """SQL expression matching ``row_uuid or f'tid:{test_id}'``."""
+    return case(
+        (
+            db.and_(
+                TestRunRecord.row_uuid.isnot(None),
+                TestRunRecord.row_uuid != "",
+            ),
+            TestRunRecord.row_uuid,
+        ),
+        else_=literal("tid:") + db.func.coalesce(TestRunRecord.test_id, ""),
+    )
 
 
 #: Left-to-right classes. ``other`` is any paired difference that is not

@@ -141,6 +141,9 @@ class Config:
     # limit; the effective number of concurrent Silver runs is enforced by the
     # runtime-adjustable DB license gate, not by this pool size.
     HUEY_WORKERS = _as_int(os.environ.get("HUEY_WORKERS"), 16)
+    # Consumer threads reserved for non-Silver jobs (UT pipeline + AI generation)
+    # so queued Silver license waiters cannot starve interactive background jobs.
+    HUEY_RESERVED_WORKERS = _as_int(os.environ.get("HUEY_RESERVED_WORKERS"), 4)
 
     # --- License / concurrency ---
     # Startup default for the maximum number of concurrent Silver executions.
@@ -155,6 +158,12 @@ class Config:
     DEFAULT_SIL_RELPATH = os.environ.get("DEFAULT_SIL_RELPATH", "model.sil")
     EXECUTION_TIMEOUT = _as_int(os.environ.get("EXECUTION_TIMEOUT"), 5000)
     SILVER_GUI = _as_bool(os.environ.get("SILVER_GUI"), False)
+    # Hard cap on per-run output.csv size in bytes (512 MiB default; 0 disables).
+    # Protects worker disk and curve indexing when a plant model exports thousands
+    # of signals without an output.txt signal-selection allowlist.
+    SILVER_MAX_CSV_BYTES = _as_int(
+        os.environ.get("SILVER_MAX_CSV_BYTES"), 512 * 1024 * 1024
+    )
 
     # --- Pre-warmed Silver instance pool ---
     # When enabled, the worker creates Silver instances on demand and reuses
@@ -172,6 +181,16 @@ class Config:
     SILVER_POOL_RECONCILE_SECONDS = float(
         os.environ.get("SILVER_POOL_RECONCILE_SECONDS", "5")
     )
+    # Automatically retire a pooled Silver instance after this many runs so any
+    # unreset C/C++ DLL static state, heap growth, or FPU mode drift cannot
+    # accumulate indefinitely (0 disables automatic retirement).
+    SILVER_MAX_RUNS_PER_INSTANCE = _as_int(
+        os.environ.get("SILVER_MAX_RUNS_PER_INSTANCE"), 50
+    )
+    # Clean-room qualification mode (ASPICE SWE.4-SWE.6): when enabled, every
+    # pooled run acquires a fresh cold instance (runs == 0) and retires it upon
+    # completion, guaranteeing zero cross-case memory/DLL state carryover.
+    SILVER_CLEAN_ROOM = _as_bool(os.environ.get("SILVER_CLEAN_ROOM"), False)
     # Directory where each pooled instance keeps its stable console-log file.
     POOL_DIR = Path(os.environ.get("POOL_DIR", BASE_DIR / "instance" / "pool"))
 
@@ -204,6 +223,25 @@ class Config:
     # Seconds per repair call. A local model serves one request at a time and
     # keeps working after a client gives up, so a short limit cascades.
     UT_REPAIR_TIMEOUT = _as_int(os.environ.get("UT_REPAIR_TIMEOUT"), 900)
+    # Allowed execution-server root directories for UT source/CSV browsing and
+    # non-admin project bindings (semicolon- or newline-separated on Windows;
+    # os.pathsep-separated on POSIX). When empty, browsing and non-admin bindings
+    # are confined to an isolated per-project directory under WORKSPACE_DIR.
+    UT_ALLOWED_SOURCE_ROOTS = [
+        p.strip()
+        for chunk in os.environ.get("UT_ALLOWED_SOURCE_ROOTS", "").replace("\n", ";").split(
+            ";" if os.name == "nt" else os.pathsep
+        )
+        for p in (chunk.split(";") if os.name != "nt" else [chunk])
+        if p.strip()
+    ]
+    # Optional server-side allowlist of custom host compiler / llvm-cov /
+    # llvm-profdata / profile-runtime executables (semicolon- or newline-separated).
+    UT_ALLOWED_TOOLCHAINS = [
+        p.strip()
+        for p in os.environ.get("UT_ALLOWED_TOOLCHAINS", "").replace("\n", ";").split(";")
+        if p.strip()
+    ]
 
     # --- Upload limits ---
     MAX_UPLOAD_BYTES = _as_int(
@@ -375,6 +413,11 @@ class Config:
     COLLAB_REST_GUARD = _as_bool(os.environ.get("COLLAB_REST_GUARD"), True)
 
     # --- SSE ---
+    # Optional HTTP base URL of the async collab/SSE gateway (e.g.
+    # "http://127.0.0.1:8765"). When set, /api/v1/projects/<id>/tasks/<key>/stream
+    # issues a signed 307 redirect so EventSource streams run on uvicorn's async
+    # loop with PostgreSQL LISTEN/NOTIFY instead of pinning Waitress WSGI threads.
+    COLLAB_SSE_BASE_URL = os.environ.get("COLLAB_SSE_BASE_URL", "").strip()
     # How often the SSE endpoint polls task_events for new rows (seconds).
     SSE_POLL_SECONDS = float(os.environ.get("SSE_POLL_SECONDS", "0.5"))
     # Idle heartbeat interval to keep proxies from closing the stream.

@@ -644,6 +644,25 @@ class TestRunRecord(db.Model):
         db.Index("ix_runrec_project_time", "project_id", "executed_at"),
         db.Index("ix_runrec_project_test", "project_id", "test_id"),
         db.Index("ix_runrec_project_version", "project_id", "model_version"),
+        db.Index(
+            "ix_runrec_proj_ver_case_time",
+            "project_id", "model_version", "row_uuid",
+            db.desc("executed_at"), db.desc("id"), "outcome",
+        ),
+        db.Index(
+            "ix_runrec_proj_ver_tid_time",
+            "project_id", "model_version", "test_id",
+            db.desc("executed_at"), db.desc("id"), "outcome",
+        ),
+        db.Index(
+            "ix_runrec_proj_trend",
+            "project_id", "outcome", "row_uuid", "test_id", "executed_on",
+        ),
+        db.Index(
+            "ix_runrec_proj_model_ver_test",
+            "project_id", "model_name", "model_version", "test_id",
+            db.desc("executed_at"), db.desc("id"),
+        ),
     )
 
     id = db.Column(db.Integer, primary_key=True)

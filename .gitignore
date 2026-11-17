@@ -12,6 +12,8 @@ _review
 # dependencies
 node_modules
 instance
+reports/
+app/static/**/*.gz
 .venv
 .env
 __pycache__

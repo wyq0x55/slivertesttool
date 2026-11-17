@@ -237,6 +237,42 @@ def _migrate_schema() -> None:
                     f"CREATE INDEX IF NOT EXISTS ix_lm_items_{column} "
                     f"ON lm_test_items ({column})"))
 
+    if "lm_test_run_records" in existing_tables:
+        is_pg = db.engine.dialect.name == "postgresql"
+        ver_idx_cols = (
+            "(project_id, model_version, row_uuid, executed_at DESC, id DESC, outcome)"
+            if is_pg else
+            "(project_id, model_version, row_uuid, executed_at, id, outcome)"
+        )
+        ver_tid_cols = (
+            "(project_id, model_version, test_id, executed_at DESC, id DESC, outcome)"
+            if is_pg else
+            "(project_id, model_version, test_id, executed_at, id, outcome)"
+        )
+        cmp_idx_cols = (
+            "(project_id, model_name, model_version, test_id, executed_at DESC, id DESC)"
+            if is_pg else
+            "(project_id, model_name, model_version, test_id, executed_at, id)"
+        )
+        with db.engine.begin() as conn:
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_runrec_proj_ver_case_time "
+                f"ON lm_test_run_records {ver_idx_cols}"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_runrec_proj_ver_tid_time "
+                f"ON lm_test_run_records {ver_tid_cols}"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_runrec_proj_trend "
+                "ON lm_test_run_records "
+                "(project_id, outcome, row_uuid, test_id, executed_on)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_runrec_proj_model_ver_test "
+                f"ON lm_test_run_records {cmp_idx_cols}"
+            ))
+
     _migrate_widen_testitem_uuid(existing_tables, inspector)
     _migrate_user_fk_ondelete(inspector)
     _migrate_testitem_field_keys(existing_tables)
