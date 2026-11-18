@@ -453,7 +453,7 @@
       const mgr = global.LMUniverSteps;
       if (mgr && typeof mgr.mount === "function") {
         try {
-          this.host.innerHTML = "";
+          this.host.replaceChildren();
           this.view = mgr.mount(this.host, {});
           this.engine = "univer";
           try { this._syncDark(); } catch (_e) {}
@@ -577,7 +577,7 @@
       }
       this.view = null;
       this.engine = "builtin";
-      if (this.host) this.host.innerHTML = "";
+      if (this.host) this.host.replaceChildren();
     }
 
     // Pull the latest edits out of the active view into this.doc so toolbar
