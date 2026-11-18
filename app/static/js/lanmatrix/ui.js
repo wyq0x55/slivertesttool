@@ -224,12 +224,20 @@
           okBtn.disabled = reqInput.value.trim() !== o.requireText;
         });
         reqInput.addEventListener("keydown", function (e) {
-          if (e.key === "Enter") { e.preventDefault(); accept(); }
+          if (e.key === "Enter") {
+            if (e.isComposing || e.keyCode === 229) return;
+            e.preventDefault();
+            accept();
+          }
         });
       }
       if (hasInput && !o.input.multiline) {
         valInput.addEventListener("keydown", function (e) {
-          if (e.key === "Enter") { e.preventDefault(); accept(); }
+          if (e.key === "Enter") {
+            if (e.isComposing || e.keyCode === 229) return;
+            e.preventDefault();
+            accept();
+          }
         });
       }
 

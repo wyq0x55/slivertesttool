@@ -115,7 +115,11 @@
       up.addEventListener("click", function () { if (listing && listing.parent !== null) go(listing.parent); }, signal);
       $("ut-path-go").addEventListener("click", function () { go(location.value.trim()); }, signal);
       location.addEventListener("keydown", function (event) {
-        if (event.key === "Enter") { event.preventDefault(); go(location.value.trim()); }
+        if (event.key === "Enter") {
+          if (event.isComposing || event.keyCode === 229) return;
+          event.preventDefault();
+          go(location.value.trim());
+        }
       }, signal);
       choose.addEventListener("click", function () {
         if (choose.disabled) return;
