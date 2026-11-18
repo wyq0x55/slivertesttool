@@ -1,6 +1,7 @@
 /* Project binding draft. Manifest semantics are validated by the server. */
 (function (window, document) {
   "use strict";
+  var structuredClone = window.structuredClone || Blob.constructor("return structuredClone")();
   var root = document.querySelector(".lm-ut-binding");
   if (!root) return;
   var pid = Number(root.dataset.project);
@@ -335,7 +336,7 @@
       if (k === "stub_mode") $("ut-c-" + k).checked = value === "llm";
       else $("ut-c-" + k).value = String(value);
     });
-    draft = object(c.manifest_document) ? JSON.parse(JSON.stringify(c.manifest_document)) : {
+    draft = object(c.manifest_document) ? structuredClone(c.manifest_document) : {
       test_policy: POLICY.reduce(function (policy, key) { policy[key] = false; return policy; }, { version: "1" })
     };
     $("ut-c-manifest_path").value = c.manifest_path || "";
