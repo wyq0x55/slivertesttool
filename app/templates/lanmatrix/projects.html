@@ -53,18 +53,18 @@
   </div>
 </div>
 
-<dialog id="lm-new-dialog" class="lm-dialog">
+<dialog id="lm-new-dialog" class="lm-dialog" aria-labelledby="lm-new-dlg-title">
   <form method="dialog" class="lm-card" style="padding:22px;min-width:380px;display:flex;flex-direction:column;gap:14px">
-    <h3 style="font-size:17px">新建空白项目</h3>
-    <div class="field"><label>项目类型</label>
+    <h3 id="lm-new-dlg-title" style="font-size:17px">新建空白项目</h3>
+    <div class="field"><label for="lm-np-type">项目类型</label>
       <select id="lm-np-type">
         <option value="unit_test">单元测试（ut-agent / Clang/LLVM）</option>
         <option value="silver">Silver 仿真测试（Synopsys Silver / 测试矩阵）</option>
       </select>
     </div>
-    <div class="field"><label>项目编码</label><input id="lm-np-code" required placeholder="RWS"></div>
-    <div class="field"><label>项目名称</label><input id="lm-np-name" placeholder="RWS MCU 资格测试"></div>
-    <div class="field"><label>描述</label><textarea id="lm-np-desc" rows="2" placeholder="可选"></textarea></div>
+    <div class="field"><label for="lm-np-code">项目编码</label><input id="lm-np-code" required placeholder="RWS"></div>
+    <div class="field"><label for="lm-np-name">项目名称</label><input id="lm-np-name" placeholder="RWS MCU 资格测试"></div>
+    <div class="field"><label for="lm-np-desc">描述</label><textarea id="lm-np-desc" rows="2" placeholder="可选"></textarea></div>
     <div class="login-err" id="lm-np-error" hidden></div>
     <menu style="display:flex;gap:10px;justify-content:flex-end;margin:0;padding:0">
       <button value="cancel" formnovalidate class="btn">取消</button>
@@ -73,13 +73,13 @@
   </form>
 </dialog>
 
-<dialog id="lm-edit-dialog" class="lm-dialog">
+<dialog id="lm-edit-dialog" class="lm-dialog" aria-labelledby="lm-edit-dlg-title">
   <form method="dialog" class="lm-card" style="padding:22px;min-width:380px;display:flex;flex-direction:column;gap:14px">
-    <h3 style="font-size:17px">编辑项目</h3>
+    <h3 id="lm-edit-dlg-title" style="font-size:17px">编辑项目</h3>
     <input type="hidden" id="lm-ep-id">
-    <div class="field"><label>项目名称</label><input id="lm-ep-name" placeholder="项目名称"></div>
-    <div class="field"><label>描述</label><textarea id="lm-ep-desc" rows="3" placeholder="可选"></textarea></div>
-    <div class="field"><label>状态</label>
+    <div class="field"><label for="lm-ep-name">项目名称</label><input id="lm-ep-name" placeholder="项目名称"></div>
+    <div class="field"><label for="lm-ep-desc">描述</label><textarea id="lm-ep-desc" rows="3" placeholder="可选"></textarea></div>
+    <div class="field"><label for="lm-ep-status">状态</label>
       <select id="lm-ep-status">
         <option value="draft">草稿</option>
         <option value="active">进行中</option>
