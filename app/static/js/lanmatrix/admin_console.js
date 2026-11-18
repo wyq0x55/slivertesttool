@@ -9,24 +9,66 @@
   const $ = (id) => document.getElementById(id);
   const FINAL = ["passed", "failed", "cancelled"];
 
-  function esc(s) {
-    return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const SVG_NS = "http://www.w3.org/2000/svg";
+
+  function el(tag, props, children) {
+    const node = document.createElement(tag);
+    if (props) {
+      for (const [k, v] of Object.entries(props)) {
+        if (v == null) continue;
+        if (k === "className") node.className = v;
+        else if (k === "text") node.textContent = v;
+        else if (k === "style") node.setAttribute("style", v);
+        else if (k === "dataset") {
+          for (const [dk, dv] of Object.entries(v)) node.dataset[dk] = dv;
+        } else {
+          node[k] = v;
+        }
+      }
+    }
+    if (children) node.append(...children);
+    return node;
   }
+
+  function svgIcon(pathD) {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", pathD);
+    svg.appendChild(path);
+    return svg;
+  }
+
+  function emptyRow(colspan, cls, text) {
+    return el("tr", null, [
+      el("td", { colSpan: colspan, className: cls, text: text }),
+    ]);
+  }
+
   // Deterministic gradient avatar (2-char label) — mirrors the design demo.
   function avatar(label, i) {
     const h1 = (i * 67) % 360, h2 = (i * 67 + 40) % 360;
-    return `<span class="avatar" style="width:30px;height:30px;font-size:11px;`
-      + `background:linear-gradient(135deg,hsl(${h1} 55% 62%),hsl(${h2} 55% 50%))">`
-      + `${esc(label)}</span>`;
+    return el("span", {
+      className: "avatar",
+      style: `width:30px;height:30px;font-size:11px;background:linear-gradient(135deg,hsl(${h1} 55% 62%),hsl(${h2} 55% 50%))`,
+      text: label,
+    });
   }
-  const ICO_EDIT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
-  const ICO_DEL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>';
+  const PATH_EDIT = "M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z";
+  const PATH_DEL = "M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6";
 
   // Merge execution ``status`` + judge ``result`` into one label, splitting a
   // failed run into a genuine ``failed`` (verdict FAIL) vs an ``error`` (ERROR).
   const STATUS_ZH = LMPill.TASK_ZH;
-  const pill = LMPill.html;
+  function pillNode(status, label, tip) {
+    const span = document.createElement("span");
+    LMPill.apply(span, status, label, tip);
+    return span;
+  }
   function mergedBadge(t) {
     const st = String(t.status || "").toLowerCase();
     let cls = st || "notask";
@@ -35,13 +77,16 @@
       const v = String(t.result || "").trim().toUpperCase();
       if (v.startsWith("ERROR")) { cls = "error"; label = "error"; }
     }
-    return pill(cls, STATUS_ZH[label] || label, t.result || t.status || "");
+    return pillNode(cls, STATUS_ZH[label] || label, t.result || t.status || "");
   }
   function progCell(p) {
     p = p || 0;
-    return `<div style="display:flex;align-items:center;gap:8px">
-      <div class="prog" style="width:70px;flex:0 0 auto"><i style="width:${p}%"></i></div>
-      <span class="muted" style="font-size:12px">${p}%</span></div>`;
+    return el("div", { style: "display:flex;align-items:center;gap:8px" }, [
+      el("div", { className: "prog", style: "width:70px;flex:0 0 auto" }, [
+        el("i", { style: `width:${p}%` }),
+      ]),
+      el("span", { className: "muted", style: "font-size:12px", text: `${p}%` }),
+    ]);
   }
   // Completion moment as ``YY/MM/DD HH:MM:SS`` local time, e.g. 26/07/20 11:18:15.
   function fmtFinished(t) {
@@ -106,36 +151,55 @@
       const admins = users.filter((u) => u.is_system_admin).length;
       const kut = $("lm-kpi-users-trend");
       if (kut) kut.textContent = admins ? admins + " 管理员" : "—";
-      tb.innerHTML = users.map((u, i) => {
+      const rows = users.map((u, i) => {
         const active = u.status === "active";
         const name = u.display_name || u.username || "?";
         const projects = Array.isArray(u.projects) ? u.projects : [];
         const chips = projects.length
-          ? `<div class="projchips">${projects.map((p) => `<span class="pchip">${esc(p)}</span>`).join("")}</div>`
-          : '<span class="muted">—</span>';
-        return `
-        <tr>
-          <td><div class="u-name">${avatar(name.slice(0, 2), i)}<div><b>${esc(u.username)}</b><span class="sub">${esc(u.display_name || "")}</span></div></div></td>
-          <td class="mono">${esc(u.email || "")}</td>
-          <td>${pill(active ? "on" : "off", active ? "启用" : "停用")}</td>
-          <td><label class="sw"><input type="checkbox" class="lm-user-admin-sw" data-id="${u.id}" ${u.is_system_admin ? "checked" : ""}><span class="track"></span></label></td>
-          <td>${chips}</td>
-          <td><div class="row-acts">
-            <button class="btn small btn-icon lm-user-edit" data-id="${u.id}" title="编辑">${ICO_EDIT}</button>
-            <button class="btn small btn-icon danger lm-user-del" data-id="${u.id}" title="删除">${ICO_DEL}</button>
-          </div></td>
-        </tr>`;
-      }).join("") || '<tr><td colspan="6" class="muted">暂无账号</td></tr>';
+          ? el("div", { className: "projchips" }, projects.map((p) =>
+            el("span", { className: "pchip", text: String(p == null ? "" : p) })))
+          : el("span", { className: "muted", text: "—" });
+        const sw = el("input", {
+          type: "checkbox",
+          className: "lm-user-admin-sw",
+          dataset: { id: String(u.id) },
+          checked: !!u.is_system_admin,
+        });
+        sw.addEventListener("change", () => toggleAdmin(Number(sw.dataset.id), sw.checked, sw));
+        const editBtn = el("button", {
+          type: "button",
+          className: "btn small btn-icon lm-user-edit",
+          dataset: { id: String(u.id) },
+          title: "编辑",
+        }, [svgIcon(PATH_EDIT)]);
+        editBtn.addEventListener("click", () => openUser(Number(editBtn.dataset.id)));
+        const delBtn = el("button", {
+          type: "button",
+          className: "btn small btn-icon danger lm-user-del",
+          dataset: { id: String(u.id) },
+          title: "删除",
+        }, [svgIcon(PATH_DEL)]);
+        delBtn.addEventListener("click", () => delUser(Number(delBtn.dataset.id)));
+        return el("tr", null, [
+          el("td", null, [el("div", { className: "u-name" }, [
+            avatar(name.slice(0, 2), i),
+            el("div", null, [
+              el("b", { text: u.username || "" }),
+              el("span", { className: "sub", text: u.display_name || "" }),
+            ]),
+          ])]),
+          el("td", { className: "mono", text: u.email || "" }),
+          el("td", null, [pillNode(active ? "on" : "off", active ? "启用" : "停用")]),
+          el("td", null, [el("label", { className: "sw" }, [sw, el("span", { className: "track" })])]),
+          el("td", null, [chips]),
+          el("td", null, [el("div", { className: "row-acts" }, [editBtn, delBtn])]),
+        ]);
+      });
+      tb.replaceChildren(...(rows.length ? rows : [emptyRow(6, "muted", "暂无账号")]));
       window._lmUsers = users;
-      tb.querySelectorAll(".lm-user-edit").forEach((b) =>
-        b.addEventListener("click", () => openUser(Number(b.dataset.id))));
-      tb.querySelectorAll(".lm-user-del").forEach((b) =>
-        b.addEventListener("click", () => delUser(Number(b.dataset.id))));
-      tb.querySelectorAll(".lm-user-admin-sw").forEach((sw) =>
-        sw.addEventListener("change", () => toggleAdmin(Number(sw.dataset.id), sw.checked, sw)));
     } catch (ex) {
       if (ex.status === 401) { window.location = LM.urls.login; return; }
-      tb.innerHTML = `<tr><td colspan="6" class="lm-err">${esc(ex.message)}</td></tr>`;
+      tb.replaceChildren(emptyRow(6, "lm-err", ex.message == null ? "" : String(ex.message)));
     }
   }
 
@@ -345,20 +409,42 @@
 
   function rtcRow(field) {
     const meta = RTC_META[field.key] || { label: field.key, help: "" };
-    const unit = meta.unit ? ` <span class="muted" style="font-size:12px">${esc(meta.unit)}</span>` : "";
-    let control;
+    const crChildren = [];
     if (field.type === "bool") {
-      control = `<label class="sw"><input type="checkbox" class="lm-rtc-input" data-key="${esc(field.key)}" data-type="bool" ${field.value ? "checked" : ""}><span class="track"></span></label>`;
+      crChildren.push(el("label", { className: "sw" }, [
+        el("input", {
+          type: "checkbox",
+          className: "lm-rtc-input",
+          dataset: { key: String(field.key), type: "bool" },
+          checked: !!field.value,
+        }),
+        el("span", { className: "track" }),
+      ]));
     } else {
       const step = meta.step != null ? meta.step : (field.type === "int" ? 1 : "any");
-      const min = field.min != null ? ` min="${field.min}"` : "";
-      const max = field.max != null ? ` max="${field.max}"` : "";
-      control = `<input type="number" class="lm-rtc-input" data-key="${esc(field.key)}" data-type="${esc(field.type)}" value="${esc(field.value)}" step="${esc(step)}"${min}${max} style="width:120px">${unit}`;
+      const input = el("input", {
+        type: "number",
+        className: "lm-rtc-input",
+        dataset: { key: String(field.key), type: String(field.type) },
+        value: field.value == null ? "" : String(field.value),
+        step: String(step),
+        style: "width:120px",
+      });
+      if (field.min != null) input.min = String(field.min);
+      if (field.max != null) input.max = String(field.max);
+      crChildren.push(input);
+      if (meta.unit) {
+        crChildren.push(document.createTextNode(" "));
+        crChildren.push(el("span", { className: "muted", style: "font-size:12px", text: meta.unit }));
+      }
     }
-    return `<div class="ctrl-row">
-      <div class="cl"><b>${esc(meta.label)}</b><small>${esc(meta.help)}</small></div>
-      <div class="cr">${control}</div>
-    </div>`;
+    return el("div", { className: "ctrl-row" }, [
+      el("div", { className: "cl" }, [
+        el("b", { text: meta.label }),
+        el("small", { text: meta.help }),
+      ]),
+      el("div", { className: "cr" }, crChildren),
+    ]);
   }
 
   function paintRuntimeConfig(data) {
@@ -366,9 +452,10 @@
     _rtcServer = (data && data.values) || {};
     const host = $("lm-rtc-rows");
     if (!host) return;
-    host.innerHTML = fields.length
-      ? fields.map(rtcRow).join("")
-      : '<div class="muted" style="padding:8px 0">暂无可调项</div>';
+    const children = fields.length
+      ? fields.map(rtcRow)
+      : [el("div", { className: "muted", style: "padding:8px 0", text: "暂无可调项" })];
+    host.replaceChildren(...children);
   }
 
   async function loadRuntimeConfig() {
@@ -377,7 +464,7 @@
       const data = await LMApi.adminGetRuntimeConfig();
       paintRuntimeConfig(data);
     } catch (ex) {
-      if (host) host.innerHTML = `<div class="lm-err">${esc(ex.message)}</div>`;
+      if (host) host.replaceChildren(el("div", { className: "lm-err", text: ex.message == null ? "" : String(ex.message) }));
     }
   }
 
@@ -431,27 +518,41 @@
       const kr = $("lm-kpi-running"); if (kr) kr.textContent = running;
       const krt = $("lm-kpi-run-trend");
       if (krt) { krt.textContent = running ? "运行中" : "空闲"; krt.className = "trend " + (running ? "up" : "flat"); }
-      tb.innerHTML = tasks.map((t) => {
-        const cancel = FINAL.includes(t.status)
-          ? "" : `<button class="btn small lm-atask-cancel" data-k="${esc(t.task_id)}">取消</button>`;
-        return `<tr>
-          <td><code>${esc(t.task_id)}</code></td>
-          <td>${esc(t.project_code || (t.project_id ? "#" + t.project_id : "（未归属）"))}</td>
-          <td>${esc(t.test_id)}</td>
-          <td>${esc(t.submitter)}</td>
-          <td>${mergedBadge(t)}</td>
-          <td>${progCell(t.progress || 0)}</td>
-          <td><code style="font-size:12px">${esc(fmtFinished(t))}</code></td>
-          <td><div class="row-acts">${cancel}
-            <button class="btn small danger lm-atask-del" data-k="${esc(t.task_id)}">删除</button></div></td>
-        </tr>`;
-      }).join("") || '<tr><td colspan="8" class="muted">暂无任务</td></tr>';
-      tb.querySelectorAll(".lm-atask-cancel").forEach((b) =>
-        b.addEventListener("click", () => cancelTask(b.dataset.k)));
-      tb.querySelectorAll(".lm-atask-del").forEach((b) =>
-        b.addEventListener("click", () => delTask(b.dataset.k)));
+      const rows = tasks.map((t) => {
+        const taskId = String(t.task_id == null ? "" : t.task_id);
+        const acts = [];
+        if (!FINAL.includes(t.status)) {
+          const cancelBtn = el("button", {
+            type: "button",
+            className: "btn small lm-atask-cancel",
+            dataset: { k: taskId },
+            text: "取消",
+          });
+          cancelBtn.addEventListener("click", () => cancelTask(cancelBtn.dataset.k));
+          acts.push(cancelBtn);
+        }
+        const delBtn = el("button", {
+          type: "button",
+          className: "btn small danger lm-atask-del",
+          dataset: { k: taskId },
+          text: "删除",
+        });
+        delBtn.addEventListener("click", () => delTask(delBtn.dataset.k));
+        acts.push(delBtn);
+        return el("tr", null, [
+          el("td", null, [el("code", { text: taskId })]),
+          el("td", { text: t.project_code || (t.project_id ? "#" + t.project_id : "（未归属）") }),
+          el("td", { text: t.test_id == null ? "" : String(t.test_id) }),
+          el("td", { text: t.submitter == null ? "" : String(t.submitter) }),
+          el("td", null, [mergedBadge(t)]),
+          el("td", null, [progCell(t.progress || 0)]),
+          el("td", null, [el("code", { style: "font-size:12px", text: fmtFinished(t) })]),
+          el("td", null, [el("div", { className: "row-acts" }, acts)]),
+        ]);
+      });
+      tb.replaceChildren(...(rows.length ? rows : [emptyRow(8, "muted", "暂无任务")]));
     } catch (ex) {
-      tb.innerHTML = `<tr><td colspan="8" class="muted">${esc(ex.message)}</td></tr>`;
+      tb.replaceChildren(emptyRow(8, "muted", ex.message == null ? "" : String(ex.message)));
     }
   }
   async function cancelTask(key) {
