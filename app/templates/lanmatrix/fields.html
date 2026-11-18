@@ -35,19 +35,19 @@
   </div>
 </div>
 
-<dialog id="lm-field-dialog" class="lm-dialog">
+<dialog id="lm-field-dialog" class="lm-dialog" aria-labelledby="lm-field-dialog-title">
   <form method="dialog" class="lm-card" style="padding:22px;min-width:420px;display:flex;flex-direction:column;gap:12px">
     <h3 id="lm-field-dialog-title" style="font-size:17px">新增字段</h3>
-    <div class="field"><label>字段标识（英文）</label><input id="lm-f-key" required placeholder="test_env"></div>
-    <div class="field"><label>显示名称</label><input id="lm-f-name" placeholder="测试环境"></div>
-    <div class="field"><label>所在 Sheet 页</label>
+    <div class="field"><label for="lm-f-key">字段标识（英文）</label><input id="lm-f-key" required placeholder="test_env"></div>
+    <div class="field"><label for="lm-f-name">显示名称</label><input id="lm-f-name" placeholder="测试环境"></div>
+    <div class="field"><label for="lm-f-sheet">所在 Sheet 页</label>
       <select id="lm-f-sheet" class="selbox">
         <option value="test">test（测试用例）</option>
         <option value="const">const（常量）</option>
         <option value="lib">lib（函数库）</option>
       </select>
     </div>
-    <div class="field"><label>数据类型</label>
+    <div class="field"><label for="lm-f-type">数据类型</label>
       <select id="lm-f-type" class="selbox">
         <option value="text">文本</option>
         <option value="multiline">多行文本</option>
@@ -64,9 +64,9 @@
         <option value="steps">测试手顺（手順明细）</option>
       </select>
     </div>
-    <div class="field"><label>选项（逗号分隔，用于单选/多选）</label><input id="lm-f-options"></div>
-    <div class="field"><label>提示文本</label><input id="lm-f-help"></div>
-    <label class="lm-inline" style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="lm-f-required"> <span>必填</span></label>
+    <div class="field"><label for="lm-f-options">选项（逗号分隔，用于单选/多选）</label><input id="lm-f-options"></div>
+    <div class="field"><label for="lm-f-help">提示文本</label><input id="lm-f-help"></div>
+    <label for="lm-f-required" class="lm-inline" style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="lm-f-required"> <span>必填</span></label>
     <div class="login-err" id="lm-f-error" hidden></div>
     <menu style="display:flex;gap:10px;justify-content:flex-end;margin:0;padding:0">
       <button value="cancel" formnovalidate class="btn">取消</button>
