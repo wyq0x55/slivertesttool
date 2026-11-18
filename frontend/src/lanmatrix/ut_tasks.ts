@@ -353,12 +353,19 @@ export interface UtJobItem {
   async function loadBatches() {
     batches = await LMApi.utBatches(pid);
     var sel = $("ut-batch");
-    sel.innerHTML = '<option value="">全部批次</option>' + batches.map(function (b) {
+    var allOption = document.createElement("option");
+    allOption.value = "";
+    allOption.textContent = "全部批次";
+    var batchOptions = batches.map(function (b) {
       var n = Object.keys(b.states).reduce(function (s, k) { return s + b.states[k]; }, 0);
       var prov = b.provenance || {};
-      return '<option value="' + b.id + '">#' + b.id + " · " + esc(BATCH_ZH[b.status] || b.status) +
-        " · " + n + " 个作业" + (prov.test_rules_ref ? " · " + esc(prov.test_rules_ref) : "") + "</option>";
-    }).join("");
+      var opt = document.createElement("option");
+      opt.value = String(b.id);
+      opt.textContent = "#" + b.id + " · " + (BATCH_ZH[b.status] || b.status) +
+        " · " + n + " 个作业" + (prov.test_rules_ref ? " · " + prov.test_rules_ref : "");
+      return opt;
+    });
+    sel.replaceChildren.apply(sel, [allOption].concat(batchOptions));
     sel.value = batchId;
     $("ut-batch-stop").hidden = !U.can("edit") || !selectedBatchActive();
     renderBatchInfo();
@@ -372,7 +379,7 @@ export interface UtJobItem {
     if (!b) { box.replaceChildren(); return; }
     var prov = b.provenance || {};
     var st = b.states || {};
-    var states = Object.keys(st).sort(function (x, y) { return st[y] - st[x]; })
+    var states = (Object.keys(st) as any).toSorted(function (x: string, y: string) { return st[y] - st[x]; })
       .map(function (s) { return U.statePill(s) + " " + st[s]; }).join(" ");
     var facts = ["批次 #" + b.id + (b.label ? "「" + b.label + "」" : ""), BATCH_ZH[b.status] || b.status,
       prov.test_rules_ref, prov.generator_commit ? "生成器 " + String(prov.generator_commit).slice(0, 8) : "",
@@ -734,7 +741,7 @@ export interface UtJobItem {
       if (t.running) s.running = true;
     }
     (data.steps || []).forEach(function (row) {
-      var top = Object.prototype.hasOwnProperty.call(STAGE_TOTAL, row.step);
+      var top = (Object as any).hasOwn(STAGE_TOTAL, row.step);
       add(top ? STAGE_TOTAL[row.step] : 2, { row: row, source: "platform" }, top);
     });
     (generated.shared || []).forEach(function (row) { add(1, { row: row, source: "shared" }, false); });
@@ -781,10 +788,12 @@ export interface UtJobItem {
     U.applyState($("ut-d-state"), shown);
     var banner = $("ut-d-superseded");
     banner.hidden = !job.superseded_by;
-    banner.innerHTML = job.superseded_by
-      ? "该函数已重新入队，最新作业是 <a href=\"?job=" + job.superseded_by + "\" data-open-job=\"" +
-        job.superseded_by + "\">#" + job.superseded_by + "</a>。本作业只保留为历史记录，不能再审核或修订。"
-      : "";
+    if (job.superseded_by) {
+      banner.innerHTML = "该函数已重新入队，最新作业是 <a href=\"?job=" + job.superseded_by + "\" data-open-job=\"" +
+        job.superseded_by + "\">#" + job.superseded_by + "</a>。本作业只保留为历史记录，不能再审核或修订。";
+    } else {
+      banner.replaceChildren();
+    }
     $("ut-d-sub").textContent = "作业 #" + job.id + " · " + (t.source_rel || "");
     $("ut-d-verdict").innerHTML = U.verdictPill(job.last_verdict);
     $("ut-d-function").textContent = t.function || "";
@@ -877,7 +886,10 @@ export interface UtJobItem {
       hideCoverage();
       $("ut-d-issues-title").textContent = "校验问题";
       $("ut-d-issues-sum").textContent = "";
-      $("ut-d-issues").innerHTML = '<p class="muted">尚无版本，尚未校验</p>';
+      var noAttemptMsg = document.createElement("p");
+      noAttemptMsg.className = "muted";
+      noAttemptMsg.textContent = "尚无版本，尚未校验";
+      $("ut-d-issues").replaceChildren(noAttemptMsg);
     }
   }
 
@@ -915,7 +927,7 @@ export interface UtJobItem {
     var parts = Object.keys(counts).map(function (k) { return FRUITLESS_ZH[k] + " " + counts[k]; });
     var open = !!expandedRuns[run.key];
     return '<tr class="ut-att-run"><td class="ut-num">' + run.items[0].seq + "–" +
-      run.items[run.items.length - 1].seq + '</td><td colspan="6">本地模型 ' + run.items.length +
+      run.items.at(-1).seq + '</td><td colspan="6">本地模型 ' + run.items.length +
       " 轮未产出候选 <span class=\"submuted\">· " + esc(parts.join(" · ")) + "</span> " +
       '<button class="btn small ghost" type="button" data-run-toggle="' + run.key + '">' +
       (open ? "收起" : "展开") + "</button></td><td></td></tr>";
@@ -966,13 +978,21 @@ export interface UtJobItem {
     $("ut-d-coverage").hidden = false;
     var key = job.id + ":" + attempt.id;
     if (!coverageCache[key]) {
-      if (coverageShown !== key) $("ut-d-coverage-body").innerHTML = '<p class="muted">加载中…</p>';
+      if (coverageShown !== key) {
+        var loadingMsg = document.createElement("p");
+        loadingMsg.className = "muted";
+        loadingMsg.textContent = "加载中…";
+        $("ut-d-coverage-body").replaceChildren(loadingMsg);
+      }
       try {
         coverageCache[key] = await LMApi.utAttemptCoverage(pid, job.id, attempt.id);
       } catch (e: any) {
         if (epoch !== coverageEpoch) return;
         coverageShown = null;
-        $("ut-d-coverage-body").innerHTML = '<p class="ut-batch-err">' + esc(e.message) + "</p>";
+        var errMsg = document.createElement("p");
+        errMsg.className = "ut-batch-err";
+        errMsg.textContent = e.message;
+        $("ut-d-coverage-body").replaceChildren(errMsg);
         return;
       }
       if (epoch !== coverageEpoch) return;
@@ -1442,7 +1462,7 @@ export interface UtJobItem {
     list.forEach(function (item) {
       Object.keys(item).forEach(function (k) { if (keys.indexOf(k) < 0) keys.push(k); });
     });
-    keys.sort(function (a, b) {
+    keys = (keys as any).toSorted(function (a: string, b: string) {
       var x = KEY_ORDER.indexOf(a), y = KEY_ORDER.indexOf(b);
       return (x < 0 ? KEY_ORDER.length : x) - (y < 0 ? KEY_ORDER.length : y);
     });
@@ -1517,7 +1537,7 @@ export interface UtJobItem {
       g.items.push(i);
       if (SEV_RANK[i.severity] != null) g.rank = Math.min(g.rank, SEV_RANK[i.severity]);
     });
-    return groups.sort(function (x, y) { return x.rank - y.rank || x.order - y.order; });
+    return (groups as any).toSorted(function (x: any, y: any) { return x.rank - y.rank || x.order - y.order; });
   }
   function groupSeverity(g) {
     return ["error", "warning", "info"][g.rank] || g.items[0].severity || "";
@@ -1897,7 +1917,9 @@ export interface UtJobItem {
     var tip = mark.querySelector && mark.querySelector(".ut-mcdc-tip");
     var pop = ensureMcdcPop();
     if (!tip || !pop || !pop.style || !mark.getBoundingClientRect) return;
-    pop.innerHTML = tip.innerHTML;
+    pop.replaceChildren(...Array.from(tip.childNodes || [], function (n: any) {
+      return n.cloneNode(true);
+    }));
     pop.hidden = false;
     var rect = mark.getBoundingClientRect();
     var height = pop.offsetHeight || 72;

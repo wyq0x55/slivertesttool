@@ -194,18 +194,64 @@ const CLEAN_ROOM_TITLE =
     dialog = doc.createElement("dialog");
     dialog.id = "lm-signal-list-dialog";
     dialog.className = "lm-dialog";
-    dialog.innerHTML =
-      '<form method="dialog" class="lm-card">' +
-      "<h3>默认信号集配置 (default_signal_list)</h3>" +
-      '<p class="lm-muted">每行填写一个观测信号名。当测试用例与模型目录均未提供 output.txt 时自动落盘，避免全量信号采样导致磁盘膨胀。</p>' +
-      '<textarea id="lm-default-signal-list" rows="8" style="width:100%;font-family:monospace" ' +
-      'placeholder="例如：&#10;v_speed&#10;u1_brake_lamp"></textarea>' +
-      '<p id="lm-signal-list-status" class="lm-muted" role="status" aria-live="polite"></p>' +
-      "<menu>" +
-      '<button type="button" value="cancel" id="lm-signal-list-cancel" class="btn">取消</button>' +
-      '<button type="button" id="lm-signal-list-save" class="btn btn-primary">保存默认信号集</button>' +
-      "</menu>" +
-      "</form>";
+
+    const form = doc.createElement("form");
+    form.method = "dialog";
+    form.className = "lm-card";
+
+    const heading = doc.createElement("h3");
+    heading.textContent = "默认信号集配置 (default_signal_list)";
+
+    const desc = doc.createElement("p");
+    desc.className = "lm-muted";
+    desc.textContent =
+      "每行填写一个观测信号名。当测试用例与模型目录均未提供 output.txt 时自动落盘，避免全量信号采样导致磁盘膨胀。";
+
+    const textarea = doc.createElement("textarea");
+    textarea.id = "lm-default-signal-list";
+    textarea.rows = 8;
+    if (textarea.style) {
+      textarea.style.width = "100%";
+      textarea.style.fontFamily = "monospace";
+    }
+    textarea.placeholder = "例如：\nv_speed\nu1_brake_lamp";
+
+    const status = doc.createElement("p");
+    status.id = "lm-signal-list-status";
+    status.className = "lm-muted";
+    if (typeof status.setAttribute === "function") {
+      status.setAttribute("role", "status");
+      status.setAttribute("aria-live", "polite");
+    }
+
+    const menu = doc.createElement("menu");
+
+    const cancelBtnEl = doc.createElement("button");
+    cancelBtnEl.type = "button";
+    cancelBtnEl.value = "cancel";
+    cancelBtnEl.id = "lm-signal-list-cancel";
+    cancelBtnEl.className = "btn";
+    cancelBtnEl.textContent = "取消";
+
+    const saveBtnEl = doc.createElement("button");
+    saveBtnEl.type = "button";
+    saveBtnEl.id = "lm-signal-list-save";
+    saveBtnEl.className = "btn btn-primary";
+    saveBtnEl.textContent = "保存默认信号集";
+
+    menu.appendChild(cancelBtnEl);
+    menu.appendChild(saveBtnEl);
+    form.appendChild(heading);
+    form.appendChild(desc);
+    form.appendChild(textarea);
+    form.appendChild(status);
+    form.appendChild(menu);
+
+    if (typeof dialog.replaceChildren === "function") {
+      dialog.replaceChildren(form);
+    } else if (typeof dialog.appendChild === "function") {
+      dialog.appendChild(form);
+    }
     doc.body.appendChild(dialog);
 
     const cancelBtn = doc.getElementById("lm-signal-list-cancel");
