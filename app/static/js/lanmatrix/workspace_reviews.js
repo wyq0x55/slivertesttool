@@ -204,7 +204,7 @@
       if (card) card.hidden = true;
       if (toolbar) toolbar.hidden = true;
       if (empty) empty.hidden = false;
-      $("lm-h-rv-rows").innerHTML = "";
+      $("lm-h-rv-rows").replaceChildren();
       syncBulk();
       return;
     }

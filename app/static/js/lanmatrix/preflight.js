@@ -230,7 +230,7 @@
   function render(el, rows) {
     if (!el) return;
     rows = rows || [];
-    if (!rows.length) { el.innerHTML = ""; el.hidden = true; return; }
+    if (!rows.length) { el.replaceChildren(); el.hidden = true; return; }
     el.hidden = false;
     el.className = "lm-preflight" + (blocked(rows) ? " is-blocked" : "");
     var head = '<div class="lm-preflight-head">提交前置检查 · ' +

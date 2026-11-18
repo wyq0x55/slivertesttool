@@ -140,7 +140,7 @@
       await LMApi.addMember(pid, { user_id: uid, role: roleEl.value });
       toast("成员已添加", true);
       searchEl.value = "";
-      candEl.innerHTML = "";
+      candEl.replaceChildren();
       load();
     } catch (ex) { toast(ex.message, false); }
   }

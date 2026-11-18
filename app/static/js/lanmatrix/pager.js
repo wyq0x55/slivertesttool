@@ -49,7 +49,7 @@
       var last = pages();
       // One page of results needs no controls.
       host.hidden = total <= pageSize;
-      if (host.hidden) { host.innerHTML = ""; return; }
+      if (host.hidden) { host.replaceChildren(); return; }
       var from = (page - 1) * pageSize + 1;
       var to = Math.min(total, page * pageSize);
       host.innerHTML =
