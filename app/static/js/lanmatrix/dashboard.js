@@ -476,7 +476,7 @@
     const body = $("lm-vc-history-rows");
     if (error) error.hidden = true;
     if (status) status.textContent = "正在加载运行历史…";
-    if (body) body.innerHTML = "";
+    if (body) body.replaceChildren();
     try {
       const query = new URLSearchParams({
         test_id: historyTestId,
@@ -585,7 +585,10 @@
     const rows = $("lm-vc-rows");
     const error = $("lm-vc-err");
     if (summary) summary.textContent = "";
-    if (rows) rows.innerHTML = "";
+    if (rows) {
+      if (typeof rows.replaceChildren === "function") rows.replaceChildren();
+      else rows.innerHTML = "";
+    }
     if (error) error.hidden = true;
     ["lm-vc-prev", "lm-vc-next", "lm-vc-history"].forEach((id) => {
       const element = $(id);
