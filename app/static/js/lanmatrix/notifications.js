@@ -28,11 +28,6 @@
   // Which tab is showing. "unread" is work to do; "history" is the receipt.
   let scope = "unread";
 
-  function esc(s) {
-    return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  }
-
   // "刚刚 / 5 分钟前 / 3 小时前 / 2 天前" — for a notification list the age is
   // what matters, and an absolute timestamp forces the reader to do the
   // subtraction themselves.
@@ -87,6 +82,64 @@
     loadList();
   }
 
+  function buildNotificationItem(n) {
+    const el = document.createElement(n.link_url ? "a" : "div");
+    el.className = "lm-notif-item" + (n.is_read ? "" : " unread");
+    if (n.link_url) el.setAttribute("href", String(n.link_url));
+    el.dataset.id = String(n.id == null ? "" : n.id);
+
+    const ico = document.createElement("span");
+    ico.className = "lm-notif-ico";
+    ico.textContent = ICONS[n.type] || "•";
+
+    const main = document.createElement("span");
+    main.className = "lm-notif-main";
+
+    const title = document.createElement("span");
+    title.className = "lm-notif-title";
+    title.textContent = n.title == null ? "" : String(n.title);
+    // Server-side collapsing is off by default (LM_NOTIFY_GROUP_SECONDS = 0),
+    // so every event now gets its own row and its own link -- a "×2" row
+    // could only ever open one of the two things it announced. The badge is
+    // kept for deployments that re-enable the window, where it must say how
+    // many events the row stands for rather than hide them silently.
+    if ((n.count || 1) > 1) {
+      const badge = document.createElement("span");
+      badge.className = "lm-notif-count";
+      badge.title = `合并了 ${n.count} 条同类通知`;
+      badge.textContent = `×${n.count}`;
+      title.appendChild(badge);
+    }
+    main.appendChild(title);
+
+    if (n.body) {
+      const body = document.createElement("div");
+      body.className = "lm-notif-body";
+      body.textContent = String(n.body);
+      main.appendChild(body);
+    }
+
+    const time = document.createElement("span");
+    time.className = "lm-notif-time";
+    time.textContent = ago(n.created_at);
+    main.appendChild(time);
+
+    el.append(ico, main);
+    // Archived rows are already filed; offering "×" again would suggest a
+    // delete this control does not perform.
+    if (!n.archived) {
+      const x = document.createElement("button");
+      x.type = "button";
+      x.className = "lm-notif-x";
+      x.dataset.archive = String(n.id == null ? "" : n.id);
+      x.title = "移入历史";
+      x.setAttribute("aria-label", "移入历史");
+      x.textContent = "×";
+      el.appendChild(x);
+    }
+    return el;
+  }
+
   function render(items) {
     const host = $("lm-notif-list");
     const empty = $("lm-notif-empty");
@@ -100,34 +153,7 @@
       return;
     }
     if (empty) empty.hidden = true;
-    host.innerHTML = items.map((n) => {
-      const cls = "lm-notif-item" + (n.is_read ? "" : " unread");
-      // Server-side collapsing is off by default (LM_NOTIFY_GROUP_SECONDS = 0),
-      // so every event now gets its own row and its own link -- a "×2" row
-      // could only ever open one of the two things it announced. The badge is
-      // kept for deployments that re-enable the window, where it must say how
-      // many events the row stands for rather than hide them silently.
-      const badge = (n.count || 1) > 1
-        ? `<span class="lm-notif-count" title="合并了 ${n.count} 条同类通知">×${n.count}</span>`
-        : "";
-      const body = n.body
-        ? `<div class="lm-notif-body">${esc(n.body)}</div>` : "";
-      const inner = `
-        <span class="lm-notif-ico">${esc(ICONS[n.type] || "•")}</span>
-        <span class="lm-notif-main">
-          <span class="lm-notif-title">${esc(n.title)}${badge}</span>
-          ${body}
-          <span class="lm-notif-time">${esc(ago(n.created_at))}</span>
-        </span>`;
-      // Archived rows are already filed; offering "×" again would suggest a
-      // delete this control does not perform.
-      const x = n.archived ? "" :
-        `<button type="button" class="lm-notif-x" data-archive="${esc(n.id)}"
-                 title="移入历史" aria-label="移入历史">×</button>`;
-      return n.link_url
-        ? `<a class="${cls}" href="${esc(n.link_url)}" data-id="${esc(n.id)}">${inner}${x}</a>`
-        : `<div class="${cls}" data-id="${esc(n.id)}">${inner}${x}</div>`;
-    }).join("");
+    host.replaceChildren(...items.map(buildNotificationItem));
   }
 
   async function pollBadge() {
@@ -147,8 +173,12 @@
       setCounts(d);
     } catch (ex) {
       const host = $("lm-notif-list");
-      if (host) host.innerHTML =
-        `<div class="lm-notif-item muted">加载失败：${esc(ex.message || "")}</div>`;
+      if (host) {
+        const err = document.createElement("div");
+        err.className = "lm-notif-item muted";
+        err.textContent = `加载失败：${(ex && ex.message) || ""}`;
+        host.replaceChildren(err);
+      }
     }
   }
 
@@ -186,7 +216,16 @@
       if (open && !root.contains(e.target)) setOpen(false);
     });
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && open) setOpen(false);
+      if (e.isComposing || e.keyCode === 229) return;
+      if (e.key === "Escape" && open) {
+        const pop = $("lm-notif-pop");
+        const hadFocus = pop && pop.contains(document.activeElement);
+        setOpen(false);
+        if (hadFocus) {
+          const btn = $("lm-notif-btn");
+          if (btn) btn.focus();
+        }
+      }
     });
 
     $("lm-notif-readall").addEventListener("click", async (e) => {
