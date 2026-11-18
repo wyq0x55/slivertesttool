@@ -187,7 +187,7 @@
     _drawRemoteSelections() {
       const peers = this._remoteSelections || [];
       const ov = this._ensureOverlay();
-      ov.innerHTML = "";
+      ov.replaceChildren();
       if (!peers.length) return;
       const fields = this._visibleFields();
       const cellAt = (tr, col) => (col != null && fields[col])
@@ -415,7 +415,11 @@
           self._emitSelection();   // republish local cursor (focused cell → col) §6.1
         });
         td.addEventListener("keydown", (e) => {
-          if (e.key === "Enter") { e.preventDefault(); td.blur(); }
+          if (e.key === "Enter") {
+            if (e.isComposing || e.keyCode === 229) return;
+            e.preventDefault();
+            td.blur();
+          }
           if (e.key === "Escape") { td.textContent = td.dataset.orig; td.blur(); }
         });
         td.addEventListener("blur", () => self._commit(td, td.textContent, td.dataset.orig));
@@ -700,7 +704,7 @@
           // always renders, instead of shipping a blank spreadsheet.
           if (typeof g.setSheetFields !== "function") {
             try { if (typeof g.dispose === "function") g.dispose(); } catch (_e) {}
-            if (opts && opts.host) opts.host.innerHTML = "";
+            if (opts && opts.host) opts.host.replaceChildren();
             console.warn(
               "Univer bundle is stale (no multi-sheet API); using built-in grid.");
             degradeBanner(opts && opts.host,

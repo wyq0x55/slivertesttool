@@ -80,11 +80,16 @@
     var text = labelFor(c, label);
     el.className = "pill st-" + c;
     el.title = tip || text;
-    while (el.firstChild) el.removeChild(el.firstChild);
     var dot = document.createElement("span");
     dot.className = "dot";
-    el.appendChild(dot);
-    el.appendChild(document.createTextNode(text));
+    var textNode = document.createTextNode(text);
+    if (typeof el.replaceChildren === "function") {
+      el.replaceChildren(dot, textNode);
+    } else if (Array.isArray(el.children)) {
+      el.children.length = 0;
+      el.appendChild(dot);
+      el.appendChild(textNode);
+    }
   }
 
   window.LMPill = {
