@@ -108,12 +108,12 @@
 .ut-draft-state.is-dirty::before{ background:var(--warn); }
 .ut-visually-hidden{ position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
 /* Execution-server path picker (ut_path_picker.js). */
-.ut-path-dialog{ width:min(640px, calc(100vw - 32px)); }
+.ut-path-dialog{ width:min(640px, calc(100dvw - 32px)); }
 .ut-path-bar{ display:flex; align-items:center; gap:8px; }
 .ut-path-bar .lmui-input{ flex:1 1 auto; min-width:0; font-family:var(--mono); font-size:12.5px; }
 .ut-path-bar .btn{ flex:0 0 auto; }
 .ut-path-bar svg{ display:block; }
-.ut-path-list{ display:flex; flex-direction:column; height:min(360px, 50vh); overflow:auto; padding:4px;
+.ut-path-list{ display:flex; flex-direction:column; height:min(360px, 50dvh); overflow:auto; padding:4px;
   border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface-2); }
 .ut-path-list[aria-busy="true"]{ opacity:.6; }
 .ut-path-entry{ display:flex; align-items:center; gap:10px; width:100%; padding:7px 10px; border:0;
@@ -312,7 +312,7 @@
 .ut-cov-note{ margin:0; font-size:12.5px; color:var(--warn-text); }
 .ut-cov-gaps{ margin:10px 0 0; font-size:12.5px; color:var(--text-2); }
 .ut-cov-views{ margin:10px 0 8px; }
-.ut-cov-wrap{ max-height:70vh; overflow:auto; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface); }
+.ut-cov-wrap{ max-height:70dvh; overflow:auto; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface); }
 .ut-cov-lines{ width:100%; border-collapse:separate; border-spacing:0; font-size:12.5px; }
 .ut-cov-lines th{ position:sticky; top:0; z-index:1; background:var(--surface-2); text-align:left; font-weight:500; color:var(--text-3); padding:6px 10px; border-bottom:1px solid var(--border); white-space:nowrap; }
 .ut-cov-lines td{ padding:2px 10px; vertical-align:middle; white-space:nowrap; font-variant-numeric:tabular-nums; border-bottom:1px solid var(--border); }
@@ -338,7 +338,7 @@
 .ut-cov-mark.is-missing{ color:var(--text-3); }
 .ut-mcdc{ cursor:help; }
 .ut-mcdc-tip{ display:none; }
-.ut-mcdc-pop{ position:fixed; z-index:80; min-width:220px; max-width:min(560px, 92vw); padding:8px 10px; background:var(--surface); color:var(--text); border:1px solid var(--border-strong); border-radius:var(--radius-sm); white-space:normal; font-size:12px; line-height:1.55; text-align:left; display:flex; flex-direction:column; gap:2px; }
+.ut-mcdc-pop{ position:fixed; z-index:80; min-width:220px; max-width:min(560px, 92dvw); padding:8px 10px; background:var(--surface); color:var(--text); border:1px solid var(--border-strong); border-radius:var(--radius-sm); white-space:normal; font-size:12px; line-height:1.55; text-align:left; display:flex; flex-direction:column; gap:2px; }
 .ut-mcdc-pop[hidden]{ display:none; }
 .ut-mcdc-pop .is-full{ color:var(--ok-text); }
 .ut-mcdc-pop .is-miss{ color:var(--danger-text); }

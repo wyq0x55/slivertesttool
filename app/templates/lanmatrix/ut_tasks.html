@@ -44,7 +44,7 @@
   <div class="toolbar">
     <div class="search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>
-      <input type="search" id="ut-q" placeholder="搜索函数 / 源文件…" autocomplete="off">
+      <input type="search" id="ut-q" placeholder="搜索函数 / 源文件…" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
     </div>
     <select id="ut-batch" class="selbox" title="按批次筛选"><option value="">全部批次</option></select>
     <button class="btn" id="ut-batch-stop" type="button" hidden>
@@ -210,9 +210,9 @@
     <div id="ut-d-issues" class="ut-issues"></div>
   </div>
 </section>
-<dialog id="ut-cfg-dialog" class="lm-dialog">
+<dialog id="ut-cfg-dialog" class="lm-dialog" aria-labelledby="ut-cfg-dlg-title">
   <form id="ut-cfg-form" method="dialog" class="lm-card">
-    <h3>单元测试工具链与编译配置</h3>
+    <h3 id="ut-cfg-dlg-title">单元测试工具链与编译配置</h3>
     <div class="ut-fields">
       <div class="field">
         <label for="ut-cfg-toolchain-profile">工具链配置档</label>
