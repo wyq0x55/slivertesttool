@@ -362,6 +362,59 @@ class TestItemsStructural(unittest.TestCase):
             "direction": "down",
         })
 
+    def test_all_jinja_templates_compile_and_lanmatrix_pages_render(self):
+        templates = sorted(self.app.jinja_env.list_templates())
+        self.assertGreater(len(templates), 0)
+        for name in templates:
+            self.app.jinja_env.get_template(name)
+
+        resp_editor = self.client.get(f"/lanmatrix/projects/{self.project.id}")
+        self.assertEqual(resp_editor.status_code, 200)
+        html_editor = resp_editor.get_data(as_text=True)
+        self.assertIn('id="lm-topbar-actions"', html_editor)
+        self.assertIn('id="lm-ai-generate"', html_editor)
+        self.assertIn('id="lm-run-selected"', html_editor)
+        self.assertIn("vendor/univer/esm/univer-core.js", html_editor)
+
+        resp_home = self.client.get("/lanmatrix/home")
+        self.assertEqual(resp_home.status_code, 200)
+        self.assertIn('data-esm="1"', resp_home.get_data(as_text=True))
+
+        resp_tasks = self.client.get(f"/lanmatrix/projects/{self.project.id}/tasks")
+        self.assertEqual(resp_tasks.status_code, 200)
+        self.assertIn('data-esm="1"', resp_tasks.get_data(as_text=True))
+
+        ut_project = Project(
+            code="PRJ_UT_RENDER",
+            name="UT Render Project",
+            project_type="unit_test",
+            status="active",
+            created_by=self.user.id,
+        )
+        db.session.add(ut_project)
+        outsider = LMUser(
+            username="outsider",
+            display_name="Outsider",
+            password_hash="x",
+            is_system_admin=False,
+        )
+        db.session.add(outsider)
+        db.session.commit()
+
+        resp_ut_tasks = self.client.get(f"/lanmatrix/projects/{ut_project.id}/tasks")
+        self.assertEqual(resp_ut_tasks.status_code, 200)
+        self.assertIn('data-esm="1"', resp_ut_tasks.get_data(as_text=True))
+
+        outsider_client = self.app.test_client()
+        with outsider_client.session_transaction() as sess:
+            sess["lm_user_id"] = outsider.id
+        g.pop("_page_user", None)
+        resp_denied = outsider_client.get(f"/lanmatrix/projects/{self.project.id}")
+        self.assertEqual(resp_denied.status_code, 200)
+        denied_html = resp_denied.get_data(as_text=True)
+        self.assertIn("无法访问项目", denied_html)
+        self.assertNotIn('id="lm-topbar-actions"', denied_html)
+
 
 if __name__ == "__main__":
     unittest.main()

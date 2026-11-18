@@ -25,12 +25,12 @@
 {% endblock %}
 {% block content %}
 <div class="lm-editor" data-project-id="{{ project_id }}" data-collab="{{ '1' if collab_available else '0' }}">
-  <!-- Editor controls. Under the Univer engine the adapter adopts #lm-toolbar-left
-       (status + collaboration presence) into Univer's left tab-row slot, while row
-       operations and import/export/help live in Univer's native menus and Ribbon.
-       AI and test-execution actions live in the global topbar ({% block topbar_actions %}).
-       With the built-in fallback grid (no Univer chrome) this .lm-toolbar shell stays
-       visible as a slim top bar. -->
+  {# Editor controls. Under the Univer engine the adapter adopts #lm-toolbar-left
+     (status + collaboration presence) into Univer's left tab-row slot, while row
+     operations and import/export/help live in Univer's native menus and Ribbon.
+     AI and test-execution actions live in the global topbar (topbar_actions block).
+     With the built-in fallback grid (no Univer chrome) this .lm-toolbar shell stays
+     visible as a slim top bar. #}
   <div class="lm-toolbar" id="lm-toolbar"{% if univer_available %} style="display:none"{% endif %}>
     <div class="lm-tb-left" id="lm-toolbar-left">
       <strong class="lm-fallback-only" id="lm-proj-title">项目 #{{ project_id }}</strong>
