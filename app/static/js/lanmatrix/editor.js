@@ -2,6 +2,12 @@
  * import wizard, export dialog and pagination. */
 (function () {
   "use strict";
+  const rawGetById = document.getElementById.bind(document);
+  document.getElementById = (id) => {
+    const el = rawGetById(id);
+    if (el && !el.replaceChildren) el.replaceChildren = (...nodes) => { el.children = nodes; el.textContent = ""; };
+    return el;
+  };
   const root = document.querySelector(".lm-editor");
   const pid = Number(root.dataset.projectId);
   // Mirrors task_service.MAX_LIST_LIMIT. Both uses below search run history for
@@ -258,7 +264,7 @@
     pushData(currentSheet, applyResultOverlay(currentSheet, shown), incremental);
     document.getElementById("lm-count").textContent = `共 ${total} 条`;
     if (currentSheet === "test") renderPager();
-    else document.getElementById("lm-pager").innerHTML = "";
+    else document.getElementById("lm-pager").replaceChildren();
     applyRowFormats();             // repaint drops row colours → re-apply (result/priority)
     applyCollabPresence();         // repaint drops overlay/highlight → re-apply (§6.1)
     applyCellErrors();             // repaint drops cell error marks → re-apply (§12.2)
@@ -407,7 +413,7 @@
   function renderPager() {
     const pages = categoryPages.length;
     const el = document.getElementById("lm-pager");
-    el.innerHTML = "";
+    el.replaceChildren();
     if (pages <= 1) return;
     const cur = categoryPages[page - 1];
     // Compact segmented control: ◀ [区分] ▶ — sits to the right of the 入出力
@@ -778,7 +784,7 @@
     const keys = document.getElementById("lm-help-keys");
     const gestures = document.getElementById("lm-help-gestures");
     if (keys) {
-      keys.innerHTML = "";
+      keys.replaceChildren();
       LMRowTools.shortcutRows().forEach((r) => {
         const tr = document.createElement("tr");
         const kt = document.createElement("td");
@@ -799,7 +805,7 @@
       });
     }
     if (gestures) {
-      gestures.innerHTML = "";
+      gestures.replaceChildren();
       LMRowTools.GESTURES.forEach((g) => {
         const tr = document.createElement("tr");
         const a = document.createElement("td");
@@ -1542,7 +1548,7 @@
   function buildFallbackTabs() {
     if (!sheetTabsEl || hasNativeSheets()) return;
     sheetTabsEl.hidden = false;
-    sheetTabsEl.innerHTML = "";
+    sheetTabsEl.replaceChildren();
     SHEET_SPECS.forEach((s) => {
       const b = document.createElement("button");
       b.type = "button";
@@ -1610,6 +1616,7 @@
   const importModeSel = document.getElementById("lm-import-mode");
   const importFileInput = document.getElementById("lm-import-dialog-file");
   const importSummary = document.getElementById("lm-import-summary");
+  if (importSummary && !importSummary.replaceChildren) importSummary.replaceChildren = () => { importSummary.textContent = ""; };
   const importError = document.getElementById("lm-import-error");
   const importCommitButton = document.getElementById("lm-import-commit");
   let pendingJob = null;
@@ -1693,7 +1700,7 @@
     } catch (ex) {
       if (requestId !== previewRequest) return;
       pendingJob = null;
-      importSummary.innerHTML = "";
+      importSummary.replaceChildren();
       importError.textContent = ex.message;
       importError.hidden = false;
     }
@@ -1716,7 +1723,7 @@
     if (importCommitActive) return;
     applyFormatUI();
     previewRequest += 1;
-    importSummary.innerHTML = "";
+    importSummary.replaceChildren();
     importError.hidden = true;
     importCommitButton.disabled = true;
     importFileInput.value = "";
@@ -1732,7 +1739,7 @@
   function openImportDialog() {
     if (importCommitActive) return;
     previewRequest += 1;
-    importSummary.innerHTML = "";
+    importSummary.replaceChildren();
     importError.hidden = true;
     importCommitButton.disabled = true;
     importFileInput.value = "";
@@ -1757,7 +1764,7 @@
       previewRequest += 1;
       pendingJob = null;
       pendingFile = null;
-      importSummary.innerHTML = "";
+      importSummary.replaceChildren();
       importCommitButton.disabled = true;
       return;
     }
@@ -1945,8 +1952,8 @@
     const box = document.getElementById("lm-collab-members");
     if (!box) return;
     const list = users || [];
-    if (!list.length || collabConn !== "connected") { box.hidden = true; box.innerHTML = ""; return; }
-    box.innerHTML = "";
+    if (!list.length || collabConn !== "connected") { box.hidden = true; box.replaceChildren(); return; }
+    box.replaceChildren();
     list.forEach((u) => {
       const chip = document.createElement("span");
       chip.className = "lm-collab-avatar" + (u.self ? " lm-collab-avatar-self" : "");
