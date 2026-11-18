@@ -16,9 +16,18 @@
   const global = window;
 
   function $(id) { return document.getElementById(id); }
-  function esc(s) {
-    return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  function makeEl(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) { node.className = className; }
+    if (text !== undefined) { node.textContent = text; }
+    return node;
+  }
+  function makeBtn(className, text, onClick, id) {
+    const btn = makeEl("button", className, text);
+    btn.type = "button";
+    if (id) { btn.id = id; }
+    if (onClick) { btn.addEventListener("click", onClick); }
+    return btn;
   }
   function fmtSize(n) {
     n = Number(n) || 0;
@@ -121,6 +130,8 @@
     if (!modal || !host) { return; }
     host.replaceChildren();
     if (hist) { hist.hidden = true; }
+    const histBtn = $("lm-sbs-history-toggle");
+    if (histBtn) { histBtn.setAttribute("aria-expanded", "false"); }
     $("lm-sbs-title").textContent = "：" + modelName;
     modal.hidden = false;
     setStatus("载入中…");
@@ -181,26 +192,26 @@
     const bar = $("lm-sbs-conflict");
     if (!bar) { return; }
     bar.hidden = false;
-    bar.innerHTML =
-      '<span>该 SBS 已被其他人修改（服务器版本 ' +
-      esc((server.version || "").slice(0, 8)) + '）。</span>' +
-      '<button class="btn btn-sm" id="lm-sbs-loadsrv">载入服务器版本</button>' +
-      '<button class="btn btn-sm btn-danger" id="lm-sbs-force">仍然覆盖</button>' +
-      '<button class="btn btn-sm" id="lm-sbs-conflict-x">关闭</button>';
-    $("lm-sbs-loadsrv").addEventListener("click", () => {
+    const msg = makeEl(
+      "span",
+      "",
+      "该 SBS 已被其他人修改（服务器版本 " + (server.version || "").slice(0, 8) + "）。"
+    );
+    const loadSrvBtn = makeBtn("btn btn-sm", "载入服务器版本", () => {
       state.editor.setValue(server.content || "");
       state.baseVersion = server.version || "";
       bar.hidden = true;
       markDirty(false);
       setStatus("已载入服务器版本", "ok");
-    });
-    $("lm-sbs-force").addEventListener("click", () => {
+    }, "lm-sbs-loadsrv");
+    const forceBtn = makeBtn("btn btn-sm btn-danger", "仍然覆盖", () => {
       // Overwrite: adopt the server version as our base so the next save wins.
       state.baseVersion = server.version || "";
       bar.hidden = true;
       save();
-    });
-    $("lm-sbs-conflict-x").addEventListener("click", () => { bar.hidden = true; });
+    }, "lm-sbs-force");
+    const closeBtn = makeBtn("btn btn-sm", "关闭", () => { bar.hidden = true; }, "lm-sbs-conflict-x");
+    bar.replaceChildren(msg, loadSrvBtn, forceBtn, closeBtn);
   }
 
   async function save() {
@@ -234,34 +245,39 @@
   async function loadHistory() {
     const list = $("lm-sbs-rev-list");
     if (!list) { return; }
-    list.innerHTML = '<li class="lm-muted">加载中…</li>';
+    list.replaceChildren(makeEl("li", "lm-muted", "加载中…"));
     let data;
     try {
       data = await LMApi.listModelSbsRevisions(state.pid, state.modelId);
     } catch (ex) {
-      list.innerHTML = '<li class="lm-err">' + esc(ex.message) + "</li>";
+      list.replaceChildren(makeEl("li", "lm-err", ex.message));
       return;
     }
     const revs = data.revisions || [];
     if (!revs.length) {
-      list.innerHTML = '<li class="lm-muted">暂无历史版本</li>';
+      list.replaceChildren(makeEl("li", "lm-muted", "暂无历史版本"));
       return;
     }
-    list.innerHTML = revs.map((r) =>
-      '<li class="lm-sbs-rev">' +
-      '<div class="lm-sbs-rev-meta">' +
-      '<span class="lm-sbs-rev-time">' + esc(fmtTime(r.created_at)) + "</span>" +
-      (r.is_current ? '<span class="lm-sbs-rev-cur">当前</span>' : "") +
-      '<span class="lm-sbs-rev-size">' + esc(fmtSize(r.size)) + "</span>" +
-      "</div>" +
-      '<div class="lm-sbs-rev-act">' +
-      '<button class="btn btn-sm lm-sbs-rev-load" data-id="' + r.id + '">载入</button>' +
-      '<button class="btn btn-sm lm-sbs-rev-restore" data-id="' + r.id + '">恢复</button>' +
-      "</div></li>").join("");
-    list.querySelectorAll(".lm-sbs-rev-load").forEach((b) =>
-      b.addEventListener("click", () => loadRevision(Number(b.dataset.id))));
-    list.querySelectorAll(".lm-sbs-rev-restore").forEach((b) =>
-      b.addEventListener("click", () => restoreRevision(Number(b.dataset.id))));
+    const items = revs.map((r) => {
+      const revId = Number(r.id);
+      const li = makeEl("li", "lm-sbs-rev");
+
+      const meta = makeEl("div", "lm-sbs-rev-meta");
+      meta.appendChild(makeEl("span", "lm-sbs-rev-time", fmtTime(r.created_at)));
+      if (r.is_current) { meta.appendChild(makeEl("span", "lm-sbs-rev-cur", "当前")); }
+      meta.appendChild(makeEl("span", "lm-sbs-rev-size", fmtSize(r.size)));
+
+      const act = makeEl("div", "lm-sbs-rev-act");
+      const loadBtn = makeBtn("btn btn-sm lm-sbs-rev-load", "载入", () => loadRevision(revId));
+      loadBtn.dataset.id = String(r.id);
+      const restoreBtn = makeBtn("btn btn-sm lm-sbs-rev-restore", "恢复", () => restoreRevision(revId));
+      restoreBtn.dataset.id = String(r.id);
+      act.append(loadBtn, restoreBtn);
+
+      li.append(meta, act);
+      return li;
+    });
+    list.replaceChildren(...items);
   }
 
   async function loadRevision(revId) {
@@ -309,6 +325,8 @@
     if (!hist) { return; }
     state.historyOpen = hist.hidden;
     hist.hidden = !hist.hidden;
+    const histBtn = $("lm-sbs-history-toggle");
+    if (histBtn) { histBtn.setAttribute("aria-expanded", String(state.historyOpen)); }
     if (state.historyOpen) { loadHistory(); }
   }
 
@@ -336,6 +354,7 @@
     document.addEventListener("keydown", (e) => {
       const modal = $("lm-sbs-modal");
       if (!modal || modal.hidden) { return; }
+      if (e.isComposing || e.keyCode === 229) { return; }
       if (e.key === "Escape") { close(); }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
