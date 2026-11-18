@@ -92,7 +92,7 @@
     const empty = $("lm-notif-empty");
     if (!host) return;
     if (!items || !items.length) {
-      host.innerHTML = "";
+      host.replaceChildren();
       if (empty) {
         empty.hidden = false;
         empty.textContent = scope === "history" ? "暂无历史通知" : "暂无未读通知";

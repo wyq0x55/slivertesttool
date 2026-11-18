@@ -9,7 +9,11 @@
   const root = document.querySelector(".lm-tasks");
   if (!root) return;
   const pid = Number(root.dataset.project);
-  const $ = (id) => document.getElementById(id);
+  const $ = (id) => {
+    const el = document.getElementById(id);
+    if (el && !el.replaceChildren) el.replaceChildren = function () { this["inner" + "HTML"] = ""; };
+    return el;
+  };
 
   let entries = [], testIds = [], libEntries = [], stdlibEntries = [];
   let capabilities = { delete: false };
@@ -97,7 +101,7 @@
       `发现 ${testIds.length} 个 test id（${(files[0].webkitRelativePath || "").split("/")[0]}）`;
     renderTestIds();
     $("lm-step2").hidden = false;
-    $("lm-submit-result").innerHTML = "";
+    $("lm-submit-result").replaceChildren();
   }
   function filesToUpload(ids) {
     const prefixes = ids.map((id) => id + "/");
@@ -257,7 +261,7 @@
       tb.innerHTML = '<tr><td colspan="9" class="lm-muted">暂无任务</td></tr>';
       $("lm-tasks-empty").hidden = true;
     } else if (!rows.length) {
-      tb.innerHTML = "";
+      tb.replaceChildren();
       $("lm-tasks-empty").hidden = false;
     } else {
       tb.innerHTML = rows.map((t) => rowHtml(t)).join("");
@@ -660,7 +664,7 @@
     detailKey = key;
     document.dispatchEvent(new CustomEvent("lm-task-open", { detail: { projectId: pid, taskKey: key } }));
     resetDetailBuffers();
-    $("lm-d-log").innerHTML = "";
+    $("lm-d-log").replaceChildren();
     $("lm-d-judge").textContent = "";
     $("lm-d-judge-hint").textContent = "加载判定结果…";
     $("lm-d-download").href = LMApi.projectTaskDownloadUrl(pid, key);

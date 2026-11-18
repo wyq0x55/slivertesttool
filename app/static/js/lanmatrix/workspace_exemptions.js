@@ -163,7 +163,7 @@
       if (toolbar) toolbar.hidden = true;
       if (empty) empty.hidden = false;
       const host = $("lm-h-ex-rows");
-      if (host) host.innerHTML = "";
+      if (host) host.replaceChildren();
       syncBulk();
       return;
     }
