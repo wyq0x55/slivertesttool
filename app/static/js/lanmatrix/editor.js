@@ -218,7 +218,7 @@
     // Order the category pages by テスト区分 number (natural/numeric) rather than
     // first-seen order, so a newly added 区分 lands in its proper sequential slot
     // instead of always at the last page. "未分类" (no category) always sorts last.
-    order.sort((a, b) => {
+    const sortedOrder = order.toSorted((a, b) => {
       if (a === "__none__") return 1;
       if (b === "__none__") return -1;
       const na = parseFloat(a);
@@ -229,7 +229,7 @@
       if (aNum !== bNum) return aNum ? -1 : 1; // numeric 区分 before textual ones
       return a.localeCompare(b, undefined, { numeric: true }); // textual/natural
     });
-    return order.map((key) => {
+    return sortedOrder.map((key) => {
       const list = buckets.get(key);
       const cname = list[0].category_name;
       let label;
@@ -503,7 +503,7 @@
   async function insertRowAt(item, where, count) {
     const ids = grid.getSelectedIds();
     let anchor = item ? item.id : null;
-    if (!anchor && ids.length) anchor = where === "above" ? ids[0] : ids[ids.length - 1];
+    if (!anchor && ids.length) anchor = where === "above" ? ids[0] : ids.at(-1);
     const n = Math.max(1, Number(count) || 1);
     if (!anchor) return addRow(n > 1 ? { count: n } : undefined);
     const opts = { anchor_id: anchor, place: where };
@@ -829,6 +829,7 @@
   // "?" is an ordinary character inside the grid's cells, so LMRowTools.isHelpKey
   // ignores the key while a text control has focus.
   document.addEventListener("keydown", (e) => {
+    if (!e || e.isComposing || e.keyCode === 229) return;
     if (!global_LMRowTools() || !LMRowTools.isHelpKey(e)) return;
     e.preventDefault();
     toggleHelp();
@@ -886,7 +887,9 @@
       closeAiModelPop();
     });
     document.addEventListener("keydown", (e) => {
-      if (e && e.key === "Escape" && aiModelPop.open) closeAiModelPop();
+      if (e && !e.isComposing && e.keyCode !== 229 && e.key === "Escape" && aiModelPop.open) {
+        closeAiModelPop();
+      }
     });
   }
 
@@ -908,7 +911,7 @@
     if (Array.isArray(value)) return value.map(aiStoredValue);
     if (typeof value === "object") {
       const sorted = Object.create(null);
-      Object.keys(value).sort().forEach((key) => { sorted[key] = aiStoredValue(value[key]); });
+      Object.keys(value).toSorted().forEach((key) => { sorted[key] = aiStoredValue(value[key]); });
       return sorted;
     }
     return value;
@@ -1034,11 +1037,11 @@
     "High": "High", "Medium": "Medium", "Low": "Low", "Critical": "Critical",
   };
   const PRIORITY_LABEL = { high: "高", medium: "中", low: "低", "": "—" };
-  const PRIORITY_STYLE = {
-    high: "background:#fdecea;color:#c0392b;",
-    medium: "background:#fff4e5;color:#b9770e;",
-    low: "background:#eaf3fb;color:#2471a3;",
-    "": "background:#eee;color:#777;",
+  const PRIORITY_COLORS = {
+    high: { background: "#fdecea", color: "#c0392b" },
+    medium: { background: "#fff4e5", color: "#b9770e" },
+    low: { background: "#eaf3fb", color: "#2471a3" },
+    "": { background: "#eee", color: "#777" },
   };
   function priorityTier(raw) {
     const en = PRIORITY_JP_TO_EN[String(raw == null ? "" : raw).trim()] || "";
@@ -1048,10 +1051,18 @@
     return "";
   }
   function priorityBadge(tier) {
-    const style = PRIORITY_STYLE[tier] || PRIORITY_STYLE[""];
-    return `<span class="lm-queue-prio" style="${style}border-radius:3px;`
-      + `padding:0 6px;margin-left:6px;font-size:12px;line-height:18px;">`
-      + `${esc(PRIORITY_LABEL[tier] || "—")}</span>`;
+    const colors = PRIORITY_COLORS[tier] || PRIORITY_COLORS[""];
+    const span = document.createElement("span");
+    span.className = "lm-queue-prio";
+    span.style.background = colors.background;
+    span.style.color = colors.color;
+    span.style.borderRadius = "3px";
+    span.style.padding = "0 6px";
+    span.style.marginLeft = "6px";
+    span.style.fontSize = "12px";
+    span.style.lineHeight = "18px";
+    span.textContent = PRIORITY_LABEL[tier] || "—";
+    return span;
   }
 
   // --- Row-level conditional formatting (result + priority) ---
@@ -1106,7 +1117,7 @@
   let resultsByTestId = Object.create(null);
   function effectiveResult(item) {
     const tid = rowTestId(item);
-    if (tid && Object.prototype.hasOwnProperty.call(resultsByTestId, tid)) {
+    if (tid && Object.hasOwn(resultsByTestId, tid)) {
       return resultsByTestId[tid];
     }
     return item ? item.result : "";
@@ -1123,7 +1134,7 @@
     let touched = false;
     const out = items.map((it) => {
       const tid = rowTestId(it);
-      if (!tid || !Object.prototype.hasOwnProperty.call(resultsByTestId, tid)) return it;
+      if (!tid || !Object.hasOwn(resultsByTestId, tid)) return it;
       const rv = resultsByTestId[tid];
       const shown = (rv == null || rv === "") ? "Not Tested" : rv;
       if (it.result === shown) return it;
@@ -1188,7 +1199,7 @@
       const r = t.result == null ? "" : String(t.result);
       // Keep the FIRST verdict seen per test_id; list_project_tasks returns
       // newest-first, so that is the latest run.
-      if (!Object.prototype.hasOwnProperty.call(map, tid)) map[tid] = r;
+      if (!Object.hasOwn(map, tid)) map[tid] = r;
     });
     const changed = JSON.stringify(map) !== JSON.stringify(resultsByTestId);
     resultsByTestId = map;
@@ -1215,7 +1226,7 @@
     try { items = collab.getItems("test") || []; } catch (_e) { return; }
     items.forEach((it) => {
       const tid = rowTestId(it);
-      if (!tid || !Object.prototype.hasOwnProperty.call(resultsByTestId, tid)) return;
+      if (!tid || !Object.hasOwn(resultsByTestId, tid)) return;
       const rv = resultsByTestId[tid];
       const shown = (rv == null || rv === "") ? "Not Tested" : rv;
       if (String(it.result == null ? "" : it.result) === shown) return;
@@ -1343,8 +1354,7 @@
         result: res, resCat: resultCategory(res),
       });
     });
-    out.sort((a, b) => a.testId.localeCompare(b.testId, undefined, { numeric: true }));
-    return out;
+    return out.toSorted((a, b) => a.testId.localeCompare(b.testId, undefined, { numeric: true }));
   }
 
   // A candidate is in scope when it matches BOTH the active priority tier
@@ -1375,7 +1385,10 @@
       ? byPrio.filter((r) => r.testId.toLowerCase().includes(q) || r.desc.toLowerCase().includes(q))
       : byPrio;
     if (!all.length) {
-      queueList.innerHTML = '<div class="lm-queue-empty">当前测试用例表没有带 test_id 的行，无法入队。</div>';
+      const empty = document.createElement("div");
+      empty.className = "lm-queue-empty";
+      empty.textContent = "当前测试用例表没有带 test_id 的行，无法入队。";
+      queueList.replaceChildren(empty);
     } else if (!rows.length) {
       const plabel = PRIORITY_LABEL[queuePriority];
       const scope = [];
@@ -1384,25 +1397,44 @@
       const hint = scope.length
         ? `没有${scope.join("、")}的 test_id。`
         : "没有匹配的 test_id。";
-      queueList.innerHTML = `<div class="lm-queue-empty">${hint}</div>`;
+      const empty = document.createElement("div");
+      empty.className = "lm-queue-empty";
+      empty.textContent = hint;
+      queueList.replaceChildren(empty);
     } else {
-      queueList.innerHTML = rows.map((r) => {
-        const on = queueChecked.has(r.testId) ? " checked" : "";
-        const desc = r.desc ? `<div class="lm-queue-desc">${esc(r.desc)}</div>` : "";
-        const res = `<span class="lm-queue-res lm-queue-res-${esc(r.resCat)}">`
-          + `${esc(RESULT_LABEL[r.resCat] || r.resCat)}</span>`;
-        return `<label class="lm-queue-row">`
-          + `<input type="checkbox" value="${esc(r.testId)}"${on}>`
-          + `<span><span class="lm-queue-tid">${esc(r.testId)}</span>${priorityBadge(r.tier)}${res}${desc}</span>`
-          + `</label>`;
-      }).join("");
-      queueList.querySelectorAll('input[type=checkbox]').forEach((cb) => {
+      const nodes = rows.map((r) => {
+        const label = document.createElement("label");
+        label.className = "lm-queue-row";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.value = r.testId;
+        cb.checked = queueChecked.has(r.testId);
         cb.addEventListener("change", () => {
           if (cb.checked) queueChecked.add(cb.value);
           else queueChecked.delete(cb.value);
           updateQueueCount();
         });
+        const wrap = document.createElement("span");
+        const tidEl = document.createElement("span");
+        tidEl.className = "lm-queue-tid";
+        tidEl.textContent = r.testId;
+        wrap.appendChild(tidEl);
+        wrap.appendChild(priorityBadge(r.tier));
+        const resEl = document.createElement("span");
+        resEl.className = `lm-queue-res lm-queue-res-${r.resCat}`;
+        resEl.textContent = RESULT_LABEL[r.resCat] || r.resCat;
+        wrap.appendChild(resEl);
+        if (r.desc) {
+          const descEl = document.createElement("div");
+          descEl.className = "lm-queue-desc";
+          descEl.textContent = r.desc;
+          wrap.appendChild(descEl);
+        }
+        label.appendChild(cb);
+        label.appendChild(wrap);
+        return label;
       });
+      queueList.replaceChildren(...nodes);
     }
     updateQueueCount();
   }
@@ -1435,6 +1467,15 @@
   // present it is built and prepended to the queue toolbar. Switching the tier
   // re-selects every case in that tier (or all cases) so the ticked set always
   // matches the chosen priority.
+  function populateSelectOptions(selectEl, items) {
+    const opts = items.map(([value, label]) => {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = label;
+      return opt;
+    });
+    selectEl.replaceChildren(...opts);
+  }
   let queuePrioSel = document.getElementById("lm-queue-priority");
   if (!queuePrioSel && queueDialog) {
     const toolbar = queueDialog.querySelector(".lm-queue-toolbar");
@@ -1443,11 +1484,12 @@
       wrap.className = "lm-queue-prio-pick";
       queuePrioSel = document.createElement("select");
       queuePrioSel.id = "lm-queue-priority";
-      queuePrioSel.innerHTML =
-        '<option value="high">高（默认）</option>'
-        + '<option value="medium">中</option>'
-        + '<option value="low">低</option>'
-        + '<option value="all">全部</option>';
+      populateSelectOptions(queuePrioSel, [
+        ["high", "高（默认）"],
+        ["medium", "中"],
+        ["low", "低"],
+        ["all", "全部"],
+      ]);
       wrap.appendChild(queuePrioSel);
       toolbar.insertBefore(wrap, toolbar.firstChild);
     }
@@ -1470,14 +1512,15 @@
       queueResultSel = document.createElement("select");
       queueResultSel.id = "lm-queue-result";
       queueResultSel.title = "按结果筛选";
-      queueResultSel.innerHTML =
-        '<option value="">全部结果</option>'
-        + '<option value="nottested">未测试</option>'
-        + '<option value="passed">passed</option>'
-        + '<option value="failed">failed</option>'
-        + '<option value="error">error</option>'
-        + '<option value="cancelled">cancelled</option>'
-        + '<option value="other">其它</option>';
+      populateSelectOptions(queueResultSel, [
+        ["", "全部结果"],
+        ["nottested", "未测试"],
+        ["passed", "passed"],
+        ["failed", "failed"],
+        ["error", "error"],
+        ["cancelled", "cancelled"],
+        ["other", "其它"],
+      ]);
       wrap.appendChild(queueResultSel);
       // Place it right after the priority picker (or at the front otherwise).
       const prioWrap = toolbar.querySelector(".lm-queue-prio-pick");
@@ -1672,7 +1715,13 @@
     importCommitButton.disabled = true;
     importError.textContent = notice;
     importError.hidden = !notice;
-    importSummary.innerHTML = "<p>正在生成导入预览…</p>";
+    if (typeof document.createElement === "function") {
+      const loading = document.createElement("p");
+      loading.textContent = "正在生成导入预览…";
+      importSummary.replaceChildren(loading);
+    } else {
+      importSummary.innerHTML = "<p>正在生成导入预览…</p>";
+    }
 
     try {
       const data = await spec.call(pid, file, mode);
@@ -1682,20 +1731,72 @@
 
       const preview = pendingJob.preview || {};
       const invalid = Number(preview.invalid) || 0;
-      const errors = (preview.errors || []).slice(0, 20).map((row) =>
-        `<tr><td>${esc(row.row ?? "-")}</td>` +
-        `<td>${esc(row.column || row.field || "-")}</td>` +
-        `<td>${esc(row.message || "未知错误")}</td></tr>`).join("");
-      const replaceWarning = mode === "replace_all"
-        ? `<p class="lm-error"><strong>整表替换：</strong>确认后将替换该格式对应工作表的现有数据；被替换行将移入回收站。</p>`
-        : "";
-      importSummary.innerHTML =
-        `<p>《${esc(file.name)}》按${esc(spec.label)}预览：共 ${Number(preview.total) || 0} 行，` +
-        `新增 ${Number(preview.insert) || 0}，更新 ${Number(preview.update) || 0}，` +
-        `错误 ${invalid}。</p>` + replaceWarning +
-        (errors ? `<table class="lm-table lm-preview"><thead><tr><th>行</th><th>列</th><th>问题</th></tr></thead><tbody>${errors}</tbody></table>` : "") +
-        ((preview.errors || []).length > 20
-          ? `<p class="lm-muted">仅显示前 20 项错误。</p>` : "");
+      if (typeof document.createElement === "function") {
+        const nodes = [];
+        const summaryP = document.createElement("p");
+        summaryP.textContent =
+          `《${file.name}》按${spec.label}预览：共 ${Number(preview.total) || 0} 行，` +
+          `新增 ${Number(preview.insert) || 0}，更新 ${Number(preview.update) || 0}，` +
+          `错误 ${invalid}。`;
+        nodes.push(summaryP);
+        if (mode === "replace_all") {
+          const warnP = document.createElement("p");
+          warnP.className = "lm-error";
+          const strong = document.createElement("strong");
+          strong.textContent = "整表替换：";
+          warnP.appendChild(strong);
+          warnP.appendChild(document.createTextNode("确认后将替换该格式对应工作表的现有数据；被替换行将移入回收站。"));
+          nodes.push(warnP);
+        }
+        const previewErrors = (preview.errors || []).slice(0, 20);
+        if (previewErrors.length) {
+          const table = document.createElement("table");
+          table.className = "lm-table lm-preview";
+          const thead = document.createElement("thead");
+          const headRow = document.createElement("tr");
+          ["行", "列", "问题"].forEach((colLabel) => {
+            const th = document.createElement("th");
+            th.textContent = colLabel;
+            headRow.appendChild(th);
+          });
+          thead.appendChild(headRow);
+          table.appendChild(thead);
+          const tbody = document.createElement("tbody");
+          previewErrors.forEach((row) => {
+            const tr = document.createElement("tr");
+            [row.row ?? "-", row.column || row.field || "-", row.message || "未知错误"].forEach((cellVal) => {
+              const td = document.createElement("td");
+              td.textContent = String(cellVal);
+              tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+          });
+          table.appendChild(tbody);
+          nodes.push(table);
+        }
+        if ((preview.errors || []).length > 20) {
+          const moreP = document.createElement("p");
+          moreP.className = "lm-muted";
+          moreP.textContent = "仅显示前 20 项错误。";
+          nodes.push(moreP);
+        }
+        importSummary.replaceChildren(...nodes);
+      } else {
+        const errors = (preview.errors || []).slice(0, 20).map((row) =>
+          `<tr><td>${esc(row.row ?? "-")}</td>` +
+          `<td>${esc(row.column || row.field || "-")}</td>` +
+          `<td>${esc(row.message || "未知错误")}</td></tr>`).join("");
+        const replaceWarning = mode === "replace_all"
+          ? `<p class="lm-error"><strong>整表替换：</strong>确认后将替换该格式对应工作表的现有数据；被替换行将移入回收站。</p>`
+          : "";
+        importSummary.innerHTML =
+          `<p>《${esc(file.name)}》按${esc(spec.label)}预览：共 ${Number(preview.total) || 0} 行，` +
+          `新增 ${Number(preview.insert) || 0}，更新 ${Number(preview.update) || 0}，` +
+          `错误 ${invalid}。</p>` + replaceWarning +
+          (errors ? `<table class="lm-table lm-preview"><thead><tr><th>行</th><th>列</th><th>问题</th></tr></thead><tbody>${errors}</tbody></table>` : "") +
+          ((preview.errors || []).length > 20
+            ? `<p class="lm-muted">仅显示前 20 项错误。</p>` : "");
+      }
       updateImportCommitButton();
     } catch (ex) {
       if (requestId !== previewRequest) return;
@@ -1854,13 +1955,23 @@
       const delPart = s.deleted ? `删除 ${s.deleted}，` : "";
       const skipPart = s.skipped_nameless
         ? ` 跳过无名称信号 ${s.skipped_nameless}。` : "";
-      let html =
-        `<p>抽取完成：扫描 ${s.scanned_rows || 0} 行手順，` +
+      const summaryEl = document.getElementById("lm-import-summary");
+      const nodes = [];
+      const summaryP = document.createElement("p");
+      summaryP.appendChild(document.createTextNode(
+        `抽取完成：扫描 ${s.scanned_rows || 0} 行手順，` +
         `去重得 ${s.distinct_signals || 0} 个信号。${delPart}` +
-        `新增 ${s.created || 0}，更新 ${s.updated || 0}` +
-        (rowErrors.length
-          ? `，<b style="color:var(--danger,#c0392b)">失败 ${rowErrors.length}</b>` : "") +
-        `。${skipPart}</p>`;
+        `新增 ${s.created || 0}，更新 ${s.updated || 0}`
+      ));
+      if (rowErrors.length) {
+        summaryP.appendChild(document.createTextNode("，"));
+        const failB = document.createElement("b");
+        failB.style.color = "var(--danger,#c0392b)";
+        failB.textContent = `失败 ${rowErrors.length}`;
+        summaryP.appendChild(failB);
+      }
+      summaryP.appendChild(document.createTextNode(`。${skipPart}`));
+      nodes.push(summaryP);
       if (rowErrors.length) {
         const byMsg = new Map();
         rowErrors.forEach((er) => {
@@ -1868,19 +1979,33 @@
           if (!byMsg.has(m)) byMsg.set(m, []);
           byMsg.get(m).push(er);
         });
-        const groups = [...byMsg.entries()]
-          .sort((a, b) => b[1].length - a[1].length)
-          .map(([m, ers]) =>
-            `<li class="lm-import-errgroup"><b>${esc(m)}</b>` +
-            `<span class="lm-muted">（${ers.length} 个）</span></li>`).join("");
-        html += `<ul class="lm-import-errlist">${groups}</ul>`;
+        const ul = document.createElement("ul");
+        ul.className = "lm-import-errlist";
+        [...byMsg.entries()]
+          .toSorted((a, b) => b[1].length - a[1].length)
+          .forEach(([m, ers]) => {
+            const li = document.createElement("li");
+            li.className = "lm-import-errgroup";
+            const b = document.createElement("b");
+            b.textContent = m;
+            const span = document.createElement("span");
+            span.className = "lm-muted";
+            span.textContent = `（${ers.length} 个）`;
+            li.appendChild(b);
+            li.appendChild(span);
+            ul.appendChild(li);
+          });
+        nodes.push(ul);
       }
       const nothing = (s.distinct_signals || 0) === 0;
       if (s.reason) {
-        html += `<p class="lm-import-reason" style="color:var(--danger,#c0392b)">` +
-          `${nothing ? "未抽取到入出力" : "注意"}：${esc(s.reason)}</p>`;
+        const reasonP = document.createElement("p");
+        reasonP.className = "lm-import-reason";
+        reasonP.style.color = "var(--danger,#c0392b)";
+        reasonP.textContent = `${nothing ? "未抽取到入出力" : "注意"}：${s.reason}`;
+        nodes.push(reasonP);
       }
-      document.getElementById("lm-import-summary").innerHTML = html;
+      summaryEl.replaceChildren(...nodes);
       toast(
         rowErrors.length
           ? `抽取完成，但有 ${rowErrors.length} 个信号冲突，请查看说明`
@@ -2209,8 +2334,8 @@
             const tasks = (res && res.tasks) || [];
             const mine = tasks.filter((t) => String(t.test_id) === String(tid));
             if (!mine.length) return null;
-            mine.sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
-            return mine[0].status || null;
+            const latest = mine.toSorted((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))[0];
+            return latest.status || null;
           }) : null,
           });
         } catch (ex) {
@@ -2340,6 +2465,7 @@
   // then reload so other users' latest changes are pulled in too.
   function installForceSaveShortcut() {
     document.addEventListener("keydown", (e) => {
+      if (!e || e.isComposing || e.keyCode === 229) return;
       const isSave = (e.ctrlKey || e.metaKey) && !e.altKey &&
         (e.key === "s" || e.key === "S");
       if (!isSave) return;
