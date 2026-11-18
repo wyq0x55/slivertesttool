@@ -23,16 +23,18 @@
   function s(v) {
     return v === null || v === undefined ? "" : String(v);
   }
-  function esc(v) {
-    return s(v).replace(/&/g, "&amp;").replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  function makeEl(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
   }
 
   // Copy text to the clipboard with a synchronous fallback for browsers/contexts
   // where navigator.clipboard is unavailable (e.g. some http:// LAN origins).
   function copyText(text) {
     try {
-      if (global.navigator && navigator.clipboard && navigator.clipboard.writeText) {
+      if (global.navigator && navigator.clipboard && global.isSecureContext && navigator.clipboard.writeText) {
         return navigator.clipboard.writeText(text).then(function () { return true; },
           function () { return legacyCopy(text); });
       }
@@ -47,10 +49,12 @@
       ta.style.position = "fixed";
       ta.style.top = "-1000px";
       document.body.appendChild(ta);
-      ta.select();
-      const ok = document.execCommand && document.execCommand("copy");
-      document.body.removeChild(ta);
-      return !!ok;
+      try {
+        ta.select();
+        return !!(document.execCommand && document.execCommand("copy"));
+      } finally {
+        ta.remove();
+      }
     } catch (_e) { return false; }
   }
 
@@ -127,34 +131,47 @@
 
   LMStepsRefPanel.prototype._build = function () {
     const r = this.root;
-    r.innerHTML =
-      '<div class="lm-ref-head">' +
-      '  <div class="lm-ref-tabs">' +
-      '    <button type="button" class="lm-ref-tab is-on" data-tab="lib">Lib 函数</button>' +
-      '    <button type="button" class="lm-ref-tab" data-tab="const">Const 常量</button>' +
-      '    <button type="button" class="lm-ref-tab" data-tab="io">入出力</button>' +
-      '  </div>' +
-      '  <input type="search" class="lm-ref-search lm-input" placeholder="搜索名称 / 路径 / 值 / 备注…">' +
-      '  <div class="lm-ref-toolbar">' +
-      '    <div class="lm-ref-count lm-muted"></div>' +
-      '    <button type="button" class="lm-ref-addbtn btn btn-sm" hidden>+ 新增</button>' +
-      '  </div>' +
-      '  <div class="lm-ref-add" hidden></div>' +
-      '</div>' +
-      '<div class="lm-ref-list" tabindex="0"></div>' +
-      '<div class="lm-ref-hint lm-muted">点击条目复制，再粘贴到单元格</div>';
-
-    this.searchEl = r.querySelector(".lm-ref-search");
-    this.listEl = r.querySelector(".lm-ref-list");
-    this.countEl = r.querySelector(".lm-ref-count");
-    this.addBtn = r.querySelector(".lm-ref-addbtn");
-    this.addForm = r.querySelector(".lm-ref-add");
-    this.tabEls = Array.prototype.slice.call(r.querySelectorAll(".lm-ref-tab"));
-
     const self = this;
-    this.tabEls.forEach(function (b) {
-      b.addEventListener("click", function () { self._setTab(b.getAttribute("data-tab")); });
+
+    const tabsEl = makeEl("div", "lm-ref-tabs");
+    const tabSpecs = [
+      { tab: "lib", label: "Lib 函数", on: true },
+      { tab: "const", label: "Const 常量", on: false },
+      { tab: "io", label: "入出力", on: false },
+    ];
+    this.tabEls = tabSpecs.map(function (t) {
+      const btn = makeEl("button", "lm-ref-tab" + (t.on ? " is-on" : ""), t.label);
+      btn.type = "button";
+      btn.setAttribute("data-tab", t.tab);
+      btn.addEventListener("click", function () { self._setTab(t.tab); });
+      tabsEl.appendChild(btn);
+      return btn;
     });
+
+    this.searchEl = makeEl("input", "lm-ref-search lm-input");
+    this.searchEl.type = "search";
+    this.searchEl.placeholder = "搜索名称 / 路径 / 值 / 备注…";
+    this.searchEl.setAttribute("aria-label", "搜索名称 / 路径 / 值 / 备注…");
+
+    this.countEl = makeEl("div", "lm-ref-count lm-muted");
+    this.addBtn = makeEl("button", "lm-ref-addbtn btn btn-sm", "+ 新增");
+    this.addBtn.type = "button";
+    this.addBtn.hidden = true;
+    const toolbarEl = makeEl("div", "lm-ref-toolbar");
+    toolbarEl.append(this.countEl, this.addBtn);
+
+    this.addForm = makeEl("div", "lm-ref-add");
+    this.addForm.hidden = true;
+
+    const headEl = makeEl("div", "lm-ref-head");
+    headEl.append(tabsEl, this.searchEl, toolbarEl, this.addForm);
+
+    this.listEl = makeEl("div", "lm-ref-list");
+    this.listEl.tabIndex = 0;
+
+    const hintEl = makeEl("div", "lm-ref-hint lm-muted", "点击条目复制，再粘贴到单元格");
+    r.replaceChildren(headEl, this.listEl, hintEl);
+
     this.searchEl.addEventListener("input", function () {
       self.query = self.searchEl.value.trim().toLowerCase();
       self._renderList();
@@ -219,27 +236,33 @@
     if (!this.addForm) return;
     const spec = ADD_FORMS[this.tab];
     if (!spec) return;
-    const fields = spec.map(function (f) {
-      return '<label class="lm-ref-addrow"><span>' + esc(f.label) +
-        (f.required ? ' *' : '') + '</span>' +
-        '<input class="lm-input" data-key="' + f.key + '"' +
-        (f.required ? ' required' : '') + '></label>';
-    }).join("");
-    this.addForm.innerHTML = fields +
-      '<div class="lm-ref-adderr lm-err" hidden></div>' +
-      '<div class="lm-ref-addactions">' +
-      '  <button type="button" class="btn btn-sm btn-primary lm-ref-addsave">保存</button>' +
-      '  <button type="button" class="btn btn-sm lm-ref-addcancel">取消</button>' +
-      '</div>';
+    const self = this;
+    let firstInput = null;
+    const fieldNodes = spec.map(function (f) {
+      const row = makeEl("label", "lm-ref-addrow");
+      const labelEl = makeEl("span", "", f.label + (f.required ? " *" : ""));
+      const inputEl = makeEl("input", "lm-input");
+      inputEl.setAttribute("data-key", f.key);
+      if (f.required) inputEl.required = true;
+      if (!firstInput) firstInput = inputEl;
+      row.append(labelEl, inputEl);
+      return row;
+    });
+    const errEl = makeEl("div", "lm-ref-adderr lm-err");
+    errEl.hidden = true;
+    const saveBtn = makeEl("button", "btn btn-sm btn-primary lm-ref-addsave", "保存");
+    saveBtn.type = "button";
+    saveBtn.addEventListener("click", function () { self._submitAdd(); });
+    const cancelBtn = makeEl("button", "btn btn-sm lm-ref-addcancel", "取消");
+    cancelBtn.type = "button";
+    cancelBtn.addEventListener("click", function () { self._hideAdd(); });
+    const actionsEl = makeEl("div", "lm-ref-addactions");
+    actionsEl.append(saveBtn, cancelBtn);
+
+    this.addForm.replaceChildren(...fieldNodes, errEl, actionsEl);
     this.addForm.hidden = false;
     if (this.addBtn) this.addBtn.classList.add("is-on");
-    const self = this;
-    const save = this.addForm.querySelector(".lm-ref-addsave");
-    if (save) save.addEventListener("click", function () { self._submitAdd(); });
-    const cancel = this.addForm.querySelector(".lm-ref-addcancel");
-    if (cancel) cancel.addEventListener("click", function () { self._hideAdd(); });
-    const first = this.addForm.querySelector("input");
-    if (first) { try { first.focus(); } catch (_e) { /* noop */ } }
+    if (firstInput) { try { firstInput.focus(); } catch (_e) { /* noop */ } }
   };
 
   LMStepsRefPanel.prototype._submitAdd = function () {
@@ -272,12 +295,11 @@
   // Accept raw rows: { lib: [...rows], const: [...rows], io: [...rows] }. Rows
   // are mapped to entries and null (missing key field) rows are dropped.
   LMStepsRefPanel.prototype.setData = function (raw) {
-    const lib = ((raw && raw.lib) || []).map(libEntry).filter(Boolean);
-    const con = ((raw && raw.const) || []).map(constEntry).filter(Boolean);
-    const io = ((raw && raw.io) || []).map(ioEntry).filter(Boolean);
     // Stable, case-insensitive sort by title for predictable scanning.
     const byTitle = function (a, b) { return a.title.localeCompare(b.title); };
-    lib.sort(byTitle); con.sort(byTitle); io.sort(byTitle);
+    const lib = ((raw && raw.lib) || []).map(libEntry).filter(Boolean).toSorted(byTitle);
+    const con = ((raw && raw.const) || []).map(constEntry).filter(Boolean).toSorted(byTitle);
+    const io = ((raw && raw.io) || []).map(ioEntry).filter(Boolean).toSorted(byTitle);
     this.data = { lib: lib, const: con, io: io };
     this._renderList();
   };
@@ -298,21 +320,27 @@
     this._visible = list;
     this.countEl.textContent = list.length + " / " + this._current().length;
     if (!list.length) {
-      this.listEl.innerHTML =
-        '<div class="lm-ref-empty lm-muted">' +
-        (this._current().length ? "无匹配结果" : "该项目暂无数据") + "</div>";
+      this.listEl.replaceChildren(makeEl(
+        "div",
+        "lm-ref-empty lm-muted",
+        this._current().length ? "无匹配结果" : "该项目暂无数据"
+      ));
       return;
     }
-    const html = list.map(function (e, i) {
-      const sub = e.sub ? '<div class="lm-ref-sub">' + esc(e.sub) + "</div>" : "";
-      const note = e.note ? '<div class="lm-ref-note">' + esc(e.note) + "</div>" : "";
-      return '<div class="lm-ref-item" data-idx="' + i + '" title="点击复制：' +
-        esc(e.copy) + '">' +
-        '<div class="lm-ref-title">' + esc(e.title) +
-        '<span class="lm-ref-copy">复制</span></div>' +
-        sub + note + "</div>";
-    }).join("");
-    this.listEl.innerHTML = html;
+    const items = list.map(function (e, i) {
+      const itemEl = makeEl("div", "lm-ref-item");
+      itemEl.setAttribute("data-idx", String(i));
+      itemEl.title = "点击复制：" + e.copy;
+
+      const titleEl = makeEl("div", "lm-ref-title", e.title);
+      titleEl.appendChild(makeEl("span", "lm-ref-copy", "复制"));
+      itemEl.appendChild(titleEl);
+
+      if (e.sub) itemEl.appendChild(makeEl("div", "lm-ref-sub", e.sub));
+      if (e.note) itemEl.appendChild(makeEl("div", "lm-ref-note", e.note));
+      return itemEl;
+    });
+    this.listEl.replaceChildren(...items);
   };
 
   LMStepsRefPanel.prototype._copyAt = function (idx, el) {
