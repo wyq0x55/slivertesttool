@@ -57,7 +57,7 @@
   /* Parse CSV text; null when it is not a TestCsv (no #COMMENT header). */
   function parse(text) {
     var lines = String(text || "").replace(/\r\n?/g, "\n").split("\n");
-    if (lines.length && lines[lines.length - 1] === "") lines.pop();
+    if (lines.length && lines.at(-1) === "") lines.pop();
     var at = -1;
     for (var i = 0; i < lines.length; i++) {
       if (lines[i].indexOf("#COMMENT") === 0) { at = i; break; }

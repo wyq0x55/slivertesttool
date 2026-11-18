@@ -28,12 +28,6 @@
     reader: "只读成员"
   };
 
-  function esc(s) {
-    return String(s === null || s === undefined ? "" : s)
-      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-  }
-
   /* Top-level module names imported by a judge.
    *
    * The server does this with a real AST walk. This is a regex, and the gap is
@@ -89,7 +83,7 @@
         missing[name] = 1;
       });
     });
-    return Object.keys(missing).sort();
+    return Object.keys(missing).toSorted();
   }
 
   /* Turn the form's current state into the rows to display.
@@ -205,8 +199,7 @@
       });
     }
 
-    rows.sort(function (a, b) { return ORDER[a.level] - ORDER[b.level]; });
-    return rows;
+    return rows.toSorted(function (a, b) { return ORDER[a.level] - ORDER[b.level]; });
   }
 
   /** True when any row would prevent a successful submit. */
@@ -233,18 +226,41 @@
     if (!rows.length) { el.replaceChildren(); el.hidden = true; return; }
     el.hidden = false;
     el.className = "lm-preflight" + (blocked(rows) ? " is-blocked" : "");
-    var head = '<div class="lm-preflight-head">提交前置检查 · ' +
-      esc(summarize(rows)) + "</div>";
-    var body = rows.map(function (r) {
-      return '<div class="lm-preflight-row lm-pf-' + esc(r.level) + '">' +
-        '<span class="lm-pf-mark" aria-hidden="true">' +
-        (r.level === "ok" ? "✓" : r.level === "info" ? "·" : "!") + "</span>" +
-        '<span class="lm-pf-label">' + esc(r.label) + "</span>" +
-        '<span class="lm-pf-text">' + esc(r.text) +
-        (r.hint ? '<span class="lm-pf-hint">' + esc(r.hint) + "</span>" : "") +
-        "</span></div>";
-    }).join("");
-    el.innerHTML = head + '<div class="lm-preflight-rows">' + body + "</div>";
+
+    var head = document.createElement("div");
+    head.className = "lm-preflight-head";
+    head.textContent = "提交前置检查 · " + summarize(rows);
+
+    var list = document.createElement("div");
+    list.className = "lm-preflight-rows";
+    rows.forEach(function (r) {
+      var rowEl = document.createElement("div");
+      rowEl.className = "lm-preflight-row lm-pf-" + r.level;
+
+      var mark = document.createElement("span");
+      mark.className = "lm-pf-mark";
+      mark.setAttribute("aria-hidden", "true");
+      mark.textContent = r.level === "ok" ? "✓" : r.level === "info" ? "·" : "!";
+
+      var label = document.createElement("span");
+      label.className = "lm-pf-label";
+      label.textContent = r.label == null ? "" : String(r.label);
+
+      var text = document.createElement("span");
+      text.className = "lm-pf-text";
+      text.textContent = r.text == null ? "" : String(r.text);
+      if (r.hint) {
+        var hint = document.createElement("span");
+        hint.className = "lm-pf-hint";
+        hint.textContent = String(r.hint);
+        text.appendChild(hint);
+      }
+
+      rowEl.append(mark, label, text);
+      list.appendChild(rowEl);
+    });
+
+    el.replaceChildren(head, list);
   }
 
   window.LMPreflight = {

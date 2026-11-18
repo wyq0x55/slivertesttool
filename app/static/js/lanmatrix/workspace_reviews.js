@@ -61,9 +61,22 @@
   // comes back must still have their four rows selected.
   const selected = new Set();
 
-  function esc(s) {
-    return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  function makeEl(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text == null ? "" : String(text);
+    return node;
+  }
+
+  function makePill(status, label, tip) {
+    const node = document.createElement("span");
+    if (global.LMPill && LMPill.apply) {
+      LMPill.apply(node, status, label, tip);
+    } else {
+      node.className = "pill";
+      node.textContent = label == null ? "" : String(label);
+    }
+    return node;
   }
 
   function toast(msg, good) {
@@ -103,12 +116,13 @@
       + `?row=${encodeURIComponent(r.uuid)}&from=workspace`;
   }
 
-  function verdictPill(r) {
+  function verdictNodes(r) {
     if (isUtJob(r)) {
       const v = String(r.review_verdict || "");
-      const badge = v ? LMPill.html(UT_VERDICT[v] || "pending", v, `机器判定：${v}`)
-        : '<span class="muted">—</span>';
-      return `${badge} <span class="muted">单元测试</span>`;
+      const badge = v
+        ? makePill(UT_VERDICT[v] || "pending", v, `机器判定：${v}`)
+        : makeEl("span", "muted", "—");
+      return [badge, document.createTextNode(" "), makeEl("span", "muted", "单元测试")];
     }
     const v = String(r.review_verdict || r.result || "");
     const cls = /untestable/i.test(v) ? "warn" : "ok";
@@ -116,27 +130,24 @@
     // because that is literally what approving it writes onto the row. The tag
     // says where the claim came from, so a reviewer can still tell a runner's
     // result apart from a hand-typed 不要 without opening the case.
-    const tag = isExemption(r)
-      ? ` <span class="muted">項目作成=不要</span>` : "";
-    return `<span class="pill ${cls}">${esc(v || "—")}</span>${tag}`;
+    const nodes = [makeEl("span", `pill ${cls}`, v || "—")];
+    if (isExemption(r)) nodes.push(document.createTextNode(" "), makeEl("span", "muted", "項目作成=不要"));
+    return nodes;
   }
 
   /* The review's own state, as a pill. In the pending scope every row is
      `pending`, so the column shows the author's 説明 instead -- the substance
      of what is being reviewed. In the decided scopes the state and, above all,
      the rejection reason are the whole point. */
-  function statusCell(r) {
-    if (actionable()) return esc(r.description || "");
+  function statusNodes(r) {
+    if (actionable()) return [document.createTextNode(r.description || "")];
     const zh = { pending: "待审核", approved: "已通过", rejected: "已驳回" };
     const st = String(r.review_status || "");
-    const badge = global.LMPill
-      ? LMPill.html(st, zh[st] || st, r.review_note || "")
-      : `<span class="pill">${esc(zh[st] || st)}</span>`;
-    const who = r.reviewer_name ? ` <span class="muted">${esc(r.reviewer_name)}</span>` : "";
-    const note = r.review_note
-      ? `<div class="lm-rv-reason">${esc(r.review_note)}</div>`
-      : (r.description ? `<div class="muted">${esc(r.description)}</div>` : "");
-    return badge + who + note;
+    const nodes = [makePill(st, zh[st] || st, r.review_note || "")];
+    if (r.reviewer_name) nodes.push(document.createTextNode(" "), makeEl("span", "muted", r.reviewer_name));
+    if (r.review_note) nodes.push(makeEl("div", "lm-rv-reason", r.review_note));
+    else if (r.description) nodes.push(makeEl("div", "muted", r.description));
+    return nodes;
   }
 
   function applyScopeText() {
@@ -219,42 +230,80 @@
   function paint() {
     const start = pager ? pager.offset() : 0;
     const page = pager ? pager.slice(rows) : rows;
-    $("lm-h-rv-rows").innerHTML = page.map((r, n) => {
+    const rowNodes = page.map((r, n) => {
       const i = start + n;
       const href = rowHref(r);
+      const tr = document.createElement("tr");
+      if (r.needs_note) tr.className = "needs-note";
+
       // Only bulk-approvable rows get a checkbox: offering one that silently
       // does nothing on submit is worse than not offering it.
-      const box = (actionable() && r.bulk_approvable)
-        ? `<input type="checkbox" class="lm-rv-box" data-i="${i}"`
-          + `${selected.has(i) ? " checked" : ""}>`
-        : `<span class="muted" title="${actionable() ? "需逐条审核" : "已完成审核"}">—</span>`;
-      // A decided row gets 打开 only: 通过 / 驳回 on it would be refused by the
-      // server, and a button that cannot work is worse than no button.
-      const acts = isUtJob(r)
-        ? `<a class="btn ${actionable() ? "primary " : "ghost "}small" href="${href}">`
-          + `${actionable() ? "打开审核" : "打开"}</a>`
-        : (actionable() && isPending(r))
-        ? `<button class="btn primary small" data-act="approve" data-i="${i}">通过</button>
-           <button class="btn small" data-act="reject" data-i="${i}">驳回</button>
-           <a class="btn ghost small" href="${href}">打开</a>`
-        : `<a class="btn ghost small" href="${href}">打开</a>`;
+      const tdCheck = document.createElement("td");
+      if (actionable() && r.bulk_approvable) {
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.className = "lm-rv-box";
+        box.dataset.i = String(i);
+        box.checked = selected.has(i);
+        tdCheck.appendChild(box);
+      } else {
+        const dash = makeEl("span", "muted", "—");
+        dash.title = actionable() ? "需逐条审核" : "已完成审核";
+        tdCheck.appendChild(dash);
+      }
+
+      const tdProj = makeEl("td", "", projName(r.project_id, projects));
+
       // The list is read by test id, like every other list in the product; the
       // row uuid is only the fallback for a case that has none.
-      const label = r.test_id || r.case_id || r.uuid || "";
-      return `<tr class="${r.needs_note ? "needs-note" : ""}">
-        <td>${box}</td>
-        <td>${esc(projName(r.project_id, projects))}</td>
-        <td class="lm-rv-case"><a href="${href}">${esc(label)}</a>
-            <div class="muted lm-rv-path" title="${esc(r.title || "")}">${esc(r.title || "")}</div></td>
-        <td>${verdictPill(r)}</td>
-        <td class="lm-rv-reason">${statusCell(r)}</td>
-        <td>${esc(r.executor || "")}
-            <div class="muted lm-rv-date">${esc(r.exec_date || "")}</div></td>
-        <td>
-          <div class="lm-rv-acts">${acts}</div>
-        </td>
-      </tr>`;
-    }).join("");
+      const tdCase = makeEl("td", "lm-rv-case");
+      const caseLink = makeEl("a", "", r.test_id || r.case_id || r.uuid || "");
+      caseLink.href = href;
+      const pathDiv = makeEl("div", "muted lm-rv-path", r.title || "");
+      pathDiv.title = r.title || "";
+      tdCase.append(caseLink, pathDiv);
+
+      const tdVerdict = document.createElement("td");
+      tdVerdict.append(...verdictNodes(r));
+
+      const tdReason = makeEl("td", "lm-rv-reason");
+      tdReason.append(...statusNodes(r));
+
+      const tdExec = document.createElement("td");
+      tdExec.append(
+        document.createTextNode(r.executor == null ? "" : String(r.executor)),
+        makeEl("div", "muted lm-rv-date", r.exec_date || ""),
+      );
+
+      // A decided row gets 打开 only: 通过 / 驳回 on it would be refused by the
+      // server, and a button that cannot work is worse than no button.
+      const tdActs = document.createElement("td");
+      const actsDiv = makeEl("div", "lm-rv-acts");
+      if (isUtJob(r)) {
+        const openLink = makeEl("a", `btn ${actionable() ? "primary " : "ghost "}small`, actionable() ? "打开审核" : "打开");
+        openLink.href = href;
+        actsDiv.appendChild(openLink);
+      } else if (actionable() && isPending(r)) {
+        const approveBtn = makeEl("button", "btn primary small", "通过");
+        approveBtn.dataset.act = "approve";
+        approveBtn.dataset.i = String(i);
+        const rejectBtn = makeEl("button", "btn small", "驳回");
+        rejectBtn.dataset.act = "reject";
+        rejectBtn.dataset.i = String(i);
+        const openLink = makeEl("a", "btn ghost small", "打开");
+        openLink.href = href;
+        actsDiv.append(approveBtn, rejectBtn, openLink);
+      } else {
+        const openLink = makeEl("a", "btn ghost small", "打开");
+        openLink.href = href;
+        actsDiv.appendChild(openLink);
+      }
+      tdActs.appendChild(actsDiv);
+
+      tr.append(tdCheck, tdProj, tdCase, tdVerdict, tdReason, tdExec, tdActs);
+      return tr;
+    });
+    $("lm-h-rv-rows").replaceChildren(...rowNodes);
     syncBulk();
   }
 
@@ -280,8 +329,13 @@
     } catch (ex) {
       if (ex.status === 401) return;
       const host = $("lm-h-rv-rows");
-      if (host) host.innerHTML =
-        `<tr><td colspan="7" class="muted">加载失败：${esc(ex.message || "")}</td></tr>`;
+      if (host) {
+        const tr = document.createElement("tr");
+        const td = makeEl("td", "muted", `加载失败：${ex.message || ""}`);
+        td.colSpan = 7;
+        tr.appendChild(td);
+        host.replaceChildren(tr);
+      }
     }
   }
 

@@ -261,7 +261,7 @@
         if (q[1] === null) { flush(); return; }
         run.push([tx(q[0]), ys(q[1])]);
       });
-      if (run.length && !ghost) run.push([tx(endT), run[run.length - 1][1]]);
+      if (run.length && !ghost) run.push([tx(endT), run.at(-1)[1]]);
       flush();
       return;
     }
@@ -276,7 +276,7 @@
       const x0 = tx(pts[i][0]);
       const x1 = i + 1 < pts.length ? tx(pts[i + 1][0]) : tx(endT);
       const yy = ys(v);
-      if (run.length) run.push([x0, run[run.length - 1][1]]);
+      if (run.length) run.push([x0, run.at(-1)[1]]);
       run.push([x0, yy], [x1, yy]);
     }
     flush();
