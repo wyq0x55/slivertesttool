@@ -129,7 +129,7 @@ body.lm-has-side{ display:block; }
 ::selection{ background:var(--brand-ring); }
 a{ color:var(--brand-text); text-decoration:none; }
 a:hover{ color:var(--brand-hover); }
-h1,h2,h3,h4{ margin:0; }
+h1,h2,h3,h4{ margin:0; text-wrap:balance; }
 h1{ letter-spacing:-0.025em; font-weight:650; }
 h2,h3,h4{ letter-spacing:-0.015em; }
 .muted, .lm-muted{ color:var(--text-3); }
@@ -140,18 +140,33 @@ code{
 :where(input,select,textarea,button,a,[tabindex]):focus-visible{
   outline:none; box-shadow:0 0 0 3px var(--brand-ring); border-radius:var(--radius-sm);
 }
-*{ scrollbar-width:thin; scrollbar-color:var(--border-strong) transparent; }
-::-webkit-scrollbar{ width:10px; height:10px; }
-::-webkit-scrollbar-thumb{ background:var(--border-strong); border-radius:6px; border:2px solid var(--bg); }
-::-webkit-scrollbar-thumb:hover{ background:var(--text-3); }
+*{
+  --scrollbar-thumb: var(--border-strong);
+  --scrollbar-track: transparent;
+  scrollbar-width: auto;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+@media (prefers-contrast: more){
+  *{
+    --scrollbar-thumb: CanvasText;
+    --scrollbar-track: Canvas;
+  }
+}
+@supports not (scrollbar-color: auto){
+  *{ scrollbar-width: auto; }
+  ::-webkit-scrollbar{ width:10px; height:10px; }
+  ::-webkit-scrollbar-track{ background:var(--scrollbar-track); }
+  ::-webkit-scrollbar-thumb{ background:var(--scrollbar-thumb); border-radius:6px; border:2px solid var(--bg); }
+  ::-webkit-scrollbar-thumb:hover{ background:var(--text-3); }
+}
 @media (prefers-reduced-motion: reduce){
   *{ transition-duration:.01ms !important; animation-duration:.01ms !important; }
 }
 
 /* ===== PART 3 · APP SHELL ================================================ */
-.app{ display:flex; width:100%; min-height:100vh; }
+.app{ display:flex; width:100%; min-height:100dvh; }
 .side{
-  flex:0 0 232px; position:sticky; top:0; align-self:start; height:100vh;
+  flex:0 0 232px; position:sticky; top:0; align-self:start; height:100dvh;
   background:var(--surface); border-right:1px solid var(--border);
   display:flex; flex-direction:column; padding:16px 12px 14px;
   transition:flex-basis var(--dur) var(--ease), padding var(--dur) var(--ease);
@@ -664,6 +679,7 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .stepper input{ width:52px; text-align:center; border:none; border-left:1px solid var(--border);
   border-right:1px solid var(--border); border-radius:0; padding:6px 0; }
 .stepper input:focus{ box-shadow:none; }
+.stepper:focus-within{ border-color:var(--brand); box-shadow:0 0 0 3px var(--brand-ring); }
 
 /* ===== PART 9 · MEMBERS ================================================== */
 .mgrid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:16px; }
@@ -804,9 +820,10 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .skcard .l.h20{ height:20px; }
 
 /* ===== PART 12 · DIALOGS / TOAST (shared) ============================== */
+dialog:modal{ overscroll-behavior:contain; }
 dialog.lm-dialog, .lm-dialog{ border:1px solid var(--border); border-radius:var(--radius-lg);
   box-shadow:var(--shadow-lg); background:var(--surface); color:var(--text); padding:0; }
-dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-filter:blur(2px); }
+dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-filter:blur(2px); overflow:hidden; overscroll-behavior:contain; }
 .lm-modal-panel,.lm-modal-head,.lm-modal-foot{ background:var(--surface); color:var(--text); }
 .lm-modal-head,.lm-modal-foot{ border-color:var(--border); }
 .lm-toast{ border-radius:var(--radius-sm); box-shadow:var(--shadow-lg); font-weight:550; color:#fff; }
@@ -815,7 +832,7 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
 .lm-toast.lm-ok{ background:#1f7a37; } .lm-toast.lm-err{ background:#c0392b; }
 
 /* ===== PART 13 · LOGIN / REGISTER ===================================== */
-.login-wrap{ min-height:100vh; display:grid; grid-template-columns:1fr 1fr; }
+.login-wrap{ min-height:100dvh; display:grid; grid-template-columns:1fr 1fr; }
 .login-aside{ position:relative; overflow:hidden; padding:56px 52px; color:#fff;
   background:linear-gradient(150deg,var(--brand-active),var(--brand) 55%,#7b86e6); display:flex; flex-direction:column; }
 .login-aside::after{ content:""; position:absolute; inset:0;
@@ -998,7 +1015,7 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
 .lm-badge-admin{ background:var(--warn-soft); color:var(--warn-text); }
 
 /* --- Table browser (left nav + grid) ------------------------------------ */
-.lm-db-browser{ height:calc(100vh - 300px); min-height:440px; }
+.lm-db-browser{ height:calc(100dvh - 300px); min-height:440px; }
 .lm-db-tablelist{ border-right:1px solid var(--border); background:var(--surface-2); }
 .lm-db-tablelist-head{ color:var(--text-2); border-bottom:1px solid var(--border);
   background:var(--surface-2); }
@@ -1031,10 +1048,10 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
 .lm-db-write-warn{ background:var(--warn-soft); color:var(--warn-text); }
 .lm-db-result-meta{ color:var(--text-3); }
 .lm-db-result-wrap{ border:1px solid var(--border); border-radius:var(--radius-sm);
-  background:var(--surface); max-height:min(560px,60vh); }
+  background:var(--surface); max-height:min(560px,60dvh); }
 .lm-db-result thead th{ background:var(--surface-2); }
 /* 连接概览's 数据表 list: full width now, so give it more vertical room. */
-.lm-db-tables-wrap{ max-height:min(360px,45vh); }
+.lm-db-tables-wrap{ max-height:min(360px,45dvh); }
 .lm-null{ color:var(--text-3); font-style:italic; }
 
 /* --- Row-edit dialog fields (scoped to beat legacy `.lm-card input[type]`) - */
@@ -1061,9 +1078,9 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
   border:1px solid var(--border); border-radius:var(--radius-lg);
   background:var(--surface); color:var(--text);
   box-shadow:var(--shadow-lg); padding:0;
-  width:min(440px, calc(100vw - 32px)); max-height:calc(100vh - 64px);
+  width:min(440px, calc(100dvw - 32px)); max-height:calc(100dvh - 64px);
 }
-.lmui::backdrop{ background:rgba(16,18,24,.45); backdrop-filter:blur(2px); }
+.lmui::backdrop{ background:rgba(16,18,24,.45); backdrop-filter:blur(2px); overflow:hidden; overscroll-behavior:contain; }
 :root[data-theme="dark"] .lmui::backdrop{ background:rgba(0,0,0,.62); }
 
 .lmui-form{ display:flex; flex-direction:column; gap:12px; padding:20px; margin:0; }
