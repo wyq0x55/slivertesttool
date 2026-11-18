@@ -19,7 +19,7 @@
     <a class="btn btn-sm" id="lm-ai-draft-link" hidden>查看草稿</a>
   </div>
   <div class="lm-topbar-exec" id="lm-topbar-exec" hidden>
-    <button class="btn btn-sm btn-primary" id="lm-run-selected" hidden>队列测试</button>
+    <button class="btn btn-sm btn-primary" id="lm-run-selected" type="button" hidden>队列测试</button>
   </div>
 </div>
 {% endblock %}
@@ -45,10 +45,10 @@
       <!-- Fallback row-structure + file controls for FallbackGrid (Univer exposes
            these natively via row-header menus, drag-reorder, and Ribbon buttons). -->
       <span class="lm-rowtools" id="lm-rowtools" role="group" aria-label="行操作"></span>
-      <button class="btn btn-sm" id="lm-help" title="快捷键与操作帮助（快捷键 ?）"
+      <button class="btn btn-sm" id="lm-help" type="button" title="快捷键与操作帮助（快捷键 ?）"
               aria-label="快捷键与操作帮助">?</button>
-      <button class="btn" id="lm-import">导入</button>
-      <button class="btn" id="lm-export">导出</button>
+      <button class="btn" id="lm-import" type="button">导入</button>
+      <button class="btn" id="lm-export" type="button">导出</button>
     </div>
   </div>
 
@@ -76,11 +76,11 @@
   <input type="file" id="lm-import-file" accept=".xlsx" hidden>
 </div>
 
-<dialog id="lm-queue-dialog" class="lm-dialog lm-dialog-wide">
+<dialog id="lm-queue-dialog" class="lm-dialog lm-dialog-wide" aria-labelledby="lm-queue-dlg-title">
   <form method="dialog" class="lm-card">
-    <h3>队列测试 · 选择要入队的测试用例</h3>
+    <h3 id="lm-queue-dlg-title">队列测试 · 选择要入队的测试用例</h3>
     <div class="lm-queue-toolbar">
-      <input type="search" id="lm-queue-filter" placeholder="按 test_id 或说明筛选…" autocomplete="off">
+      <input type="search" id="lm-queue-filter" placeholder="按 test_id 或说明筛选…" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
       <button type="button" class="btn btn-sm" id="lm-queue-sel-all">全选</button>
       <button type="button" class="btn btn-sm" id="lm-queue-sel-none">清空</button>
       <span class="lm-muted" id="lm-queue-count"></span>
@@ -94,10 +94,10 @@
   </form>
 </dialog>
 
-<dialog id="lm-export-dialog" class="lm-dialog">
+<dialog id="lm-export-dialog" class="lm-dialog" aria-labelledby="lm-export-dlg-title">
   <form method="dialog" class="lm-card">
-    <h3>导出</h3>
-    <label>格式
+    <h3 id="lm-export-dlg-title">导出</h3>
+    <label for="lm-export-format">格式
       <select id="lm-export-format">
         <option value="generic">通用模板 (本平台格式)</option>
         <option value="test_matrix">测试平台 (日文表头)</option>
@@ -114,10 +114,10 @@
   </form>
 </dialog>
 
-<dialog id="lm-import-dialog" class="lm-dialog lm-dialog-wide">
+<dialog id="lm-import-dialog" class="lm-dialog lm-dialog-wide" aria-labelledby="lm-import-dlg-title">
   <form method="dialog" class="lm-card">
-    <h3>导入</h3>
-    <label>格式
+    <h3 id="lm-import-dlg-title">导入</h3>
+    <label for="lm-import-format">格式
       <select id="lm-import-format">
         <option value="generic">通用模板 (本平台导出/模板格式)</option>
         <option value="test_matrix">测试平台 (日文表头)</option>
@@ -126,7 +126,7 @@
         <option value="io">入出力信号池 (名称 / 路径)</option>
       </select>
     </label>
-    <label>模式
+    <label for="lm-import-mode">模式
       <select id="lm-import-mode">
         <option value="upsert">增量合并 (存在则更新)</option>
         <option value="insert_only">仅新增</option>
@@ -138,8 +138,8 @@
     <div class="lm-extract-io" id="lm-extract-io-block" hidden>
       <p class="lm-muted">或不上传文件，直接从手順中抽取入出力信号（自动去重，按名称 + 路径唯一并入信号池）：</p>
       <div class="lm-extract-io-src">
-        <label class="lm-inline"><input type="checkbox" id="lm-extract-src-lib" checked> Lib 手順</label>
-        <label class="lm-inline"><input type="checkbox" id="lm-extract-src-test"> 测试手順</label>
+        <label class="lm-inline" for="lm-extract-src-lib"><input type="checkbox" id="lm-extract-src-lib" checked> Lib 手順</label>
+        <label class="lm-inline" for="lm-extract-src-test"><input type="checkbox" id="lm-extract-src-test"> 测试手順</label>
         <button type="button" id="lm-import-extract-io" class="btn">从手順抽取入出力</button>
       </div>
     </div>
@@ -153,9 +153,9 @@
 </dialog>
 <!-- Keyboard/gesture help. Rows are rendered by rowtools.js from a single list
      so the panel can never drift from what the code actually binds. -->
-<dialog id="lm-help-dialog" class="lm-dialog">
+<dialog id="lm-help-dialog" class="lm-dialog" aria-labelledby="lm-help-dlg-title">
   <form method="dialog" class="lm-card">
-    <h3>快捷键与操作帮助</h3>
+    <h3 id="lm-help-dlg-title">快捷键与操作帮助</h3>
     <table class="lm-help-table">
       <tbody id="lm-help-keys"></tbody>
     </table>
