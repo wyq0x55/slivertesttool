@@ -171,7 +171,11 @@
     }
     if (this.addForm) {
       this.addForm.addEventListener("keydown", function (ev) {
-        if (ev.key === "Enter") { ev.preventDefault(); self._submitAdd(); }
+        if (ev.key === "Enter") {
+          if (ev.isComposing || ev.keyCode === 229) return;
+          ev.preventDefault();
+          self._submitAdd();
+        }
       });
     }
     // Delegate copy clicks (list is re-rendered on every keystroke).
@@ -207,7 +211,7 @@
   LMStepsRefPanel.prototype._hideAdd = function () {
     if (!this.addForm) return;
     this.addForm.hidden = true;
-    this.addForm.innerHTML = "";
+    this.addForm.replaceChildren();
     if (this.addBtn) this.addBtn.classList.remove("is-on");
   };
 
