@@ -11,6 +11,8 @@
 
 /* ===== PART 1 · TOKENS ==================================================== */
 :root{
+  color-scheme: light dark;
+
   /* neutral scale */
   --n-0:#fff; --n-25:#fcfcfd; --n-50:#f7f8fa; --n-100:#f1f2f4; --n-150:#e8eaed;
   --n-200:#e3e5e8; --n-300:#d3d6db; --n-400:#a1a5ad; --n-500:#71757e;
@@ -47,9 +49,9 @@
   --chart-grid:var(--border); --chart-axis:var(--text-3);
 
   /* surfaces / text */
-  --bg:var(--n-50); --surface:var(--n-0); --surface-2:var(--n-25);
-  --border:var(--n-200); --border-strong:var(--n-300);
-  --text:var(--n-900); --text-2:var(--n-600); --text-3:#6d717a;  /* 4.5:1 on --bg */
+  --bg:light-dark(var(--n-50), #0b0c0e); --surface:light-dark(var(--n-0), #141518); --surface-2:light-dark(var(--n-25), #191b1f);
+  --border:light-dark(var(--n-200), #26282e); --border-strong:light-dark(var(--n-300), #32353c);
+  --text:light-dark(var(--n-900), #ededef); --text-2:light-dark(var(--n-600), #a1a5ad); --text-3:light-dark(#6d717a, #8b8f98);  /* 4.5:1 on --bg */
 
   /* effects */
   --shadow-sm:0 1px 2px rgba(16,18,24,.05);
@@ -76,6 +78,16 @@
   /* --- remap legacy app.css / lanmatrix.css variables onto new tokens --- */
   --card:var(--surface); --ink:var(--text); --muted:var(--text-3); --line:var(--border);
   --primary:var(--brand); --primary-dark:var(--brand-hover);
+}
+
+:root:has(> head > meta[name="color-scheme"][content="dark"]),
+[data-theme="dark"]{
+  color-scheme: dark;
+}
+
+:root:has(> head > meta[name="color-scheme"][content="light"]),
+[data-theme="light"]{
+  color-scheme: light;
 }
 
 [data-theme="dark"]{
