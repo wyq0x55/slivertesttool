@@ -190,8 +190,8 @@
   function renderProjects(projects) {
     // Most-recently-touched first. Nothing is dropped any more: the list is
     // paged, so the 9th project is one click away instead of invisible.
-    projectRows = (projects || []).slice()
-      .sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
+    projectRows = (projects || [])
+      .toSorted((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
     setTabCount("projects", projectRows.length);
     if (projectPager) {
       projectPager.reset();
@@ -204,7 +204,7 @@
     const host = $("lm-h-projects");
     if (!host) return;
     const rows = projectPager ? projectPager.slice(projectRows) : projectRows;
-    if (!rows.length) { host.innerHTML = ""; return; }
+    if (!rows.length) { host.replaceChildren(); return; }
     // Same card for both project types; only the counted unit differs.
     const nums = (p) => (p.project_type === "unit_test" ? `
           <span>函数 <b>${p.ut_targets || 0}</b></span>
@@ -230,8 +230,8 @@
   function fillProjectSelect(projects) {
     const sel = $("lm-h-project");
     const keep = sel.value;
-    const opts = (projects || []).slice()
-      .sort((a, b) => String(a.code || "").localeCompare(String(b.code || "")));
+    const opts = (projects || [])
+      .toSorted((a, b) => String(a.code || "").localeCompare(String(b.code || "")));
     sel.innerHTML = '<option value="">全部项目</option>'
       + opts.map((p) => `<option value="${esc(p.id)}">${esc(p.code || p.name || p.id)}</option>`).join("");
     const want = pendingProject != null ? pendingProject : keep;
@@ -403,7 +403,7 @@
     if (!body) return;
 
     if (!taskRows.length && !utRows.length) {
-      body.innerHTML = "";
+      body.replaceChildren();
       empty.hidden = false;
       updateBatchBar();
       return;
