@@ -15,15 +15,31 @@
   let filter = { q: "", s: "all" };
 
   const STATUS_ZH = LMPill.PROJECT_ZH;
+  const SVG_NS = "http://www.w3.org/2000/svg";
 
-  function esc(s) {
-    return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  function el(tag, props, children) {
+    const node = document.createElement(tag);
+    if (props) {
+      for (const [k, v] of Object.entries(props)) {
+        if (v == null) continue;
+        if (k === "className") node.className = v;
+        else if (k === "text") node.textContent = v;
+        else if (k === "style") node.setAttribute("style", v);
+        else if (k === "ariaLabel") node.setAttribute("aria-label", v);
+        else if (k === "dataset") {
+          for (const [dk, dv] of Object.entries(v)) node.dataset[dk] = dv;
+        } else {
+          node[k] = v;
+        }
+      }
+    }
+    if (children) node.append(...children);
+    return node;
   }
   function fmtDate(s) {
     if (!s) return "—";
     const d = new Date(s);
-    if (isNaN(d)) return esc(String(s).replace("T", " ").replace("Z", ""));
+    if (isNaN(d)) return String(s).replace("T", " ").replace("Z", "");
     const p = (n) => String(n).padStart(2, "0");
     return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
   }
@@ -37,17 +53,28 @@
   function show(el, on) { if (el) el.hidden = !on; }
 
   function skeleton() {
-    const one = `<div class="skcard">
-      <div class="row"><span class="sk" style="width:44px;height:20px"></span><span class="sk" style="width:52px;height:16px"></span></div>
-      <span class="sk" style="width:70%;height:17px;display:block;margin-bottom:9px"></span>
-      <span class="sk" style="width:100%;height:12px;display:block;margin-bottom:6px"></span>
-      <span class="sk" style="width:85%;height:12px;display:block"></span>
-      <div class="row" style="margin:18px 0 16px;padding:14px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border)">
-        <span class="sk" style="width:40px;height:28px"></span><span class="sk" style="width:40px;height:28px"></span><span class="sk" style="width:40px;height:28px"></span>
-      </div>
-      <div class="row" style="margin:0"><span class="sk" style="width:80px;height:26px;border-radius:999px"></span><span class="sk" style="width:70px;height:12px"></span></div>
-    </div>`;
-    skelEl.innerHTML = one.repeat(6);
+    const cards = Array.from({ length: 6 }, () => el("div", { className: "skcard" }, [
+      el("div", { className: "row" }, [
+        el("span", { className: "sk", style: "width:44px;height:20px" }),
+        el("span", { className: "sk", style: "width:52px;height:16px" }),
+      ]),
+      el("span", { className: "sk", style: "width:70%;height:17px;display:block;margin-bottom:9px" }),
+      el("span", { className: "sk", style: "width:100%;height:12px;display:block;margin-bottom:6px" }),
+      el("span", { className: "sk", style: "width:85%;height:12px;display:block" }),
+      el("div", {
+        className: "row",
+        style: "margin:18px 0 16px;padding:14px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border)",
+      }, [
+        el("span", { className: "sk", style: "width:40px;height:28px" }),
+        el("span", { className: "sk", style: "width:40px;height:28px" }),
+        el("span", { className: "sk", style: "width:40px;height:28px" }),
+      ]),
+      el("div", { className: "row", style: "margin:0" }, [
+        el("span", { className: "sk", style: "width:80px;height:26px;border-radius:999px" }),
+        el("span", { className: "sk", style: "width:70px;height:12px" }),
+      ]),
+    ]));
+    skelEl.replaceChildren(...cards);
   }
 
   function avatarStack(p) {
@@ -56,81 +83,162 @@
     if (!inits.length && !extra) {
       // fall back to the raw member_count when no initials are supplied
       const n = p.member_count || 0;
-      if (!n) return "";
-      return `<span class="avatar more">${n}</span>`;
+      if (!n) return [];
+      return [el("span", { className: "avatar more", text: String(n) })];
     }
-    let h = inits.map((m, i) => {
+    const nodes = inits.map((m, i) => {
       const hue1 = (i * 57) % 360, hue2 = (i * 57 + 40) % 360;
-      return `<span class="avatar" style="background:linear-gradient(135deg,hsl(${hue1} 55% 62%),hsl(${hue2} 55% 50%))">${esc(m)}</span>`;
-    }).join("");
-    if (extra > 0) h += `<span class="avatar more">+${extra}</span>`;
-    return h;
+      return el("span", {
+        className: "avatar",
+        style: `background:linear-gradient(135deg,hsl(${hue1} 55% 62%),hsl(${hue2} 55% 50%))`,
+        text: String(m == null ? "" : m),
+      });
+    });
+    if (extra > 0) nodes.push(el("span", { className: "avatar more", text: `+${extra}` }));
+    return nodes;
   }
 
-  function cardHtml(p) {
+  function metricBox(val, valClass, label) {
+    return el("div", { className: "metric" }, [
+      el("div", { className: valClass ? `v ${valClass}` : "v", text: String(val) }),
+      el("div", { className: "k", text: label }),
+    ]);
+  }
+
+  function searchGlyph() {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "2");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    const circle = document.createElementNS(SVG_NS, "circle");
+    circle.setAttribute("cx", "11");
+    circle.setAttribute("cy", "11");
+    circle.setAttribute("r", "7");
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", "m21 21-4.3-4.3");
+    svg.append(circle, path);
+    return svg;
+  }
+
+  function cardEl(p) {
     const isUt = p.project_type === "unit_test";
-    const st = esc(p.status || "draft");
+    const st = String(p.status || "draft");
     const stZh = STATUS_ZH[p.status] || st;
     const hasDesc = (p.description || "").trim().length > 0;
     const defaultDesc = isUt ? "暂无描述 · 点击进入实施一览" : "暂无描述 · 点击进入在线编辑";
-    const desc = hasDesc ? esc(p.description) : defaultDesc;
+    const desc = hasDesc ? String(p.description) : defaultDesc;
     const mainHref = isUt ? `/lanmatrix/projects/${p.id}/ut` : `/lanmatrix/projects/${p.id}`;
-    const mainAria = isUt ? `打开 ${esc(p.name)} 实施一览` : `打开 ${esc(p.name)} 在线编辑`;
+    const nameStr = p.name == null ? "" : String(p.name);
+    const codeStr = p.code == null ? "" : String(p.code);
+    const mainAria = isUt ? `打开 ${nameStr} 实施一览` : `打开 ${nameStr} 在线编辑`;
     // Every card names its type, so the two kinds read as peers in one list
     // rather than one of them looking like an exception.
     const typeTag = isUt
-      ? `<span class="ptype ptype-ut">单元测试</span>`
-      : `<span class="ptype ptype-silver">Silver</span>`;
+      ? el("span", { className: "ptype ptype-ut", text: "单元测试" })
+      : el("span", { className: "ptype ptype-silver", text: "Silver" });
 
-    let middleHtml = "";
+    let middleZone;
     if (isUt) {
-      middleHtml = `
-      <a class="zone zone-tasks" href="/lanmatrix/projects/${p.id}/tasks" aria-label="查看单元测试作业">
-        <div class="metrics">
-          <div class="metric"><div class="v">${p.ut_targets_count || 0}</div><div class="k">函数</div></div>
-          <div class="metric"><div class="v ok">${p.ut_jobs_approved || 0}</div><div class="k">审核通过</div></div>
-          <div class="metric"><div class="v ${(p.ut_jobs_needs_human || 0) ? "warn" : ""}">${p.ut_jobs_needs_human || 0}</div><div class="k">需人工</div></div>
-        </div>
-      </a>`;
+      const needsHuman = p.ut_jobs_needs_human || 0;
+      middleZone = el("a", {
+        className: "zone zone-tasks",
+        href: `/lanmatrix/projects/${p.id}/tasks`,
+        ariaLabel: "查看单元测试作业",
+      }, [
+        el("div", { className: "metrics" }, [
+          metricBox(p.ut_targets_count || 0, "", "函数"),
+          metricBox(p.ut_jobs_approved || 0, "ok", "审核通过"),
+          metricBox(needsHuman, needsHuman ? "warn" : "", "需人工"),
+        ]),
+      ]);
     } else {
       const total = p.task_total || 0;
       const passed = p.task_passed || 0;
       const failed = p.task_failed || 0;
       const rate = total ? Math.round((passed / total) * 100) : 0;
-      middleHtml = `
-      <a class="zone zone-tasks" href="/lanmatrix/projects/${p.id}/tasks" aria-label="查看测试任务">
-        <div class="metrics">
-          <div class="metric"><div class="v">${total}</div><div class="k">测试项</div></div>
-          <div class="metric"><div class="v ok">${total ? rate + "%" : "—"}</div><div class="k">通过率</div></div>
-          <div class="metric"><div class="v ${failed ? "warn" : ""}">${failed}</div><div class="k">失败</div></div>
-        </div>
-      </a>`;
+      middleZone = el("a", {
+        className: "zone zone-tasks",
+        href: `/lanmatrix/projects/${p.id}/tasks`,
+        ariaLabel: "查看测试任务",
+      }, [
+        el("div", { className: "metrics" }, [
+          metricBox(total, "", "测试项"),
+          metricBox(total ? rate + "%" : "—", "ok", "通过率"),
+          metricBox(failed, failed ? "warn" : "", "失败"),
+        ]),
+      ]);
     }
 
-    return `<div class="card zoned" data-id="${p.id}" data-code="${esc(p.code)}"
-        data-name="${esc(p.name)}" data-status="${st}" data-desc="${esc(p.description || "")}">
-      <a class="zone zone-main" href="${mainHref}"
-        aria-label="${mainAria}">
-        <div class="card-top">
-          <span class="card-tags"><span class="code-chip">${esc(p.code)}</span>${typeTag}</span>
-          <span class="status"><span class="dot ${st}"></span>${esc(stZh)}</span>
-        </div>
-        <h3>${esc(p.name)}</h3>
-        <p class="desc${hasDesc ? "" : " empty"}">${desc}</p>
-      </a>
-      ${middleHtml}
-      <a class="zone zone-members" href="/lanmatrix/projects/${p.id}/members" aria-label="项目成员管理">
-        <div class="card-foot">
-          <div class="stack">${avatarStack(p)}</div>
-          <span class="upd">更新于 ${fmtDate(p.updated_at)}</span>
-        </div>
-      </a>
-      <div class="card-acts">
-        <button class="btn small" data-edit="${p.id}">编辑</button>
-        <button class="btn small danger" data-del="${p.id}"
-          data-code="${esc(p.code)}" data-name="${esc(p.name)}">删除</button>
-      </div>
-    </div>`;
+    const editBtn = el("button", {
+      type: "button",
+      className: "btn small",
+      dataset: { edit: String(p.id) },
+      text: "编辑",
+    });
+    editBtn.addEventListener("click", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const card = editBtn.closest(".card");
+      openEdit({
+        id: card.getAttribute("data-id"),
+        code: card.getAttribute("data-code"),
+        name: card.getAttribute("data-name"),
+        status: card.getAttribute("data-status"),
+        description: card.getAttribute("data-desc"),
+      });
+    });
+    const delBtn = el("button", {
+      type: "button",
+      className: "btn small danger",
+      dataset: { del: String(p.id), code: codeStr, name: nameStr },
+      text: "删除",
+    });
+    delBtn.addEventListener("click", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      onDelete(delBtn.getAttribute("data-del"),
+        delBtn.getAttribute("data-code"),
+        delBtn.getAttribute("data-name"));
+    });
+
+    return el("div", {
+      className: "card zoned",
+      dataset: {
+        id: String(p.id),
+        code: codeStr,
+        name: nameStr,
+        status: st,
+        desc: p.description == null ? "" : String(p.description),
+      },
+    }, [
+      el("a", { className: "zone zone-main", href: mainHref, ariaLabel: mainAria }, [
+        el("div", { className: "card-top" }, [
+          el("span", { className: "card-tags" }, [
+            el("span", { className: "code-chip", text: codeStr }),
+            typeTag,
+          ]),
+          el("span", { className: "status" }, [
+            el("span", { className: `dot ${st}` }),
+            document.createTextNode(stZh),
+          ]),
+        ]),
+        el("h3", { text: nameStr }),
+        el("p", { className: hasDesc ? "desc" : "desc empty", text: desc }),
+      ]),
+      middleZone,
+      el("a", {
+        className: "zone zone-members",
+        href: `/lanmatrix/projects/${p.id}/members`,
+        ariaLabel: "项目成员管理",
+      }, [
+        el("div", { className: "card-foot" }, [
+          el("div", { className: "stack" }, avatarStack(p)),
+          el("span", { className: "upd", text: `更新于 ${fmtDate(p.updated_at)}` }),
+        ]),
+      ]),
+      el("div", { className: "card-acts" }, [editBtn, delBtn]),
+    ]);
   }
 
   function render() {
@@ -148,34 +256,15 @@
     show(emptyEl, false); show(errEl, false);
     if (!list.length) {
       show(gridEl, true);
-      gridEl.innerHTML = `<div class="state" style="grid-column:1/-1">
-        <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></span>
-        <h3>没有匹配的项目</h3><p>试试调整搜索或筛选条件。</p></div>`;
+      gridEl.replaceChildren(el("div", { className: "state", style: "grid-column:1/-1" }, [
+        el("span", { className: "glyph" }, [searchGlyph()]),
+        el("h3", { text: "没有匹配的项目" }),
+        el("p", { text: "试试调整搜索或筛选条件。" }),
+      ]));
       return;
     }
     show(gridEl, true);
-    gridEl.innerHTML = list.map(cardHtml).join("");
-    gridEl.querySelectorAll("button[data-del]").forEach((btn) => {
-      btn.addEventListener("click", (e) => {
-        e.preventDefault(); e.stopPropagation();
-        onDelete(btn.getAttribute("data-del"),
-          btn.getAttribute("data-code"),
-          btn.getAttribute("data-name"));
-      });
-    });
-    gridEl.querySelectorAll("button[data-edit]").forEach((btn) => {
-      btn.addEventListener("click", (e) => {
-        e.preventDefault(); e.stopPropagation();
-        const card = btn.closest(".card");
-        openEdit({
-          id: card.getAttribute("data-id"),
-          code: card.getAttribute("data-code"),
-          name: card.getAttribute("data-name"),
-          status: card.getAttribute("data-status"),
-          description: card.getAttribute("data-desc"),
-        });
-      });
-    });
+    gridEl.replaceChildren(...list.map(cardEl));
   }
 
   async function load() {

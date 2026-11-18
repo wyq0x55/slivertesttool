@@ -13,9 +13,27 @@
   let dragEl = null;     // row currently being dragged (reorder)
   let currentFields = []; // last-loaded field list, for order diffing
 
-  function esc(s) {
-    return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  function el(tag, props, children) {
+    const node = document.createElement(tag);
+    if (props) {
+      for (const [k, v] of Object.entries(props)) {
+        if (v == null) continue;
+        if (k === "className") node.className = v;
+        else if (k === "text") node.textContent = v;
+        else if (k === "style") node.setAttribute("style", v);
+        else if (k === "ariaLabel") node.setAttribute("aria-label", v);
+        else if (k === "dataset") {
+          for (const [dk, dv] of Object.entries(v)) node.dataset[dk] = dv;
+        } else {
+          node[k] = v;
+        }
+      }
+    }
+    if (children) node.append(...children);
+    return node;
+  }
+  function emptyRow(text) {
+    return el("tr", null, [el("td", { colSpan: 9, className: "muted", text: text })]);
   }
   function toast(msg, ok) {
     const t = document.getElementById("lm-toast");
@@ -45,26 +63,49 @@
     try {
       const data = await LMApi.listFields(pid);
       currentFields = data.fields;
-      rows.innerHTML = data.fields.map((f) => `
-        <tr data-id="${f.id}"${f.is_active ? "" : ' class="row-off"'}>
-          <td><span class="grip lm-drag-handle" title="拖拽排序" aria-label="拖拽排序">⠿</span></td>
-          <td><span class="tag">${esc(f.sheet || "test")}</span></td>
-          <td><code>${esc(f.field_key)}</code></td>
-          <td>${esc(f.display_name)}</td>
-          <td><span class="tag">${esc(f.data_type)}</span></td>
-          <td>${f.is_required ? '<span class="pill st-on"><span class="dot"></span>必填</span>' : '<span class="muted">—</span>'}</td>
-          <td>${f.is_readonly ? '<span class="tag">只读</span>' : '<span class="muted">—</span>'}</td>
-          <td class="muted" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((f.options || []).join(", ") || f.help_text || "")}</td>
-          <td><div class="row-acts">
-            <button class="btn small lm-edit">编辑</button>
-            <button class="btn small lm-toggle" data-active="${f.is_active}">${f.is_active ? "停用" : "启用"}</button>
-            <button class="btn small danger lm-del">删除</button>
-          </div></td>
-        </tr>`).join("") || '<tr><td colspan="9" class="muted">暂无字段，点击右上角新增</td></tr>';
+      const trs = data.fields.map((f) => {
+        const reqNode = f.is_required
+          ? el("span", { className: "pill st-on" }, [
+            el("span", { className: "dot" }),
+            document.createTextNode("必填"),
+          ])
+          : el("span", { className: "muted", text: "—" });
+        const roNode = f.is_readonly
+          ? el("span", { className: "tag", text: "只读" })
+          : el("span", { className: "muted", text: "—" });
+        return el("tr", {
+          className: f.is_active ? null : "row-off",
+          dataset: { id: String(f.id) },
+        }, [
+          el("td", null, [el("span", {
+            className: "grip lm-drag-handle",
+            title: "拖拽排序",
+            ariaLabel: "拖拽排序",
+            text: "⠿",
+          })]),
+          el("td", null, [el("span", { className: "tag", text: f.sheet || "test" })]),
+          el("td", null, [el("code", { text: f.field_key == null ? "" : String(f.field_key) })]),
+          el("td", { text: f.display_name == null ? "" : String(f.display_name) }),
+          el("td", null, [el("span", { className: "tag", text: f.data_type == null ? "" : String(f.data_type) })]),
+          el("td", null, [reqNode]),
+          el("td", null, [roNode]),
+          el("td", {
+            className: "muted",
+            style: "max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap",
+            text: (f.options || []).join(", ") || f.help_text || "",
+          }),
+          el("td", null, [el("div", { className: "row-acts" }, [
+            el("button", { type: "button", className: "btn small lm-edit", text: "编辑" }),
+            el("button", { type: "button", className: "btn small lm-toggle", dataset: { active: String(f.is_active) }, text: f.is_active ? "停用" : "启用" }),
+            el("button", { type: "button", className: "btn small danger lm-del", text: "删除" }),
+          ])]),
+        ]);
+      });
+      rows.replaceChildren(...(trs.length ? trs : [emptyRow("暂无字段，点击右上角新增")]));
       wire(data.fields);
     } catch (ex) {
       if (ex.status === 401) { window.location = LM.urls.login; return; }
-      rows.innerHTML = `<tr><td colspan="9" class="muted">${esc(ex.message)}</td></tr>`;
+      rows.replaceChildren(emptyRow(ex.message == null ? "" : String(ex.message)));
     }
   }
 
@@ -72,8 +113,7 @@
   // row can be inserted before it (classic HTML5 drag-sort). Returns null when
   // the cursor is below every remaining row (append to the end).
   function rowAfter(y) {
-    const els = Array.prototype.slice.call(
-      rows.querySelectorAll("tr:not(.lm-dragging)"));
+    const els = Array.from(rows.querySelectorAll("tr:not(.lm-dragging)"));
     let closest = null;
     let closestOffset = -Infinity;
     els.forEach((el) => {
@@ -91,7 +131,7 @@
   async function commitOrder() {
     const byId = {};
     currentFields.forEach((f) => { byId[f.id] = f; });
-    const ids = Array.prototype.slice.call(rows.querySelectorAll("tr"))
+    const ids = Array.from(rows.querySelectorAll("tr"))
       .map((tr) => Number(tr.dataset.id));
     const patches = [];
     ids.forEach((id, i) => {

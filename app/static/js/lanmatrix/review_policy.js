@@ -45,16 +45,30 @@
   };
   // Working copy of the routing rules; only `save` promotes it to `committed`.
   let routes = [];
-  // <option> markup for the per-rule reviewer pickers, built from the members.
-  let reviewerOptions = '<option value="">（选择审核人）</option>';
+  // { value, label } choices for the per-rule reviewer pickers, built from the members.
+  let reviewerChoices = [{ value: "", label: "（选择审核人）" }];
   // Distinct テスト区分 that actually exist, for the picker and the coverage
   // hint. A rule typed against a 区分 that does not exist never fires, and
   // nothing else in the UI would ever say so.
   let categories = [];
 
-  function esc(s) {
-    return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  function el(tag, props, children) {
+    const node = document.createElement(tag);
+    if (props) {
+      for (const [k, v] of Object.entries(props)) {
+        if (v == null) continue;
+        if (k === "className") node.className = v;
+        else if (k === "text") node.textContent = v;
+        else if (k === "list") node.setAttribute("list", v);
+        else if (k === "dataset") {
+          for (const [dk, dv] of Object.entries(v)) node.dataset[dk] = dv;
+        } else {
+          node[k] = v;
+        }
+      }
+    }
+    if (children) node.append(...children);
+    return node;
   }
 
   // Mirrors services/lanmatrix/review_routes.normalise_category: "01", "1.0"
@@ -96,37 +110,58 @@
   function renderRoutes() {
     if (!routeHost) return;
     if (!routes.length) {
-      routeHost.innerHTML = '<div class="muted lm-rv-route-empty">'
-        + "尚未设置区分规则，所有审核都会流向下方的默认审核人。</div>";
+      routeHost.replaceChildren(el("div", {
+        className: "muted lm-rv-route-empty",
+        text: "尚未设置区分规则，所有审核都会流向下方的默认审核人。",
+      }));
     } else {
-      routeHost.innerHTML = routes.map((r, i) => `
-        <div class="lm-rv-route" data-i="${i}">
-          <span class="lm-rv-route-ord">${i + 1}</span>
-          <input class="input lm-rv-route-cat" list="lm-rv-cat-list"
-                 value="${esc(r.category)}" placeholder="区分（如 5 或 1*）">
-          <select class="input lm-rv-route-who">${reviewerOptions}</select>
-          <button type="button" class="btn btn-ghost lm-rv-route-up"
-                  title="上移（提高优先级）"${i === 0 ? " disabled" : ""}>↑</button>
-          <button type="button" class="btn btn-ghost lm-rv-route-down"
-                  title="下移"${i === routes.length - 1 ? " disabled" : ""}>↓</button>
-          <button type="button" class="btn btn-ghost lm-rv-route-del"
-                  title="删除">✕</button>
-        </div>`).join("");
-      routeHost.querySelectorAll(".lm-rv-route").forEach((el) => {
-        const i = Number(el.getAttribute("data-i"));
-        const sel = el.querySelector(".lm-rv-route-who");
-        const want = routes[i].reviewer_id ? String(routes[i].reviewer_id) : "";
+      const rows = routes.map((r, i) => {
+        const want = r.reviewer_id ? String(r.reviewer_id) : "";
+        const opts = reviewerChoices.map((c) =>
+          el("option", { value: c.value, text: c.label }));
         // A reviewer removed from the project is no longer in the option list;
         // keep them selectable so the rule still renders as a name and can be
         // fixed, instead of silently reading as "unassigned".
-        if (want && !Array.prototype.some.call(sel.options,
-          (o) => o.value === want)) {
-          sel.insertAdjacentHTML("beforeend",
-            `<option value="${esc(want)}">`
-            + `${esc(routes[i].reviewer_name || ("#" + want))}（非成员）</option>`);
+        if (want && !reviewerChoices.some((c) => c.value === want)) {
+          opts.push(el("option", {
+            value: want,
+            text: `${r.reviewer_name || ("#" + want)}（非成员）`,
+          }));
         }
+        const sel = el("select", { className: "input lm-rv-route-who" }, opts);
         sel.value = want;
+        return el("div", { className: "lm-rv-route", dataset: { i: String(i) } }, [
+          el("span", { className: "lm-rv-route-ord", text: String(i + 1) }),
+          el("input", {
+            className: "input lm-rv-route-cat",
+            list: "lm-rv-cat-list",
+            value: r.category == null ? "" : String(r.category),
+            placeholder: "区分（如 5 或 1*）",
+          }),
+          sel,
+          el("button", {
+            type: "button",
+            className: "btn btn-ghost lm-rv-route-up",
+            title: "上移（提高优先级）",
+            disabled: i === 0,
+            text: "↑",
+          }),
+          el("button", {
+            type: "button",
+            className: "btn btn-ghost lm-rv-route-down",
+            title: "下移",
+            disabled: i === routes.length - 1,
+            text: "↓",
+          }),
+          el("button", {
+            type: "button",
+            className: "btn btn-ghost lm-rv-route-del",
+            title: "删除",
+            text: "✕",
+          }),
+        ]);
       });
+      routeHost.replaceChildren(...rows);
     }
     renderHint();
   }
@@ -165,26 +200,28 @@
       // Not fatal: the panel is still usable for the checkboxes, and the
       // current reviewer is preserved as an option below.
     }
-    const opts = ['<option value="">（未设置 · 回退项目负责人）</option>'];
-    const routeOpts = ['<option value="">（选择审核人）</option>'];
+    const opts = [el("option", { value: "", text: "（未设置 · 回退项目负责人）" })];
+    const routeOpts = [{ value: "", label: "（选择审核人）" }];
     const seen = new Set();
     members.forEach((m) => {
       if (!m.user_id || seen.has(m.user_id)) return;
       seen.add(m.user_id);
       const label = m.display_name || m.username || `#${m.user_id}`;
-      const html = `<option value="${esc(m.user_id)}">${esc(label)}`
-        + `${m.role ? `（${esc(m.role)}）` : ""}</option>`;
-      opts.push(html);
-      routeOpts.push(html);
+      const text = `${label}${m.role ? `（${m.role}）` : ""}`;
+      const value = String(m.user_id);
+      opts.push(el("option", { value: value, text: text }));
+      routeOpts.push({ value: value, label: text });
     });
     // Keep the reviewer that is actually configured even if they are no longer
     // in the member list, so opening the panel cannot silently clear them.
     if (currentId && !seen.has(Number(currentId))) {
-      opts.push(`<option value="${esc(currentId)}">`
-        + `${esc(currentName || `#${currentId}`)}（非成员）</option>`);
+      opts.push(el("option", {
+        value: String(currentId),
+        text: `${currentName || `#${currentId}`}（非成员）`,
+      }));
     }
-    if (reviewerSel) reviewerSel.innerHTML = opts.join("");
-    reviewerOptions = routeOpts.join("");
+    if (reviewerSel) reviewerSel.replaceChildren(...opts);
+    reviewerChoices = routeOpts;
   }
 
   async function loadCategories() {
@@ -195,12 +232,16 @@
       categories = [];  // Picker degrades to free text; the rules still work.
     }
     if (catList) {
-      catList.innerHTML = categories.map((c) => {
+      const opts = categories.map((c) => {
         const label = c.category
           + (c.category_name ? ` · ${c.category_name}` : "")
           + `（${c.count} 条）`;
-        return `<option value="${esc(c.category)}">${esc(label)}</option>`;
-      }).join("");
+        return el("option", {
+          value: c.category == null ? "" : String(c.category),
+          text: label,
+        });
+      });
+      catList.replaceChildren(...opts);
     }
   }
 
