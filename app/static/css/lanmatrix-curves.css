@@ -45,7 +45,7 @@ body.cv-noscroll { overflow:hidden; }
 .cv-body { display:grid; grid-template-columns:280px minmax(0,1fr); border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--surface); }
 
 .cv-signals { border-right:1px solid var(--border); background:var(--surface-2); padding:12px; display:flex; flex-direction:column; gap:8px; max-height:760px; align-self:start; }
-.cv-full .cv-signals { max-height:calc(100vh - 150px); position:sticky; top:0; }
+.cv-full .cv-signals { max-height:calc(100dvh - 150px); position:sticky; top:0; }
 .cv-signals input[type="search"] { width:100%; min-width:0; }
 .cv-filters { display:flex; gap:6px; }
 .cv-chip { appearance:none; border:1px solid var(--border); background:var(--surface); color:var(--text-2); border-radius:999px; padding:3px 10px; font:inherit; font-size:12px; cursor:pointer; }
@@ -108,7 +108,8 @@ body.cv-noscroll { overflow:hidden; }
 .cv-table td { vertical-align:top; overflow-wrap:anywhere; }
 .cv-table td.num { font-family:var(--mono); font-variant-numeric:tabular-nums; white-space:nowrap; }
 .cv-table tbody tr { cursor:pointer; }
-.cv-table tbody tr:hover, .cv-table tbody tr:focus { background:var(--surface-2); outline:none; }
+.cv-table tbody tr:hover { background:var(--surface-2); }
+.cv-table tbody tr:focus-visible { background:var(--surface-2); outline:2px solid var(--brand); outline-offset:-2px; }
 .cv-table tr.cv-bad td { background:var(--danger-soft); }
 .cv-pager { display:flex; align-items:center; gap:10px; margin-top:8px; }
 
