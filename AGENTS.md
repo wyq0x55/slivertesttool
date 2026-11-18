@@ -112,6 +112,9 @@ do not adopt skill-provided dispatchers, orchestrator personas, or
 `/make-plan` → `/do` pipelines. The repository contract in this file remains
 authoritative for how work is bounded and verified.
 
+For project-specific T3 Code task templates and dispatch examples, see
+[the subagent index](.agents/README.md).
+
 - Keep architecture and cross-component decisions in the root session.
 - Use read-only exploration before implementation when the ownership boundary is
   not already clear.
