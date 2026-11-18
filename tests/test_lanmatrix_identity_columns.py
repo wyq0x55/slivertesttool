@@ -47,6 +47,17 @@ def _svc():
     return items_service
 
 
+def _run_field_key_migration():
+    """Invoke the baseline field-key migration helper in a committed transaction."""
+    import importlib
+    from app.extensions import db
+
+    baseline = importlib.import_module("app.migrations.versions.0001_baseline_schema")
+    db.session.rollback()
+    with db.engine.begin() as conn:
+        baseline._migrate_testitem_field_keys(conn, {"lm_test_items"})
+
+
 def test_new_values_land_in_first_class_columns(env):
     app, user, project = env
     with app.app_context():
@@ -94,7 +105,6 @@ def test_sort_by_test_name_orders_rows(env):
 
 def test_boot_migration_lifts_legacy_jsonb_rows(env):
     app, user, project = env
-    from app.bootstrap import _migrate_testitem_field_keys
     from app.extensions import db
     from app.models import TestItemRow
 
@@ -110,7 +120,7 @@ def test_boot_migration_lifts_legacy_jsonb_rows(env):
         # Before migration to_dict is still correct via the JSONB overlay.
         assert legacy.to_dict()["test_name"] == "Legacy title"
 
-        _migrate_testitem_field_keys({"lm_test_items"})
+        _run_field_key_migration()
         db.session.expire_all()
 
         migrated = db.session.get(TestItemRow, legacy_id)
@@ -125,7 +135,6 @@ def test_boot_migration_lifts_legacy_jsonb_rows(env):
 
 def test_boot_migration_is_idempotent_and_non_destructive(env):
     app, user, project = env
-    from app.bootstrap import _migrate_testitem_field_keys
     from app.extensions import db
     from app.models import TestItemRow
 
@@ -137,7 +146,7 @@ def test_boot_migration_is_idempotent_and_non_destructive(env):
         db.session.commit()
         row_id = row.id
 
-        _migrate_testitem_field_keys({"lm_test_items"})
+        _run_field_key_migration()
         db.session.expire_all()
         edited = db.session.get(TestItemRow, row_id)
         assert edited.title == "Once"
@@ -145,6 +154,6 @@ def test_boot_migration_is_idempotent_and_non_destructive(env):
         # A later explicit column edit must never be clobbered by a re-run.
         edited.title = "Manually edited"
         db.session.commit()
-        _migrate_testitem_field_keys({"lm_test_items"})
+        _run_field_key_migration()
         db.session.expire_all()
         assert db.session.get(TestItemRow, row_id).title == "Manually edited"

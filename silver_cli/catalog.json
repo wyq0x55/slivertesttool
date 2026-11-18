@@ -1546,6 +1546,7 @@
   {
    "body_fields": [
     "anchor_id",
+    "count",
     "draft",
     "place",
     "sheet",
@@ -1654,7 +1655,9 @@
   {
    "body_fields": [
     "direction",
-    "ids"
+    "ids",
+    "place",
+    "target_id"
    ],
    "file_fields": [],
    "form_fields": [],
