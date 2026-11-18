@@ -138,6 +138,11 @@ def app_ctx(monkeypatch):
     # Most tests call API routes directly; authentication behavior is covered
     # separately, so keep the global page/API gate out of unrelated fixtures.
     monkeypatch.setenv("GLOBAL_LOGIN_REQUIRED", "0")
+    # Seed the bootstrap admin with a deterministic test password so
+    # must_change_password stays False across both local (.env) and CI runs.
+    monkeypatch.setenv("LM_ADMIN_PASSWORD", "test-admin-password")
+    if not os.environ.get("SECRET_KEY"):
+        monkeypatch.setenv("SECRET_KEY", "test-only-not-for-production")
 
     # Import lazily so the env vars above are picked up by Config.
     import importlib

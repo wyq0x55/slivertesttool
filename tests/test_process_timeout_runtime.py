@@ -24,7 +24,7 @@ def assert_stopped(pid):
             try:
                 if status.read_text().rsplit(")", 1)[1].split()[0] == "Z":
                     return False
-            except FileNotFoundError:
+            except (FileNotFoundError, ProcessLookupError):
                 return False
         return pid_is_running(pid)
 

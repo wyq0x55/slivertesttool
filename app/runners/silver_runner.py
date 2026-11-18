@@ -29,7 +29,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, NoReturn, Optional
 
 from .process_guard import (
     kill_process_tree, pid_is_running, require_process_job, retain_cleanup,
@@ -200,6 +200,14 @@ class _SilverSession:
         except Exception:  # noqa: BLE001
             pass
 
+    def _raise_closed_handle_error(
+        self, exc: BaseException, *, timed_out: bool, deadline: float
+    ) -> NoReturn:
+        """Map a watchdog-closed pipe handle error to timeout or worker-exit."""
+        if timed_out or deadline - time.monotonic() <= 0:
+            raise RunnerError("timeout") from exc
+        raise RunnerError("Silver API process exited") from exc
+
     def _send_bounded(self, payload: Any, *, deadline: float) -> None:
         if deadline - time.monotonic() <= 0:
             raise RunnerError("timeout")
@@ -216,6 +224,14 @@ class _SilverSession:
             if timed_out[0] or deadline - time.monotonic() <= 0:
                 raise RunnerError("timeout") from exc
             raise RunnerError("Silver API process exited") from exc
+        except TypeError as exc:
+            # Closing a multiprocessing Connection from the watchdog thread sets
+            # _handle to None mid-write/read, raising TypeError on the raw fd.
+            if timed_out[0] or self._closed or deadline - time.monotonic() <= 0:
+                self._raise_closed_handle_error(
+                    exc, timed_out=timed_out[0], deadline=deadline
+                )
+            raise
         finally:
             _IO_WATCHDOG.disarm(token)
         if timed_out[0]:
@@ -254,6 +270,12 @@ class _SilverSession:
             if timed_out[0]:
                 raise RunnerError("timeout") from exc
             raise RunnerError("Silver API process exited") from exc
+        except TypeError as exc:
+            if timed_out[0] or self._closed or deadline - time.monotonic() <= 0:
+                self._raise_closed_handle_error(
+                    exc, timed_out=timed_out[0], deadline=deadline
+                )
+            raise
         if timed_out[0]:
             raise RunnerError("timeout")
         if status == "error":
