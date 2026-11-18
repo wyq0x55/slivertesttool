@@ -56,9 +56,22 @@
   // rows on page 1, glancing at page 2 and coming back keeps the selection.
   const selected = new Set();
 
-  function esc(s) {
-    return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  function makeEl(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text == null ? "" : String(text);
+    return node;
+  }
+
+  function makePill(status, label, tip) {
+    const node = document.createElement("span");
+    if (global.LMPill && LMPill.apply) {
+      LMPill.apply(node, status, label, tip);
+    } else {
+      node.className = "pill";
+      node.textContent = label == null ? "" : String(label);
+    }
+    return node;
   }
 
   function toast(msg, good) {
@@ -83,16 +96,13 @@
     }
   }
 
-  function statusCell(r) {
+  function statusNodes(r) {
     const zh = { pending: "待审批", approved: "已通过", rejected: "已驳回" };
     const st = String(r.status || "");
-    const badge = global.LMPill
-      ? LMPill.html(st, zh[st] || st, r.note || "")
-      : `<span class="pill">${esc(zh[st] || st)}</span>`;
-    const who = r.reviewer_name
-      ? ` <span class="muted">${esc(r.reviewer_name)}</span>` : "";
-    const note = r.note ? `<div class="lm-rv-reason">${esc(r.note)}</div>` : "";
-    return badge + who + note;
+    const nodes = [makePill(st, zh[st] || st, r.note || "")];
+    if (r.reviewer_name) nodes.push(document.createTextNode(" "), makeEl("span", "muted", r.reviewer_name));
+    if (r.note) nodes.push(makeEl("div", "lm-rv-reason", r.note));
+    return nodes;
   }
 
   function applyScopeText() {
@@ -180,36 +190,63 @@
     const page = pager ? pager.slice(rows) : rows;
     const host = $("lm-h-ex-rows");
     if (!host) return;
-    host.innerHTML = page.map((r, n) => {
+    const rowNodes = page.map((r, n) => {
       const i = start + n;
       const href = `/lanmatrix/projects/${encodeURIComponent(r.project_id)}`
         + `?row=${encodeURIComponent(r.uuid)}&from=workspace`;
-      const box = actionable()
-        ? `<input type="checkbox" class="lm-ex-box" data-i="${i}"`
-          + `${selected.has(i) ? " checked" : ""}>`
-        : `<span class="muted">—</span>`;
+      const tr = document.createElement("tr");
+
+      const tdCheck = document.createElement("td");
+      if (actionable()) {
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.className = "lm-ex-box";
+        box.dataset.i = String(i);
+        box.checked = selected.has(i);
+        tdCheck.appendChild(box);
+      } else {
+        tdCheck.appendChild(makeEl("span", "muted", "—"));
+      }
+
+      const tdProj = makeEl("td", "", projName(r.project_id));
+
+      const tdCase = document.createElement("td");
+      const caseLink = makeEl("a", "", r.test_id || r.case_id || r.uuid || "");
+      caseLink.href = href;
+      tdCase.append(caseLink, makeEl("div", "muted", r.title || ""));
+
+      const tdCat = document.createElement("td");
+      if (r.category) tdCat.appendChild(makeEl("span", "pill", r.category));
+
+      const tdCreated = makeEl("td", "", r.item_created || "");
+
+      const tdReason = makeEl("td", "lm-rv-reason");
+      tdReason.append(...statusNodes(r));
+
+      const tdReq = makeEl("td", "muted", r.requester_name || "");
+
       // A decided claim gets 打开 only: 通过 / 驳回 on it would be refused by
       // the server, and a button that cannot work is worse than no button.
-      const acts = actionable()
-        ? `<button class="btn primary small" data-act="approve" data-i="${i}">通过</button>
-           <button class="btn small" data-act="reject" data-i="${i}">驳回</button>
-           <a class="btn ghost small" href="${href}">打开</a>`
-        : `<a class="btn ghost small" href="${href}">打开</a>`;
-      const label = r.test_id || r.case_id || r.uuid || "";
-      const cat = r.category
-        ? `<span class="pill">${esc(r.category)}</span>` : "";
-      return `<tr>
-        <td>${box}</td>
-        <td>${esc(projName(r.project_id))}</td>
-        <td><a href="${href}">${esc(label)}</a>
-            <div class="muted">${esc(r.title || "")}</div></td>
-        <td>${cat}</td>
-        <td>${esc(r.item_created || "")}</td>
-        <td class="lm-rv-reason">${statusCell(r)}</td>
-        <td class="muted">${esc(r.requester_name || "")}</td>
-        <td><div class="lm-rv-acts">${acts}</div></td>
-      </tr>`;
-    }).join("");
+      const tdActs = document.createElement("td");
+      const actsDiv = makeEl("div", "lm-rv-acts");
+      if (actionable()) {
+        const approveBtn = makeEl("button", "btn primary small", "通过");
+        approveBtn.dataset.act = "approve";
+        approveBtn.dataset.i = String(i);
+        const rejectBtn = makeEl("button", "btn small", "驳回");
+        rejectBtn.dataset.act = "reject";
+        rejectBtn.dataset.i = String(i);
+        actsDiv.append(approveBtn, rejectBtn);
+      }
+      const openLink = makeEl("a", "btn ghost small", "打开");
+      openLink.href = href;
+      actsDiv.appendChild(openLink);
+      tdActs.appendChild(actsDiv);
+
+      tr.append(tdCheck, tdProj, tdCase, tdCat, tdCreated, tdReason, tdReq, tdActs);
+      return tr;
+    });
+    host.replaceChildren(...rowNodes);
     syncBulk();
   }
 
@@ -238,8 +275,13 @@
     } catch (ex) {
       if (ex.status === 401) return;
       const host = $("lm-h-ex-rows");
-      if (host) host.innerHTML =
-        `<tr><td colspan="8" class="muted">加载失败：${esc(ex.message || "")}</td></tr>`;
+      if (host) {
+        const tr = document.createElement("tr");
+        const td = makeEl("td", "muted", `加载失败：${ex.message || ""}`);
+        td.colSpan = 8;
+        tr.appendChild(td);
+        host.replaceChildren(tr);
+      }
     }
   }
 

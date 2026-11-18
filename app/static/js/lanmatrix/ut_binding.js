@@ -25,7 +25,7 @@
   function $(id) { return document.getElementById(id); }
   function field(path) { return $("ut-m-" + path.replace(".", "-")); }
   function object(value) { return value !== null && typeof value === "object" && !Array.isArray(value); }
-  function own(obj, key) { return Object.prototype.hasOwnProperty.call(obj, key); }
+  function own(obj, key) { return obj != null && Object.hasOwn(obj, key); }
   function get(path) {
     var parts = path.split(".");
     return object(draft[parts[0]]) && own(draft[parts[0]], parts[1]) ? draft[parts[0]][parts[1]] : undefined;

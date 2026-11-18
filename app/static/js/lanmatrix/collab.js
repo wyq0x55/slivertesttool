@@ -501,11 +501,11 @@
       };
     });
     const users = Object.keys(byId).map(function (k) { return byId[k]; });
-    users.sort(function (a, b) {
+    const sortedUsers = users.toSorted(function (a, b) {
       if (a.self !== b.self) return a.self ? -1 : 1;
       return String(a.name).localeCompare(String(b.name));
     });
-    this._cb.onPresence(users);
+    this._cb.onPresence(sortedUsers);
   };
 
   // Publish the local user's SELECTION into awareness so peers can draw a border
@@ -837,9 +837,9 @@
       if (want.has(rowIdOfMap(m))) targets.push({ i: i, json: m.toJSON() });
     });
     if (!targets.length) return 0;
-    targets.sort(function (a, b) { return b.i - a.i; });
+    const sortedTargets = targets.toSorted(function (a, b) { return b.i - a.i; });
     this.doc.transact(function () {
-      targets.forEach(function (t) {
+      sortedTargets.forEach(function (t) {
         const clone = new Y.Map();
         arr.insert(t.i + 1, [clone]);
         Object.keys(t.json).forEach(function (k) {
@@ -849,7 +849,7 @@
         clone.set("uuid", genUuid());
       });
     });
-    return targets.length;
+    return sortedTargets.length;
   };
 
   LMCollabController.prototype.moveRows = function (sheet, ids, dirOrTarget) {
