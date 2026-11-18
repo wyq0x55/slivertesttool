@@ -17,42 +17,43 @@
 (function (global) {
   "use strict";
 
-  function esc(s) {
-    return String(s == null ? "" : s).replace(/[&<>]/g, (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  function tokenSpan(cls, text) {
+    const span = document.createElement("span");
+    span.className = cls;
+    span.textContent = text;
+    return span;
   }
 
-  // Tokenise a JSON string into highlighted HTML. Never throws: on any input it
-  // degrades to plain escaped text, so a half-typed document still renders.
+  // Tokenise a JSON string into highlighted DOM nodes. Never throws: on any
+  // input it degrades to plain text nodes, so a half-typed document still renders.
   const TOKEN_RE =
     /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|([{}\[\],:])/g;
 
   function highlight(src) {
-    let out = "";
+    const nodes = [];
     let last = 0;
     let m;
     TOKEN_RE.lastIndex = 0;
     while ((m = TOKEN_RE.exec(src))) {
-      out += esc(src.slice(last, m.index));
+      if (m.index > last) nodes.push(document.createTextNode(src.slice(last, m.index)));
       if (m[1] != null) {
         if (m[2] != null) {
           // A quoted string immediately followed by ":" is an object key.
-          out += '<span class="lm-ce-key">' + esc(m[1]) + "</span>" +
-                 '<span class="lm-ce-punct">' + esc(m[2]) + "</span>";
+          nodes.push(tokenSpan("lm-ce-key", m[1]), tokenSpan("lm-ce-punct", m[2]));
         } else {
-          out += '<span class="lm-ce-str">' + esc(m[1]) + "</span>";
+          nodes.push(tokenSpan("lm-ce-str", m[1]));
         }
       } else if (m[3] != null) {
-        out += '<span class="lm-ce-kw">' + esc(m[3]) + "</span>";
+        nodes.push(tokenSpan("lm-ce-kw", m[3]));
       } else if (m[4] != null) {
-        out += '<span class="lm-ce-num">' + esc(m[4]) + "</span>";
+        nodes.push(tokenSpan("lm-ce-num", m[4]));
       } else if (m[5] != null) {
-        out += '<span class="lm-ce-punct">' + esc(m[5]) + "</span>";
+        nodes.push(tokenSpan("lm-ce-punct", m[5]));
       }
       last = TOKEN_RE.lastIndex;
     }
-    out += esc(src.slice(last));
-    return out;
+    if (last < src.length) nodes.push(document.createTextNode(src.slice(last)));
+    return nodes;
   }
 
   class LMCodeEditor {
@@ -105,6 +106,7 @@
       this.ta.addEventListener("scroll", () => this._syncScroll());
       // Insert two spaces on Tab instead of leaving the field.
       this.ta.addEventListener("keydown", (e) => {
+        if (e.isComposing || e.keyCode === 229) return;
         if (e.key === "Tab") {
           e.preventDefault();
           this._insertAtCaret("  ");
@@ -126,9 +128,11 @@
 
     _render() {
       const src = this._value;
+      const nodes = highlight(src);
       // Trailing newline needs a filler char so the <pre> keeps the blank last
       // line's height and stays aligned with the textarea.
-      this.pre.innerHTML = highlight(src) + (src.endsWith("\n") ? "\u200b" : "");
+      if (src.endsWith("\n")) nodes.push(document.createTextNode("\u200b"));
+      this.pre.replaceChildren(...nodes);
       const lines = src.length ? src.split("\n").length : 1;
       let g = "";
       for (let i = 1; i <= lines; i++) g += i + "\n";

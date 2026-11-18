@@ -35,6 +35,25 @@
     });
   }
 
+  function textVal(v) {
+    return v == null ? "" : String(v);
+  }
+
+  function buildEl(tag, className, text) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = textVal(text);
+    return node;
+  }
+
+  function buildStatusRow(colspan, className, message) {
+    var tr = document.createElement("tr");
+    var td = buildEl("td", className, message);
+    td.colSpan = colspan;
+    tr.appendChild(td);
+    return tr;
+  }
+
   /** Render an ISO timestamp as "YYYY-MM-DD HH:MM:SS". */
   function stamp(iso) {
     return String(iso || "").replace("T", " ").replace("Z", "").split(".")[0];
@@ -116,6 +135,59 @@
       '<td class="lm-trash-actions">' + actions + "</td></tr>";
   }
 
+  function buildRow(e, canRestore, canPurge) {
+    var tr = document.createElement("tr");
+    tr.dataset.kind = textVal(e.kind);
+    tr.dataset.id = textVal(e.id);
+
+    var kindTd = document.createElement("td");
+    kindTd.appendChild(buildEl(
+      "span",
+      "pill st-" + textVal(e.kind),
+      e.kind_label || KIND_LABEL[e.kind] || e.kind
+    ));
+
+    var titleTd = document.createElement("td");
+    titleTd.appendChild(buildEl("span", "lm-trash-title", textVal(e.title)));
+    if (e.subtitle) {
+      titleTd.appendChild(document.createElement("br"));
+      titleTd.appendChild(buildEl("span", "lm-muted", textVal(e.subtitle)));
+    }
+
+    var by = e.deleted_by_name || (e.deleted_by ? "#" + e.deleted_by : "");
+    var actionsTd = buildEl("td", "lm-trash-actions");
+    if (canRestore) {
+      var restoreBtn = buildEl("button", "btn btn-sm", "还原");
+      restoreBtn.type = "button";
+      restoreBtn.dataset.act = "restore";
+      actionsTd.appendChild(restoreBtn);
+    }
+    if (canRestore && canPurge) {
+      actionsTd.appendChild(document.createTextNode(" "));
+    }
+    if (canPurge) {
+      var purgeBtn = buildEl("button", "btn btn-sm btn-danger", "彻底删除");
+      purgeBtn.type = "button";
+      purgeBtn.dataset.act = "purge";
+      actionsTd.appendChild(purgeBtn);
+    }
+    if (!canRestore && !canPurge) {
+      actionsTd.appendChild(buildEl("span", "lm-muted", "无权限"));
+    }
+
+    var retCls = retentionClass(e);
+    var retTd = buildEl("td", retCls || null, retentionText(e));
+    tr.append(
+      kindTd,
+      titleTd,
+      buildEl("td", "lm-muted", stamp(e.deleted_at)),
+      buildEl("td", "lm-muted", by),
+      retTd,
+      actionsTd
+    );
+    return tr;
+  }
+
   function init(opts) {
     var root = opts.root;
     var api = opts.api;
@@ -157,13 +229,15 @@
       var entries = (data && data.entries) || [];
       last = data || { entries: [], total: 0 };
       if (!entries.length) {
-        rows.innerHTML = '<tr><td colspan="6" class="lm-muted">' +
-          (currentKind() ? "该类型下没有已删除的内容" : "回收站是空的") +
-          "</td></tr>";
+        rows.replaceChildren(buildStatusRow(
+          6,
+          "lm-muted",
+          currentKind() ? "该类型下没有已删除的内容" : "回收站是空的"
+        ));
       } else {
-        rows.innerHTML = entries.map(function (e) {
-          return rowHtml(e, canRestore, canPurge);
-        }).join("");
+        rows.replaceChildren(...entries.map(function (e) {
+          return buildRow(e, canRestore, canPurge);
+        }));
       }
       setInfo(summaryText(data));
       setNotice(entries);
@@ -186,8 +260,7 @@
           window.location = window.LM.urls.login;
           return;
         }
-        rows.innerHTML = '<tr><td colspan="6" class="lm-err">' +
-          esc(ex && ex.message) + "</td></tr>";
+        rows.replaceChildren(buildStatusRow(6, "lm-err", textVal(ex && ex.message)));
         setInfo("加载失败", "lm-err");
       });
     }

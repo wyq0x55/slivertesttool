@@ -23,6 +23,25 @@
     });
   }
 
+  function textVal(v) {
+    return v == null ? "" : String(v);
+  }
+
+  function buildEl(tag, className, text) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = textVal(text);
+    return node;
+  }
+
+  function buildStatusRow(colspan, className, message) {
+    var tr = document.createElement("tr");
+    var td = buildEl("td", className, message);
+    td.colSpan = colspan;
+    tr.appendChild(td);
+    return tr;
+  }
+
   /** Truncate a JSON value for the "old -> new" column. */
   function brief(v, limit) {
     if (v == null) return "";
@@ -65,6 +84,58 @@
           : "") +
         "</th><td>" + from + "</td><td>" + to + "</td></tr>";
     }).join("") + "</table>";
+  }
+
+  function buildChangesNode(changes) {
+    if (!changes || !changes.length) {
+      return buildEl("span", "lm-muted", "—");
+    }
+    var table = buildEl("table", "lm-diff");
+    changes.forEach(function (c) {
+      var tr = document.createElement("tr");
+      if (c.kind === "truncated") {
+        var truncTd = buildEl("td", "lm-muted", textVal(c.new));
+        truncTd.colSpan = 3;
+        tr.appendChild(truncTd);
+        table.appendChild(tr);
+        return;
+      }
+      tr.className = "lm-diff-" + textVal(c.kind);
+      var th = document.createElement("th");
+      th.scope = "row";
+      th.appendChild(document.createTextNode(textVal(c.label)));
+      if (KIND_LABEL[c.kind]) {
+        th.appendChild(document.createTextNode(" "));
+        th.appendChild(buildEl("span", "pill st-" + textVal(c.kind), KIND_LABEL[c.kind]));
+      }
+      var fromTd = document.createElement("td");
+      fromTd.appendChild(c.old === ""
+        ? buildEl("span", "lm-muted", "（空）")
+        : buildEl("del", null, textVal(c.old)));
+      var toTd = document.createElement("td");
+      toTd.appendChild(c.new === ""
+        ? buildEl("span", "lm-muted", "（空）")
+        : buildEl("ins", null, textVal(c.new)));
+      tr.append(th, fromTd, toTd);
+      table.appendChild(tr);
+    });
+    return table;
+  }
+
+  function buildAuditRow(a) {
+    var tr = document.createElement("tr");
+    var actionTd = document.createElement("td");
+    actionTd.appendChild(buildEl("code", null, textVal(a.action)));
+    var changesTd = document.createElement("td");
+    changesTd.appendChild(buildChangesNode(a.changes));
+    tr.append(
+      buildEl("td", "lm-muted", stamp(a.created_at)),
+      actionTd,
+      buildEl("td", null, textVal(a.object_type) + " " + (a.object_id || "")),
+      buildEl("td", null, a.actor_name || a.actor_id || ""),
+      changesTd
+    );
+    return tr;
   }
 
   /**
@@ -177,15 +248,9 @@
     }
 
     function render(items, append) {
-      var html = items.map(function (a) {
-        return '<tr><td class="lm-muted">' + esc(stamp(a.created_at)) + "</td>" +
-          "<td><code>" + esc(a.action) + "</code></td>" +
-          "<td>" + esc(a.object_type) + " " + esc(a.object_id || "") + "</td>" +
-          "<td>" + esc(a.actor_name || a.actor_id || "") + "</td>" +
-          "<td>" + renderChanges(a.changes) + "</td></tr>";
-      }).join("");
-      if (append) rows.insertAdjacentHTML("beforeend", html);
-      else rows.innerHTML = html;
+      var rowNodes = items.map(buildAuditRow);
+      if (append) rows.append(...rowNodes);
+      else rows.replaceChildren(...rowNodes);
     }
 
     function load(append) {
@@ -203,10 +268,13 @@
         render(items, append);
         if (!loaded) {
           // Distinguish "nothing ever happened" from "your filters hid it".
-          rows.innerHTML = '<tr><td colspan="5" class="lm-muted">' +
+          rows.replaceChildren(buildStatusRow(
+            5,
+            "lm-muted",
             (data.filtered
               ? "没有符合筛选条件的日志，试试放宽条件或清空筛选"
-              : "暂无日志") + "</td></tr>";
+              : "暂无日志")
+          ));
           setInfo(data.filtered ? "0 条（已筛选：" + describe(filters) + "）" : "0 条");
         } else {
           setInfo("已显示 " + loaded + " / 共 " + data.total + " 条" +
@@ -219,8 +287,7 @@
           window.location = window.LM.urls.login;
           return;
         }
-        rows.innerHTML = '<tr><td colspan="5" class="lm-err">' +
-          esc(ex && ex.message) + "</td></tr>";
+        rows.replaceChildren(buildStatusRow(5, "lm-err", textVal(ex && ex.message)));
         setInfo("加载失败", "lm-err");
       });
     }
