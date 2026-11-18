@@ -13,31 +13,31 @@
     </div>
   </aside>
   <main class="login-main">
-    <form id="lm-register-form" class="login-card" autocomplete="off">
+    <form id="lm-register-form" class="login-card">
       <h1>注册新账号</h1>
       <p class="sub">局域网离线部署 · 创建平台账号</p>
       <div class="login-err" id="lm-register-error" hidden></div>
       <div class="login-err" id="lm-register-ok" hidden style="background:var(--ok-soft);color:var(--ok)"></div>
       <div class="field">
-        <label>用户名</label>
-        <input type="text" name="username" id="lm-username" required autofocus
+        <label for="lm-username">用户名</label>
+        <input type="text" name="username" id="lm-username" required autofocus autocomplete="username" spellcheck="false" autocorrect="off" autocapitalize="off"
                pattern="[A-Za-z0-9_.\-]{3,64}" title="3-64 位，允许字母、数字、下划线、点、连字符" placeholder="3-64 位">
       </div>
       <div class="field">
-        <label>显示名称（可选）</label>
-        <input type="text" name="display_name" id="lm-display-name" maxlength="120" placeholder="张三">
+        <label for="lm-display-name">显示名称（可选）</label>
+        <input type="text" name="display_name" id="lm-display-name" maxlength="120" autocomplete="name" placeholder="张三">
       </div>
       <div class="field">
-        <label>邮箱（可选）</label>
-        <input type="email" name="email" id="lm-email" maxlength="255" placeholder="you@example.com">
+        <label for="lm-email">邮箱（可选）</label>
+        <input type="email" name="email" id="lm-email" maxlength="255" autocomplete="email" spellcheck="false" placeholder="you@example.com">
       </div>
       <div class="field">
-        <label>密码</label>
-        <input type="password" name="password" id="lm-password" required minlength="{{ password_min_len }}" placeholder="至少 {{ password_min_len }} 位">
+        <label for="lm-password">密码</label>
+        <input type="password" name="password" id="lm-password" required minlength="{{ password_min_len }}" autocomplete="new-password" placeholder="至少 {{ password_min_len }} 位">
       </div>
       <div class="field">
-        <label>确认密码</label>
-        <input type="password" name="password2" id="lm-password2" required minlength="{{ password_min_len }}" placeholder="再次输入密码">
+        <label for="lm-password2">确认密码</label>
+        <input type="password" name="password2" id="lm-password2" required minlength="{{ password_min_len }}" autocomplete="new-password" placeholder="再次输入密码">
       </div>
       <button type="submit" class="btn primary">注册</button>
       <p class="alt">已有账号？<a href="{{ url_for('lanmatrix_pages.login') }}">返回登录</a></p>
