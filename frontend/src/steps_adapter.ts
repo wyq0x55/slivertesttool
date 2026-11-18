@@ -125,6 +125,10 @@ export class UniverStepsView {
   private inSig: any[] = [];
   private exSig: any[] = [];
   private hasValidation = false; // whether the data-validation preset is available
+  private hasFindReplace = false;
+  private hasCondFmt = false;
+  private disposed = false;
+  private disposables: Array<{ dispose?: () => void }> = [];
   private cellTooltip: CellTooltip | null = null; // truncated-cell full-text bubble
   private _rowHeightPx = 0; // captured uniform row height (default 24px)
   // Lib reference map (lib_func lowercased -> definition) for the サブルーチン
@@ -132,7 +136,7 @@ export class UniverStepsView {
   private _libMap: Map<string, { func: string; name: string; arg: string; note: string }> | null = null;
 
   constructor(deps: UniverDeps, host: HTMLElement) {
-    this.deps = deps;
+    this.deps = Object.assign({}, deps);
     this.host = host;
   }
 
@@ -167,6 +171,7 @@ export class UniverStepsView {
     if (typeof UniverSheetsFindReplacePreset === "function") {
       presets.push(UniverSheetsFindReplacePreset());
       if (UniverPresetSheetsFindReplaceZhCN) locales.push(UniverPresetSheetsFindReplaceZhCN);
+      this.hasFindReplace = true;
     }
     if (typeof UniverSheetsSortPreset === "function") {
       presets.push(UniverSheetsSortPreset());
@@ -175,6 +180,7 @@ export class UniverStepsView {
     if (typeof UniverSheetsConditionalFormattingPreset === "function") {
       presets.push(UniverSheetsConditionalFormattingPreset());
       if (UniverPresetSheetsConditionalFormattingZhCN) locales.push(UniverPresetSheetsConditionalFormattingZhCN);
+      this.hasCondFmt = true;
     }
     if (typeof UniverSheetsTablePreset === "function") {
       presets.push(UniverSheetsTablePreset());
@@ -208,19 +214,131 @@ export class UniverStepsView {
     // Mount the truncated-cell full-text bubble once the sheet canvas has
     // rendered (same feature the main grid has). Best-effort: if the lifecycle
     // event or hover service is missing, the bubble simply never shows.
+    this._runAtRendered(() => {
+      this._ensureCellTooltip();
+    });
+
+    this.fWorkbook = univerAPI.createWorkbook({ name: "Steps" });
+  }
+
+  private _trackDisposable(d: any): void {
+    if (d && typeof d.dispose === "function") {
+      if (!this.disposables) this.disposables = [];
+      this.disposables.push(d);
+    }
+  }
+
+  private _runAtRendered(cb: () => void): void {
+    const api = this.univerAPI;
+    if (!api) return;
+    const stages = api.Enum && api.Enum.LifecycleStages ? api.Enum.LifecycleStages : null;
+    const isAtLeastRendered = (stage: any): boolean => {
+      if (stage == null) return false;
+      if (stages) {
+        if (stages.Rendered !== undefined && stage === stages.Rendered) return true;
+        if (stages.Steady !== undefined && stage === stages.Steady) return true;
+        if (typeof stage === "number" && typeof stages.Rendered === "number" && stage >= stages.Rendered) {
+          return true;
+        }
+        return false;
+      }
+      return stage === "Rendered" || stage === "Steady" || (typeof stage === "number" && stage >= 2);
+    };
+
+    let invoked = false;
+    const invokeOnce = () => {
+      if (invoked || this.disposed) return;
+      invoked = true;
+      cb();
+    };
+
     try {
-      const ev = univerAPI.Event;
-      if (ev && ev.LifeCycleChanged && typeof univerAPI.addEvent === "function") {
-        univerAPI.addEvent(ev.LifeCycleChanged, (p: any) => {
-          const stage = p && p.stage;
-          const rendered = univerAPI.Enum && univerAPI.Enum.LifecycleStages
-            ? univerAPI.Enum.LifecycleStages.Rendered : undefined;
-          if (rendered === undefined || stage === rendered) this._ensureCellTooltip();
+      const ev = api.Event;
+      if (ev && ev.LifeCycleChanged && typeof api.addEvent === "function") {
+        const disp = api.addEvent(ev.LifeCycleChanged, (p: any) => {
+          const stage = p && p.stage !== undefined ? p.stage : p;
+          if (!stages && stage === undefined) {
+            invokeOnce();
+          } else if (isAtLeastRendered(stage)) {
+            invokeOnce();
+          }
         });
+        this._trackDisposable(disp);
       }
     } catch (_e) { /* tooltip is best-effort */ }
 
-    this.fWorkbook = univerAPI.createWorkbook({ name: "Steps" });
+    try {
+      if (typeof api.getCurrentLifecycleStage === "function") {
+        const current = api.getCurrentLifecycleStage();
+        if (isAtLeastRendered(current)) {
+          invokeOnce();
+        }
+      }
+    } catch (_e) { /* synchronous lifecycle check is best-effort */ }
+  }
+
+  attachSecondaryPresets(extraDeps: Partial<UniverDeps>): void {
+    if (!extraDeps || this.disposed) return;
+    const hadValidation = this.hasValidation || typeof this.deps.UniverSheetsDataValidationPreset === "function";
+    const hadFindReplace = this.hasFindReplace || typeof this.deps.UniverSheetsFindReplacePreset === "function";
+    const hadCondFmt = this.hasCondFmt || typeof this.deps.UniverSheetsConditionalFormattingPreset === "function";
+    Object.assign(this.deps, extraDeps);
+    if (!this.univer) return;
+
+    const extraLocales: any[] = [];
+    if (!hadValidation && extraDeps.UniverPresetSheetsDataValidationZhCN) {
+      extraLocales.push(extraDeps.UniverPresetSheetsDataValidationZhCN);
+    }
+    if (!hadFindReplace && extraDeps.UniverPresetSheetsFindReplaceZhCN) {
+      extraLocales.push(extraDeps.UniverPresetSheetsFindReplaceZhCN);
+    }
+    if (!hadCondFmt && extraDeps.UniverPresetSheetsConditionalFormattingZhCN) {
+      extraLocales.push(extraDeps.UniverPresetSheetsConditionalFormattingZhCN);
+    }
+    if (extraLocales.length) {
+      try {
+        const merged = typeof this.deps.mergeLocales === "function"
+          ? this.deps.mergeLocales(...extraLocales)
+          : Object.assign({}, ...extraLocales);
+        const zhKey = (this.deps.LocaleType && this.deps.LocaleType.ZH_CN) || "zhCN";
+        if (this.deps.LocaleService && typeof this.univer.__getInjector === "function") {
+          const localeService = this.univer.__getInjector().get(this.deps.LocaleService);
+          if (localeService && typeof localeService.load === "function") {
+            localeService.load({ [zhKey]: merged });
+          }
+        } else if (this.univerAPI && typeof this.univerAPI.loadLocales === "function") {
+          this.univerAPI.loadLocales(zhKey, merged);
+        }
+      } catch (_e) { /* locale merge is best-effort */ }
+    }
+
+    const presetEntries: Array<{
+      wasLoaded: boolean;
+      fn: any;
+      isValidation?: boolean;
+      isFindReplace?: boolean;
+      isCondFmt?: boolean;
+    }> = [
+      { wasLoaded: hadFindReplace, fn: extraDeps.UniverSheetsFindReplacePreset, isFindReplace: true },
+      { wasLoaded: hadCondFmt, fn: extraDeps.UniverSheetsConditionalFormattingPreset, isCondFmt: true },
+      { wasLoaded: hadValidation, fn: extraDeps.UniverSheetsDataValidationPreset, isValidation: true },
+    ];
+    for (const entry of presetEntries) {
+      if (entry.wasLoaded || typeof entry.fn !== "function") continue;
+      try {
+        const preset = entry.fn();
+        for (const p of (preset && preset.plugins) || []) {
+          if (Array.isArray(p)) {
+            this.univer.registerPlugin(p[0], p[1]);
+          } else if (p) {
+            this.univer.registerPlugin(p);
+          }
+        }
+        if (entry.isValidation) this.hasValidation = true;
+        if (entry.isFindReplace) this.hasFindReplace = true;
+        if (entry.isCondFmt) this.hasCondFmt = true;
+      } catch (_e) { /* plugin registration is best-effort */ }
+    }
   }
 
   // Lazily create the truncated-cell full-text bubble (needs the Univer canvas +
@@ -816,8 +934,16 @@ export class UniverStepsView {
   // items (setDoc fully resets geometry), so this is only called on a genuine
   // teardown — not on every dialog close — but kept correct for that case.
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     this.structuralListener?.dispose();
     this.structuralListener = null;
+    if (Array.isArray(this.disposables)) {
+      while (this.disposables.length) {
+        const d = this.disposables.pop();
+        try { d?.dispose?.(); } catch (_e) { /* best-effort */ }
+      }
+    }
     try { this.cellTooltip?.dispose?.(); } catch (_e) { /* best-effort */ }
     this.cellTooltip = null;
     try {
@@ -829,6 +955,7 @@ export class UniverStepsView {
     this.univerAPI = null;
     this.univer = null;
     this._rowHeightPx = 0;
+    try { (this as any)._onDisposed?.(); } catch (_e) { /* best-effort */ }
   }
 
   private _readSignals(sheet: any): any[][] {

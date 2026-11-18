@@ -28,9 +28,10 @@
   // A branch decision comment line (TestCsv); see _bindDecisionJump.
   const DECISION_LINE = /^\s*(?:else\s+)?(?:if|switch|while|for)\s*\(/;
 
-  // The Univer bundle is ~11 MB, so pages where the drawer is optional only
-  // prefetch it through <link id="lm-univer-lazy" rel="prefetch" data-css=...>
-  // and it is executed on the first open(). Resolves true once
+  // Pages where the drawer is optional only prefetch Univer (preferring the
+  // code-split ESM entry via data-esm="1", with UMD fallback) through
+  // <link id="lm-univer-lazy" rel="prefetch" data-css=...> and load it on the
+  // first open(). Resolves true once
   // window.LMUniverSteps exists; null when the page offers no bundle at all.
   let univerLoading = null;
   // How long an open drawer waits for the bundle before using the built-in
@@ -42,12 +43,26 @@
     const hint = document.getElementById("lm-univer-lazy");
     if (!hint) return null;
     univerLoading = new Promise((resolve) => {
-      const css = hint.getAttribute("data-css");
+      const css = hint.getAttribute && hint.getAttribute("data-css");
       if (css) {
         const link = document.createElement("link");
         link.rel = "stylesheet";
         link.href = css;
         document.head.appendChild(link);
+      }
+      const isEsm = (hint.getAttribute && hint.getAttribute("data-esm") === "1") ||
+        /\/esm\/univer-core\.js(?:$|[?#])/.test(hint.href || "");
+      if (isEsm) {
+        try {
+          Promise.resolve(
+            typeof global.__lmDynamicImport === "function"
+              ? global.__lmDynamicImport(hint.href)
+              : import(hint.href)
+          ).then(() => resolve(!!global.LMUniverSteps), () => resolve(false));
+        } catch (_e) {
+          resolve(false);
+        }
+        return;
       }
       const script = document.createElement("script");
       script.src = hint.href;

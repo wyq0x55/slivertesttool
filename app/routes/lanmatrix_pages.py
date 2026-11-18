@@ -150,8 +150,12 @@ def workspace():
     # ``univer_available`` is passed because the workspace task list now hosts
     # the same 手顺 dialog as the project task list, and that dialog falls back
     # to the plain grid when the Univer bundle is not vendored in.
-    return render_template("lanmatrix/home.html", user=user.to_dict(),
-                           univer_available=_univer_bundle_available())
+    univer_esm_available = _univer_esm_bundle_available()
+    univer_available = _univer_bundle_available() or univer_esm_available
+    return render_template(
+        "lanmatrix/home.html", user=user.to_dict(),
+        univer_available=univer_available,
+        univer_esm_available=univer_esm_available)
 
 
 @pages_bp.get("/tokens")
@@ -304,16 +308,20 @@ def project_tasks(project_id: int):
     if user is None:
         return redirect(url_for("lanmatrix_pages.login"))
     proj = _project(project_id)
+    univer_esm_available = _univer_esm_bundle_available()
+    univer_available = _univer_bundle_available() or univer_esm_available
     if _is_ut(proj):
         return render_template(
             "lanmatrix/ut_tasks.html", user=user.to_dict(),
             project_id=project_id, project=proj.to_dict(),
-            univer_available=_univer_bundle_available())
+            univer_available=univer_available,
+            univer_esm_available=univer_esm_available)
     return render_template(
         "lanmatrix/project_tasks.html", user=user.to_dict(),
         project_id=project_id,
         project=proj.to_dict() if proj else None,
-        univer_available=_univer_bundle_available())
+        univer_available=univer_available,
+        univer_esm_available=univer_esm_available)
 
 
 @pages_bp.get("/projects/<int:project_id>/ut")

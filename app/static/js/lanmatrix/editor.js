@@ -269,14 +269,19 @@
   // has rendered (visible symptom: correct row count but empty cells). Runs a few
   // times on animation frames + short timeouts; each pass is a cheap idempotent
   // re-render, so a working build simply repaints identical data.
+  let repaintTimer = null;
+  let repaintRaf = 0;
   function scheduleRepaint() {
     let passes = 0;
     const tick = () => {
+      repaintTimer = null;
+      repaintRaf = 0;
+      if (_tornDown) return;
       try { renderView(); } catch (_e) { /* best-effort repaint */ }
-      if (++passes < 3) setTimeout(tick, 250);
+      if (++passes < 3) repaintTimer = setTimeout(tick, 250);
     };
-    if (typeof requestAnimationFrame === "function") requestAnimationFrame(tick);
-    else setTimeout(tick, 0);
+    if (typeof requestAnimationFrame === "function") repaintRaf = requestAnimationFrame(tick);
+    else repaintTimer = setTimeout(tick, 0);
   }
 
   async function silentPoll() {
@@ -441,20 +446,32 @@
   // Draft row: server auto-generates case_id and applies field defaults;
   // required cells may stay blank and be filled inline afterwards.
   async function addRow(opts) {
+    if (!projectEditable) { toast("项目当前不可编辑", false); return; }
     try {
+      const count = Math.max(1, Number(opts && opts.count) || 1);
       let created = null;
       if (collabActive()) {
         created = collab.insertRow(currentSheet, {
-          anchorId: opts && opts.anchor_id, place: opts && opts.place, values: {},
+          anchorId: opts && opts.anchor_id,
+          place: opts && opts.place,
+          count,
+          values: {},
         });
       } else {
+        const reqOpts = Object.assign({ sheet: currentSheet }, opts || {});
+        if (opts && opts.count !== undefined) reqOpts.count = count;
         const data = await LMApi.createItem(
-          pid, { draft: true }, Object.assign({ sheet: currentSheet }, opts || {}));
-        created = data && data.item;
+          pid, { draft: true }, reqOpts);
+        created = data && (data.item || (Array.isArray(data.items) ? data.items[0] : null));
       }
       await loadItems();
       focusItemPage(created);
-      toast(opts && opts.anchor_id ? "已插入空白行" : "已新增空白行，可直接编辑", true);
+      toast(
+        count > 1
+          ? `已插入 ${count} 行空白行`
+          : (opts && opts.anchor_id ? "已插入空白行" : "已新增空白行，可直接编辑"),
+        true,
+      );
     } catch (ex) { toast(ex.message, false); }
   }
 
@@ -477,17 +494,21 @@
 
   // Insert above/below relative to the current selection (or the pointed row
   // from the context menu). Falls back to append when nothing is selected.
-  async function insertRowAt(item, where) {
+  async function insertRowAt(item, where, count) {
     const ids = grid.getSelectedIds();
     let anchor = item ? item.id : null;
     if (!anchor && ids.length) anchor = where === "above" ? ids[0] : ids[ids.length - 1];
-    if (!anchor) return addRow();
-    return addRow({ anchor_id: anchor, place: where });
+    const n = Math.max(1, Number(count) || 1);
+    if (!anchor) return addRow(n > 1 ? { count: n } : undefined);
+    const opts = { anchor_id: anchor, place: where };
+    if (n > 1) opts.count = n;
+    return addRow(opts);
   }
 
   async function bulkDuplicate(ids) {
     const list = ids && ids.length ? ids : grid.getSelectedIds();
     if (!list.length) { toast("请先勾选要复制的行", false); return; }
+    if (!projectEditable) { toast("项目当前不可编辑", false); return; }
     try {
       let created;
       if (collabActive()) created = collab.duplicateRows(currentSheet, list);
@@ -500,6 +521,7 @@
   async function bulkDelete(ids) {
     const list = ids && ids.length ? ids : grid.getSelectedIds();
     if (!list.length) { toast("请先勾选要删除的行", false); return; }
+    if (!projectEditable) { toast("项目当前不可编辑", false); return; }
     if (!(await LMUI.confirm({
       level: "danger",
       title: `删除所选 ${list.length} 行`,
@@ -518,15 +540,44 @@
   async function moveRows(ids, dir) {
     const list = ids && ids.length ? ids : grid.getSelectedIds();
     if (!list.length) { toast("请先勾选要移动的行", false); return; }
+    if (!projectEditable) { toast("项目当前不可编辑", false); return; }
     try {
       if (collabActive()) collab.moveRows(currentSheet, list, dir);
       else await LMApi.moveItems(pid, list, dir);
       const keep = list.slice();
       await loadItems();
       // Re-apply the selection so the user can keep nudging the same block.
-      keep.forEach((id) => grid._setRowSelected(id, true));
-      grid._syncSelectAll();
-      grid._emitSelection();
+      keep.forEach((id) => {
+        if (grid && typeof grid._setRowSelected === "function") grid._setRowSelected(id, true);
+      });
+      if (grid && typeof grid._syncSelectAll === "function") grid._syncSelectAll();
+      if (grid && typeof grid._emitSelection === "function") grid._emitSelection();
+    } catch (ex) { toast(ex.message, false); }
+  }
+
+  async function moveRowsTo(ids, targetId, place) {
+    const list = (ids && ids.length ? ids : (grid ? grid.getSelectedIds() : []))
+      .map(Number)
+      .filter((n) => Number.isFinite(n) && n !== 0);
+    const tid = Number(targetId);
+    if (!list.length || !Number.isFinite(tid) || tid === 0 || list.includes(tid)) return;
+    if (!projectEditable) { toast("项目当前不可编辑", false); return; }
+    const normPlace = (place === "after" || place === "below") ? "after" : "before";
+    try {
+      if (collabActive()) {
+        const moved = collab.moveRows(currentSheet, list, { targetId: tid, place: normPlace });
+        if (!moved) return;
+      } else {
+        await LMApi.moveItems(pid, list, { target_id: tid, place: normPlace });
+      }
+      const keep = list.slice();
+      await loadItems();
+      keep.forEach((id) => {
+        if (grid && typeof grid._setRowSelected === "function") grid._setRowSelected(id, true);
+      });
+      if (grid && typeof grid._syncSelectAll === "function") grid._syncSelectAll();
+      if (grid && typeof grid._emitSelection === "function") grid._emitSelection();
+      toast(`已移动 ${keep.length} 行`, true);
     } catch (ex) { toast(ex.message, false); }
   }
 
@@ -781,17 +832,65 @@
   // rows carry a ``test_id`` — the unique key used to enqueue JSON-runner jobs.
   const runSelectedBtn = document.getElementById("lm-run-selected");
   function syncRunButton() {
-    if (!runSelectedBtn) return;
-    runSelectedBtn.hidden = currentSheet !== "test";
+    const isTest = currentSheet === "test";
+    if (runSelectedBtn) runSelectedBtn.hidden = !isTest;
+    const topbarExec = document.getElementById("lm-topbar-exec");
+    if (topbarExec) topbarExec.hidden = !isTest;
+    const sigBtn = document.getElementById("lm-signal-list-btn");
+    if (sigBtn) sigBtn.hidden = !isTest;
+    const cleanWrap = document.getElementById("lm-clean-room-wrap");
+    if (cleanWrap) cleanWrap.hidden = !isTest;
+    if (typeof window !== "undefined") {
+      window.LMEditorQualification?.syncVisibility?.();
+    }
   }
   if (runSelectedBtn) {
     runSelectedBtn.addEventListener("click", () => openQueueDialog());
   }
 
   const aiGenerateBtn = document.getElementById("lm-ai-generate");
+  const aiModelPop = document.getElementById("lm-ai-model-pop");
+  const aiModelInput = document.getElementById("lm-ai-model-id");
+  const aiModelSummary = aiModelPop && typeof aiModelPop.querySelector === "function"
+    ? aiModelPop.querySelector("summary")
+    : null;
+  function closeAiModelPop() {
+    if (!aiModelPop) return;
+    aiModelPop.open = false;
+    if (typeof aiModelPop.removeAttribute === "function") aiModelPop.removeAttribute("open");
+  }
+  function syncAiModelSummary() {
+    if (!aiModelSummary || !aiModelInput) return;
+    const val = String(aiModelInput.value || "").trim();
+    aiModelSummary.textContent = val ? `模型 #${val}` : "模型";
+    if (aiModelSummary.classList && typeof aiModelSummary.classList.toggle === "function") {
+      aiModelSummary.classList.toggle("is-active", !!val);
+    }
+  }
+  if (aiModelInput && typeof aiModelInput.addEventListener === "function") {
+    aiModelInput.addEventListener("input", syncAiModelSummary);
+    aiModelInput.addEventListener("change", syncAiModelSummary);
+  }
+  syncAiModelSummary();
+  if (aiModelPop && typeof document.addEventListener === "function") {
+    document.addEventListener("click", (e) => {
+      if (!aiModelPop.open) return;
+      const target = e && e.target;
+      if (target && typeof aiModelPop.contains === "function" && aiModelPop.contains(target)) return;
+      closeAiModelPop();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e && e.key === "Escape" && aiModelPop.open) closeAiModelPop();
+    });
+  }
+
   function syncAiButton() {
+    const isTest = currentSheet === "test";
+    const topbarAi = document.getElementById("lm-topbar-ai");
+    if (topbarAi) topbarAi.hidden = !isTest;
+    if (!isTest) closeAiModelPop();
     if (!aiGenerateBtn) return;
-    aiGenerateBtn.hidden = currentSheet !== "test";
+    aiGenerateBtn.hidden = !isTest;
     aiGenerateBtn.disabled = !aiEditable || aiSubmitting || !selectedCount;
   }
 
@@ -811,6 +910,7 @@
 
   async function generateSelectedProcedure() {
     if (aiSubmitting) return;
+    closeAiModelPop();
     const status = document.getElementById("lm-ai-status");
     const link = document.getElementById("lm-ai-draft-link");
     status.textContent = "";
@@ -1047,67 +1147,18 @@
     });
     return m;
   }
-  // Paint whole-row backgrounds for the current sheet. Prefers a public grid
-  // API (present once frontend/ is rebuilt); otherwise, for the vendored Univer
-  // bundle that predates it, reaches the facade worksheet directly. Runs BEFORE
-  // applyCellErrors so a red error cell always paints on top of the row colour.
+  // Paint whole-row backgrounds for the current sheet via the grid's public
+  // setRowFormats API. Runs BEFORE applyCellErrors so a red error cell always
+  // paints on top of the row colour.
   function applyRowFormats() {
-    if (!grid) return;
+    if (!grid || typeof grid.setRowFormats !== "function") return;
     const isTest = currentSheet === "test";
     const items = sheetItems[currentSheet] || [];
-    if (typeof grid.setRowFormats === "function") {
-      try { grid.setRowFormats(isTest ? rowColorMapById(items) : {}); }
-      catch (_e) { /* best-effort */ }
-      return;
-    }
-    if (grid.engine === "univer") applyUniverRowFormats();
-  }
-  // Fallback path for the current Univer bundle (no setRowFormats): TypeScript
-  // `private` fields survive at runtime, so the mounted adapter still exposes
-  // its worksheet contexts (`ctxs`/`active`) and each one's `fSheet` Facade.
-  function univerCtxFor(key) {
+    const colorMap = isTest ? rowColorMapById(items) : {};
     try {
-      if (grid.ctxs && grid.ctxs.length) {
-        const c = grid.ctxs.find((x) => x && x.key === key);
-        if (c) return c;
-      }
-    } catch (_e) { /* fall through */ }
-    return grid.active || null;
-  }
-  function applyUniverRowFormats() {
-    const ctx = univerCtxFor(currentSheet);
-    if (!ctx || !ctx.fSheet) return;
-    const isTest = ctx.key === "test";
-    const vis = (ctx.fields || []).filter((f) => f && f.is_active !== false);
-    const width = Math.max(vis.length, 1);
-    const rows = ctx.items || [];
-    // CRITICAL: raise the adapter's ``applying`` guard exactly like its own
-    // setCellErrors does. Without it the adapter's change observer treats our
-    // style writes as user edits and reverts them on the next re-render — which
-    // is why the row colours never stuck under the Univer engine. It is a plain
-    // public instance flag; the adapter clears it in its own finally, so we
-    // save/restore rather than assume a value.
-    const prevApplying = grid.applying;
-    grid.applying = true;
-    try {
-      // Repaint the whole previously-touched data band to white first (the row
-      // set may have shrunk/paged), then colour the rows that need it. Row 0 is
-      // the header, data starts at row 1 (the adapter's O1), so offset by +1.
-      const band = Math.max(rows.length, grid.__cfLastRows || 0, 1);
-      try { ctx.fSheet.getRange(1, 0, band, width).setBackgroundColor(null); }
-      catch (_e) { /* best-effort clear */ }
-      if (isTest) {
-        for (let i = 0; i < rows.length; i++) {
-          const color = rowFormatColor(rows[i]);
-          if (!color) continue;
-          try { ctx.fSheet.getRange(i + 1, 0, 1, width).setBackgroundColor(color); }
-          catch (_e) { /* per-row best-effort */ }
-        }
-      }
-      grid.__cfLastRows = rows.length;
-    } finally {
-      grid.applying = prevApplying;
-    }
+      if (grid.setRowFormats.length >= 2) grid.setRowFormats(currentSheet, colorMap);
+      else grid.setRowFormats(colorMap);
+    } catch (_e) { /* best-effort */ }
   }
 
   // Pull the project's task verdicts over REST and, if any changed, recolour the
@@ -1515,10 +1566,11 @@
   // --- Export dialog (unifies generic + Japanese test-matrix export) ---
   const exportDialog = document.getElementById("lm-export-dialog");
   const exportFormatSel = document.getElementById("lm-export-format");
-  document.getElementById("lm-export").addEventListener("click", () => {
+  function openExportDialog() {
     document.getElementById("lm-export-error").hidden = true;
     exportDialog.showModal();
-  });
+  }
+  document.getElementById("lm-export").addEventListener("click", openExportDialog);
 
   document.getElementById("lm-export-ok").addEventListener("click", async (e) => {
     e.preventDefault();
@@ -1677,7 +1729,7 @@
     if (pendingFile) previewImport(pendingFile);
   });
 
-  document.getElementById("lm-import").addEventListener("click", () => {
+  function openImportDialog() {
     if (importCommitActive) return;
     previewRequest += 1;
     importSummary.innerHTML = "";
@@ -1695,7 +1747,8 @@
     }
     applyFormatUI();
     importDialog.showModal();
-  });
+  }
+  document.getElementById("lm-import").addEventListener("click", openImportDialog);
 
   importFileInput.addEventListener("change", async (e) => {
     if (importCommitActive) return;
@@ -1994,9 +2047,21 @@
   // its toggle is wired once, for every page, in api.js. When it collapses on the
   // editor page the ResizeObserver on #lm-grid-host makes Univer re-measure.
 
+  let footerFallbackTimer = null;
+  let toolbarFallbackTimer = null;
+  let gridResizeRaf = 0;
+
   async function init() {
     await window.LMReady;
     await loadConfig();
+    const stepsDialog = document.getElementById("lm-steps-dialog");
+    if (stepsDialog && typeof stepsDialog.addEventListener === "function") {
+      stepsDialog.addEventListener("close", () => {
+        if (grid && typeof grid.setSuspended === "function") {
+          try { grid.setSuspended(false); } catch (_e) { /* best-effort */ }
+        }
+      });
+    }
     grid = LMGrid.create({
       host: document.getElementById("lm-grid-host"),
       fields,
@@ -2005,11 +2070,11 @@
       // adapter adopts it into Univer's native footer; the built-in fallback grid
       // ignores it and the slot stays as its own thin bottom bar (CSS).
       footerSlot: document.getElementById("lm-footer-slot"),
-      // Toolbar groups (status/actions). With the Univer engine the adapter adopts
-      // these into Univer's own top ribbon row (flanking the menu tabs); the
-      // built-in fallback grid ignores them and they stay inside .lm-toolbar.
+      // Status/presence slot. With the Univer engine the adapter adopts ONLY
+      // #lm-toolbar-left into Univer's left tab-row slot; toolbarRight is null so
+      // #lm-toolbar-right / #lm-rowtools stay out of Univer's 36px tab headerbar.
       toolbarLeft: document.getElementById("lm-toolbar-left"),
-      toolbarRight: document.getElementById("lm-toolbar-right"),
+      toolbarRight: null,
       onSheetChange: (key) => {
         // User clicked a native Univer worksheet tab: sync editor state. Data is
         // already loaded in the worksheet, so no reload needed.
@@ -2017,10 +2082,14 @@
       },
       onSave: saveCell,
       onSelectionChange: updateSelectionUI,
-      onInsert: (item, where) => insertRowAt(item, where),
+      onInsert: (item, where, count) => insertRowAt(item, where, count),
       onBulkDuplicate: (ids) => bulkDuplicate(ids),
       onBulkDelete: (ids) => bulkDelete(ids),
       onMove: (ids, dir) => moveRows(ids, dir),
+      onMoveRows: (ids, targetId, place) => moveRowsTo(ids, targetId, place),
+      onImport: () => openImportDialog(),
+      onExport: () => openExportDialog(),
+      onHelp: () => toggleHelp(),
       onComment: async (item, key) => {
         const text = await LMUI.prompt({
           title: "添加评论",
@@ -2054,7 +2123,9 @@
         // Enqueue + run-status are only meaningful for test-sheet rows, which
         // carry a ``test_id`` — the key used to enqueue JSON-runner jobs.
         const testId = currentSheet === "test" ? rowTestId(item) : "";
-        LMStepsEditor.open(item, {
+        if (grid && typeof grid.setSuspended === "function") grid.setSuspended(true);
+        try {
+          LMStepsEditor.open(item, {
           fieldKey: stepsKey,
           testId,
           // Live steps sub-structure CRDT binding (item 3): lets the drawer
@@ -2134,7 +2205,11 @@
             mine.sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
             return mine[0].status || null;
           }) : null,
-        });
+          });
+        } catch (ex) {
+          if (grid && typeof grid.setSuspended === "function") grid.setSuspended(false);
+          throw ex;
+        }
       },
     });
     // The Univer engine adopts #lm-footer-slot into its native footer (and shows
@@ -2158,11 +2233,12 @@
     try {
       const host = document.getElementById("lm-grid-host");
       if (host && typeof ResizeObserver === "function") {
-        let raf = 0;
         const ro = new ResizeObserver(() => {
-          if (raf) cancelAnimationFrame(raf);
-          raf = requestAnimationFrame(() => {
-            raf = 0;
+          if (_tornDown) return;
+          if (gridResizeRaf) cancelAnimationFrame(gridResizeRaf);
+          gridResizeRaf = requestAnimationFrame(() => {
+            gridResizeRaf = 0;
+            if (_tornDown) return;
             window.dispatchEvent(new Event("resize"));
           });
         });
@@ -2177,7 +2253,9 @@
     // fall back to revealing it as a thin bottom bar.
     try {
       if (grid && grid.engine === "univer") {
-        setTimeout(() => {
+        footerFallbackTimer = setTimeout(() => {
+          footerFallbackTimer = null;
+          if (_tornDown) return;
           const fs = document.getElementById("lm-footer-slot");
           if (fs && fs.hidden) {
             fs.hidden = false;
@@ -2186,16 +2264,17 @@
         }, 1500);
       }
     } catch (_e) { /* best-effort */ }
-    // Toolbar merge: with the Univer engine the adapter adopts #lm-toolbar-left /
-    // #lm-toolbar-right into Univer's own ribbon row. The shell now starts hidden
+    // Toolbar merge: with the Univer engine the adapter adopts #lm-toolbar-left
+    // into Univer's left tab-row slot. The shell starts hidden
     // (template), so adoption reclaims the row WITHOUT a layout shift — previously
     // the shell was visible on first paint and hidden ~1.5s later, which shifted
     // the grid + collaboration overlay up ~44px and dominated the page CLS.
-    // Only reveal the shell as a fallback if adoption did NOT happen, so the
-    // import / export / run actions never become unreachable.
+    // Only reveal the shell as a fallback if adoption did NOT happen.
     try {
       if (grid && grid.engine === "univer") {
-        setTimeout(() => {
+        toolbarFallbackTimer = setTimeout(() => {
+          toolbarFallbackTimer = null;
+          if (_tornDown) return;
           const tb = document.getElementById("lm-toolbar");
           const left = document.getElementById("lm-toolbar-left");
           const adopted = left && tb && left.parentElement !== tb;
@@ -2242,6 +2321,7 @@
       // rebuild. No-op for the builtin grid, which renders synchronously.
       if (isUniver()) scheduleRepaint();
       syncRunButton();
+      syncAiButton();
     } catch (ex) {
       if (ex.status === 401) { window.location = LM.urls.login; return; }
       toast(ex.message, false);
@@ -2287,12 +2367,23 @@
     try { stopPolling(); } catch (_e) {}
     try { stopResultsPolling(); } catch (_e) {}
     if (remoteRetryTimer) { clearInterval(remoteRetryTimer); remoteRetryTimer = null; }
+    if (repaintTimer) { clearTimeout(repaintTimer); repaintTimer = null; }
+    if (repaintRaf && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(repaintRaf);
+      repaintRaf = 0;
+    }
+    if (footerFallbackTimer) { clearTimeout(footerFallbackTimer); footerFallbackTimer = null; }
+    if (toolbarFallbackTimer) { clearTimeout(toolbarFallbackTimer); toolbarFallbackTimer = null; }
+    if (gridResizeRaf && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(gridResizeRaf);
+      gridResizeRaf = 0;
+    }
     if (gridResizeObserver) {
       try { gridResizeObserver.disconnect(); } catch (_e) {}
       gridResizeObserver = null;
     }
     if (collab) { try { collab.stop(); } catch (_e) {} collab = null; }
-    if (grid && typeof grid.dispose === "function") { try { grid.dispose(); } catch (_e) {} }
+    try { grid?.dispose?.(); } catch (_e) {}
     grid = null;
   }
   window.addEventListener("pagehide", teardownEditor);

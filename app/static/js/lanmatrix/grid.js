@@ -651,7 +651,9 @@
   function attachUniverDark(adapter) {
     if (!adapter || attachUniverDark._seen && attachUniverDark._seen.has(adapter)) return;
     (attachUniverDark._seen || (attachUniverDark._seen = new WeakSet())).add(adapter);
+    let disposed = false;
     const apply = () => {
+      if (disposed) return;
       const dark = document.documentElement.getAttribute("data-theme") === "dark";
       try {
         const api = adapter.univerAPI;
@@ -659,12 +661,24 @@
       } catch (_e) { /* facade missing → stay light */ }
     };
     apply();
-    setTimeout(apply, 300);   // re-apply after first render settles
+    const settleTimer = setTimeout(apply, 300);   // re-apply after first render settles
+    let mo = null;
     try {
-      const mo = new MutationObserver(apply);
+      mo = new MutationObserver(apply);
       mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
       adapter._darkObserver = mo;
     } catch (_e) { /* no MutationObserver → theme flips just won't live-update */ }
+    const origDispose = typeof adapter.dispose === "function" ? adapter.dispose.bind(adapter) : null;
+    adapter.dispose = () => {
+      disposed = true;
+      clearTimeout(settleTimer);
+      if (mo) {
+        try { mo.disconnect(); } catch (_e) {}
+        if (adapter._darkObserver === mo) adapter._darkObserver = null;
+        mo = null;
+      }
+      if (origDispose) return origDispose();
+    };
   }
   global.LMUniverDark = attachUniverDark;
 

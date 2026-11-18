@@ -30,7 +30,7 @@ if REPO not in sys.path:
     sys.path.insert(0, REPO)
 
 from app.services.lanmatrix.items_service import (  # noqa: E402
-    MixedSheetMove, plan_move,
+    MixedSheetMove, plan_move, plan_move_to,
 )
 
 
@@ -207,6 +207,100 @@ class TestReturnShape(unittest.TestCase):
         # ids arrive from JSON and may be strings.
         self.assertEqual(plan_move(self.ROWS, ["2"], "up"),
                          plan_move(self.ROWS, [2], "up"))
+
+
+class TestArbitraryAnchorMove(unittest.TestCase):
+    """Arbitrary-span block moves to before/after a target row."""
+
+    ROWS = [
+        (1, "test", 2),
+        (10, "const", 4),
+        (2, "test", 6),
+        (3, "test", 9),
+        (20, "lib", 11),
+        (4, "test", 15),
+        (5, "test", 20),
+    ]
+
+    def test_move_single_row_upward_before_target(self):
+        changes = plan_move(self.ROWS, [5], target_id=2, place="before")
+        after = apply(self.ROWS, changes)
+        self.assertEqual(visible(after, "test"), [1, 5, 2, 3, 4])
+        self.assertNotIn(1, changes, "rows above target stay untouched")
+        self.assertNotIn(10, changes)
+        self.assertNotIn(20, changes)
+
+    def test_move_block_downward_after_target(self):
+        changes = plan_move(self.ROWS, [1, 2], target_id=4, place="after")
+        after = apply(self.ROWS, changes)
+        self.assertEqual(visible(after, "test"), [3, 4, 1, 2, 5])
+        self.assertNotIn(5, changes, "rows below target stay untouched")
+        self.assertNotIn(10, changes)
+        self.assertNotIn(20, changes)
+
+    def test_non_contiguous_selection_preserves_relative_order(self):
+        changes = plan_move(self.ROWS, [4, 1], target_id=3, place="after")
+        after = apply(self.ROWS, changes)
+        self.assertEqual(visible(after, "test"), [2, 3, 1, 4, 5])
+
+    def test_above_and_below_normalize_to_before_and_after(self):
+        self.assertEqual(
+            plan_move(self.ROWS, [4, 5], target_id=1, place="above"),
+            plan_move(self.ROWS, [4, 5], target_id=1, place="before"),
+        )
+        self.assertEqual(
+            plan_move(self.ROWS, [1, 2], target_id=5, place="below"),
+            plan_move(self.ROWS, [1, 2], target_id=5, place="after"),
+        )
+        self.assertEqual(
+            plan_move_to(self.ROWS, [4, 5], 1, "before"),
+            plan_move(self.ROWS, [4, 5], target_id=1, place="before"),
+        )
+
+    def test_only_moving_sheet_slots_are_reused(self):
+        before_slots = {o for _i, s, o in self.ROWS if s == "test"}
+        changes = plan_move(self.ROWS, [5], target_id=1, place="before")
+        self.assertTrue(set(changes.values()) <= before_slots)
+        after = apply(self.ROWS, changes)
+        self.assertEqual([o for i, _s, o in after if i == 10], [4])
+        self.assertEqual([o for i, _s, o in after if i == 20], [11])
+
+    def test_self_drop_is_a_no_op(self):
+        self.assertEqual(
+            plan_move(self.ROWS, [2, 3], target_id=2, place="before"), {})
+        self.assertEqual(
+            plan_move(self.ROWS, [2, 3], target_id=3, place="after"), {})
+
+    def test_already_in_position_returns_empty_dict(self):
+        self.assertEqual(
+            plan_move(self.ROWS, [2, 3], target_id=1, place="after"), {})
+        self.assertEqual(
+            plan_move(self.ROWS, [2, 3], target_id=4, place="before"), {})
+
+    def test_empty_selection_returns_empty_dict(self):
+        self.assertEqual(
+            plan_move(self.ROWS, [], target_id=2, place="before"), {})
+
+    def test_cross_sheet_selection_or_target_raises_mixed_sheet_move(self):
+        with self.assertRaises(MixedSheetMove):
+            plan_move(self.ROWS, [1, 10], target_id=2, place="before")
+        with self.assertRaises(MixedSheetMove):
+            plan_move(self.ROWS, [1, 2], target_id=10, place="before")
+
+    def test_missing_target_raises_lookup_error(self):
+        with self.assertRaises(LookupError):
+            plan_move(self.ROWS, [1, 2], target_id=999, place="before")
+
+    def test_invalid_place_raises_value_error(self):
+        for bad in ("up", "down", "BEFORE", "", None, 123):
+            with self.assertRaises(ValueError):
+                plan_move(self.ROWS, [1], target_id=2, place=bad)
+
+    def test_string_ids_and_target_are_accepted(self):
+        self.assertEqual(
+            plan_move(self.ROWS, ["4", "5"], target_id="2", place="before"),
+            plan_move(self.ROWS, [4, 5], target_id=2, place="before"),
+        )
 
 
 class TestServiceStillGuards(unittest.TestCase):

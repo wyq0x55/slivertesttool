@@ -140,12 +140,17 @@ export interface MountOpts {
   onSave?: (item: { id: number; version: number }, changes: Record<string, any>) => Promise<Item>;
   onComment?: (item: { id: number }, fieldKey: string) => void;
   onSteps?: ((item: Item) => void) | null;
-  onDelete?: ((item: Item) => void) | null;
+  onDelete?: ((item: Item) => any) | null;
   onSelectionChange?: (ids: number[]) => void;
-  onInsert?: ((item: Item, where: "above" | "below") => void) | null;
-  onBulkDelete?: ((ids: number[]) => void) | null;
-  onBulkDuplicate?: ((ids: number[]) => void) | null;
-  onMove?: ((ids: number[], dir: "up" | "down") => void) | null;
+  onInsert?: ((item: Item | null, where: "above" | "below", count?: number) => any) | null;
+  onBulkDelete?: ((ids: number[]) => any) | null;
+  onBulkDuplicate?: ((ids: number[]) => any) | null;
+  onMove?: ((ids: number[], dir: "up" | "down") => any) | null;
+  onMoveRows?: ((ids: number[], targetId: number, place: "before" | "after") => any) | null;
+  onImport?: (() => void) | null;
+  onExport?: (() => void) | null;
+  onHelp?: (() => void) | null;
+  onDispose?: (() => void) | null;
   // Fired when the user switches the active native worksheet tab.
   onSheetChange?: ((key: string) => void) | null;
   // Optional DOM node (the editor's "#lm-footer-slot" holding the row count,
@@ -216,6 +221,8 @@ interface SheetCtx {
   // Row-level conditional-format colours keyed by row id ({id: "#rrggbb"}),
   // re-applied after every full render (see setRowFormats).
   rowFmt?: Record<number, string>;
+  lastRenderedRows?: number;
+  lastFormattedRows?: number;
 }
 
 const HEADER_ROWS = 1; // row 0 is the header; data starts at row 1
@@ -236,8 +243,11 @@ export class UniverGridAdapter {
   private overlay: CollabOverlay | null = null; // remote-selection border overlay
   private cellTooltip: CellTooltip | null = null; // truncated-cell full-text bubble
   private fWorkbook: any = null;
+  private fShortcut: any = null;
   private hasValidation = false;
   private hasFilter = false;
+  private hasFindReplace = false;
+  private hasCondFmt = false;
 
   private applying = false;      // guards programmatic writes from re-triggering onSave
   private switchingActive = false; // guards programmatic tab switches from re-firing onSheetChange
@@ -251,6 +261,11 @@ export class UniverGridAdapter {
   private structuralTimer: any = null;
   private footerMounted = false; // guards one-time footer-slot adoption
   private toolbarMounted = false; // guards one-time toolbar-slot adoption
+  private menusMounted = false;  // guards one-time Ribbon/ContextMenu registration
+  private suspended = false;     // true while modal/drawer suspends main grid interaction
+  private disposed = false;      // guards idempotent teardown
+  private disposables: Array<{ dispose?: () => void }> = [];
+  private lastRawStartRow: number | null = null;
   private lastStepsKey: string | null = null; // de-dupes step-dialog open per cell
   private editing = false;       // true while the user has a cell editor open (SheetEditStarted→Ended)
   private activeCell: { id: number; col: number } | null = null; // last single-cell selection (anchor source)
@@ -263,7 +278,7 @@ export class UniverGridAdapter {
   } | null = null;
 
   constructor(deps: UniverDeps, opts: MountOpts) {
-    this.deps = deps;
+    this.deps = Object.assign({}, deps);
     this.opts = opts;
     this.host = opts.host;
     this.specs = (opts.sheets && opts.sheets.length)
@@ -301,6 +316,7 @@ export class UniverGridAdapter {
     if (typeof UniverSheetsFindReplacePreset === "function") {
       presets.push(UniverSheetsFindReplacePreset());
       if (UniverPresetSheetsFindReplaceZhCN) locales.push(UniverPresetSheetsFindReplaceZhCN);
+      this.hasFindReplace = true;
     }
     if (typeof UniverSheetsSortPreset === "function") {
       presets.push(UniverSheetsSortPreset());
@@ -309,6 +325,7 @@ export class UniverGridAdapter {
     if (typeof UniverSheetsConditionalFormattingPreset === "function") {
       presets.push(UniverSheetsConditionalFormattingPreset());
       if (UniverPresetSheetsConditionalFormattingZhCN) locales.push(UniverPresetSheetsConditionalFormattingZhCN);
+      this.hasCondFmt = true;
     }
     if (typeof UniverSheetsTablePreset === "function") {
       presets.push(UniverSheetsTablePreset());
@@ -353,23 +370,14 @@ export class UniverGridAdapter {
     // Make sure the first tab is the active one.
     this._activateFSheet(this.active);
 
-    try {
-      const ev = univerAPI.Event;
-      if (ev && ev.LifeCycleChanged && typeof univerAPI.addEvent === "function") {
-        univerAPI.addEvent(ev.LifeCycleChanged, (p: any) => {
-          const stage = p && p.stage;
-          const rendered = univerAPI.Enum && univerAPI.Enum.LifecycleStages
-            ? univerAPI.Enum.LifecycleStages.Rendered : undefined;
-          if (rendered === undefined || stage === rendered) {
-            this._applyFreeze(this.active);
-            this._ensureOverlay();
-            this._ensureCellTooltip();
-            this._mountFooterSlot();
-            this._mountToolbarSlots();
-          }
-        });
-      }
-    } catch (_e) { /* header/freeze are best-effort */ }
+    this._runAtRendered(() => {
+      if (this.active) this._applyFreeze(this.active);
+      this._ensureCollabOverlay();
+      this._ensureCellTooltip();
+      this._mountFooterSlot();
+      this._mountToolbarSlots();
+      this._mountMenus();
+    });
 
     this._bindEvents();
     // Initial paint for every worksheet (headers now; data arrives via setSheetData).
@@ -380,11 +388,67 @@ export class UniverGridAdapter {
     this._applyFreeze(this.active);
   }
 
+  private _trackDisposable(d: any): void {
+    if (d && typeof d.dispose === "function") {
+      if (!this.disposables) this.disposables = [];
+      this.disposables.push(d);
+    }
+  }
+
+  private _runAtRendered(cb: () => void): void {
+    const api = this.univerAPI;
+    if (!api) return;
+    const stages = api.Enum && api.Enum.LifecycleStages ? api.Enum.LifecycleStages : null;
+    const isAtLeastRendered = (stage: any): boolean => {
+      if (stage == null) return false;
+      if (stages) {
+        if (stages.Rendered !== undefined && stage === stages.Rendered) return true;
+        if (stages.Steady !== undefined && stage === stages.Steady) return true;
+        if (typeof stage === "number" && typeof stages.Rendered === "number" && stage >= stages.Rendered) {
+          return true;
+        }
+        return false;
+      }
+      return stage === "Rendered" || stage === "Steady" || (typeof stage === "number" && stage >= 2);
+    };
+
+    let invoked = false;
+    const invokeOnce = () => {
+      if (invoked || this.disposed) return;
+      invoked = true;
+      cb();
+    };
+
+    try {
+      const ev = api.Event;
+      if (ev && ev.LifeCycleChanged && typeof api.addEvent === "function") {
+        const disp = api.addEvent(ev.LifeCycleChanged, (p: any) => {
+          const stage = p && p.stage !== undefined ? p.stage : p;
+          if (!stages && stage === undefined) {
+            invokeOnce();
+          } else if (isAtLeastRendered(stage)) {
+            invokeOnce();
+          }
+        });
+        this._trackDisposable(disp);
+      }
+    } catch (_e) { /* header/freeze are best-effort */ }
+
+    try {
+      if (typeof api.getCurrentLifecycleStage === "function") {
+        const current = api.getCurrentLifecycleStage();
+        if (isAtLeastRendered(current)) {
+          invokeOnce();
+        }
+      }
+    } catch (_e) { /* synchronous lifecycle check is best-effort */ }
+  }
+
   attachSecondaryPresets(extraDeps: Partial<UniverDeps>): void {
-    if (!extraDeps) return;
-    const hadValidation = typeof this.deps.UniverSheetsDataValidationPreset === "function";
-    const hadFindReplace = typeof this.deps.UniverSheetsFindReplacePreset === "function";
-    const hadCondFmt = typeof this.deps.UniverSheetsConditionalFormattingPreset === "function";
+    if (!extraDeps || this.disposed) return;
+    const hadValidation = this.hasValidation || typeof this.deps.UniverSheetsDataValidationPreset === "function";
+    const hadFindReplace = this.hasFindReplace || typeof this.deps.UniverSheetsFindReplacePreset === "function";
+    const hadCondFmt = this.hasCondFmt || typeof this.deps.UniverSheetsConditionalFormattingPreset === "function";
     Object.assign(this.deps, extraDeps);
     if (!this.univer) return;
 
@@ -415,9 +479,15 @@ export class UniverGridAdapter {
       } catch (_e) { /* locale merge is best-effort */ }
     }
 
-    const presetEntries: Array<{ wasLoaded: boolean; fn: any; isValidation?: boolean }> = [
-      { wasLoaded: hadFindReplace, fn: extraDeps.UniverSheetsFindReplacePreset },
-      { wasLoaded: hadCondFmt, fn: extraDeps.UniverSheetsConditionalFormattingPreset },
+    const presetEntries: Array<{
+      wasLoaded: boolean;
+      fn: any;
+      isValidation?: boolean;
+      isFindReplace?: boolean;
+      isCondFmt?: boolean;
+    }> = [
+      { wasLoaded: hadFindReplace, fn: extraDeps.UniverSheetsFindReplacePreset, isFindReplace: true },
+      { wasLoaded: hadCondFmt, fn: extraDeps.UniverSheetsConditionalFormattingPreset, isCondFmt: true },
       { wasLoaded: hadValidation, fn: extraDeps.UniverSheetsDataValidationPreset, isValidation: true },
     ];
     let validationAttached = false;
@@ -436,6 +506,8 @@ export class UniverGridAdapter {
           this.hasValidation = true;
           validationAttached = true;
         }
+        if (entry.isFindReplace) this.hasFindReplace = true;
+        if (entry.isCondFmt) this.hasCondFmt = true;
       } catch (_e) { /* plugin registration is best-effort */ }
     }
 
@@ -470,7 +542,7 @@ export class UniverGridAdapter {
       ? api.Enum.BuiltInUIPart.FOOTER : "footer";
     if (!api || typeof api.registerUIPart !== "function") return;
     try {
-      api.registerUIPart(FOOTER, () =>
+      const disp = api.registerUIPart(FOOTER, () =>
         createElement("div", {
           className: "lm-univer-footerpager",
           style: { marginLeft: "auto", display: "flex", alignItems: "center", height: "100%" },
@@ -484,6 +556,7 @@ export class UniverGridAdapter {
           },
         })
       );
+      this._trackDisposable(disp);
       this.footerMounted = true;
     } catch (_e) {
       // registerUIPart is best-effort: if the facade shape changes the editor
@@ -520,14 +593,231 @@ export class UniverGridAdapter {
         },
       });
     try {
-      if (left) api.registerUIPart(TOOLBAR, makeSlot(left, "left"));
-      if (right) api.registerUIPart(TOOLBAR, makeSlot(right, "right"));
+      if (left) this._trackDisposable(api.registerUIPart(TOOLBAR, makeSlot(left, "left")));
+      if (right) this._trackDisposable(api.registerUIPart(TOOLBAR, makeSlot(right, "right")));
       this.toolbarMounted = true;
     } catch (_e) {
       // Best-effort: on failure the editor keeps .lm-toolbar visible as its own
       // top bar (editor.js only hides it after confirming adoption), so the
       // import/export/queue actions never become unreachable.
     }
+  }
+
+  private _mountMenus(): void {
+    if (this.menusMounted || !this.univerAPI || typeof this.univerAPI.createMenu !== "function") return;
+    const api = this.univerAPI;
+    const opts = this.opts || ({} as MountOpts);
+
+    const appendMenu = (
+      spec: { id: string; title: string; tooltip?: string; action: () => void },
+      targets: Array<string | string[]>
+    ) => {
+      try {
+        const menu = api.createMenu(spec);
+        if (!menu || typeof menu.appendTo !== "function") return;
+        targets.forEach((target) => {
+          menu.appendTo(target);
+        });
+      } catch (_e) { /* menu registration is best-effort */ }
+    };
+
+    const resolveActionIds = (): number[] => {
+      const sel = this.getSelectedIds();
+      if (sel.length) return sel;
+      return this.activeCell && this.activeCell.id != null ? [this.activeCell.id] : [];
+    };
+
+    if (opts.onImport !== null) {
+      appendMenu(
+        {
+          id: "lm.menu.import",
+          title: "导入",
+          tooltip: "导入 Excel 数据（矩阵 / 函数库 / 常量 / 入出力）",
+          action: () => {
+            if (this.suspended) return;
+            this.opts?.onImport?.();
+          },
+        },
+        ["ribbon.start.others", "ribbon.data.others"]
+      );
+    }
+
+    if (opts.onExport !== null) {
+      appendMenu(
+        {
+          id: "lm.menu.export",
+          title: "导出",
+          tooltip: "导出当前项目或指定模板 (.xlsx)",
+          action: () => {
+            if (this.suspended) return;
+            this.opts?.onExport?.();
+          },
+        },
+        ["ribbon.start.others", "ribbon.data.others"]
+      );
+    }
+
+    if (opts.onHelp !== null) {
+      appendMenu(
+        {
+          id: "lm.menu.help",
+          title: "帮助 ?",
+          tooltip: "快捷键与操作帮助（快捷键 ?）",
+          action: () => {
+            if (this.suspended) return;
+            this.opts?.onHelp?.();
+          },
+        },
+        ["ribbon.start.others"]
+      );
+    }
+
+    const ctxTargets: Array<string[]> = [
+      ["contextMenu.rowHeader", "contextMenu.others"],
+      ["contextMenu.mainArea", "contextMenu.others"],
+    ];
+
+    if (opts.onBulkDuplicate !== null) {
+      appendMenu(
+        {
+          id: "lm.ctx.duplicate-row",
+          title: "复制所选行",
+          action: () => {
+            if (this.suspended) return;
+            const ids = resolveActionIds();
+            if (!ids.length) return;
+            this.opts?.onBulkDuplicate?.(ids);
+          },
+        },
+        ctxTargets
+      );
+    }
+
+    if (opts.onMove !== null) {
+      appendMenu(
+        {
+          id: "lm.ctx.move-row-up",
+          title: "上移一行",
+          action: () => {
+            if (this.suspended) return;
+            const ids = resolveActionIds();
+            if (!ids.length) return;
+            this.opts?.onMove?.(ids, "up");
+          },
+        },
+        ctxTargets
+      );
+
+      appendMenu(
+        {
+          id: "lm.ctx.move-row-down",
+          title: "下移一行",
+          action: () => {
+            if (this.suspended) return;
+            const ids = resolveActionIds();
+            if (!ids.length) return;
+            this.opts?.onMove?.(ids, "down");
+          },
+        },
+        ctxTargets
+      );
+    }
+
+    this.menusMounted = true;
+  }
+
+  isSuspended(): boolean {
+    return Boolean(this.suspended);
+  }
+
+  setSuspended(suspended: boolean): void {
+    const next = Boolean(suspended);
+    this.suspended = next;
+    if (next && this.syncTimer) {
+      clearTimeout(this.syncTimer);
+      this.syncTimer = null;
+    }
+    try {
+      if (!this.fShortcut && this.univerAPI && typeof this.univerAPI.getShortcut === "function") {
+        this.fShortcut = this.univerAPI.getShortcut();
+      }
+      if (this.fShortcut) {
+        if (next && typeof this.fShortcut.disableShortcut === "function") {
+          this.fShortcut.disableShortcut();
+        } else if (!next && typeof this.fShortcut.enableShortcut === "function") {
+          this.fShortcut.enableShortcut();
+        }
+      }
+    } catch (_e) { /* shortcut suspension is best-effort */ }
+    try {
+      if (this.fWorkbook && typeof this.fWorkbook.setEditable === "function") {
+        this.fWorkbook.setEditable(!next);
+      }
+    } catch (_e) { /* workbook editable toggle is best-effort */ }
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    if (this.syncTimer) {
+      clearTimeout(this.syncTimer);
+      this.syncTimer = null;
+    }
+    this._endStructural();
+    try {
+      if (this.fShortcut && typeof this.fShortcut.enableShortcut === "function") {
+        this.fShortcut.enableShortcut();
+      }
+    } catch (_e) { /* best-effort */ }
+    this.fShortcut = null;
+
+    try {
+      const ov: any = this.overlay;
+      if (ov) {
+        if (typeof ov.dispose === "function") ov.dispose();
+        else if (typeof ov.destroy === "function") ov.destroy();
+      }
+    } catch (_e) { /* best-effort */ }
+    this.overlay = null;
+
+    try { this.cellTooltip?.dispose?.(); } catch (_e) { /* best-effort */ }
+    this.cellTooltip = null;
+
+    if (Array.isArray(this.disposables)) {
+      while (this.disposables.length) {
+        const d = this.disposables.pop();
+        try { d?.dispose?.(); } catch (_e) { /* best-effort */ }
+      }
+    }
+
+    try {
+      (this as any)._darkObserver?.disconnect?.();
+      (this as any)._darkObserver = null;
+    } catch (_e) { /* best-effort */ }
+
+    const adoptedNodes = [
+      this.opts && this.opts.footerSlot,
+      this.opts && this.opts.toolbarLeft,
+      this.opts && this.opts.toolbarRight,
+    ];
+    adoptedNodes.forEach((node: any) => {
+      if (!node) return;
+      try {
+        if (node.parentNode && typeof node.parentNode.removeChild === "function") {
+          node.parentNode.removeChild(node);
+        } else if (typeof node.remove === "function") {
+          node.remove();
+        }
+      } catch (_e) { /* best-effort */ }
+    });
+
+    try { this.univerAPI?.dispose?.(); } catch (_e) { /* best-effort */ }
+    this.fWorkbook = null;
+    this.univerAPI = null;
+    this.univer = null;
+
+    try { this.opts?.onDispose?.(); } catch (_e) { /* best-effort */ }
+    try { (this as any)._onDisposed?.(); } catch (_e) { /* best-effort */ }
   }
 
   // Reuse the default sheet for the first requested one, then create more.
@@ -611,6 +901,10 @@ export class UniverGridAdapter {
 
   // Lazily create the transparent border-overlay layer once the first sheet has
   // rendered (needs the Univer canvas + skeleton to exist).
+  private _ensureCollabOverlay(): void {
+    this._ensureOverlay();
+  }
+
   private _ensureOverlay(): void {
     if (this.overlay || !this.univer) return;
     try {
@@ -763,10 +1057,23 @@ export class UniverGridAdapter {
   // (white) background. The editor computes the colours (single source of truth
   // for the result/priority semantics); the adapter only paints them and
   // re-applies on every full render (a reload clears cell backgrounds).
-  setRowFormats(key: string, map: Record<number, string>): void {
-    const ctx = this._ctx(key);
+  setRowFormats(map: Record<number, string>): void;
+  setRowFormats(key: string, map: Record<number, string>): void;
+  setRowFormats(
+    keyOrMap: string | Record<number, string>,
+    maybeMap?: Record<number, string>
+  ): void {
+    let ctx: SheetCtx | null = null;
+    let map: Record<number, string> = {};
+    if (typeof keyOrMap === "string") {
+      ctx = this._ctx(keyOrMap);
+      map = maybeMap || {};
+    } else {
+      ctx = this.active || null;
+      map = keyOrMap || {};
+    }
     if (!ctx) return;
-    ctx.rowFmt = map || {};
+    ctx.rowFmt = map;
     this._applyRowFormats(ctx);
   }
 
@@ -775,15 +1082,42 @@ export class UniverGridAdapter {
     const vis = this._visibleFields(ctx);
     const width = Math.max(vis.length, 1);
     const map = ctx.rowFmt || {};
+    const prevApplying = Boolean(this.applying);
     this.applying = true;
     try {
+      let band = Math.max(
+        ctx.items.length,
+        ctx.lastFormattedRows || 0,
+        ctx.lastRenderedRows || 0,
+        1
+      );
+      const maxRows = this._getMaxRows(ctx.fSheet);
+      if (maxRows > HEADER_ROWS) {
+        band = Math.min(band, maxRows - HEADER_ROWS);
+      }
+      try {
+        ctx.fSheet.getRange(HEADER_ROWS, 0, band, width).setBackgroundColor(null);
+      } catch (_e) { /* best-effort clear */ }
+
       ctx.items.forEach((it, idx) => {
-        const color = map[it.id as number] || null;
+        const color = map[it.id as number];
+        if (!color) return;
         try {
           ctx.fSheet.getRange(HEADER_ROWS + idx, 0, 1, width).setBackgroundColor(color);
         } catch (_e) { /* per-row best-effort */ }
       });
-    } finally { this.applying = false; }
+      ctx.lastFormattedRows = ctx.items.length;
+
+      if (ctx.errCells && ctx.errCells.size) {
+        ctx.errCells.forEach((key) => {
+          const [r, c] = key.split(",").map(Number);
+          if (r < 0 || r >= ctx.items.length || c < 0 || c >= width) return;
+          try {
+            ctx.fSheet.getRange(HEADER_ROWS + r, c, 1, 1).setBackgroundColor("#fff4f4");
+          } catch (_e) { /* best-effort */ }
+        });
+      }
+    } finally { this.applying = prevApplying; }
   }
 
   // Incremental remote apply (real-time collaboration, design §1.3). When the
@@ -928,6 +1262,8 @@ export class UniverGridAdapter {
   // range write. Best-effort across the facade's differing width APIs.
   private _ensureWidth(sheet: any, need: number): void {
     if (!sheet || need <= 0) return;
+    const prevApplying = Boolean(this.applying);
+    this.applying = true;
     try {
       let have = 0;
       if (typeof sheet.getMaxColumns === "function") have = sheet.getMaxColumns();
@@ -938,6 +1274,39 @@ export class UniverGridAdapter {
         sheet.insertColumns(Math.max(have - 1, 0), need - have);
       }
     } catch (_e) { /* width grow is best-effort; render still tries */ }
+    finally { this.applying = prevApplying; }
+  }
+
+  private _getMaxRows(sheet: any): number {
+    if (!sheet) return 0;
+    try {
+      if (typeof sheet.getMaxRows === "function") {
+        const v = sheet.getMaxRows();
+        if (typeof v === "number" && v > 0) return v;
+      }
+      if (typeof sheet.getRowCount === "function") {
+        const v = sheet.getRowCount();
+        if (typeof v === "number" && v > 0) return v;
+      }
+    } catch (_e) { /* ignore */ }
+    return 0;
+  }
+
+  private _ensureHeight(sheet: any, need: number): void {
+    if (!sheet || need <= 0) return;
+    const prevApplying = Boolean(this.applying);
+    this.applying = true;
+    try {
+      let have = 0;
+      if (typeof sheet.getMaxRows === "function") have = sheet.getMaxRows();
+      else if (typeof sheet.getRowCount === "function") have = sheet.getRowCount();
+      if (!(have > 0 && have < need)) return;
+      if (typeof sheet.setRowCount === "function") { sheet.setRowCount(need); return; }
+      if (typeof sheet.insertRows === "function") {
+        sheet.insertRows(Math.max(have - 1, 0), need - have);
+      }
+    } catch (_e) { /* height grow is best-effort; render still tries */ }
+    finally { this.applying = prevApplying; }
   }
 
   private _renderHeader(ctx: SheetCtx): void {
@@ -966,7 +1335,12 @@ export class UniverGridAdapter {
     this._ensureWidth(ctx.fSheet, vis.length + 1);
     this.applying = true;
     try {
-      const clearRows = Math.max(ctx.items.length + 50, 50);
+      this._ensureHeight(ctx.fSheet, HEADER_ROWS + ctx.items.length + 20);
+      let clearRows = Math.max(ctx.items.length + 50, ctx.lastRenderedRows || 0, 50);
+      const maxRows = this._getMaxRows(ctx.fSheet);
+      if (maxRows > HEADER_ROWS) {
+        clearRows = Math.min(clearRows, maxRows - HEADER_ROWS);
+      }
       try {
         const clearRange = ctx.fSheet.getRange(HEADER_ROWS, 0, clearRows, Math.max(vis.length, 1));
         clearRange.clearContent();
@@ -983,6 +1357,7 @@ export class UniverGridAdapter {
           vis.map((f) => this._toCellData(this._displayValue(it[f.field_key], f))));
         ctx.fSheet.getRange(HEADER_ROWS, 0, matrix.length, vis.length).setValues(matrix);
       }
+      ctx.lastRenderedRows = ctx.items.length;
       vis.forEach((f, col) => {
         if (!this._isStepsField(f)) return;
         try { ctx.fSheet.setColumnWidth && ctx.fSheet.setColumnWidth(col, 130); } catch (_e) { /* best-effort */ }
@@ -1125,7 +1500,7 @@ export class UniverGridAdapter {
   // ------------------------------------------------------------------ events --
   private _bindEvents(): void {
     const api = this.univerAPI;
-    if (!api || !api.Event) {
+    if (!api) {
       console.warn("[LMUniver] facade Event API unavailable; edits will not persist");
       return;
     }
@@ -1138,12 +1513,39 @@ export class UniverGridAdapter {
     let bound = 0;
     changeEvents.forEach((name) => {
       if (!evs[name]) return;
-      try { api.addEvent(evs[name], () => this._scheduleSync()); bound++; }
+      try {
+        this._trackDisposable(api.addEvent(evs[name], () => this._scheduleSync()));
+        bound++;
+      }
       catch (_e) { /* skip */ }
     });
+
+    try {
+      if (evs.BeforeCommandExecute && typeof api.addEvent === "function") {
+        this._trackDisposable(
+          api.addEvent(evs.BeforeCommandExecute, (event: any) => this._onBeforeCommandExecute(event))
+        );
+        bound++;
+      } else if (typeof api.onBeforeCommandExecute === "function") {
+        this._trackDisposable(
+          api.onBeforeCommandExecute((event: any) => this._onBeforeCommandExecute(event))
+        );
+        bound++;
+      }
+    } catch (_e) { /* optional */ }
+
+    try {
+      if (evs.BeforeUndo && typeof api.addEvent === "function") {
+        this._trackDisposable(api.addEvent(evs.BeforeUndo, (e: any) => { if (this.suspended && e) e.cancel = true; }));
+      }
+      if (evs.BeforeRedo && typeof api.addEvent === "function") {
+        this._trackDisposable(api.addEvent(evs.BeforeRedo, (e: any) => { if (this.suspended && e) e.cancel = true; }));
+      }
+    } catch (_e) { /* optional */ }
+
     if (typeof api.onCommandExecuted === "function") {
       try {
-        api.onCommandExecuted((cmd: any) => {
+        const cmdDisp = api.onCommandExecuted((cmd: any) => {
           const id = cmd && cmd.id ? String(cmd.id) : "";
           if (id === "sheet.operation.set-selections") {
             const params = cmd.params || {};
@@ -1156,13 +1558,6 @@ export class UniverGridAdapter {
             }
             return;
           }
-          // Native "insert row" / "remove row" (context menu, toolbar) only mutate
-          // Univer's in-memory grid — they create no backing server Item, so the
-          // row is dropped on the next save/reload. Route them to the host's
-          // create/delete flow (createItem(draft) / bulk-delete + reload) so the
-          // change is persisted, then stop: they must not fall through to the
-          // cell-diff sync below.
-          if (this._maybeHandleStructural(id, cmd)) return;
           if (/paste|set-?range-?values|set-?range|fill|clear-?selection-?content|delete-?range/i.test(id)) {
             this._scheduleSync();
           } else if (/set-?worksheet-?active|active-?sheet|activate-?sheet/i.test(id)) {
@@ -1184,6 +1579,7 @@ export class UniverGridAdapter {
             this.overlay.refresh();
           }
         });
+        this._trackDisposable(cmdDisp);
         bound++;
       } catch (_e) { /* optional */ }
     }
@@ -1195,8 +1591,12 @@ export class UniverGridAdapter {
     // selecting, so a DOM activeElement check misfires and freezes remote sync;
     // these events flip only on a real edit session.
     try {
-      if (evs.SheetEditStarted) api.addEvent(evs.SheetEditStarted, () => { this.editing = true; });
-      if (evs.SheetEditEnded) api.addEvent(evs.SheetEditEnded, () => { this.editing = false; });
+      if (evs.SheetEditStarted) {
+        this._trackDisposable(api.addEvent(evs.SheetEditStarted, () => { this.editing = true; }));
+      }
+      if (evs.SheetEditEnded) {
+        this._trackDisposable(api.addEvent(evs.SheetEditEnded, () => { this.editing = false; }));
+      }
     } catch (_e) { /* edit-state tracking is optional */ }
 
     // Native worksheet-tab switches: probe the various event names Univer builds
@@ -1205,12 +1605,14 @@ export class UniverGridAdapter {
                           "WorksheetActivated", "SheetActivate"];
     activeEvents.forEach((name) => {
       if (!evs[name]) return;
-      try { api.addEvent(evs[name], () => this._onActiveSheetMaybeChanged()); }
+      try { this._trackDisposable(api.addEvent(evs[name], () => this._onActiveSheetMaybeChanged())); }
       catch (_e) { /* skip */ }
     });
 
     try {
-      if (evs.SelectionChanged) api.addEvent(evs.SelectionChanged, (p: any) => this._onSelectionChanged(p));
+      if (evs.SelectionChanged) {
+        this._trackDisposable(api.addEvent(evs.SelectionChanged, (p: any) => this._onSelectionChanged(p)));
+      }
     } catch (_e) { /* selection tracking is optional */ }
   }
 
@@ -1239,82 +1641,272 @@ export class UniverGridAdapter {
   }
 
   private _scheduleSync(): void {
-    if (this.applying) return;
-    if (this.structuralPending) return;
+    if (this.applying || this.structuralPending || this.suspended || this.disposed) return;
     if (this.syncTimer) clearTimeout(this.syncTimer);
     this.syncTimer = setTimeout(() => { this.syncTimer = null; this._flushSync(); }, 90);
   }
 
-  // Intercept Univer's native row-structure commands and route them to the host
-  // callbacks that own server persistence. Matches ONLY the top-level command
-  // ids (`sheet.command.insert-row` / `sheet.command.remove-row`) — never the
-  // `sheet.mutation.*` ids — so each user action is handled exactly once.
-  // Returns true when it consumed the command (caller then returns early).
-  private _maybeHandleStructural(id: string, cmd: any): boolean {
+  private _isHeaderSelectedForPreInsert(ctx: SheetCtx | null, params: any): boolean {
+    if (params && params.range && typeof params.range.startRow === "number") {
+      return params.range.startRow < HEADER_ROWS;
+    }
+    try {
+      const activeRange = ctx?.fSheet?.getSelection?.()?.getActiveRange?.();
+      if (activeRange) {
+        if (typeof activeRange.getRow === "function") {
+          const r = activeRange.getRow();
+          if (typeof r === "number") return r < HEADER_ROWS;
+        }
+        const raw = typeof activeRange.getRange === "function" ? activeRange.getRange() : activeRange;
+        if (raw && typeof raw.startRow === "number") return raw.startRow < HEADER_ROWS;
+      }
+    } catch (_e) { /* fall through */ }
+    if (this.lastRawStartRow != null) {
+      return this.lastRawStartRow < HEADER_ROWS;
+    }
+    return Boolean(ctx && (!ctx.selected || !ctx.selected.size) && !this.activeCell);
+  }
+
+  // Pre-execution interceptor: cancels native Univer structural commands BEFORE
+  // they mutate local worksheet memory or push onto Univer's Undo stack, routing
+  // row operations cleanly to the host's server-authoritative callbacks.
+  private _onBeforeCommandExecute(event: any): void {
+    if (!event || this.applying) return;
+    const id = event.id ? String(event.id) : "";
+    if (!id) return;
+
+    if (this.suspended) {
+      if (
+        /(?:paste|cut|clear|delete|set-range|fill|undo|redo|insert-(?:multi-)?rows?|remove-rows?|move-rows|insert-(?:multi-)?cols?|remove-cols?|move-cols)/i.test(
+          id
+        )
+      ) {
+        event.cancel = true;
+      }
+      return;
+    }
+
+    const params = event.params || {};
+    const wbId = this.fWorkbook?.getId?.();
+    if (params.unitId && wbId && params.unitId !== wbId) return;
+
+    // Column structural commands are always blocked: columns are schema-driven.
+    if (
+      /^sheet\.command\.(?:insert-col|insert-multi-cols-|remove-col|move-cols|insert-range-move-right|delete-range-move-left)/.test(
+        id
+      )
+    ) {
+      event.cancel = true;
+      return;
+    }
+
     const ctx = this.active;
-    if (!ctx) return false;
-    const params = (cmd && cmd.params) || {};
-    const range = params && params.range ? params.range : null;
+
+    // Header protection on pre-insert commands so Univer never runs copyRangeStyles(..., -1).
+    if (id === "sheet.command.insert-row-before" || id === "sheet.command.insert-multi-rows-above") {
+      if (this._isHeaderSelectedForPreInsert(ctx, params)) {
+        event.cancel = true;
+      }
+      return;
+    }
 
     // --- insert row -------------------------------------------------------
-    // InsertRowCommand's `range` is the block the NEW blank row(s) occupy, so
-    // `range.startRow` is the absolute sheet row the blank now sits at. The item
-    // that lived there (pre-insert; ctx.items is still the old layout) is the
-    // anchor to insert ABOVE. Works for both "insert above" and "insert below"
-    // without depending on params.direction. No item there → append at the end.
-    if (/(?:^|\.)sheet\.command\.insert-row$/.test(id)) {
-      if (!this.opts.onInsert) return false;
-      const blankRow = range && typeof range.startRow === "number"
-        ? range.startRow : ctx.items.length + HEADER_ROWS;
-      const anchor = this._rowToItem(ctx, blankRow);
-      this._beginStructural();
-      try {
+    if (id === "sheet.command.insert-row" || id === "sheet.command.insert-row-by-range") {
+      event.cancel = true;
+      if (!ctx || !this.opts?.onInsert) return;
+      const range = params.range || null;
+      const direction = params.direction;
+      const count =
+        range && typeof range.startRow === "number" && typeof range.endRow === "number"
+          ? Math.max(1, range.endRow - range.startRow + 1)
+          : 1;
+      const isDown =
+        direction === 2 ||
+        String(direction).toUpperCase() === "DOWN" ||
+        String(direction).toLowerCase() === "below";
+      const startRow =
+        range && typeof range.startRow === "number"
+          ? range.startRow
+          : HEADER_ROWS + ctx.items.length;
+
+      if (!isDown) {
+        if (startRow < HEADER_ROWS) return;
+        const anchor = this._rowToItem(ctx, startRow);
         if (anchor) {
-          this.opts.onInsert(anchor, "above");
+          this._runStructural(() => this.opts.onInsert!(anchor, "above", count));
         } else {
           const last = ctx.items.length ? ctx.items[ctx.items.length - 1] : null;
-          if (last) this.opts.onInsert(last, "below");
-          else this.opts.onInsert(null as any, "below"); // empty sheet → append
+          this._runStructural(() => this.opts.onInsert!(last, "below", count));
         }
-      } catch (e) {
-        console.warn("[LMUniver] onInsert failed:", e);
-        this._endStructural();
+      } else {
+        const anchorRow = startRow - 1;
+        if (anchorRow < HEADER_ROWS) {
+          if (ctx.items.length > 0) {
+            this._runStructural(() => this.opts.onInsert!(ctx.items[0], "above", count));
+          } else {
+            this._runStructural(() => this.opts.onInsert!(null, "below", count));
+          }
+        } else {
+          const anchor =
+            this._rowToItem(ctx, anchorRow) ||
+            (ctx.items.length ? ctx.items[ctx.items.length - 1] : null);
+          this._runStructural(() => this.opts.onInsert!(anchor, "below", count));
+        }
       }
-      return true;
+      return;
     }
 
     // --- remove row -------------------------------------------------------
-    if (/(?:^|\.)sheet\.command\.remove-row$/.test(id)) {
-      if (!range) return false;
-      if (!this.opts.onBulkDelete && !this.opts.onDelete) return false;
-      const s = Number(range.startRow);
-      const e = Number(range.endRow);
+    if (
+      id === "sheet.command.remove-row-confirm" ||
+      id === "sheet.command.remove-row" ||
+      id === "sheet.command.remove-row-by-range"
+    ) {
+      event.cancel = true;
+      if (!ctx || (!this.opts?.onDelete && !this.opts?.onBulkDelete)) return;
       const ids: number[] = [];
-      for (let r = s; r <= e; r++) {
-        const it = this._rowToItem(ctx, r);
-        if (it) ids.push(it.id as number);
-      }
-      if (!ids.length) return false;
-      this._beginStructural();
-      try {
-        if (ids.length > 1 && this.opts.onBulkDelete) {
-          this.opts.onBulkDelete(ids);
-        } else if (this.opts.onDelete) {
-          const first = this._rowToItem(ctx, s);
-          if (first) this.opts.onDelete(first); else this._endStructural();
-        } else if (this.opts.onBulkDelete) {
-          this.opts.onBulkDelete(ids);
-        } else {
-          this._endStructural();
+      if (Array.isArray(params.ranges) && params.ranges.length > 0) {
+        const seen = new Set<number>();
+        for (const r of params.ranges) {
+          if (!r || typeof r.startRow !== "number") continue;
+          const s = Math.max(HEADER_ROWS, Number(r.startRow));
+          const e = typeof r.endRow === "number" ? Number(r.endRow) : s;
+          for (let row = s; row <= e; row++) {
+            const it = this._rowToItem(ctx, row);
+            if (it && !seen.has(it.id)) {
+              seen.add(it.id);
+              ids.push(it.id as number);
+            }
+          }
         }
-      } catch (e) {
-        console.warn("[LMUniver] onDelete failed:", e);
-        this._endStructural();
+      } else if (params.range && typeof params.range.startRow === "number") {
+        const s = Math.max(HEADER_ROWS, Number(params.range.startRow));
+        const e = typeof params.range.endRow === "number" ? Number(params.range.endRow) : s;
+        for (let row = s; row <= e; row++) {
+          const it = this._rowToItem(ctx, row);
+          if (it) ids.push(it.id as number);
+        }
+      } else {
+        const selIds = this.getSelectedIds();
+        if (selIds.length) {
+          ids.push(...selIds);
+        } else if (this.activeCell && this.activeCell.id != null) {
+          const exists = ctx.items.some((it) => it.id === this.activeCell!.id);
+          if (exists) ids.push(this.activeCell.id);
+        }
       }
-      return true;
+
+      if (!ids.length) return;
+      if (ids.length === 1 && this.opts.onDelete) {
+        const targetItem = ctx.items.find((it) => it.id === ids[0]);
+        if (!targetItem) return;
+        this._runStructural(() => this.opts.onDelete!(targetItem));
+      } else if (this.opts.onBulkDelete) {
+        this._runStructural(() => this.opts.onBulkDelete!(ids));
+      } else if (this.opts.onDelete) {
+        const targetItem = ctx.items.find((it) => it.id === ids[0]);
+        if (targetItem) this._runStructural(() => this.opts.onDelete!(targetItem));
+      }
+      return;
     }
 
-    return false;
+    // --- drag move rows ---------------------------------------------------
+    if (id === "sheet.command.move-rows") {
+      event.cancel = true;
+      if (!ctx) return;
+      const fromRange = params.fromRange;
+      const toRange = params.toRange;
+      if (!fromRange || !toRange || typeof fromRange.startRow !== "number") return;
+
+      let s = Number(fromRange.startRow);
+      let e = Number(fromRange.endRow ?? fromRange.startRow);
+      let ids: number[] = [];
+
+      if (
+        params.range &&
+        typeof params.range.startRow === "number" &&
+        typeof params.range.endRow === "number" &&
+        params.range.startRow <= s &&
+        e <= params.range.endRow
+      ) {
+        s = Number(params.range.startRow);
+        e = Number(params.range.endRow);
+      } else if (ctx.selected && ctx.selected.size > 1) {
+        const selectedRows: number[] = [];
+        const selectedIds: number[] = [];
+        ctx.items.forEach((it, idx) => {
+          if (ctx.selected.has(it.id)) {
+            selectedRows.push(HEADER_ROWS + idx);
+            selectedIds.push(it.id as number);
+          }
+        });
+        if (selectedRows.includes(s)) {
+          s = Math.min(s, selectedRows[0]);
+          e = Math.max(e, selectedRows[selectedRows.length - 1]);
+          ids = selectedIds;
+        }
+      }
+
+      const clampedStart = Math.max(HEADER_ROWS, s);
+      if (!ids.length) {
+        for (let row = clampedStart; row <= e; row++) {
+          const it = this._rowToItem(ctx, row);
+          if (it) ids.push(it.id as number);
+        }
+      }
+      if (!ids.length) return;
+
+      const toRow = Number(toRange.startRow);
+      if (!Number.isFinite(toRow) || toRow < HEADER_ROWS) return;
+      if (toRow >= clampedStart && toRow <= e + 1) return;
+
+      let targetId: number | null = null;
+      let place: "before" | "after" = "before";
+      if (toRow < clampedStart) {
+        const anchor = this._rowToItem(ctx, toRow);
+        if (anchor && !ids.includes(anchor.id as number)) {
+          targetId = anchor.id as number;
+          place = "before";
+        }
+      } else {
+        const anchor =
+          this._rowToItem(ctx, toRow - 1) ||
+          (ctx.items.length ? ctx.items[ctx.items.length - 1] : null);
+        if (anchor && !ids.includes(anchor.id as number)) {
+          targetId = anchor.id as number;
+          place = "after";
+        }
+      }
+      if (targetId == null) return;
+
+      if (this.opts?.onMoveRows) {
+        this._runStructural(() => this.opts.onMoveRows!(ids, targetId!, place));
+      } else if (this.opts?.onMove) {
+        if (place === "before" && toRow === clampedStart - 1) {
+          this._runStructural(() => this.opts.onMove!(ids, "up"));
+        } else if (place === "after" && toRow === e + 2) {
+          this._runStructural(() => this.opts.onMove!(ids, "down"));
+        }
+      }
+      return;
+    }
+  }
+
+  private _runStructural(fn: () => any): void {
+    this._beginStructural();
+    let ret: any;
+    try {
+      ret = fn();
+    } catch (e) {
+      console.warn("[LMUniver] structural handler failed:", e);
+      this._endStructural();
+      return;
+    }
+    Promise.resolve(ret)
+      .catch((e) => {
+        console.warn("[LMUniver] structural handler rejected:", e);
+      })
+      .finally(() => this._endStructural());
   }
 
   // Enter the "structural change pending" state: suppress cell-diff saves and
@@ -1340,7 +1932,7 @@ export class UniverGridAdapter {
   // every change, grouped per item (one PATCH per row). Handles single edits,
   // Delete-key clears, drag-fill and multi-cell paste uniformly.
   private async _flushSync(): Promise<void> {
-    if (this.applying) return;
+    if (this.applying || this.suspended || this.disposed) return;
     // A native row insert/remove is in flight; the grid is intentionally out of
     // sync with ctx.items until the host reloads. Diffing now would mis-save the
     // shifted rows, so skip — setSheetData will clear the guard.
@@ -1468,12 +2060,14 @@ export class UniverGridAdapter {
     const rowIds: number[] = [];
     let minCol = Infinity;
     let maxCol = -Infinity;
+    let minRawRow = Infinity;
     ranges.forEach((r) => {
       const s = r.startRow ?? r.row;
       const e = r.endRow ?? s;
       const sc = r.startColumn ?? r.column ?? r.col;
       const ec = r.endColumn ?? sc;
       if (s == null) return;
+      minRawRow = Math.min(minRawRow, Number(s));
       for (let row = Math.max(s, HEADER_ROWS); row <= e; row++) {
         const it = this._rowToItem(ctx, row);
         if (it) { ctx.selected.add(it.id); rowIds.push(it.id as number); }
@@ -1481,6 +2075,7 @@ export class UniverGridAdapter {
       if (sc != null) { minCol = Math.min(minCol, Number(sc)); maxCol = Math.max(maxCol, Number(ec ?? sc)); }
       if (s === e && sc != null && sc === ec) single = { row: Number(s), col: Number(sc) };
     });
+    this.lastRawStartRow = minRawRow < Infinity ? minRawRow : null;
     // Record the active cell so the editor can publish it as the anchor
     // (design §6.1); col is the visible-column index, matching FallbackGrid.
     if (single) {
@@ -1501,6 +2096,7 @@ export class UniverGridAdapter {
   }
 
   private _maybeOpenSteps(single: { row: number; col: number } | null): void {
+    if (this.suspended || this.disposed) { this.lastStepsKey = null; return; }
     const ctx = this.active;
     if (!ctx || !single || !this.opts.onSteps) { this.lastStepsKey = null; return; }
     const field = this._colToField(ctx, single.col);

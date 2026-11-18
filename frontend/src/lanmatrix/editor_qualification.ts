@@ -19,6 +19,7 @@ export interface QualificationProjectInfo {
 
 export interface EditorQualificationController {
   init(): void;
+  syncVisibility(): void;
   isCleanRoomEnabled(): boolean;
   setCleanRoomEnabled(enabled: boolean): void;
   wrapApi(targetApi?: any): void;
@@ -92,13 +93,23 @@ const CLEAN_ROOM_TITLE =
     }
   }
 
+  function syncVisibility(): void {
+    if (!doc || typeof doc.getElementById !== "function") return;
+    const runBtn = doc.getElementById("lm-run-selected");
+    const sigBtn = doc.getElementById("lm-signal-list-btn");
+    const wrap = doc.getElementById("lm-clean-room-wrap");
+    const shouldHide = Boolean(runBtn && runBtn.hidden);
+    if (sigBtn) sigBtn.hidden = shouldHide;
+    if (wrap) wrap.hidden = shouldHide;
+  }
+
   function ensureToolbarControls(): void {
     if (!doc || typeof doc.getElementById !== "function" || typeof doc.createElement !== "function") {
       return;
     }
     const toolbarRight = doc.getElementById("lm-toolbar-right");
     const runBtn = doc.getElementById("lm-run-selected");
-    const host = toolbarRight || (runBtn && runBtn.parentNode) || null;
+    const host = (runBtn && runBtn.parentNode) || doc.getElementById("lm-topbar-exec") || toolbarRight || null;
 
     if (!doc.getElementById("lm-signal-list-btn") && host) {
       const sigBtn = doc.createElement("button");
@@ -150,16 +161,6 @@ const CLEAN_ROOM_TITLE =
         }
       }
       insertBeforeOrAppend(host, wrap, runBtn);
-
-      const ObserverCtor = win && win.MutationObserver;
-      if (runBtn && typeof ObserverCtor === "function") {
-        try {
-          const observer = new ObserverCtor(() => {
-            wrap.hidden = Boolean(runBtn.hidden);
-          });
-          observer.observe(runBtn, { attributes: true, attributeFilter: ["hidden"] });
-        } catch (_e) { /* ignore mock DOM limitations */ }
-      }
     } else if (toggle && typeof toggle.addEventListener === "function" && !(toggle as any).__lmQualBound) {
       (toggle as any).__lmQualBound = true;
       toggle.title = toggle.title || CLEAN_ROOM_TITLE;
@@ -167,6 +168,19 @@ const CLEAN_ROOM_TITLE =
         cleanRoomState = Boolean(toggle.checked);
       });
     }
+
+    const ObserverCtor = win && win.MutationObserver;
+    if (runBtn && typeof ObserverCtor === "function" && !(runBtn as any).__lmQualVisObserved) {
+      try {
+        const observer = new ObserverCtor(() => {
+          syncVisibility();
+        });
+        observer.observe(runBtn, { attributes: true, attributeFilter: ["hidden"] });
+        (runBtn as any).__lmQualVisObserved = true;
+      } catch (_e) { /* ignore mock DOM limitations */ }
+    }
+
+    syncVisibility();
   }
 
   function ensureSignalListDialog(): any {
@@ -326,6 +340,7 @@ const CLEAN_ROOM_TITLE =
 
   const controller: EditorQualificationController = {
     init,
+    syncVisibility,
     isCleanRoomEnabled,
     setCleanRoomEnabled,
     wrapApi,

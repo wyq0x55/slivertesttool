@@ -70,21 +70,49 @@ def create_item(project_id):
     if blocked is not None:
         return blocked
     body = request.get_json(silent=True) or {}
+    has_nested_values = isinstance(body.get("values"), dict)
     values = body.get("values", body)
     if not isinstance(values, dict):
         values = {}
     # ``draft`` may arrive at the top level or nested inside ``values``.
     draft = bool(body.get("draft", False) or values.get("draft", False))
-    values = {k: v for k, v in values.items() if k != "draft"}
+    strip_keys = {"draft"} if has_nested_values else {"draft", "count"}
+    values = {k: v for k, v in values.items() if k not in strip_keys}
+    raw_count = body.get("count", 1)
+    if raw_count is None:
+        raw_count = 1
+    if isinstance(raw_count, bool) or (
+            isinstance(raw_count, float) and not raw_count.is_integer()):
+        return err("VALIDATION_ERROR", "单次插入行数需在 1–200 之间", status=400)
+    try:
+        count = int(raw_count)
+    except (TypeError, ValueError):
+        return err("VALIDATION_ERROR", "单次插入行数需在 1–200 之间", status=400)
+    if count < 1 or count > 200:
+        return err("VALIDATION_ERROR", "单次插入行数需在 1–200 之间", status=400)
     # Optional positional insert (Excel-style "insert above / below" a row).
     anchor_id = body.get("anchor_id")
+    if anchor_id in (None, "", 0, "0"):
+        parsed_anchor_id = None
+    elif isinstance(anchor_id, bool):
+        return err("VALIDATION_ERROR", "锚点行无效", status=400)
+    else:
+        try:
+            parsed_anchor_id = int(anchor_id)
+        except (TypeError, ValueError):
+            return err("VALIDATION_ERROR", "锚点行无效", status=400)
     place = body.get("place", "below")
     sheet = body.get("sheet") or values.get("sheet")
-    item = service.create_item(g.user, project, values, draft=draft,
-                               anchor_id=int(anchor_id) if anchor_id else None,
-                               place="above" if place == "above" else "below",
-                               sheet=sheet)
-    return ok({"item": item.to_dict()}, status=201)
+    items = service.create_items(
+        g.user, project, values,
+        count=count, draft=draft,
+        anchor_id=parsed_anchor_id,
+        place="above" if place in ("above", "before") else "below",
+        sheet=sheet,
+    )
+    serialized = [it.to_dict() for it in items]
+    return ok({"item": serialized[0], "items": serialized,
+               "created": len(serialized)}, status=201)
 
 @bp.post("/projects/<int:project_id>/pool/<sheet>/entries")
 @login_required
@@ -219,8 +247,21 @@ def move_items(project_id):
     if blocked is not None:
         return blocked
     body = request.get_json(silent=True) or {}
-    direction = body.get("direction", "up")
-    n = service.move_items(g.user, project, _row_ids(body), direction)
+    target_id = body.get("target_id")
+    if target_id is not None and target_id != "":
+        if isinstance(target_id, bool):
+            return err("VALIDATION_ERROR", "目标行无效", status=400)
+        try:
+            target_id = int(target_id)
+        except (TypeError, ValueError):
+            return err("VALIDATION_ERROR", "目标行无效", status=400)
+        place = body.get("place", "before")
+        n = service.move_items(
+            g.user, project, _row_ids(body), None,
+            target_id=target_id, place=place)
+    else:
+        direction = body.get("direction", "up")
+        n = service.move_items(g.user, project, _row_ids(body), direction)
     return ok({"moved": n})
 
 @bp.post("/projects/<int:project_id>/items/batch-preview")

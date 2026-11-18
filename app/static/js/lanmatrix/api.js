@@ -210,7 +210,17 @@
 
     bulkDeleteItems(id, ids) { return request("POST", `/projects/${id}/items/bulk-delete`, { body: { ids } }); },
     bulkDuplicateItems(id, ids) { return request("POST", `/projects/${id}/items/bulk-duplicate`, { body: { ids } }); },
-    moveItems(id, ids, direction) { return request("POST", `/projects/${id}/items/move`, { body: { ids, direction } }); },
+    moveItems(id, ids, dirOrTarget) {
+      if (dirOrTarget && typeof dirOrTarget === "object") {
+        const target_id = dirOrTarget.target_id !== undefined && dirOrTarget.target_id !== null
+          ? dirOrTarget.target_id
+          : dirOrTarget.targetId;
+        return request("POST", `/projects/${id}/items/move`, {
+          body: { ids, target_id, place: dirOrTarget.place || "before" },
+        });
+      }
+      return request("POST", `/projects/${id}/items/move`, { body: { ids, direction: dirOrTarget } });
+    },
 
     // Real-time collaboration: mint a short-lived token for the Yjs WebSocket
     // server. Returns { token, room, ws_url, expires_in }. Requires item.edit.

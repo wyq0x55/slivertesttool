@@ -20,15 +20,32 @@ const UPGRADE = section("_renderWhenLoaded(item) {", "// Sync the Univer steps s
 
 // A page with an optional <link id="lm-univer-lazy">; appended <script>s are
 // recorded so a test decides whether the bundle loads or fails.
-function page({ hint = true } = {}) {
+function page({ hint = true, esm = false, dynamicImport = null } = {}) {
   const appended = [];
+  const imports = [];
   const global = {};
+  if (esm) {
+    global.__lmDynamicImport = (url) => {
+      imports.push(url);
+      return dynamicImport ? dynamicImport(url) : Promise.resolve();
+    };
+  }
   const document = {
     activeElement: null,
     head: { appendChild(node) { appended.push(node); } },
     createElement(tag) { return { tag }; },
     getElementById(id) {
       if (id !== "lm-univer-lazy" || !hint) return null;
+      if (esm) {
+        return {
+          href: "/static/vendor/univer/esm/univer-core.js?v=abc",
+          getAttribute: (name) => {
+            if (name === "data-esm") return "1";
+            if (name === "data-css") return "/static/vendor/univer/univer.full.umd.css?v=abc";
+            return null;
+          },
+        };
+      }
       return {
         href: "/static/vendor/univer/univer.full.umd.js?v=abc",
         getAttribute: (name) => (name === "data-css" ? "/static/vendor/univer/univer.full.umd.css?v=abc" : null),
@@ -40,7 +57,14 @@ function page({ hint = true } = {}) {
     setTimeout: (callback, ms) => timers.push({ callback, ms }) });
   vm.runInContext(`${LOADER}; global.load = loadUniverBundle;
     global.Editor = class { ${UPGRADE} };`, context);
-  return { global, document, appended, timers, scripts: () => appended.filter((node) => node.tag === "script") };
+  return {
+    global,
+    document,
+    appended,
+    imports,
+    timers,
+    scripts: () => appended.filter((node) => node.tag === "script"),
+  };
 }
 
 function editor(env, item) {
@@ -161,3 +185,46 @@ test("outcome rows, value rows and unmarked steps do not move the sheet", () => 
   assert.deepEqual(activated, []);
 });
 
+test("data-esm hint loads Univer once via dynamic import and upgrades the drawer", async () => {
+  let resolveImport;
+  const env = page({
+    esm: true,
+    dynamicImport: () => new Promise((resolve) => { resolveImport = resolve; }),
+  });
+  const item = { id: 12 };
+  const { instance, view } = editor(env, item);
+
+  assert.equal(instance._renderWhenLoaded(item), true);
+  const first = env.global.load();
+  assert.equal(env.global.load(), first);
+  assert.deepEqual(env.appended.map((node) => node.tag), ["link"]);
+  assert.equal(env.appended[0].href, "/static/vendor/univer/univer.full.umd.css?v=abc");
+  assert.equal(env.scripts().length, 0);
+  assert.deepEqual(env.imports, ["/static/vendor/univer/esm/univer-core.js?v=abc"]);
+
+  env.global.LMUniverSteps = { mount() {} };
+  resolveImport();
+  assert.equal(await first, true);
+  await settle();
+  assert.equal(instance.view, view);
+  assert.deepEqual(instance.rendered, ["univer"]);
+  assert.deepEqual(view.refData, { lib: ["SUB"] });
+  assert.equal(view.resized, 1);
+});
+
+test("data-esm dynamic import rejection falls back to built-in tables", async () => {
+  let rejectImport;
+  const env = page({
+    esm: true,
+    dynamicImport: () => new Promise((_resolve, reject) => { rejectImport = reject; }),
+  });
+  const item = { id: 15 };
+  const { instance } = editor(env, item);
+
+  assert.equal(instance._renderWhenLoaded(item), true);
+  rejectImport(new Error("ChunkLoadError"));
+  await settle();
+  assert.equal(await env.global.load(), false);
+  assert.equal(instance.view, null);
+  assert.deepEqual(instance.rendered, ["builtin"]);
+});

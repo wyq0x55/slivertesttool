@@ -12,7 +12,7 @@
  * Every preset — current and future — MUST be registered with its zh-CN locale
  * bundle and the workbook created with LocaleType.ZH_CN.
  */
-import { createUniver, defaultTheme, LocaleType, mergeLocales } from "@univerjs/presets";
+import { createUniver, defaultTheme, LocaleService, LocaleType, mergeLocales } from "@univerjs/presets";
 import { UniverSheetsCorePreset } from "@univerjs/preset-sheets-core";
 import UniverPresetSheetsCoreZhCN from "@univerjs/preset-sheets-core/locales/zh-CN";
 import "@univerjs/preset-sheets-core/lib/index.css";
@@ -87,7 +87,7 @@ declare global {
 }
 
 const deps = {
-  createUniver, defaultTheme, LocaleType, mergeLocales,
+  createUniver, defaultTheme, LocaleType, LocaleService, mergeLocales,
   UniverSheetsCorePreset, UniverPresetSheetsCoreZhCN,
   UniverSheetsDataValidationPreset, UniverPresetSheetsDataValidationZhCN,
   UniverSheetsFilterPreset, UniverPresetSheetsFilterZhCN,

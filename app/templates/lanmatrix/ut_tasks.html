@@ -247,12 +247,20 @@
 {% include "lanmatrix/_steps_dialog.html" %}
 {% endblock %}
 {% block scripts %}
-{# The ~11 MB Univer bundle only upgrades the optional 手順 drawer, so the page
-   just prefetches it; steps_editor.js executes it on the drawer's first open. #}
+{# The Univer bundle only upgrades the optional 手順 drawer, so the page just
+   prefetches the code-split ESM entry (falling back to UMD when ESM is absent);
+   steps_editor.js loads it via dynamic import() on the drawer's first open. #}
 {% if univer_available %}
+{% if univer_esm_available %}
+<link id="lm-univer-lazy" rel="prefetch" as="script"
+      href="{{ static_asset_url('vendor/univer/esm/univer-core.js') }}"
+      data-esm="1"
+      data-css="{{ static_asset_url('vendor/univer/univer.full.umd.css') }}">
+{% else %}
 <link id="lm-univer-lazy" rel="prefetch" as="script"
       href="{{ static_asset_url('vendor/univer/univer.full.umd.js') }}"
       data-css="{{ static_asset_url('vendor/univer/univer.full.umd.css') }}">
+{% endif %}
 {% endif %}
 <script src="{{ static_asset_url('js/lanmatrix/steps_ref_panel.js') }}"></script>
 <script src="{{ static_asset_url('js/lanmatrix/json_editor.js') }}"></script>

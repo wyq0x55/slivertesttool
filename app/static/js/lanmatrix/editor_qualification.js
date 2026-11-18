@@ -56,13 +56,22 @@
         parent.appendChild(node);
       }
     }
+    function syncVisibility() {
+      if (!doc || typeof doc.getElementById !== "function") return;
+      const runBtn = doc.getElementById("lm-run-selected");
+      const sigBtn = doc.getElementById("lm-signal-list-btn");
+      const wrap = doc.getElementById("lm-clean-room-wrap");
+      const shouldHide = Boolean(runBtn && runBtn.hidden);
+      if (sigBtn) sigBtn.hidden = shouldHide;
+      if (wrap) wrap.hidden = shouldHide;
+    }
     function ensureToolbarControls() {
       if (!doc || typeof doc.getElementById !== "function" || typeof doc.createElement !== "function") {
         return;
       }
       const toolbarRight = doc.getElementById("lm-toolbar-right");
       const runBtn = doc.getElementById("lm-run-selected");
-      const host = toolbarRight || runBtn && runBtn.parentNode || null;
+      const host = runBtn && runBtn.parentNode || doc.getElementById("lm-topbar-exec") || toolbarRight || null;
       if (!doc.getElementById("lm-signal-list-btn") && host) {
         const sigBtn = doc.createElement("button");
         sigBtn.type = "button";
@@ -111,16 +120,6 @@
           }
         }
         insertBeforeOrAppend(host, wrap, runBtn);
-        const ObserverCtor = win && win.MutationObserver;
-        if (runBtn && typeof ObserverCtor === "function") {
-          try {
-            const observer = new ObserverCtor(() => {
-              wrap.hidden = Boolean(runBtn.hidden);
-            });
-            observer.observe(runBtn, { attributes: true, attributeFilter: ["hidden"] });
-          } catch (_e) {
-          }
-        }
       } else if (toggle && typeof toggle.addEventListener === "function" && !toggle.__lmQualBound) {
         toggle.__lmQualBound = true;
         toggle.title = toggle.title || CLEAN_ROOM_TITLE;
@@ -128,6 +127,18 @@
           cleanRoomState = Boolean(toggle.checked);
         });
       }
+      const ObserverCtor = win && win.MutationObserver;
+      if (runBtn && typeof ObserverCtor === "function" && !runBtn.__lmQualVisObserved) {
+        try {
+          const observer = new ObserverCtor(() => {
+            syncVisibility();
+          });
+          observer.observe(runBtn, { attributes: true, attributeFilter: ["hidden"] });
+          runBtn.__lmQualVisObserved = true;
+        } catch (_e) {
+        }
+      }
+      syncVisibility();
     }
     function ensureSignalListDialog() {
       if (!doc || typeof doc.getElementById !== "function" || typeof doc.createElement !== "function") {
@@ -256,6 +267,7 @@
     }
     const controller = {
       init,
+      syncVisibility,
       isCleanRoomEnabled,
       setCleanRoomEnabled,
       wrapApi,

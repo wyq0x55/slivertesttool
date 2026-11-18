@@ -769,7 +769,8 @@
     const Y = this._Y();
     if (!arr || !Y) throw new Error("协同未就绪");
     opts = opts || {};
-    const uuid = genUuid();
+    const rawCount = Number(opts.count);
+    const count = Math.max(1, Math.min(200, Number.isFinite(rawCount) && rawCount > 0 ? Math.floor(rawCount) : 1));
     const values = opts.values || {};
     let index = arr.length;
     let anchorMap = null;
@@ -793,16 +794,24 @@
         if (v !== null && v !== undefined && values[k] === undefined) inherit[k] = v;
       });
     }
-    const m = new Y.Map();
+    const maps = [];
+    const uuids = [];
+    for (let n = 0; n < count; n++) {
+      maps.push(new Y.Map());
+      uuids.push(genUuid());
+    }
     this.doc.transact(function () {
-      arr.insert(index, [m]);
-      m.set("uuid", uuid);
-      Object.keys(inherit).forEach(function (k) { m.set(k, inherit[k]); });
-      Object.keys(values).forEach(function (k) {
-        if (!SKIP_ON_COPY[k]) m.set(k, values[k]);
-      });
+      arr.insert(index, maps);
+      for (let n = 0; n < count; n++) {
+        const m = maps[n];
+        m.set("uuid", uuids[n]);
+        Object.keys(inherit).forEach(function (k) { m.set(k, inherit[k]); });
+        Object.keys(values).forEach(function (k) {
+          if (!SKIP_ON_COPY[k]) m.set(k, values[k]);
+        });
+      }
     });
-    return this._mapToItem(m, index);
+    return this._mapToItem(maps[0], index);
   };
 
   LMCollabController.prototype.deleteRows = function (sheet, ids) {
@@ -843,17 +852,74 @@
     return targets.length;
   };
 
-  LMCollabController.prototype.moveRows = function (sheet, ids, dir) {
+  LMCollabController.prototype.moveRows = function (sheet, ids, dirOrTarget) {
     const arr = this.arrays[sheet];
     const Y = this._Y();
     if (!arr || !Y) throw new Error("协同未就绪");
     const want = new Set((ids || []).map(Number));
+    if (dirOrTarget && typeof dirOrTarget === "object") {
+      const rawTarget = dirOrTarget.targetId !== undefined && dirOrTarget.targetId !== null
+        ? dirOrTarget.targetId
+        : dirOrTarget.target_id;
+      const targetId = Number(rawTarget);
+      const place = (dirOrTarget.place === "after" || dirOrTarget.place === "below")
+        ? "after"
+        : "before";
+      if (!Number.isFinite(targetId) || want.has(targetId)) return 0;
+      const allIds = [];
+      const picked = [];
+      const remainingIds = [];
+      let targetExists = false;
+      arr.forEach(function (m, i) {
+        const rid = rowIdOfMap(m);
+        allIds.push(rid);
+        if (rid === targetId) targetExists = true;
+        if (want.has(rid)) picked.push({ index: i, id: rid, json: m.toJSON() });
+        else remainingIds.push(rid);
+      });
+      if (!picked.length || !targetExists) return 0;
+      const previewTargetIdx = remainingIds.indexOf(targetId);
+      if (previewTargetIdx < 0) return 0;
+      const previewInsertAt = place === "after" ? previewTargetIdx + 1 : previewTargetIdx;
+      const nextIds = remainingIds.slice(0, previewInsertAt)
+        .concat(picked.map(function (p) { return p.id; }), remainingIds.slice(previewInsertAt));
+      let changed = false;
+      for (let i = 0; i < allIds.length; i++) {
+        if (allIds[i] !== nextIds[i]) { changed = true; break; }
+      }
+      if (!changed) return 0;
+      this.doc.transact(function () {
+        for (let j = picked.length - 1; j >= 0; j--) {
+          arr.delete(picked[j].index, 1);
+        }
+        let ti = -1;
+        arr.forEach(function (m, i) {
+          if (ti < 0 && rowIdOfMap(m) === targetId) ti = i;
+        });
+        if (ti < 0) return;
+        const insertAt = place === "after" ? ti + 1 : ti;
+        const clones = picked.map(function () { return new Y.Map(); });
+        arr.insert(insertAt, clones);
+        picked.forEach(function (p, idx) {
+          const clone = clones[idx];
+          Object.keys(p.json).forEach(function (k) {
+            if (SKIP_ON_COPY[k]) return;
+            if (stepsCrdtEnabled() && STEP_FIELDS[k] && p.json[k] && typeof p.json[k] === "object") {
+              clone.set(k, buildStepsY(Y, p.json[k]));
+            } else {
+              clone.set(k, p.json[k]);
+            }
+          });
+        });
+      });
+      return picked.length;
+    }
     const idxs = [];
     arr.forEach(function (m, i) { if (want.has(rowIdOfMap(m))) idxs.push(i); });
     if (!idxs.length) return;
     const minI = Math.min.apply(null, idxs);
     const maxI = Math.max.apply(null, idxs);
-    const up = !(dir === "down" || dir === "DOWN" || dir === 1);
+    const up = !(dirOrTarget === "down" || dirOrTarget === "DOWN" || dirOrTarget === 1);
     if (up && minI <= 0) return;
     if (!up && maxI >= arr.length - 1) return;
     this.doc.transact(function () {

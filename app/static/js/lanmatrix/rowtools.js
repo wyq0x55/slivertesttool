@@ -2,24 +2,14 @@
  *
  * WHY THIS EXISTS
  * ---------------
- * Row operations (insert / duplicate / delete / move) used to be reachable only
- * from the built-in grid's right-click menu (grid.js `_showContextMenu`). That
- * menu belongs to FallbackGrid, which is the *emergency degrade* path — the
- * primary engine is Univer. Under Univer:
+ * Under the primary Univer engine, row structure operations (上方/下方插入行,
+ * 删除行, 复制所选行, 上移一行/下移一行) live directly in Univer's native
+ * row-header right-click menu, row-header drag-and-drop reorders rows in place,
+ * and 导入 / 导出 / 帮助 ? sit in Univer's Ribbon.
  *
- *   - insert-row / remove-row ARE reachable, because adapter.ts intercepts
- *     Univer's own `sheet.command.insert-row` / `sheet.command.remove-row`
- *     and routes them to onInsert / onBulkDelete;
- *   - move (上移/下移) and duplicate (复制所选) are NOT. adapter.ts declares
- *     `onMove` and `onBulkDuplicate` in its options type and never calls them.
- *
- * So on the default engine those two operations are not "hidden in a context
- * menu" — they have no entry point at all. Explicit toolbar buttons are the
- * only way to reach them, not merely a nicer way.
- *
- * The buttons live in #lm-toolbar-right, which adapter.ts adopts into Univer's
- * own ribbon via registerUIPart(TOOLBAR), so one markup site serves both
- * engines.
+ * The explicit toolbar buttons rendered here into #lm-rowtools remain active for
+ * the built-in FallbackGrid degrade path, and SHORTCUTS / GESTURES back the
+ * shared `?` help dialog across both engines.
  *
  * `plan()` is a pure function: it decides which controls are offered and why
  * one is unavailable, with no DOM and no network. That is the part worth
@@ -141,8 +131,14 @@
   // Mouse/other interactions that are not key bindings but are equally
   // undiscoverable. Kept separate so the panel can label them honestly.
   var GESTURES = [
-    { what: "右键点击行", desc: "打开行操作菜单（仅内置表格引擎可用）" },
-    { what: "工具栏行操作按钮", desc: "插入 / 复制 / 删除 / 上移 / 下移，两种表格引擎均可用" },
+    { what: "右键点击行号（Univer）",
+      desc: "打开原生行菜单：上方/下方插入行、删除行、复制所选行、上移一行/下移一行" },
+    { what: "拖拽行号（Univer）",
+      desc: "选中一行或多行后按住左侧行号上下拖动，释放即可重排行顺序" },
+    { what: "开始工具栏（Univer Ribbon）",
+      desc: "提供「导入」「导出」「帮助 ?」快捷按钮" },
+    { what: "内置降级表格",
+      desc: "当 Univer 未加载时，可通过顶部行操作按钮或右键点击行执行插入 / 复制 / 删除 / 上移 / 下移" },
   ];
 
   function isMac() {

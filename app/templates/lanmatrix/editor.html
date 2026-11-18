@@ -2,42 +2,53 @@
 {% from "lanmatrix/_crumb.html" import project_crumb %}
 {% block title %}矩阵编辑{% endblock %}
 {% block crumb %}{{ project_crumb(project_id, "矩阵编辑") }}{% endblock %}
+{% block topbar_actions %}
+<div class="lm-topbar-actions" id="lm-topbar-actions">
+  <div class="lm-topbar-ai" id="lm-topbar-ai" hidden>
+    <div class="lm-ai-combo">
+      <button class="btn btn-sm" id="lm-ai-generate" type="button" disabled
+        title="选择已保存测试行，生成手顺草稿供人工审核">AI 生成手顺</button>
+      <details class="lm-ai-model-pop" id="lm-ai-model-pop">
+        <summary class="btn btn-sm ghost lm-ai-model-trigger" title="可选：指定已保存模型 ID（默认使用项目当前模型）" aria-label="AI 模型配置">模型</summary>
+        <div class="lm-ai-model-card">
+          <label class="lm-muted" for="lm-ai-model-id">指定模型 ID（可选）</label>
+          <input id="lm-ai-model-id" type="number" min="1" step="1" placeholder="当前默认" aria-label="AI 使用的已保存模型 ID（可选）">
+        </div>
+      </details>
+    </div>
+    <a class="btn btn-sm" id="lm-ai-draft-link" hidden>查看草稿</a>
+  </div>
+  <div class="lm-topbar-exec" id="lm-topbar-exec" hidden>
+    <button class="btn btn-sm btn-primary" id="lm-run-selected" hidden>队列测试</button>
+  </div>
+</div>
+{% endblock %}
 {% block content %}
 <div class="lm-editor" data-project-id="{{ project_id }}" data-collab="{{ '1' if collab_available else '0' }}">
-  <!-- Editor controls. Under the Univer engine the adapter adopts the two groups
-       (#lm-toolbar-left / #lm-toolbar-right) into Univer's OWN top ribbon row via
-       registerUIPart(TOOLBAR) — the left group flanks the menu tabs on the left,
-       the right group on the right — and this .lm-toolbar shell is then hidden.
-       With the built-in fallback grid (no Univer chrome) the shell stays visible
-       as a slim top bar. Element ids are unchanged; editor.js drives them by id. -->
+  <!-- Editor controls. Under the Univer engine the adapter adopts #lm-toolbar-left
+       (status + collaboration presence) into Univer's left tab-row slot, while row
+       operations and import/export/help live in Univer's native menus and Ribbon.
+       AI and test-execution actions live in the global topbar ({% block topbar_actions %}).
+       With the built-in fallback grid (no Univer chrome) this .lm-toolbar shell stays
+       visible as a slim top bar. -->
   <div class="lm-toolbar" id="lm-toolbar"{% if univer_available %} style="display:none"{% endif %}>
     <div class="lm-tb-left" id="lm-toolbar-left">
-      <strong id="lm-proj-title">项目 #{{ project_id }}</strong>
+      <strong class="lm-fallback-only" id="lm-proj-title">项目 #{{ project_id }}</strong>
       <span class="pill" id="lm-proj-status"></span>
-      <span class="lm-muted" id="lm-grid-engine"></span>
+      <span class="lm-muted lm-fallback-only" id="lm-grid-engine"></span>
       <span class="pill lm-collab-badge" id="lm-collab-status" hidden></span>
       <!-- Live online-member list (Phase 2, design §6.1): avatar chips coloured
            per collaborator, rendered by editor.js from awareness presence. -->
       <span class="lm-collab-members" id="lm-collab-members" hidden></span>
     </div>
     <div class="lm-tb-right" id="lm-toolbar-right">
-      <!-- Explicit row-structure controls, filled by rowtools.js. Under the
-           Univer engine 上移/下移/复制所选 have NO other entry point (adapter.ts
-           declares onMove/onBulkDuplicate but never calls them), so these
-           buttons are the only way to reach them, not just a shortcut. This
-           group is adopted into Univer's own ribbon together with #lm-toolbar-
-           right, so one markup site serves both engines. -->
+      <!-- Fallback row-structure + file controls for FallbackGrid (Univer exposes
+           these natively via row-header menus, drag-reorder, and Ribbon buttons). -->
       <span class="lm-rowtools" id="lm-rowtools" role="group" aria-label="行操作"></span>
       <button class="btn btn-sm" id="lm-help" title="快捷键与操作帮助（快捷键 ?）"
               aria-label="快捷键与操作帮助">?</button>
       <button class="btn" id="lm-import">导入</button>
       <button class="btn" id="lm-export">导出</button>
-      <label class="lm-muted">模型 ID <input id="lm-ai-model-id" type="number" min="1" step="1"
-        style="width:80px" placeholder="当前" aria-label="AI 使用的已保存模型 ID（可选）"></label>
-      <button class="btn" id="lm-ai-generate" type="button" disabled
-        title="选择已保存测试行，生成手顺草稿供人工审核">AI 生成手顺</button>
-      <a class="btn" id="lm-ai-draft-link" hidden>查看草稿</a>
-      <button class="btn btn-primary" id="lm-run-selected" hidden>队列测试</button>
     </div>
   </div>
 

@@ -117,6 +117,29 @@ def _auto_case_id(project_id: int) -> str:
     return candidate
 
 
+def _allocate_case_ids(project_id: int, count: int) -> list[str]:
+    base = _dt.datetime.now().strftime("TC_%Y%m%d_%H%M%S")
+    existing = (
+        db.session.query(TestItemRow.case_id)
+        .filter(
+            TestItemRow.project_id == project_id,
+            TestItemRow.deleted_at.is_(None),
+            TestItemRow.case_id.like(f"{base}%"),
+        )
+        .all()
+    )
+    taken = {r[0] for r in existing if r[0]}
+    out: list[str] = []
+    candidate, n = base, 1
+    for _ in range(count):
+        while candidate in taken:
+            n += 1
+            candidate = f"{base}_{n}"
+        taken.add(candidate)
+        out.append(candidate)
+    return out
+
+
 def _max_row_order(project_id: int) -> int:
     return db.session.query(db.func.max(TestItemRow.row_order)) \
         .filter_by(project_id=project_id).scalar() or 0
@@ -196,6 +219,113 @@ def create_item(user: LMUser, project: Project, values: dict[str, Any],
     if commit:
         db.session.commit()
     return item
+
+
+def create_items(user: LMUser, project: Project, values: dict[str, Any],
+                 *, count: int = 1, draft: bool = False,
+                 commit: bool = True, anchor_id: Optional[int] = None,
+                 place: str = "below",
+                 sheet: Optional[str] = None) -> list[TestItemRow]:
+    """Create ``count`` (1..200) rows at once, optionally above/below ``anchor_id``."""
+    if isinstance(count, bool) or (
+            isinstance(count, float) and not count.is_integer()):
+        raise ServiceError("单次插入行数需在 1–200 之间", code="VALIDATION_ERROR")
+    try:
+        n_rows = int(count)
+    except (TypeError, ValueError):
+        raise ServiceError("单次插入行数需在 1–200 之间", code="VALIDATION_ERROR")
+    if n_rows < 1 or n_rows > 200:
+        raise ServiceError("单次插入行数需在 1–200 之间", code="VALIDATION_ERROR")
+    if n_rows == 1:
+        return [create_item(
+            user, project, values, draft=draft, anchor_id=anchor_id,
+            place=place, sheet=sheet, commit=commit)]
+
+    from . import fields as fld
+    specs = field_specs(project.id)
+    raw_input = dict(values or {})
+    row_sheet = (sheet or raw_input.pop("sheet", None) or fld.DEFAULT_SHEET)
+    if row_sheet not in fld.SHEETS:
+        row_sheet = fld.DEFAULT_SHEET
+    specs = [s for s in specs if getattr(s, "sheet", "test") == row_sheet]
+
+    defs = {f.field_key: f for f in list_fields(project.id, active_only=True)}
+    templated = dict(raw_input)
+    for key, fdef in defs.items():
+        current = templated.get(key)
+        empty = current is None or (isinstance(current, str) and current.strip() == "")
+        if empty and fdef.default_value not in (None, ""):
+            templated[key] = fdef.default_value
+
+    raw_case_id = raw_input.get("case_id")
+    has_explicit_case_id = bool(
+        raw_case_id and (not isinstance(raw_case_id, str) or raw_case_id.strip())
+    )
+    if has_explicit_case_id and not draft:
+        raise ServiceError("批量插入多行时不能指定固定 case_id",
+                           code="VALIDATION_ERROR")
+    case_ids = _allocate_case_ids(project.id, n_rows)
+
+    prepared: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    seen_case_ids: set[str] = set()
+    for idx in range(n_rows):
+        row_values = dict(templated)
+        row_values["case_id"] = case_ids[idx]
+
+        def _check_unique(fkey: str, val: Any) -> bool:
+            if fkey == "case_id" and val in seen_case_ids:
+                return False
+            return _unique_checker(project.id, fkey, None)(fkey, val)
+
+        coerced, errors = validation.validate_record(
+            specs, row_values,
+            unique_checker=_check_unique,
+            enforce_required=not draft)
+        if validation.has_blocking(errors):
+            raise ServiceError("输入数据校验失败", code="VALIDATION_ERROR",
+                               details=[e.to_dict() for e in errors])
+        seen_case_ids.add(row_values["case_id"])
+        prepared.append((row_values, coerced))
+
+    target_order = _max_row_order(project.id) + 1
+    anchor = None
+    if anchor_id is not None:
+        anchor = TestItemRow.query.filter_by(
+            id=anchor_id, project_id=project.id, deleted_at=None).first()
+        if anchor is not None:
+            target_order = anchor.row_order + (1 if place == "below" else 0)
+            _shift_row_orders(project.id, target_order, n_rows)
+
+    created_rows: list[TestItemRow] = []
+    for idx, (row_values, coerced) in enumerate(prepared):
+        item = TestItemRow(
+            project_id=project.id,
+            row_order=target_order + idx,
+            sheet=row_sheet,
+            created_by=user.id,
+            updated_by=user.id,
+            version=1,
+        )
+        _apply_values(item, coerced, specs)
+        if anchor is not None:
+            for _k in ("category", "category_name"):
+                if not raw_input.get(_k) and item.get_field(_k) in (None, ""):
+                    inherited = anchor.get_field(_k)
+                    if inherited not in (None, ""):
+                        item.set_field(_k, inherited)
+        if row_values.get("case_id"):
+            item.case_id = row_values["case_id"]
+        db.session.add(item)
+        created_rows.append(item)
+
+    db.session.flush()
+    for item in created_rows:
+        audit.record("item.create", actor_id=user.id, object_type="item",
+                     object_id=item.id, project_id=project.id,
+                     new_value=item.to_dict())
+    if commit:
+        db.session.commit()
+    return created_rows
 
 
 # --------------------------------------------------------------------------- #
@@ -438,7 +568,19 @@ class MixedSheetMove(ValueError):
     """Raised when a reorder selection spans more than one editor sheet."""
 
 
-def plan_move(ordered: list[tuple], selected, direction: str) -> dict[int, int]:
+def _normalize_move_place(place: str) -> str:
+    if not isinstance(place, str):
+        raise ValueError("place must be 'before' or 'after'")
+    if place in ("before", "above"):
+        return "before"
+    if place in ("after", "below"):
+        return "after"
+    raise ValueError("place must be 'before' or 'after'")
+
+
+def plan_move(ordered: list[tuple], selected, direction: Optional[str] = "up",
+              *, target_id: Optional[int] = None,
+              place: str = "before") -> dict[int, int]:
     """Pure reorder planner. Returns ``{row_id: new_row_order}`` for the rows
     whose position actually changes; ``{}`` when the move is a no-op.
 
@@ -457,6 +599,40 @@ def plan_move(ordered: list[tuple], selected, direction: str) -> dict[int, int]:
 
     Kept free of database access so the ordering rules can be tested directly.
     """
+    if target_id is not None:
+        norm_place = _normalize_move_place(place)
+        if isinstance(target_id, bool):
+            raise ValueError("target_id must be an integer")
+        tid = int(target_id)
+        sel = set(int(i) for i in (selected or []))
+        if not sel:
+            return {}
+        sheets = set(sheet for (rid, sheet, _o) in ordered if rid in sel)
+        if len(sheets) > 1:
+            raise MixedSheetMove("selection spans sheets: %s" % sorted(sheets))
+        target_sheets = [sheet for (rid, sheet, _o) in ordered if rid == tid]
+        if not target_sheets:
+            raise LookupError("target_id not found")
+        if not sheets:
+            return {}
+        sheet = sheets.pop()
+        if target_sheets[0] != sheet:
+            raise MixedSheetMove(
+                "target sheet %r differs from selection sheet %r"
+                % (target_sheets[0], sheet))
+        if tid in sel:
+            return {}
+        rows = [(rid, order) for (rid, s, order) in ordered if s == sheet]
+        slots = [order for (_rid, order) in rows]
+        before = dict(rows)
+        moving = [rid for (rid, _o) in rows if rid in sel]
+        remaining = [rid for (rid, _o) in rows if rid not in sel]
+        anchor_idx = remaining.index(tid)
+        insert_at = anchor_idx if norm_place == "before" else anchor_idx + 1
+        new_ids = remaining[:insert_at] + moving + remaining[insert_at:]
+        return {rid: slots[pos] for pos, rid in enumerate(new_ids)
+                if before[rid] != slots[pos]}
+
     if direction not in ("up", "down"):
         raise ValueError("direction must be 'up' or 'down'")
     sel = set(int(i) for i in (selected or []))
@@ -487,31 +663,64 @@ def plan_move(ordered: list[tuple], selected, direction: str) -> dict[int, int]:
             if before[rid] != slots[pos]}
 
 
+def plan_move_to(ordered: list[tuple], selected, target_id: int,
+                 place: str = "before") -> dict[int, int]:
+    """Pure reorder planner for arbitrary-anchor block moves."""
+    return plan_move(ordered, selected, None, target_id=target_id, place=place)
+
+
 def move_items(user: LMUser, project: Project, ids: list[int],
-               direction: str, *, commit: bool = True) -> int:
+               direction: Optional[str] = "up", *,
+               target_id: Optional[int] = None,
+               place: str = "before",
+               commit: bool = True) -> int:
     """Move the selected rows one position up or down within their own sheet
-    (block move). Returns the number of rows the caller selected."""
-    if direction not in ("up", "down"):
-        raise ServiceError("方向无效", code="VALIDATION_ERROR")
+    (block move), or before/after ``target_id``. Returns the number of rows
+    the caller selected."""
+    norm_place = "before"
+    if target_id is None:
+        if direction not in ("up", "down"):
+            raise ServiceError("方向无效", code="VALIDATION_ERROR")
+    else:
+        if isinstance(target_id, bool):
+            raise ServiceError("目标行无效", code="VALIDATION_ERROR")
+        try:
+            target_id = int(target_id)
+        except (TypeError, ValueError):
+            raise ServiceError("目标行无效", code="VALIDATION_ERROR")
+        try:
+            norm_place = _normalize_move_place(place)
+        except ValueError:
+            raise ServiceError("位置无效", code="VALIDATION_ERROR")
     sel = set(int(i) for i in (ids or []))
     if not sel:
         return 0
+    from ...collab import writeback
+    writeback.lock_project(project.id)
     rows = TestItemRow.query.filter(
         TestItemRow.project_id == project.id,
         TestItemRow.deleted_at.is_(None),
     ).order_by(TestItemRow.row_order.asc()).all()
     try:
         changes = plan_move(
-            [(r.id, r.sheet, r.row_order) for r in rows], sel, direction)
+            [(r.id, r.sheet, r.row_order) for r in rows], sel, direction,
+            target_id=target_id, place=norm_place)
     except MixedSheetMove:
         raise ServiceError("不能跨 Sheet 移动行", code="VALIDATION_ERROR")
+    except LookupError:
+        raise ServiceError("目标行不存在", code="NOT_FOUND")
     if changes:
         for r in rows:
             if r.id in changes:
                 r.row_order = changes[r.id]
+        reorder_value = (
+            {"moved": sorted(sel), "direction": direction}
+            if target_id is None
+            else {"moved": sorted(sel), "target_id": int(target_id), "place": norm_place}
+        )
         audit.record("item.reorder", actor_id=user.id, object_type="project",
                      object_id=project.id, project_id=project.id,
-                     new_value={"moved": sorted(sel), "direction": direction})
+                     new_value=reorder_value)
         if commit:
             db.session.commit()
     return len(sel)

@@ -57,6 +57,7 @@ const deps: UniverDeps = {
 };
 
 const mountedAdapters = new Set<UniverGridAdapter>();
+const mountedStepsViews = new Set<UniverStepsView>();
 let secondaryPromise: Promise<Partial<UniverDeps>> | null = null;
 let secondaryScheduled = false;
 
@@ -68,6 +69,9 @@ function loadSecondaryPresets(): Promise<Partial<UniverDeps>> {
         Object.assign(deps, extra);
         mountedAdapters.forEach((adapter) => {
           adapter.attachSecondaryPresets(extra);
+        });
+        mountedStepsViews.forEach((view) => {
+          view.attachSecondaryPresets(extra);
         });
         return extra;
       })
@@ -97,14 +101,28 @@ function scheduleSecondaryLoad(): void {
 window.LMUniver = {
   mount(opts: MountOpts): UniverGridAdapter {
     const adapter = new UniverGridAdapter(deps, opts);
+    let isDisposed = false;
+    (adapter as any)._onDisposed = () => {
+      isDisposed = true;
+      mountedAdapters.delete(adapter);
+    };
     adapter.init();
-    mountedAdapters.add(adapter);
+    if (!isDisposed) mountedAdapters.add(adapter);
     scheduleSecondaryLoad();
     return adapter;
   },
 };
 (window.LMUniver as any).loadSecondary = loadSecondaryPresets;
 
+const baseStepsMount = createStepsMount(deps);
 window.LMUniverSteps = {
-  mount: createStepsMount(deps),
+  mount(host: HTMLElement, opts?: any): UniverStepsView {
+    const view = baseStepsMount(host, opts);
+    (view as any)._onDisposed = () => {
+      mountedStepsViews.delete(view);
+    };
+    mountedStepsViews.add(view);
+    scheduleSecondaryLoad();
+    return view;
+  },
 };

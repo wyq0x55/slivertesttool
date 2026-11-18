@@ -88,6 +88,80 @@
    :has so only the editor page is locked; other pages scroll normally. */
 html:has(.lm-editor), body:has(.lm-editor) { height: 100%; overflow: hidden; }
 
+/* ── Editor actions in global topbar (base_lm.html {% block topbar_actions %}) ── */
+.lm-topbar-actions { display: inline-flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+.lm-topbar-ai,
+.lm-topbar-exec { display: inline-flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
+.lm-topbar-actions[hidden],
+.lm-topbar-ai[hidden],
+.lm-topbar-exec[hidden],
+.lm-topbar-actions [hidden] { display: none !important; }
+
+.lm-ai-combo { display: inline-flex; align-items: center; }
+.lm-ai-combo > #lm-ai-generate {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.lm-ai-model-pop { position: relative; display: inline-flex; align-items: center; }
+.lm-ai-model-pop > summary { list-style: none; cursor: pointer; user-select: none; }
+.lm-ai-model-pop > summary::-webkit-details-marker { display: none; }
+.lm-ai-model-pop > summary.lm-ai-model-trigger {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  margin-left: -1px;
+  border: 1px solid var(--border);
+  padding-inline: 8px;
+  white-space: nowrap;
+}
+.lm-ai-model-pop[open] > summary.lm-ai-model-trigger,
+.lm-ai-model-pop > summary.lm-ai-model-trigger.is-active {
+  background: var(--brand-soft);
+  color: var(--brand-text);
+  border-color: var(--brand);
+}
+.lm-ai-model-card {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 60;
+  min-width: 210px;
+  padding: 10px 12px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(16, 25, 43, .18);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+[data-theme="dark"] .lm-ai-model-card {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .48);
+}
+.lm-ai-model-card label {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.lm-ai-model-card input[type=number] {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px 8px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 6px;
+}
+.lm-ai-model-card input[type=number]:focus {
+  outline: 2px solid var(--brand);
+  outline-offset: -1px;
+}
+#lm-ai-status { margin: 0; padding: 4px 12px; font-size: 12px; }
+#lm-ai-status:empty { display: none; }
+
 /* Toolbar (fallback bar). Under the Univer engine its two groups are adopted
    into Univer's own ribbon row and this shell is hidden by editor.js; it only
    shows with the built-in fallback grid. Styled to mimic Univer's own bar
@@ -133,38 +207,38 @@ footer:has(> .lm-univer-footerpager) > section {
   background: var(--surface); border-left: 1px solid var(--border); color: var(--text); }
 .lm-univer-footerpager .lm-footer-slot { padding: 0; }
 
-/* ── Toolbar groups adopted into Univer's OWN top ribbon row ────────────────
-   The adapter registers #lm-toolbar-left / #lm-toolbar-right into Univer's
-   TOOLBAR UI part. Univer renders them inside <header data-u-comp="headerbar">
-   (position:relative), which stacks two rows: the top menu-tab bar (h-9 = 36px,
-   the "univer-bg-gray-50" bar with the tabs centred) and, below it, the ribbon
-   tools row (h-10). We absolutely dock each slot onto the TOP 36px row, flanking
-   the centred tabs — status group on the left, action group on the right — so
-   the app controls share Univer's own top bar on the SAME line as the tabs.
-   Kept compact so they never exceed the 36px row (header clips overflow). */
-.lm-univer-tbslot { min-height: 36px; display: flex; align-items: center; gap: 8px; z-index: 11; }
-/* The slots used to be absolutely docked over the tab row. Once the row tools
-   joined the right group it grew wider than the space beside the centred tabs
-   and covered 开始/公式/数据 (and, on a laptop, the project title too). The
-   headerbar is now a grid: [status | tabs | actions] on the first row, the
-   ribbon tools on the second, so nothing can overlap; when the actions do not
-   fit they wrap inside their own cell and the row grows instead. */
+/* ── Status slot adopted into Univer's OWN top 36px tab row ─────────────────
+   The adapter registers #lm-toolbar-left into Univer's TOOLBAR UI part.
+   Fallback-only labels (duplicate project title & engine label) are hidden so
+   only project status and live collaboration presence sit beside the menu tabs
+   on a crisp single 36px row. */
+.lm-univer-tbslot { height: 36px; min-height: 36px; display: flex; align-items: center; gap: 8px; z-index: 11; }
+.lm-univer-tbslot .lm-fallback-only { display: none !important; }
 header[data-u-comp="headerbar"]:has(> .lm-univer-tbslot) {
-  display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: center; }
+  display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: 36px auto; align-items: center; }
+header[data-u-comp="headerbar"]:has(> .lm-univer-tbslot--right) {
+  grid-template-columns: auto auto minmax(0, 1fr); }
 header[data-u-comp="headerbar"]:has(> .lm-univer-tbslot) > * { grid-column: 1 / -1; }
-header[data-u-comp="headerbar"] > .lm-univer-tbslot--left { grid-column: 1; grid-row: 1; padding-left: 12px; }
-header[data-u-comp="headerbar"] > [data-u-comp="ribbon-header-menu"] { grid-column: 2; grid-row: 1; padding: 0 8px; }
+header[data-u-comp="headerbar"] > .lm-univer-tbslot--left { grid-column: 1; grid-row: 1; padding-left: 12px; height: 36px; }
+header[data-u-comp="headerbar"] > [data-u-comp="ribbon-header-menu"] { grid-column: 2; grid-row: 1; padding: 0 8px; height: 36px; }
 header[data-u-comp="headerbar"] > .lm-univer-tbslot--right { grid-column: 3; grid-row: 1;
   justify-content: flex-end; flex-wrap: wrap; row-gap: 4px; padding: 4px 12px 4px 0; }
 header[data-u-comp="headerbar"] > .lm-univer-tbslot--right .lm-tb-right { display: flex; flex-wrap: wrap;
   justify-content: flex-end; align-items: center; gap: 6px; row-gap: 4px; flex: 1 1 auto; min-width: 0; }
 .lm-univer-tbslot .lm-tb-left,
 .lm-univer-tbslot .lm-tb-right { flex: 0 0 auto; }
+.lm-univer-tbslot .lm-tb-left { white-space: nowrap; height: 36px; }
 /* Shrink the adopted controls to fit the slim tab row. */
 .lm-univer-tbslot .btn { padding: 3px 10px; font-size: 12px; line-height: 1.4; }
 .lm-univer-tbslot #lm-proj-title { font-size: 13px; }
 .lm-univer-tbslot .pill { font-size: 11px; padding: 1px 6px; }
 .lm-univer-tbslot .lm-muted { font-size: 12px; }
+button[data-u-command^="lm.menu."] {
+  padding: 0 8px;
+  border-radius: 5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
 
 /* Compact テスト区分 control: ◀ [区分] ▶ (crosshair-toolbar style). Prev/next are
    merged into one small segmented box; the full label appears in a hover bubble
