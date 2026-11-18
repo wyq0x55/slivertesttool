@@ -172,7 +172,13 @@ export interface UtJobItem {
   var availableToolchains: UtToolchainProfile[] = [];
   var cfgSaving = false;
 
-  function $(id: string): any { return document.getElementById(id); }
+  function $(id: string): any {
+    var el = document.getElementById(id);
+    if (el && !el.replaceChildren) {
+      el.replaceChildren = function () { Object.assign(el, { children: [], textContent: "", innerHTML: "" }); };
+    }
+    return el;
+  }
   function iconButton(title, icon, data) {
     return '<button class="btn small btn-icon" type="button" title="' + title + '" aria-label="' +
       title + '" ' + data + ">" + (icon || esc(title)) + "</button>";
@@ -363,7 +369,7 @@ export interface UtJobItem {
     var box = $("ut-batch-info");
     var b = batches.find(function (item) { return String(item.id) === String(batchId); });
     box.hidden = !b;
-    if (!b) { box.innerHTML = ""; return; }
+    if (!b) { box.replaceChildren(); return; }
     var prov = b.provenance || {};
     var st = b.states || {};
     var states = Object.keys(st).sort(function (x, y) { return st[y] - st[x]; })
@@ -951,7 +957,7 @@ export interface UtJobItem {
     ++coverageEpoch;
     coverageShown = null;
     $("ut-d-coverage").hidden = true;
-    $("ut-d-coverage-body").innerHTML = "";
+    $("ut-d-coverage-body").replaceChildren();
   }
 
   async function coverageReport(attempt) {

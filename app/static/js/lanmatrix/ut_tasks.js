@@ -39,7 +39,13 @@
     var availableToolchains = [];
     var cfgSaving = false;
     function $(id) {
-      return document2.getElementById(id);
+      var el = document2.getElementById(id);
+      if (el && !el.replaceChildren) {
+        el.replaceChildren = function() {
+          Object.assign(el, { children: [], textContent: "", innerHTML: "" });
+        };
+      }
+      return el;
     }
     function iconButton(title, icon, data) {
       return '<button class="btn small btn-icon" type="button" title="' + title + '" aria-label="' + title + '" ' + data + ">" + (icon || esc(title)) + "</button>";
@@ -196,7 +202,7 @@
       });
       box.hidden = !b;
       if (!b) {
-        box.innerHTML = "";
+        box.replaceChildren();
         return;
       }
       var prov = b.provenance || {};
@@ -701,7 +707,7 @@
       ++coverageEpoch;
       coverageShown = null;
       $("ut-d-coverage").hidden = true;
-      $("ut-d-coverage-body").innerHTML = "";
+      $("ut-d-coverage-body").replaceChildren();
     }
     async function coverageReport(attempt) {
       if (!(attempt.execution || {}).has_coverage_report) {
