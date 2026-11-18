@@ -273,6 +273,7 @@
     // Enter commits from the single-line label field; the note is multi-line so
     // it keeps Enter for newlines.
     $("lm-ver-input").addEventListener("keydown", (e) => {
+      if (e.isComposing || e.keyCode === 229) return;
       if (e.key === "Enter") { e.preventDefault(); saveVersion(); }
     });
     verModal.addEventListener("keydown", (e) => {

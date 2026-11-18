@@ -62,7 +62,7 @@
     const d = dict(c.name);
     const names = d && d.labels[String(v)];
     if (!names || !names.length) return R.fmtValue(v);
-    const short = names.slice().sort((x, y) => x.length - y.length)[0];
+    const short = names.toSorted((x, y) => x.length - y.length)[0];
     return R.fmtValue(v) + " " + short;
   }
   function kindOf(c) {
@@ -216,7 +216,7 @@
   function fillRuns() {
     const sel = $("cv-run");
     sel.replaceChildren();
-    ctx.attempts.slice().reverse().forEach(n => {
+    ctx.attempts.toReversed().forEach(n => {
       sel.add(new Option("第 " + n + " 次" + (n === ctx.task.current_run ? "（最新）" : ""), String(n)));
     });
     if (!ctx.attempts.includes(ctx.task.run)) sel.add(new Option("第 " + ctx.task.run + " 次（运行中）", String(ctx.task.run)));
@@ -228,7 +228,7 @@
     const sel = $("cv-compare");
     sel.replaceChildren(new Option("不对比", ""));
     const runs = document.createElement("optgroup"); runs.label = "本任务的其他执行";
-    ctx.attempts.filter(n => n !== ctx.task.run).slice().reverse()
+    ctx.attempts.filter(n => n !== ctx.task.run).toReversed()
       .forEach(n => runs.append(new Option("第 " + n + " 次执行", task.taskKey + ":" + n)));
     if (runs.children.length) sel.append(runs);
     const epoch = gen;
@@ -802,7 +802,7 @@
         tr.innerHTML = `<td class="num">${esc(R.fmtValue(e.t))}</td><td class="num">${e.row}</td><td title="${esc(c.name)}">${esc(display(c))}</td><td>${esc(valueLabel(c, e.from))}</td><td>${esc(valueLabel(c, e.to))}</td><td>${s ? "Step" + esc(s.step) : ""}</td>`;
         const go = () => { ensureLanes([c.name]); setCursor("a", e.t); ensureVisible(e.t); };
         tr.addEventListener("click", go);
-        tr.addEventListener("keydown", ev => { if (ev.key === "Enter") go(); });
+        tr.addEventListener("keydown", ev => { if (ev.isComposing || ev.keyCode === 229) return; if (ev.key === "Enter") go(); });
         body.append(tr);
       });
       table.append(body);
@@ -827,7 +827,7 @@
         <td>${esc(c.expected || "")}</td><td>${esc(c.observed || "")}</td><td>${esc(c.timing || "")}</td>`;
       const go = () => { focusStep = s; if (inCsv) ensureLanes([c.var]); if (c.at !== null) { setCursor("a", c.at); ensureVisible(c.at); } };
       tr.addEventListener("click", go);
-      tr.addEventListener("keydown", ev => { if (ev.key === "Enter") go(); });
+      tr.addEventListener("keydown", ev => { if (ev.isComposing || ev.keyCode === 229) return; if (ev.key === "Enter") go(); });
       body.append(tr);
     }));
     if (!body.children.length) body.innerHTML = '<tr><td colspan="7" class="muted">没有判定检查点。</td></tr>';
