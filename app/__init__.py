@@ -118,9 +118,35 @@ def _install_static_compression(app: Flask) -> None:
     """
     import gzip as _gzip
     import hashlib as _hashlib
+    import mimetypes as _mimetypes
+    import re as _re
     from pathlib import Path as _Path
 
     from flask import request, url_for
+
+    # Windows workstations often register ``.js`` as ``text/plain`` in HKCR,
+    # which causes browsers to block ``<script type="module">`` and
+    # ``WebAssembly.instantiateStreaming`` under strict HTML/Wasm MIME checks.
+    _STATIC_MIME_OVERRIDES: dict[str, str] = {
+        ".js": "text/javascript",
+        ".mjs": "text/javascript",
+        ".cjs": "text/javascript",
+        ".css": "text/css",
+        ".wasm": "application/wasm",
+        ".json": "application/json",
+        ".map": "application/json",
+        ".svg": "image/svg+xml",
+        ".woff": "font/woff",
+        ".woff2": "font/woff2",
+    }
+    _mimetypes.init()
+    for _ext, _mime in _STATIC_MIME_OVERRIDES.items():
+        _mimetypes.add_type(_mime, _ext, strict=True)
+        _mimetypes.add_type(_mime, _ext, strict=False)
+
+    _HASHED_ESM_CHUNK_RE = _re.compile(
+        r"^vendor/univer/esm/chunks/.+-[A-Za-z0-9_-]{8,}\.js$"
+    )
 
     revision_cache: dict[str, tuple[int, int, str]] = {}
     gzip_cache: dict[str, tuple[str, bytes]] = {}
@@ -192,16 +218,27 @@ def _install_static_compression(app: Flask) -> None:
             if not path.startswith(static_prefix):
                 return resp
             filename = path[len(static_prefix):]
+            ext = _Path(filename).suffix.lower()
+            expected_mime = _STATIC_MIME_OVERRIDES.get(ext)
+            if expected_mime and resp.status_code in (200, 206, 304):
+                if expected_mime.startswith("text/"):
+                    resp.headers["Content-Type"] = f"{expected_mime}; charset=utf-8"
+                else:
+                    resp.headers["Content-Type"] = expected_mime
+
             current_rev = _revision(filename)
 
             requested_rev = (request.args.get("v") or "").strip()
-            if current_rev and requested_rev == current_rev:
+            if current_rev and (
+                requested_rev == current_rev
+                or _HASHED_ESM_CHUNK_RE.match(filename)
+            ):
                 resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
             else:
                 # Unversioned (e.g. url() inside a stylesheet) or stale: revalidate.
                 resp.headers["Cache-Control"] = "no-cache"
 
-            if not path.endswith((".js", ".css", ".json", ".svg", ".map", ".wasm")):
+            if not path.endswith((".js", ".mjs", ".cjs", ".css", ".json", ".svg", ".map", ".wasm")):
                 return resp
             if resp.status_code != 200:
                 return resp

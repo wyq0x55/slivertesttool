@@ -1,3 +1,4 @@
+import "./univer-globals";
 import {
   createUniver,
   defaultTheme,

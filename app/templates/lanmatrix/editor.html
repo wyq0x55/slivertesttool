@@ -167,8 +167,12 @@
    `window.LMUniver` is ready before `editor.js` executes. #}
 {% if univer_available %}
 <link rel="stylesheet" href="{{ static_asset_url('vendor/univer/univer.full.umd.css') }}">
+{% if univer_esm_available is not defined or univer_esm_available %}
 <link rel="modulepreload" href="{{ static_asset_url('vendor/univer/esm/univer-core.js') }}">
 <script type="module" src="{{ static_asset_url('vendor/univer/esm/univer-core.js') }}"></script>
+{% else %}
+<script defer src="{{ static_asset_url('vendor/univer/univer.full.umd.js') }}"></script>
+{% endif %}
 {% endif %}
 {% if collab_available %}
 <script defer src="{{ static_asset_url('vendor/collab/collab.umd.js') }}"></script>

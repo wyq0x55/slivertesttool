@@ -54,6 +54,39 @@ export default defineConfig({
           "}",
         entryFileNames: "univer-core.js",
         chunkFileNames: "chunks/[name]-[hash].js",
+        manualChunks: (() => {
+          let primarySet: Set<string> | null = null;
+          return (id, meta) => {
+            if (!primarySet) {
+              primarySet = new Set<string>();
+              const queue: string[] = [];
+              for (const modId of meta.getModuleIds()) {
+                const info = meta.getModuleInfo(modId);
+                if (info?.isEntry) {
+                  for (const imp of info.importedIds) {
+                    queue.push(imp);
+                  }
+                }
+              }
+              while (queue.length > 0) {
+                const cur = queue.pop()!;
+                if (primarySet.has(cur)) continue;
+                const info = meta.getModuleInfo(cur);
+                if (!info || info.isEntry) continue;
+                primarySet.add(cur);
+                for (const imp of info.importedIds) {
+                  if (!primarySet.has(imp)) {
+                    queue.push(imp);
+                  }
+                }
+              }
+            }
+            if (primarySet.has(id)) {
+              return "univer-primary";
+            }
+            return undefined;
+          };
+        })(),
       },
     },
   },

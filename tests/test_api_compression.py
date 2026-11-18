@@ -105,3 +105,64 @@ def test_static_sidecar_gz_is_served_when_fresh_and_ignored_when_stale(tmp_path)
     os.utime(asset, (mtime + 20, mtime + 20))
     resp2 = c.get("/static/bundle.js", headers=GZIP)
     assert gzip.decompress(resp2.data) == payload_v2
+
+
+def test_static_js_enforces_javascript_mime_even_when_windows_registry_says_text_plain():
+    import mimetypes
+    import app as app_pkg
+    from app.config import Config
+
+    # Simulate Windows HKCR\.js\Content Type = "text/plain" poisoning both
+    # before and after create_app().
+    mimetypes.add_type("text/plain", ".js", strict=True)
+    mimetypes.add_type("text/plain", ".js", strict=False)
+
+    class MimeConfig(Config):
+        TESTING = True
+        SECRET_KEY = "mime-test"
+        GLOBAL_LOGIN_REQUIRED = False
+        SQLALCHEMY_DATABASE_URI = "postgresql+psycopg2://invalid:invalid@127.0.0.1:1/never-connect"
+
+    application = app_pkg.create_app(MimeConfig)
+    c = application.test_client()
+
+    resp_esm = c.get("/static/vendor/univer/esm/univer-core.js")
+    assert resp_esm.status_code == 200
+    assert resp_esm.mimetype == "text/javascript"
+    assert "text/javascript" in resp_esm.headers.get("Content-Type", "")
+
+    # Even if external code re-poisons mimetypes at runtime, the static handler
+    # must still emit text/javascript so <script type="module"> never fails.
+    mimetypes.add_type("text/plain", ".js", strict=True)
+    resp_js = c.get("/static/js/lanmatrix/grid.js")
+    assert resp_js.status_code == 200
+    assert resp_js.mimetype == "text/javascript"
+
+    resp_wasm = c.get("/static/vendor/sbs/onig.wasm")
+    assert resp_wasm.status_code == 200
+    assert resp_wasm.mimetype == "application/wasm"
+
+    # Restore authoritative mapping in process state.
+    mimetypes.add_type("text/javascript", ".js", strict=True)
+    mimetypes.add_type("text/javascript", ".js", strict=False)
+
+
+def test_hashed_esm_chunks_receive_immutable_cache_and_gzip_sidecar(client):
+    esm_chunks = (
+        Path(__file__).resolve().parent.parent
+        / "app" / "static" / "vendor" / "univer" / "esm" / "chunks"
+    )
+    primary_chunks = sorted(esm_chunks.glob("univer-primary-*.js"))
+    assert primary_chunks, "expected hashed univer-primary chunk in esm/chunks"
+    chunk_name = primary_chunks[0].name
+
+    resp = client.get(f"/static/vendor/univer/esm/chunks/{chunk_name}", headers=GZIP)
+    assert resp.status_code == 200
+    assert resp.mimetype == "text/javascript"
+    assert "immutable" in resp.headers.get("Cache-Control", "")
+    assert resp.headers.get("Content-Encoding") == "gzip"
+    assert gzip.decompress(resp.data) == primary_chunks[0].read_bytes()
+
+    missing = client.get("/static/vendor/univer/esm/chunks/univer-primary-deadbeef.js")
+    assert missing.status_code == 404
+    assert "immutable" not in missing.headers.get("Cache-Control", "")

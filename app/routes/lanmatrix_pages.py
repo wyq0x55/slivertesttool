@@ -211,6 +211,13 @@ def _univer_bundle_available() -> bool:
     return os.path.isfile(bundle)
 
 
+def _univer_esm_bundle_available() -> bool:
+    """True when the code-split ESM Univer entry bundle has been vendored."""
+    bundle = os.path.join(
+        current_app.root_path, "static", "vendor", "univer", "esm", "univer-core.js")
+    return os.path.isfile(bundle)
+
+
 def _collab_bundle_available() -> bool:
     """True when the Vite-built Yjs collaboration bundle has been vendored.
 
@@ -233,10 +240,12 @@ def editor(project_id: int):
     proj = _project(project_id)
     if _is_ut(proj):
         return redirect(url_for("lanmatrix_pages.ut_pipeline", project_id=project_id))
+    esm_ready = _univer_esm_bundle_available()
     return render_template(
         "lanmatrix/editor.html", user=user.to_dict(), project_id=project_id,
         project=proj.to_dict() if proj else None,
-        univer_available=_univer_bundle_available(),
+        univer_available=_univer_bundle_available() or esm_ready,
+        univer_esm_available=esm_ready,
         collab_available=_collab_bundle_available())
 
 

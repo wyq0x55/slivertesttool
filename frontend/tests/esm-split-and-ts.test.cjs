@@ -44,16 +44,35 @@ test("ESM Univer core bundle, lazy secondary chunk, and .gz sidecars exist and s
   );
 
   const chunkFiles = fs.readdirSync(chunksDir).filter((f) => f.endsWith(".js"));
+  const primaryChunks = chunkFiles.filter((f) => f.startsWith("univer-primary-"));
   const secondaryChunks = chunkFiles.filter((f) => f.startsWith("univer-secondary-"));
+  assert.equal(primaryChunks.length, 1, "shared univer-primary chunk must exist in esm/chunks/");
   assert.ok(secondaryChunks.length >= 1, "lazy univer-secondary chunk must exist in esm/chunks/");
 
-  for (const chunkName of secondaryChunks) {
+  const primaryStat = fs.statSync(path.join(chunksDir, primaryChunks[0]));
+  const totalInitialBytes = coreStat.size + primaryStat.size;
+  assert.ok(
+    totalInitialBytes < umdStat.size * 0.75,
+    `initial ESM payload (${totalInitialBytes} B) must be substantially smaller than univer.full.umd.js (${umdStat.size} B)`
+  );
+
+  for (const chunkName of [...primaryChunks, ...secondaryChunks]) {
     const chunkPath = path.join(chunksDir, chunkName);
     const chunkGzPath = `${chunkPath}.gz`;
     assert.ok(fs.existsSync(chunkGzPath), `missing .gz sidecar for ${chunkName}`);
     const raw = fs.readFileSync(chunkPath);
     const unzipped = zlib.gunzipSync(fs.readFileSync(chunkGzPath));
     assert.equal(unzipped.byteLength, raw.byteLength);
+  }
+
+  // Ensure no chunk imports "../univer-core.js", which would duplicate module
+  // evaluation when editor.html loads univer-core.js?v=<rev>.
+  for (const chunkName of chunkFiles) {
+    const src = fs.readFileSync(path.join(chunksDir, chunkName), "utf8");
+    assert.ok(
+      !src.includes("univer-core.js"),
+      `${chunkName} must not import univer-core.js (would split module identity under ?v=)`
+    );
   }
 
   const editorHtml = fs.readFileSync(path.join(repoRoot, "app/templates/lanmatrix/editor.html"), "utf8");
