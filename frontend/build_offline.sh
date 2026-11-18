@@ -16,12 +16,13 @@ if [ ! -d node_modules ]; then
   npm install
 fi
 
-echo ">> building Univer bundle (vite build)"
+echo ">> building frontend bundles (UMD + ESM split + Collab + SBS + LanMatrix TS + precompress)"
 npm run build
 
 OUT="../app/static/vendor/univer"
+JS_OUT="../app/static/js/lanmatrix"
 echo ">> output:"
-ls -l "$OUT/univer.full.umd.js" "$OUT/univer.full.umd.css" 2>/dev/null || {
+ls -l "$OUT/univer.full.umd.js" "$OUT/univer.full.umd.css" "$OUT/esm/univer-core.js" "$JS_OUT/ut_tasks.js" "$JS_OUT/editor_qualification.js" 2>/dev/null || {
   echo "ERROR: expected bundle files were not produced." >&2
   exit 2
 }

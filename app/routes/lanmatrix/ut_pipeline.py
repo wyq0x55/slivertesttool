@@ -29,7 +29,7 @@ from flask import Blueprint, Response, g, request
 from ...jobqueue import ut_tasks
 from ...services.lanmatrix.errors import RequestParamError, ServiceError
 from ...services.ut_pipeline import export as ut_export
-from ...services.ut_pipeline import pipeline, server_paths
+from ...services.ut_pipeline import pipeline, server_paths, toolchains
 from ...services.ut_pipeline.repair import normalize_csv
 from ._base import _project_and_role, arg_int, arg_str, err, login_required, ok, register_common
 
@@ -69,7 +69,15 @@ def _advance(project_id: int, job):
 def get_config(project_id: int):
     _project_and_role(project_id, "project.view")
     config = pipeline.get_config(project_id)
-    return ok(pipeline.config_document(config))
+    doc = pipeline.config_document(config)
+    if arg_str("include_toolchains", "", allowed=("", "0", "1")) == "1":
+        return ok({
+            "config": doc,
+            "available_toolchains": toolchains.list_profiles(),
+        })
+    if doc is not None:
+        doc["available_toolchains"] = toolchains.list_profiles()
+    return ok(doc)
 
 
 @bp.put("/config")

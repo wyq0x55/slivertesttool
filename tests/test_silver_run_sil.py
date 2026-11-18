@@ -165,3 +165,130 @@ def test_csv_budget_guard_rejects_oversized_output_csv(tmp_path):
 
     with pytest.raises(RunnerError, match="output.csv size"):
         SilverRunner().configure_and_run(_Instance(), ctx)
+
+
+def test_prepare_run_sil_materializes_project_default_signal_list_fallback(tmp_path):
+    case = tmp_path / "inputs" / "TC1"
+    case.mkdir(parents=True)
+    (case / "silver_json_runner.py").write_text("", encoding="utf-8")
+    (case / "testcase_TC1.json").write_text("{}", encoding="utf-8")
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    model = model_dir / "RWS.sil"
+    model.write_bytes(MODEL)
+    log_dir = tmp_path / "logs"
+
+    ctx = RunContext(
+        test_id="TC1",
+        run_dir=tmp_path / "inputs",
+        log_dir=log_dir,
+        sil_path=model,
+        gui=False,
+        timeout=5,
+        default_signal_list="\n  sig_speed \r\n\n sig_torque  \n",
+    )
+    run_sil = SilverRunner().prepare_run_sil(ctx)
+    project_output = log_dir / "project_output.txt"
+    assert project_output.is_file()
+    assert project_output.read_text(encoding="utf-8") == "sig_speed\nsig_torque\n"
+
+    out = ET.fromstring(run_sil.read_bytes())
+    lines = [m.findtext("sil-line") for m in out.find("modules").findall("module")]
+    assert lines[0] == "CsvWriter.dll ${OUTPUTCSV} -l ${OUTPUTTXT} -w 0 -I 0.001 -m t"
+    params = {p.findtext("name"): p.findtext("value") for p in out.find("parameters")}
+    assert params["OUTPUTTXT"] == str(project_output)
+
+    # Model-dir output.txt still takes precedence over default_signal_list.
+    model_signals = model_dir / "output.txt"
+    model_signals.write_text("model_sig\n", encoding="utf-8")
+    log_dir_2 = tmp_path / "logs2"
+    ctx2 = RunContext(
+        test_id="TC1",
+        run_dir=tmp_path / "inputs",
+        log_dir=log_dir_2,
+        sil_path=model,
+        gui=False,
+        timeout=5,
+        default_signal_list="sig_speed\n",
+    )
+    run_sil_2 = SilverRunner().prepare_run_sil(ctx2)
+    assert not (log_dir_2 / "project_output.txt").exists()
+    out_2 = ET.fromstring(run_sil_2.read_bytes())
+    params_2 = {p.findtext("name"): p.findtext("value") for p in out_2.find("parameters")}
+    assert params_2["OUTPUTTXT"] == str(model_signals)
+
+
+def _install_fake_silver_sdk(root: Path) -> Path:
+    import sys
+    import textwrap
+
+    packages = root / "common" / "ext-tools"
+    if sys.platform.startswith("linux"):
+        packages /= "linux64"
+    packages /= "python3/lib/site-packages"
+    module = packages / "synopsys/silver/remotescripting"
+    module.mkdir(parents=True, exist_ok=True)
+    (packages / "Pyro4.py").write_text(
+        "from types import SimpleNamespace\nconfig = SimpleNamespace()\n",
+        encoding="utf-8",
+    )
+    marker = root / "fake_native.pid"
+    (module / "remotesilverapi.py").write_text(
+        textwrap.dedent(
+            f"""
+            import os, subprocess, sys, time
+            from pathlib import Path
+
+            class LocalSilverNative:
+                def __init__(self, **options):
+                    self.process = subprocess.Popen(
+                        [sys.executable, "-c", "import time; time.sleep(60)"]
+                    )
+                    Path({str(marker)!r}).write_text(str(self.process.pid))
+
+                def ping(self, value):
+                    return f"pong:{{value}}"
+
+                def hang(self):
+                    time.sleep(60)
+
+                def crash_worker(self):
+                    self.process.kill()
+                    os._exit(1)
+
+                def exit(self, **kwargs):
+                    self.process.kill()
+                    self.process.wait(timeout=5)
+            """
+        ),
+        encoding="utf-8",
+    )
+    return marker
+
+
+def test_silver_session_pure_pipe_poll_timeout_and_crash(tmp_path):
+    import time
+    import app.runners.silver_runner as sr
+
+    assert not hasattr(sr, "_IpcWorker")
+    _install_fake_silver_sdk(tmp_path)
+
+    # 1. Normal synchronous RPC + timeout via _call(..., timeout=...)
+    session = sr._SilverSession(str(tmp_path), {}, time.monotonic() + 10)
+    try:
+        assert not any(t.name == "silver-ipc" for t in threading.enumerate())
+        assert session._call("ping", "ok", timeout=2.0) == "pong:ok"
+        with pytest.raises(RunnerError, match="^timeout$"):
+            session._call("hang", timeout=0.2)
+        assert session._closed is True
+    finally:
+        session.stop()
+
+    # 2. Abrupt worker exit mid-call raises "Silver API process exited" promptly.
+    session2 = sr._SilverSession(str(tmp_path), {}, time.monotonic() + 10)
+    try:
+        with pytest.raises(RunnerError, match="Silver API process exited"):
+            session2._call("crash_worker", timeout=3.0)
+        assert session2._closed is True
+    finally:
+        session2.stop()

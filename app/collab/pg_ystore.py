@@ -25,7 +25,7 @@ import time
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 import anyio
-from pycrdt import Doc, merge_updates
+from pycrdt import Doc
 from pycrdt.store import BaseYStore, YDocNotFound
 
 # Merge the append-only log into a single squashed update once it grows past
@@ -122,12 +122,10 @@ class PgYStore(BaseYStore):
                 .order_by(CollabDoc.seq.asc()).all())
         if len(rows) < 2:
             return
-        # pycrdt's ``merge_updates(*updates: bytes)`` is variadic: it forwards the
-        # positional tuple straight to the native ``_merge_updates``. Passing a
-        # single list makes the Rust side try to read that list as one update,
-        # panicking with "'bytes' object cannot be interpreted as an integer"
-        # (src/update.rs) once there are >=2 rows to compact. Spread the updates.
-        merged = merge_updates(*[bytes(update) for update, _ts in rows])
+        merged_doc = Doc()
+        for update, _ts in rows:
+            merged_doc.apply_update(bytes(update))
+        merged = merged_doc.get_update()
         latest_ts = rows[-1][1]
         try:
             CollabDoc.query.filter_by(project_id=self._pid).delete(

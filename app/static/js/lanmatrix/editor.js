@@ -149,12 +149,13 @@
   // Raw REST read straight from the DB, regardless of collaboration state. Used
   // both as the classic (non-collab) source and to pull freshly-imported rows so
   // they can be reconciled into the Y.Doc (see resyncSheetFromDb).
-  async function fetchDbItems(sheet) {
+  async function fetchDbItems(sheet, opts) {
+    const unfiltered = !!(opts && opts.unfiltered);
     const acc = [];
     let p = 1;
     for (;;) {
       const params = { page: p, page_size: FETCH_CHUNK, sheet: sheet };
-      if (quick) params.q = quick;
+      if (quick && !unfiltered) params.q = quick;
       const data = await LMApi.listItems(pid, params);
       const batch = data.items || [];
       acc.push.apply(acc, batch);
@@ -165,13 +166,13 @@
     return acc;
   }
 
-  async function fetchAllItems(sheetKey) {
+  async function fetchAllItems(sheetKey, opts) {
     const sheet = sheetKey || currentSheet;
     // When collaboration is live the shared Y.Doc — not REST — is the source of
     // truth (the server materializer is one-way Y→DB, so a REST read could show
     // rows the doc hasn't yet, or that a pending materialize will soft-delete).
     if (collabActive()) return collab.getItems(sheet);
-    return fetchDbItems(sheet);
+    return fetchDbItems(sheet, opts);
   }
 
   // After a server-side import while collaboration is live, the new rows exist
@@ -1213,10 +1214,11 @@
     }
   }
 
-  async function executionSnapshot(testIds) {
-    await waitForCommittedEdits();
+  async function readExecutionSnapshot(testIds) {
     const [tests, libs, constants] = await Promise.all([
-      fetchAllItems("test"), fetchAllItems("lib"), fetchAllItems("const"),
+      fetchAllItems("test", { unfiltered: true }),
+      fetchAllItems("lib", { unfiltered: true }),
+      fetchAllItems("const", { unfiltered: true }),
     ]);
     const wanted = new Set((testIds || []).map((id) => String(id).trim()));
     return {
@@ -1232,6 +1234,40 @@
         uuid: item.uuid, name: String(item.const_name || "").trim(), value: item.const_value,
       })),
     };
+  }
+
+  async function executionSnapshot(testIds) {
+    await waitForCommittedEdits();
+    return readExecutionSnapshot(testIds);
+  }
+
+  async function enqueueSelectedRuns(testIds, model) {
+    await waitForCommittedEdits();
+    const waitMs = typeof window.__LM_COLLAB_MATERIALIZE_WAIT_MS === "number"
+      ? window.__LM_COLLAB_MATERIALIZE_WAIT_MS : 8000;
+    const pollMs = typeof window.__LM_COLLAB_MATERIALIZE_POLL_MS === "number"
+      ? window.__LM_COLLAB_MATERIALIZE_POLL_MS : 400;
+    const deadline = Date.now() + (collabActive() ? waitMs : 0);
+    for (;;) {
+      if (collabActive() && collabConn !== "connected") {
+        throw new Error("协同连接未同步，请恢复连接后再运行。");
+      }
+      const payload = { test_ids: testIds, expected_inputs: await readExecutionSnapshot(testIds) };
+      if (model) payload.model = model;
+      try {
+        return await LMApi.runSelectedTasks(pid, payload);
+      } catch (ex) {
+        const conflicts = (ex && ex.details && Array.isArray(ex.details.conflicts))
+          ? ex.details.conflicts : [];
+        const hasRowError = conflicts.some(
+          (c) => c && c.uuid && remoteRowErrors && remoteRowErrors[c.uuid]);
+        if (!collabActive() || !ex || ex.code !== "COLLAB_INPUTS_NOT_MATERIALIZED" ||
+            hasRowError || Date.now() >= deadline) {
+          throw ex;
+        }
+        await new Promise((resolve) => setTimeout(resolve, pollMs));
+      }
+    }
   }
 
   function queueCandidates() {
@@ -1427,9 +1463,7 @@
       if (queueError) queueError.hidden = true;
       try {
         const model = (window.LMDefaultModel || "").trim();
-        const payload = { test_ids: testIds, expected_inputs: await executionSnapshot(testIds) };
-        if (model) payload.model = model;
-        const res = await LMApi.runSelectedTasks(pid, payload);
+        const res = await enqueueSelectedRuns(testIds, model);
         const created = (res.created || []).length;
         const missing = (res.missing || []);
         const errors = (res.errors || []);
@@ -2077,12 +2111,14 @@
             await loadItems();
             toast("步骤明细已保存", true);
           },
-          onPrepare: async (json) => { await saveCell(item, { [stepsKey]: json }); },
+          onPrepare: async (json) => {
+            const merged = await saveCell(item, { [stepsKey]: json });
+            item.version = merged.version;
+            item[stepsKey] = merged[stepsKey];
+          },
           onEnqueue: testId ? (async (tid) => {
-            const payload = { test_ids: [tid], expected_inputs: await executionSnapshot([tid]) };
             const model = (window.LMDefaultModel || "").trim();
-            if (model) payload.model = model;
-            const res = await LMApi.runSelectedTasks(pid, payload);
+            const res = await enqueueSelectedRuns([tid], model);
             const errors = (res.errors || []);
             const missing = (res.missing || []);
             if (errors.length) throw new Error(errors[0].error || "入队失败");

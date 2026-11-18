@@ -26,6 +26,9 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/></svg>
         刷新
       </button>
+      <button class="btn" id="ut-cfg-open" type="button"{% if project_capabilities is defined and not project_capabilities.edit and not project_capabilities.configure %} hidden{% endif %}>
+        工具链配置
+      </button>
       <button class="btn" id="ut-requeue" type="button" hidden>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
         <span id="ut-requeue-label">重新入队</span>
@@ -207,6 +210,40 @@
     <div id="ut-d-issues" class="ut-issues"></div>
   </div>
 </section>
+<dialog id="ut-cfg-dialog" class="lm-dialog">
+  <form id="ut-cfg-form" method="dialog" class="lm-card">
+    <h3>单元测试工具链与编译配置</h3>
+    <div class="ut-fields">
+      <div class="field">
+        <label for="ut-cfg-toolchain-profile">工具链配置档</label>
+        <select id="ut-cfg-toolchain-profile">
+          <option value="default">默认工具链 (PATH)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="ut-cfg-host-clang">Clang 编译器路径 (host_clang)</label>
+        <input id="ut-cfg-host-clang" type="text" autocomplete="off" spellcheck="false" placeholder="clang">
+      </div>
+      <div class="field">
+        <label for="ut-cfg-host-llvm-cov">LLVM Coverage 路径 (host_llvm_cov)</label>
+        <input id="ut-cfg-host-llvm-cov" type="text" autocomplete="off" spellcheck="false" placeholder="llvm-cov">
+      </div>
+      <div class="field">
+        <label for="ut-cfg-host-llvm-profdata">LLVM Profdata 路径 (host_llvm_profdata)</label>
+        <input id="ut-cfg-host-llvm-profdata" type="text" autocomplete="off" spellcheck="false" placeholder="llvm-profdata">
+      </div>
+      <div class="field">
+        <label for="ut-cfg-host-profile-runtime">Profile Runtime 路径 (host_profile_runtime)</label>
+        <input id="ut-cfg-host-profile-runtime" type="text" autocomplete="off" spellcheck="false" placeholder="可选 libclang_rt.profile 路径">
+      </div>
+    </div>
+    <p id="ut-cfg-status" class="muted" role="status" aria-live="polite"></p>
+    <menu>
+      <button type="button" value="cancel" id="ut-cfg-cancel" class="btn">取消</button>
+      <button type="button" id="ut-cfg-save" class="btn btn-primary">保存配置</button>
+    </menu>
+  </form>
+</dialog>
 {% include "lanmatrix/_steps_dialog.html" %}
 {% endblock %}
 {% block scripts %}

@@ -18,12 +18,11 @@ Both backends implement :meth:`SilverRunnerBase.run`, which receives a
 
 from __future__ import annotations
 
-import concurrent.futures
 import contextvars
+import heapq
 import logging
 import multiprocessing
 import os
-import queue
 import shutil
 import sys
 import threading
@@ -91,47 +90,63 @@ class _SilverProcess:
         return self.owner._worker.exitcode
 
 
-class _IpcWorker:
-    """Single-thread daemon executor for deadline-bounded pipe I/O."""
+class _IoDeadlineWatchdog:
+    """Process-wide singleton timer heap unblocking stuck pipe send/recv calls."""
 
     def __init__(self) -> None:
-        self._queue: queue.SimpleQueue = queue.SimpleQueue()
-        self._closed = False
-        self._thread = threading.Thread(
-            target=self._loop, daemon=True, name="silver-ipc"
-        )
-        self._thread.start()
+        self._cond = threading.Condition(threading.Lock())
+        self._heap: list[tuple[float, int, list]] = []
+        self._seq = 0
+        self._thread: Optional[threading.Thread] = None
 
-    def _loop(self) -> None:
+    def _ensure_started_locked(self) -> None:
+        if self._thread is None or not self._thread.is_alive():
+            self._thread = threading.Thread(
+                target=self._run, daemon=True, name="silver-io-watchdog"
+            )
+            self._thread.start()
+
+    def arm(self, deadline: float, callback: Callable[[], None]) -> list:
+        token = [False, callback]  # [cancelled_or_fired, callback]
+        with self._cond:
+            self._ensure_started_locked()
+            self._seq += 1
+            heapq.heappush(self._heap, (deadline, self._seq, token))
+            self._cond.notify()
+        return token
+
+    def disarm(self, token: list) -> None:
+        with self._cond:
+            token[0] = True
+            token[1] = None
+
+    def _run(self) -> None:
         while True:
-            item = self._queue.get()
-            if item is None:
-                return
-            fn, fut = item
-            if not fut.set_running_or_notify_cancel():
-                continue
-            try:
-                fut.set_result(fn())
-            except BaseException as exc:
-                fut.set_exception(exc)
+            callback = None
+            with self._cond:
+                while self._heap and self._heap[0][2][0]:
+                    heapq.heappop(self._heap)
+                if not self._heap:
+                    self._cond.wait()
+                    continue
+                deadline, _seq, token = self._heap[0]
+                remaining = deadline - time.monotonic()
+                if remaining > 0:
+                    self._cond.wait(timeout=remaining)
+                    continue
+                heapq.heappop(self._heap)
+                if not token[0]:
+                    token[0] = True
+                    callback = token[1]
+                    token[1] = None
+            if callback is not None:
+                try:
+                    callback()
+                except Exception:  # noqa: BLE001
+                    pass
 
-    def run(self, fn: Callable[[], Any], timeout: float) -> Any:
-        if timeout <= 0:
-            raise RunnerError("timeout")
-        if self._closed:
-            raise RunnerError("Silver API process exited")
-        fut: concurrent.futures.Future = concurrent.futures.Future()
-        self._queue.put((fn, fut))
-        try:
-            return fut.result(timeout=timeout)
-        except concurrent.futures.TimeoutError as exc:
-            fut.cancel()
-            raise RunnerError("timeout") from exc
 
-    def close(self) -> None:
-        if not self._closed:
-            self._closed = True
-            self._queue.put(None)
+_IO_WATCHDOG = _IoDeadlineWatchdog()
 
 
 class _SilverSession:
@@ -146,18 +161,23 @@ class _SilverSession:
         self._job = None
         self._native_pid = None
         self._deadline = deadline
-        self._lock = threading.Lock()
+        self._io_lock = threading.Lock()
+        self._lock = self._io_lock
         self._stop_lock = threading.Lock()
-        self._stopped = threading.Event()
-        self._ipc = _IpcWorker()
+        self._closed = False
         self.process = _SilverProcess(self)
         self._worker.start()
         remote.close()
         try:
             self._job = require_process_job(self._worker.pid)
-            self._receive()
-            self._transport(lambda: self._connection.send("start"))
-            self._native_pid = self._receive()
+            with self._io_lock:
+                self._recv_reply(deadline=self._deadline)
+                if self._closed or not self._worker.is_alive():
+                    raise RunnerError("Silver API process exited")
+                if self._deadline - time.monotonic() <= 0:
+                    raise RunnerError("timeout")
+                self._send_bounded("start", deadline=self._deadline)
+                self._native_pid = self._recv_reply(deadline=self._deadline)
         except BaseException as failure:
             try:
                 self.stop()
@@ -168,45 +188,114 @@ class _SilverSession:
                 ) from failure
             raise
 
-    def _receive(self):
+    def _interrupt_blocked_io(self) -> None:
+        self._closed = True
+        try:
+            if self._worker.is_alive():
+                self._worker.kill()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self._connection.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _send_bounded(self, payload: Any, *, deadline: float) -> None:
+        if deadline - time.monotonic() <= 0:
+            raise RunnerError("timeout")
+        timed_out = [False]
+
+        def _on_timeout() -> None:
+            timed_out[0] = True
+            self._interrupt_blocked_io()
+
+        token = _IO_WATCHDOG.arm(deadline, _on_timeout)
+        try:
+            self._connection.send(payload)
+        except (EOFError, OSError, ValueError) as exc:
+            if timed_out[0] or deadline - time.monotonic() <= 0:
+                raise RunnerError("timeout") from exc
+            raise RunnerError("Silver API process exited") from exc
+        finally:
+            _IO_WATCHDOG.disarm(token)
+        if timed_out[0]:
+            raise RunnerError("timeout")
+
+    def _recv_reply(self, *, deadline: float) -> Any:
+        timed_out = [False]
         try:
             while True:
-                if self._stopped.is_set():
+                if self._closed:
                     raise RunnerError("Silver API process exited")
-                remaining = self._deadline - time.monotonic()
+                remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise RunnerError("timeout")
-                if self._connection.poll(min(0.25, remaining)):
+                if self._connection.poll(min(0.05, remaining)):
                     break
-            status, value = self._transport(self._connection.recv)
-        except (EOFError, OSError) as exc:
+                if self._closed or not self._worker.is_alive():
+                    if not self._closed and self._connection.poll(0):
+                        break
+                    raise RunnerError("Silver API process exited")
+
+            def _on_timeout() -> None:
+                timed_out[0] = True
+                self._interrupt_blocked_io()
+
+            token = _IO_WATCHDOG.arm(deadline, _on_timeout)
+            try:
+                status, value = self._connection.recv()
+            finally:
+                _IO_WATCHDOG.disarm(token)
+        except RunnerError:
+            if timed_out[0]:
+                raise RunnerError("timeout")
+            raise
+        except (EOFError, OSError, ValueError) as exc:
+            if timed_out[0]:
+                raise RunnerError("timeout") from exc
             raise RunnerError("Silver API process exited") from exc
+        if timed_out[0]:
+            raise RunnerError("timeout")
         if status == "error":
             raise RunnerError(f"Execution error: {value}")
         return value
 
-    def _transport(self, operation):
-        remaining = self._deadline - time.monotonic()
-        return self._ipc.run(operation, remaining)
-
-    def call(self, name, *args, **kwargs):
-        remaining = max(0, self._deadline - time.monotonic())
-        if not self._lock.acquire(timeout=remaining):
+    def _call(
+        self,
+        cmd: str,
+        *args: Any,
+        timeout: Optional[float] = None,
+        _kwargs: Optional[dict] = None,
+    ) -> Any:
+        now = time.monotonic()
+        if timeout is None:
+            deadline = self._deadline
+        else:
+            deadline = now + float(timeout)
+        if not self._io_lock.acquire(timeout=max(0.0, deadline - now)):
+            self.stop()
             raise RunnerError("timeout")
+        should_stop = False
         try:
-            try:
-                if time.monotonic() >= self._deadline:
-                    raise RunnerError("timeout")
-                self._transport(lambda: self._connection.send((name, args, kwargs)))
-                return self._receive()
-            except (EOFError, OSError) as exc:
-                self.stop()
-                raise RunnerError("Silver API process exited") from exc
-            except BaseException:
-                self.stop()
-                raise
+            if self._closed or not self._worker.is_alive():
+                should_stop = True
+                raise RunnerError("Silver API process exited")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                should_stop = True
+                raise RunnerError("timeout")
+            self._send_bounded((cmd, args, _kwargs or {}), deadline=deadline)
+            return self._recv_reply(deadline=deadline)
+        except BaseException:
+            should_stop = True
+            raise
         finally:
-            self._lock.release()
+            self._io_lock.release()
+            if should_stop:
+                self.stop()
+
+    def call(self, name: str, *args: Any, **kwargs: Any) -> Any:
+        return self._call(name, *args, _kwargs=kwargs)
 
     def __getattr__(self, name):
         if name.startswith("_"):
@@ -217,17 +306,17 @@ class _SilverSession:
         if not self._stop_lock.acquire(timeout=5):
             raise RunnerError("Silver API cleanup is still in progress")
         try:
-            self._stopped.set()
+            self._closed = True
             failures = []
             actions = []
             if os.name != "nt" or self._job is not None:
                 actions.append(lambda: kill_process_tree(self._worker.pid, self._job))
             actions.extend((
+                lambda: self._worker.terminate() if self._worker.is_alive() else None,
                 lambda: self._worker.kill() if self._worker.is_alive() else None,
                 lambda: self._worker.join(timeout=2),
             ))
             if close_connection:
-                actions.append(self._ipc.close)
                 actions.append(self._connection.close)
             for action in actions:
                 try:
@@ -301,6 +390,8 @@ class RunContext:
     reload_model: bool = False
     console_log: Optional[Path] = None
     max_csv_bytes: int = 0
+    clean_room: bool = False
+    default_signal_list: str = ""
 
 
 class RunnerError(Exception):
@@ -421,6 +512,9 @@ class SilverRunner(SilverRunnerBase):
     gate), not here.
     """
 
+    def __init__(self, pool: Any = None) -> None:
+        self._pool = pool
+
     # ---------------------- lifecycle helpers ------------------------------- #
     @staticmethod
     def _call_timeout(explicit: Optional[int] = None) -> int:
@@ -532,6 +626,26 @@ class SilverRunner(SilverRunnerBase):
 
     def run(self, ctx: RunContext) -> None:
         """Dedicated-instance path: launch, run, dispose."""
+        if self._pool is not None:
+            inst = self._pool.acquire(
+                ctx.sil_path,
+                should_cancel=ctx.cancel_event.is_set,
+                clean_room=bool(getattr(ctx, "clean_room", False)),
+            )
+            if inst is None:
+                raise RunnerCancelled("Cancelled before Silver launch.")
+            try:
+                if ctx.on_start is not None:
+                    ctx.on_start(inst.handle)
+                self._pool.configure_and_run(inst, ctx)
+            except BaseException:
+                if not getattr(self._pool, "is_mock", False):
+                    self._pool.poison(inst)
+                raise
+            finally:
+                self._pool.release(inst)
+            return
+
         console_log = ctx.console_log or (ctx.log_dir / "Console.log")
         ctx.log_dir.mkdir(parents=True, exist_ok=True)
         run_sil = self.prepare_run_sil(ctx)
@@ -641,6 +755,21 @@ class SilverRunner(SilverRunnerBase):
             raise RunnerError(f"SIL model not found: {ctx.sil_path}")
         if not json_mode and not judge_py.is_file():
             raise RunnerError(f"judge.py not found: {judge_py}")
+
+        if not signal_list.is_file():
+            raw_default = (getattr(ctx, "default_signal_list", "") or "").strip()
+            if raw_default:
+                norm_lines = [
+                    ln.strip()
+                    for ln in raw_default.splitlines()
+                    if ln.strip()
+                ]
+                if norm_lines:
+                    project_signal_list = ctx.log_dir / "project_output.txt"
+                    project_signal_list.write_text(
+                        "\n".join(norm_lines) + "\n", encoding="utf-8"
+                    )
+                    signal_list = project_signal_list
 
         params = {
             "OUTPUTCSV": str(output_csv),
@@ -774,8 +903,8 @@ class SilverRunner(SilverRunnerBase):
         if isinstance(silver, _SilverSession):
             try:
                 silver._deadline = min(silver._deadline, time.monotonic() + 5)
-                if silver.process.poll() is None and silver._lock.acquire(blocking=False):
-                    silver._lock.release()
+                if silver.process.poll() is None and silver._io_lock.acquire(blocking=False):
+                    silver._io_lock.release()
                     silver.exit(force=True)
             except Exception:
                 logger.warning("Silver exit failed; terminating its owned process tree")

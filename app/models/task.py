@@ -69,6 +69,9 @@ class Task(db.Model):
 
     # Cancellation is cooperative: the API sets this flag, the worker honours it.
     cancel_requested = db.Column(db.Boolean, nullable=False, default=False)
+    # Per-run ASPICE SWE.4-SWE.6 qualification clean-room mode: forces a fresh
+    # cold Silver instance (runs == 0) and retires it after completion.
+    clean_room = db.Column(db.Boolean, nullable=False, default=False)
 
     workspace = db.Column(db.String(500), nullable=False, default="")
     report_path = db.Column(db.String(500), nullable=False, default="")
@@ -116,6 +119,7 @@ class Task(db.Model):
             "progress": self.progress,
             "message": self.message,
             "has_result": bool(self.report_path),
+            "clean_room": bool(self.clean_room),
             "run_count": self.run_count or 1,
             "created_at": _iso(self.created_at),
             "started_at": _iso(self.started_at),

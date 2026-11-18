@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import socket
 import types
 
 import pytest
@@ -164,3 +165,206 @@ def test_wake_next_queued_run_dispatches_unleased_head(sqlite_app, monkeypatch):
 
     tasks._wake_next_queued_run(sqlite_app)
     assert scheduled == [((t2_id, 2), 0)]
+
+
+def test_resolve_sse_gateway_base_auto_derivation_and_testing_guard(sqlite_app, monkeypatch):
+    from app.routes.lanmatrix import tasks as task_routes
+
+    task_routes._sse_probe_cache.clear()
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        open_port = listener.getsockname()[1]
+
+        # 1) Under TESTING=True without explicit COLLAB_SSE_BASE_URL, never auto-redirect.
+        with sqlite_app.test_request_context(
+            "/api/v1/projects/1/tasks/T000001/stream",
+            base_url="http://192.168.10.25:8080",
+        ):
+            cfg_testing = types.SimpleNamespace(
+                TESTING=True,
+                COLLAB_SSE_BASE_URL="",
+                COLLAB_SSE_AUTO=True,
+                COLLAB_PORT=open_port,
+                COLLAB_WS_URL="",
+            )
+            from flask import request
+
+            assert task_routes._resolve_sse_gateway_base(cfg_testing, request) == ""
+
+            # Explicit COLLAB_SSE_BASE_URL overrides TESTING=True.
+            cfg_explicit = types.SimpleNamespace(
+                TESTING=True,
+                COLLAB_SSE_BASE_URL="http://10.0.0.8:8765/",
+                COLLAB_SSE_AUTO=True,
+                COLLAB_PORT=open_port,
+                COLLAB_WS_URL="",
+            )
+            assert (
+                task_routes._resolve_sse_gateway_base(cfg_explicit, request)
+                == "http://10.0.0.8:8765"
+            )
+
+        # 2) Non-testing + reachable local collab port preserves LAN host and IPv6 brackets.
+        monkeypatch.setitem(sqlite_app.config, "TESTING", False)
+        with sqlite_app.test_request_context(
+            "/api/v1/projects/1/tasks/T000001/stream",
+            base_url="http://192.168.10.25:8080",
+        ):
+            from flask import request
+
+            cfg_lan = types.SimpleNamespace(
+                TESTING=False,
+                COLLAB_SSE_BASE_URL="",
+                COLLAB_SSE_AUTO=True,
+                COLLAB_PORT=open_port,
+                COLLAB_WS_URL="",
+            )
+            assert (
+                task_routes._resolve_sse_gateway_base(cfg_lan, request)
+                == f"http://192.168.10.25:{open_port}"
+            )
+
+            cfg_ws = types.SimpleNamespace(
+                TESTING=False,
+                COLLAB_SSE_BASE_URL="",
+                COLLAB_SSE_AUTO=True,
+                COLLAB_PORT=open_port,
+                COLLAB_WS_URL="wss://collab.lan.local:9443/",
+            )
+            assert (
+                task_routes._resolve_sse_gateway_base(cfg_ws, request)
+                == "https://collab.lan.local:9443"
+            )
+
+        with sqlite_app.test_request_context(
+            "/api/v1/projects/1/tasks/T000001/stream",
+            base_url="https://[::1]:8443",
+        ):
+            from flask import request
+
+            cfg_v6 = types.SimpleNamespace(
+                TESTING=False,
+                COLLAB_SSE_BASE_URL="",
+                COLLAB_SSE_AUTO=True,
+                COLLAB_PORT=open_port,
+                COLLAB_WS_URL="",
+            )
+            assert (
+                task_routes._resolve_sse_gateway_base(cfg_v6, request)
+                == f"https://[::1]:{open_port}"
+            )
+
+    # 3) Once listener is closed (and probe cache cleared), falls back to "" cleanly.
+    task_routes._sse_probe_cache.clear()
+    with sqlite_app.test_request_context(
+        "/api/v1/projects/1/tasks/T000001/stream",
+        base_url="http://192.168.10.25:8080",
+    ):
+        from flask import request
+
+        cfg_closed = types.SimpleNamespace(
+            TESTING=False,
+            COLLAB_SSE_BASE_URL="",
+            COLLAB_SSE_AUTO=True,
+            COLLAB_PORT=open_port,
+            COLLAB_WS_URL="",
+        )
+        assert task_routes._resolve_sse_gateway_base(cfg_closed, request) == ""
+
+
+def test_task_service_persists_clean_room_and_project_default_signal_list(sqlite_app, monkeypatch):
+    from unittest.mock import Mock
+
+    from app.models import AuditLog, LMUser
+    from app.runners import test_runner
+    from app.services import license_service, task_service, worker_lock
+    from app.services.lanmatrix import projects_service
+    from app.services.lanmatrix.errors import ServiceError
+
+    with sqlite_app.app_context():
+        user = LMUser(username="lead", password_hash="x", is_system_admin=True)
+        db.session.add(user)
+        db.session.commit()
+
+        project = projects_service.create_project(user, code="CR01", name="Clean Room Proj")
+        updated = projects_service.update_project(
+            user,
+            project,
+            {"default_signal_list": "  EngineSpeed \r\n\r\n VehicleSpeed  \n"},
+        )
+        assert updated.default_signal_list == "EngineSpeed\nVehicleSpeed"
+        audit_row = (
+            AuditLog.query.filter_by(project_id=project.id, action="project.update")
+            .order_by(AuditLog.id.desc())
+            .first()
+        )
+        assert audit_row is not None
+        assert audit_row.new_value["default_signal_list"] == "EngineSpeed\nVehicleSpeed"
+
+        with pytest.raises(ServiceError):
+            projects_service.update_project(
+                user, project, {"default_signal_list": "s" * (256 * 1024 + 10)}
+            )
+
+        created = task_service.create_task(
+            task_name="TC_CR_1",
+            file_name="(json runner)",
+            submitter="lead",
+            test_id="TC_CR_1",
+            sil_relpath="model.sil",
+            workspace="ws",
+            project_id=project.id,
+            submitter_id=user.id,
+            clean_room=True,
+        )
+        assert created.clean_room is True
+        created.status = TaskStatus.PASSED.value
+        db.session.commit()
+
+        upserted, started = task_service.upsert_task(
+            task_name="TC_CR_1",
+            file_name="(json runner)",
+            submitter="lead",
+            test_id="TC_CR_1",
+            sil_relpath="model.sil",
+            workspace="ws",
+            project_id=project.id,
+            submitter_id=user.id,
+            clean_room=False,
+        )
+        assert started is True
+        assert upserted.id == created.id
+        assert upserted.clean_room is False
+        upserted.status = TaskStatus.FAILED.value
+        db.session.commit()
+
+        requeued = task_service.requeue_task(
+            upserted,
+            sil_relpath="model.sil",
+            workspace="ws",
+            submitter="lead",
+            submitter_id=user.id,
+            clean_room=True,
+        )
+        assert requeued.clean_room is True
+
+        # Verify _run_task_pooled forwards per-task clean_room=True to pool.acquire.
+        pool = Mock()
+        instance = object()
+        pool.acquire.return_value = instance
+        monkeypatch.setattr(tasks, "get_pool", lambda *_args: pool)
+        monkeypatch.setattr(worker_lock, "ownership_was_lost", lambda: False)
+        monkeypatch.setattr(
+            worker_lock,
+            "ownership_guard",
+            lambda: contextlib.nullcontext(True),
+        )
+        monkeypatch.setattr(license_service, "is_draining", lambda: False)
+        monkeypatch.setattr(license_service, "try_acquire", lambda: True)
+        monkeypatch.setattr(license_service, "release", lambda: None)
+        monkeypatch.setattr(test_runner, "execute", lambda *_a, **_kw: None)
+
+        tasks._run_task_pooled(sqlite_app, sqlite_app.config_obj, requeued.id, requeued.run_count)
+        assert pool.acquire.call_args.kwargs.get("clean_room") is True

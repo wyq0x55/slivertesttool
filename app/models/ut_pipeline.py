@@ -30,6 +30,7 @@ class UtPipelineConfig(db.Model):
     index_csv = db.Column(db.String(1024), nullable=False, default="")
     product_root = db.Column(db.String(1024), nullable=False, default="")
     execution_backend = db.Column(db.String(16), nullable=False, default="clang")
+    toolchain_profile = db.Column(db.String(64), nullable=False, default="default")
     stub_mode = db.Column(db.String(16), nullable=False, default="deterministic")
     stub_model = db.Column(db.String(128), nullable=False, default="")
     stub_max_rounds = db.Column(db.Integer, nullable=False, default=2)
@@ -50,6 +51,7 @@ class UtPipelineConfig(db.Model):
             "index_csv": self.index_csv,
             "product_root": self.product_root,
             "execution_backend": self.execution_backend,
+            "toolchain_profile": self.toolchain_profile or "default",
             "stub_mode": self.stub_mode,
             "stub_model": self.stub_model,
             "stub_max_rounds": self.stub_max_rounds,

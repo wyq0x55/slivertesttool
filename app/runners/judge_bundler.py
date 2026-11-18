@@ -35,7 +35,9 @@ from __future__ import annotations
 import ast
 import base64
 import os
+import re
 import sys
+import zlib
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -54,14 +56,18 @@ __all__ = [
 # bootstrap) is re-processed instead of blindly kept -- otherwise a judge that
 # was bundled by a buggy earlier version could never be fixed by re-uploading.
 _BUNDLE_MARKER_BASE = "preprocessed by SilverTestApp's judge-bundler"
-_BUNDLE_VERSION = "3"
+_BUNDLE_VERSION = "4"
 _BUNDLE_MARKER = (
     "# This judge.py was preprocessed by SilverTestApp's judge-bundler "
     "(v" + _BUNDLE_VERSION + ")."
 )
-# Separator line the bootstrap emits just before the original judge source; used
-# to recover the original when re-bundling a stale/older bundle.
+# Separator line legacy (v1-v3) bootstraps emitted before the original judge
+# source; retained so older bundles still recover cleanly onto v4+.
 _ORIGINAL_SEP = "# ============================ original judge.py =============================="
+_ORIG_JUDGE_B64_RE = re.compile(
+    r"^_ORIG_JUDGE_B64\s*=\s*(['\"])([A-Za-z0-9+/=]+)\1\s*$",
+    re.MULTILINE,
+)
 
 # Silver's own packages are always treated as external (never inlined).
 _SILVER_ROOTS = ("synopsys", "qtronic")
@@ -89,6 +95,13 @@ def is_current_bundle(source: str) -> bool:
 
 def _recover_original(source: str) -> Optional[str]:
     """Recover the original judge source embedded in a bundle, if possible."""
+    match = _ORIG_JUDGE_B64_RE.search(source)
+    if match is not None:
+        try:
+            raw = base64.b64decode(match.group(2).encode("ascii"))
+            return zlib.decompress(raw).decode("utf-8")
+        except Exception:
+            return None
     idx = source.find(_ORIGINAL_SEP)
     if idx == -1:
         return None
@@ -586,6 +599,7 @@ _BOOTSTRAP_TEMPLATE = '''\
 import sys as _sys
 import os as _os
 import base64 as _base64
+import zlib as _zlib
 import linecache as _linecache
 import importlib.util as _ilu
 import importlib.abc as _ila
@@ -651,7 +665,20 @@ class _BundledFinder(_ila.MetaPathFinder):
 if not any(isinstance(_f, _BundledFinder) for _f in _sys.meta_path):
     _sys.meta_path.insert(0, _BundledFinder())
 
-# ============================ original judge.py ==============================
+_ORIG_JUDGE_B64 = {orig_judge_b64!r}
+_orig_src = _zlib.decompress(_base64.b64decode(_ORIG_JUDGE_B64)).decode("utf-8")
+try:
+    _judge_fname = __file__
+except NameError:
+    _judge_fname = _JUDGE_FILE
+for _fname in (_judge_fname, _os.path.abspath(_judge_fname)):
+    _linecache.cache[_fname] = (
+        len(_orig_src),
+        None,
+        _orig_src.splitlines(True),
+        _fname,
+    )
+exec(compile(_orig_src, _judge_fname, "exec"), globals())
 '''
 
 
@@ -715,12 +742,16 @@ def bundle_judge(judge_path: Path,
         return judge_src
 
     entries = _render_entries(modules)
+    orig_judge_b64 = base64.b64encode(
+        zlib.compress(judge_src.encode("utf-8"))
+    ).decode("ascii")
     bootstrap = _BOOTSTRAP_TEMPLATE.format(
         marker=_BUNDLE_MARKER,
         module_list=", ".join(sorted(modules)) or "(none)",
         entries=entries,
+        orig_judge_b64=orig_judge_b64,
     )
-    return bootstrap + _strip_leading_coding(judge_src)
+    return bootstrap
 
 
 def _search_dirs_for(judge_path: Path,

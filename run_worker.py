@@ -23,9 +23,11 @@ limit, and the pool is disposed cleanly on shutdown.
 
 from __future__ import annotations
 
+import argparse
 import atexit
-import signal
 import logging
+import os
+import signal
 import threading
 
 from app.config import Config
@@ -41,7 +43,7 @@ configure_logging("worker", Config)
 # exactly once. Persistent bootstrap is owned by run.py or ``manage.py bootstrap``;
 # the worker must never migrate schema/files itself.
 from app.jobqueue import tasks  # noqa: F401
-from app.jobqueue.huey_app import huey
+from app.jobqueue.huey_app import aux_huey, huey
 from app.runners import process_guard
 
 logger = logging.getLogger("silvetestapp.worker")
@@ -172,7 +174,59 @@ def begin_worker_ownership(app):
         return lock
 
 
-def main() -> None:
+def _default_queue_role() -> str:
+    raw = (os.environ.get("WORKER_QUEUE_ROLE") or "all").strip().lower()
+    return raw if raw in ("all", "silver", "aux") else "all"
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Start the Huey task worker (Silver and/or UT/AI auxiliary queue)."
+    )
+    parser.add_argument(
+        "--queue",
+        choices=("all", "silver", "aux"),
+        default=_default_queue_role(),
+        help="Queue consumer role to run: 'all' (default), 'silver', or 'aux'.",
+    )
+    return parser
+
+
+def _stop_consumer_instance(consumer, signum: int = signal.SIGTERM, frame=None) -> None:
+    if consumer is None:
+        return
+    try:
+        consumer._handle_stop_signal(signum, frame)
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not signal Huey consumer to stop")
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = build_parser().parse_args(argv)
+    queue_role = args.queue
+    aux_workers = max(1, int(getattr(Config, "HUEY_AUX_WORKERS", 4) or 4))
+
+    if queue_role == "aux":
+        # Split-deployment UT/AI-only worker: never acquires the single-owner
+        # Silver runtime lock or pre-warms Silver instances.
+        tasks._get_app()
+        print(f"Auxiliary worker starting: {aux_workers} threads, queue={aux_huey.name}")
+        aux_consumer = aux_huey.create_consumer(
+            workers=aux_workers,
+            worker_type="thread",
+            periodic=False,
+        )
+
+        def _on_aux_break(signum, frame) -> None:
+            process_guard.begin_shutdown()
+            _stop_consumer_instance(aux_consumer, signum, frame)
+
+        process_guard.install_break_handler(_on_aux_break)
+        if process_guard.is_shutting_down():
+            raise SystemExit(1)
+        aux_consumer.run()
+        return
+
     # Before any Silver instance can be launched, so all of them join the job.
     _bind_to_kill_on_close_job()
     app = tasks._get_app()
@@ -193,19 +247,17 @@ def main() -> None:
     atexit.register(lock.release)
     consumer_box = {}
 
+    def _stop_all_consumers(signum: int = signal.SIGTERM, frame=None) -> None:
+        for key in ("consumer", "aux_consumer"):
+            _stop_consumer_instance(consumer_box.get(key), signum, frame)
+
     def _lost_runtime_lock() -> None:
         process_guard.begin_shutdown()
         stop_reconcile.set()
         logger.critical(
             "Lost the worker runtime lock; stopping this worker without acquiring another."
         )
-        consumer = consumer_box.get("consumer")
-        if consumer is None:
-            return
-        try:
-            consumer._handle_stop_signal(signal.SIGTERM, None)
-        except Exception:
-            logger.exception("Could not stop the consumer after losing the worker lock")
+        _stop_all_consumers(signal.SIGTERM, None)
 
     lock.supervise(_lost_runtime_lock)
 
@@ -260,27 +312,57 @@ def main() -> None:
         ).start()
 
     print(f"Worker starting: {Config.HUEY_WORKERS} threads, "
+          f"aux={'off' if queue_role == 'silver' else aux_workers}, "
+          f"role={queue_role}, "
           f"backend={Config.RUNNER_BACKEND}, "
           f"pool={'supported' if pool_supported else 'off'}")
     consumer = huey.create_consumer(
         workers=Config.HUEY_WORKERS,
         worker_type="thread",
     )
+    aux_consumer = None
+    aux_thread = None
+    if queue_role == "all":
+        aux_consumer = aux_huey.create_consumer(
+            workers=aux_workers,
+            worker_type="thread",
+            periodic=False,
+        )
+        # Signal handlers can only be installed on the main thread; the primary
+        # consumer and _on_break forward stop signals to both consumers.
+        aux_consumer._set_signal_handlers = lambda: None
+
     # run.py stops this worker with CTRL_BREAK_EVENT on Windows (there is no
     # SIGTERM to deliver). Treat it like Huey's SIGTERM: stop consuming and
     # exit normally, so the atexit pool shutdown disposes every Silver instance.
     def _on_break(signum, frame) -> None:
         process_guard.begin_shutdown()
-        consumer._handle_stop_signal(signum, frame)
+        _stop_all_consumers(signum, frame)
 
     process_guard.install_break_handler(_on_break)
     consumer_box["consumer"] = consumer
+    if aux_consumer is not None:
+        consumer_box["aux_consumer"] = aux_consumer
     if process_guard.is_shutting_down():
         raise SystemExit(1)
     try:
+        if aux_consumer is not None:
+            aux_thread = threading.Thread(
+                target=aux_consumer.run,
+                name="huey-aux-consumer",
+                daemon=True,
+            )
+            aux_thread.start()
         consumer.run()
     finally:
         stop_reconcile.set()
+        if aux_consumer is not None:
+            try:
+                aux_consumer.stop(graceful=True)
+            except Exception:  # noqa: BLE001
+                logger.exception("Auxiliary consumer shutdown failed")
+            if aux_thread is not None and aux_thread.is_alive():
+                aux_thread.join(timeout=5.0)
 
 if __name__ == "__main__":
     main()

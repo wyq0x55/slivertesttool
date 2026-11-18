@@ -192,6 +192,7 @@ export interface UniverDeps {
   SheetSkeletonManagerService?: any;
   // Hover service for the truncated-cell full-text bubble (see cell_tooltip.ts).
   HoverManagerService?: any;
+  LocaleService?: any;
 }
 
 // Per-worksheet context: each native tab owns its field set, its rows and its
@@ -377,6 +378,77 @@ export class UniverGridAdapter {
       this._renderRows(ctx);
     });
     this._applyFreeze(this.active);
+  }
+
+  attachSecondaryPresets(extraDeps: Partial<UniverDeps>): void {
+    if (!extraDeps) return;
+    const hadValidation = typeof this.deps.UniverSheetsDataValidationPreset === "function";
+    const hadFindReplace = typeof this.deps.UniverSheetsFindReplacePreset === "function";
+    const hadCondFmt = typeof this.deps.UniverSheetsConditionalFormattingPreset === "function";
+    Object.assign(this.deps, extraDeps);
+    if (!this.univer) return;
+
+    const extraLocales: any[] = [];
+    if (!hadValidation && extraDeps.UniverPresetSheetsDataValidationZhCN) {
+      extraLocales.push(extraDeps.UniverPresetSheetsDataValidationZhCN);
+    }
+    if (!hadFindReplace && extraDeps.UniverPresetSheetsFindReplaceZhCN) {
+      extraLocales.push(extraDeps.UniverPresetSheetsFindReplaceZhCN);
+    }
+    if (!hadCondFmt && extraDeps.UniverPresetSheetsConditionalFormattingZhCN) {
+      extraLocales.push(extraDeps.UniverPresetSheetsConditionalFormattingZhCN);
+    }
+    if (extraLocales.length) {
+      try {
+        const merged = typeof this.deps.mergeLocales === "function"
+          ? this.deps.mergeLocales(...extraLocales)
+          : Object.assign({}, ...extraLocales);
+        const zhKey = (this.deps.LocaleType && this.deps.LocaleType.ZH_CN) || "zhCN";
+        if (this.deps.LocaleService && typeof this.univer.__getInjector === "function") {
+          const localeService = this.univer.__getInjector().get(this.deps.LocaleService);
+          if (localeService && typeof localeService.load === "function") {
+            localeService.load({ [zhKey]: merged });
+          }
+        } else if (this.univerAPI && typeof this.univerAPI.loadLocales === "function") {
+          this.univerAPI.loadLocales(zhKey, merged);
+        }
+      } catch (_e) { /* locale merge is best-effort */ }
+    }
+
+    const presetEntries: Array<{ wasLoaded: boolean; fn: any; isValidation?: boolean }> = [
+      { wasLoaded: hadFindReplace, fn: extraDeps.UniverSheetsFindReplacePreset },
+      { wasLoaded: hadCondFmt, fn: extraDeps.UniverSheetsConditionalFormattingPreset },
+      { wasLoaded: hadValidation, fn: extraDeps.UniverSheetsDataValidationPreset, isValidation: true },
+    ];
+    let validationAttached = false;
+    for (const entry of presetEntries) {
+      if (entry.wasLoaded || typeof entry.fn !== "function") continue;
+      try {
+        const preset = entry.fn();
+        for (const p of (preset && preset.plugins) || []) {
+          if (Array.isArray(p)) {
+            this.univer.registerPlugin(p[0], p[1]);
+          } else if (p) {
+            this.univer.registerPlugin(p);
+          }
+        }
+        if (entry.isValidation) {
+          this.hasValidation = true;
+          validationAttached = true;
+        }
+      } catch (_e) { /* plugin registration is best-effort */ }
+    }
+
+    if (validationAttached && this.ctxs.length) {
+      const prevApplying = this.applying;
+      this.applying = true;
+      try {
+        this.ctxs.forEach((ctx) => this._applyValidations(ctx));
+      } catch (_e) { /* best-effort */ }
+      finally {
+        this.applying = prevApplying;
+      }
+    }
   }
 
   // Adopt the editor-owned footer slot (row count + テスト区分 pager + dirty

@@ -5,11 +5,14 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import secrets
+import socket
+import threading
+import time
 from pathlib import Path
 
 from flask import (
-    Blueprint, Response, current_app, g, request, send_file, session,
-    stream_with_context,
+    Blueprint, Response, current_app, g, has_app_context, request, send_file,
+    session, stream_with_context,
 )
 
 from ...extensions import db
@@ -32,6 +35,107 @@ from ._base import (
 
 bp = Blueprint("lanmatrix_tasks", __name__, url_prefix="/api/v1")
 register_common(bp)
+
+_SSE_PROBE_TTL_SECONDS = 2.0
+_sse_probe_cache: dict[int, tuple[float, bool]] = {}
+_sse_probe_lock = threading.Lock()
+
+
+def _collab_port_reachable(port: int) -> bool:
+    """Probe whether the local collab ASGI server is listening on ``port``."""
+    port = int(port)
+    now = time.monotonic()
+    with _sse_probe_lock:
+        cached = _sse_probe_cache.get(port)
+        if cached is not None and (now - cached[0]) < _SSE_PROBE_TTL_SECONDS:
+            return cached[1]
+    reachable = False
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.05):
+            reachable = True
+    except OSError:
+        reachable = False
+    with _sse_probe_lock:
+        _sse_probe_cache[port] = (time.monotonic(), reachable)
+    return reachable
+
+
+def _extract_host_for_url(raw_host: str) -> str:
+    """Extract the host literal from ``req.host`` while preserving IPv6 brackets."""
+    host = (raw_host or "").strip()
+    if not host:
+        return "127.0.0.1"
+    if host.startswith("["):
+        end = host.find("]")
+        if end != -1:
+            return host[: end + 1]
+    if host.count(":") > 1:
+        return f"[{host}]"
+    host_only, _, _port = host.partition(":")
+    return host_only or "127.0.0.1"
+
+
+def _resolve_sse_gateway_base(cfg, req) -> str:
+    """Resolve the async collab/SSE gateway HTTP base URL, or ``""`` for local stream."""
+    from ...config import Config as _BaseConfig
+
+    app_cfg = current_app.config if has_app_context() else {}
+    use_app_cfg = has_app_context() and cfg is getattr(current_app, "config_obj", None)
+
+    explicit = (
+        getattr(cfg, "COLLAB_SSE_BASE_URL", "")
+        or app_cfg.get("COLLAB_SSE_BASE_URL")
+        or ""
+    ).strip().rstrip("/")
+    if explicit:
+        return explicit
+
+    is_testing = (
+        bool(app_cfg.get("TESTING"))
+        if use_app_cfg and "TESTING" in app_cfg
+        else bool(getattr(cfg, "TESTING", False) or app_cfg.get("TESTING"))
+    )
+    if is_testing:
+        return ""
+
+    auto_enabled = (
+        bool(app_cfg["COLLAB_SSE_AUTO"])
+        if use_app_cfg and "COLLAB_SSE_AUTO" in app_cfg
+        else bool(getattr(cfg, "COLLAB_SSE_AUTO", False))
+    )
+    if not auto_enabled:
+        return ""
+
+    cfg_port = getattr(cfg, "COLLAB_PORT", None)
+    raw_port = (
+        cfg_port
+        if not use_app_cfg or (cfg_port is not None and cfg_port != _BaseConfig.COLLAB_PORT)
+        else app_cfg.get("COLLAB_PORT", cfg_port)
+    )
+    try:
+        collab_port = int(raw_port or 1234)
+    except (TypeError, ValueError):
+        return ""
+    if collab_port <= 0 or not _collab_port_reachable(collab_port):
+        return ""
+
+    ws_url = (
+        getattr(cfg, "COLLAB_WS_URL", "")
+        or (app_cfg.get("COLLAB_WS_URL") if use_app_cfg else "")
+        or ""
+    ).strip().rstrip("/")
+    if ws_url:
+        if ws_url.startswith("wss://"):
+            return "https://" + ws_url[len("wss://") :]
+        if ws_url.startswith("ws://"):
+            return "http://" + ws_url[len("ws://") :]
+        if ws_url.startswith(("http://", "https://")):
+            return ws_url
+
+    scheme = (getattr(req, "scheme", "") or "http").strip() or "http"
+    host_only = _extract_host_for_url(getattr(req, "host", ""))
+    return f"{scheme}://{host_only}:{collab_port}"
+
 
 def _enqueue_task(task: Task) -> None:
     from ...jobqueue.tasks import run_task
@@ -238,12 +342,12 @@ def _ambiguous_test_ids(grouped, test_ids):
     return [test_id for test_id in test_ids if len(grouped.get(test_id, [])) > 1]
 
 
-def _reject_unmaterialized_inputs(project_id, snapshot):
+def _reject_unmaterialized_inputs(project_id, snapshot, *, test_ids=None):
     """Reject a run whose edited inputs are not yet committed."""
     from ...services.lanmatrix import run_input_service
 
     try:
-        run_input_service.assert_materialized(project_id, snapshot)
+        run_input_service.assert_materialized(project_id, snapshot, test_ids=test_ids)
     except run_input_service.RunInputsNotMaterialized as exc:
         db.session.rollback()
         return err(
@@ -303,10 +407,6 @@ def run_selected_tasks(project_id):
                 .order_by(TestItemRow.row_order.asc(), TestItemRow.id.asc())
                 .all())
 
-    const_rows = _rows("const")
-    lib_rows = _rows("lib")
-    test_rows = _rows("test")
-    grouped = _logical_test_rows(test_rows)
     ordered = []
     seen = set()
     for test_id in selected:
@@ -314,6 +414,17 @@ def run_selected_tasks(project_id):
             seen.add(test_id)
             ordered.append(test_id)
     selected = ordered
+
+    snapshot = body.get("expected_inputs") if isinstance(body, dict) else None
+    if snapshot is not None:
+        conflict = _reject_unmaterialized_inputs(project.id, snapshot, test_ids=selected)
+        if conflict is not None:
+            return conflict
+
+    const_rows = _rows("const")
+    lib_rows = _rows("lib")
+    test_rows = _rows("test")
+    grouped = _logical_test_rows(test_rows)
     ambiguous = _ambiguous_test_ids(grouped, selected)
     if ambiguous:
         return err("AMBIGUOUS_TEST_ID", "同一个 test id 对应多行，无法确定要运行的用例",
@@ -321,12 +432,8 @@ def run_selected_tasks(project_id):
     by_test_id = {test_id: rows[0] for test_id, rows in grouped.items() if len(rows) == 1}
 
     submitter = g.user.username
+    clean_room = bool(body.get("clean_room", False)) if isinstance(body, dict) else False
     created, missing, errors, duplicates = [], [], [], []
-    snapshot = body.get("expected_inputs") if isinstance(body, dict) else None
-    if snapshot is not None:
-        conflict = _reject_unmaterialized_inputs(project.id, snapshot)
-        if conflict is not None:
-            return conflict
     for test_id in selected:
         row = by_test_id.get(test_id)
         if row is None:
@@ -335,7 +442,7 @@ def run_selected_tasks(project_id):
         committed_attempt = None
         try:
             if snapshot is not None:
-                conflict = _reject_unmaterialized_inputs(project.id, snapshot)
+                conflict = _reject_unmaterialized_inputs(project.id, snapshot, test_ids=selected)
                 if conflict is not None:
                     return conflict
             task, started = task_service.upsert_task(
@@ -344,7 +451,7 @@ def run_selected_tasks(project_id):
                 sil_relpath=sil_ref, sil_name=model_name,
                 sil_version=model_version, sil_model_id=model_id, workspace="",
                 project_id=project.id, submitter_id=g.user.id, commit=False,
-                recover_stale=True)
+                recover_stale=True, clean_room=clean_room)
             if not started:
                 duplicates.append({"test_id": test_id, "task_id": task.task_key})
                 db.session.rollback()
@@ -409,27 +516,31 @@ def rerun_selected_tasks(project_id):
                 .order_by(TestItemRow.row_order.asc(), TestItemRow.id.asc())
                 .all())
 
+    rerun_test_ids = []
+    for key in keys:
+        existing = task_service.get_project_task(project_id, key)
+        if existing is not None and existing.test_id:
+            rerun_test_ids.append(existing.test_id)
+
+    snapshot = body.get("expected_inputs") if isinstance(body, dict) else None
+    if snapshot is not None:
+        conflict = _reject_unmaterialized_inputs(project.id, snapshot, test_ids=rerun_test_ids)
+        if conflict is not None:
+            return conflict
+
     const_rows = _rows("const")
     lib_rows = _rows("lib")
     test_rows = _rows("test")
     grouped = _logical_test_rows(test_rows)
-    ambiguous = []
-    for key in keys:
-        existing = task_service.get_project_task(project_id, key)
-        if existing is not None and len(grouped.get(existing.test_id, [])) > 1:
-            ambiguous.append(existing.test_id)
+    ambiguous = [tid for tid in rerun_test_ids if len(grouped.get(tid, [])) > 1]
     if ambiguous:
         return err("AMBIGUOUS_TEST_ID", "同一个 test id 对应多行，无法确定要运行的用例",
                    details={"test_ids": ambiguous}, status=409)
     by_test_id = {test_id: rows[0] for test_id, rows in grouped.items() if len(rows) == 1}
 
     submitter = g.user.username
+    clean_room = bool(body.get("clean_room", False)) if isinstance(body, dict) else False
     created, skipped, missing, errors = [], [], [], []
-    snapshot = body.get("expected_inputs") if isinstance(body, dict) else None
-    if snapshot is not None:
-        conflict = _reject_unmaterialized_inputs(project.id, snapshot)
-        if conflict is not None:
-            return conflict
     for key in keys:
         task = task_service.get_project_task(project_id, key)
         if task is None:
@@ -451,7 +562,7 @@ def rerun_selected_tasks(project_id):
         committed_attempt = None
         try:
             if snapshot is not None:
-                conflict = _reject_unmaterialized_inputs(project.id, snapshot)
+                conflict = _reject_unmaterialized_inputs(project.id, snapshot, test_ids=rerun_test_ids)
                 if conflict is not None:
                     return conflict
             # requeue_task (not upsert_task): upsert resolves its target by
@@ -462,7 +573,8 @@ def rerun_selected_tasks(project_id):
                 task, sil_relpath=sil_ref, sil_name=model_name,
                 sil_version=model_version, sil_model_id=model_id,
                 workspace=str(proj_root), task_name=test_id,
-                submitter=submitter, submitter_id=g.user.id, commit=False)
+                submitter=submitter, submitter_id=g.user.id, commit=False,
+                clean_room=clean_room)
             if not sil_ref or not Path(sil_ref).is_file():
                 raise ValueError("保存的模型副本不存在")
             case_dir = run_layout.staging_dir(proj_root, test_id) / test_id
@@ -532,7 +644,7 @@ def project_task_stream(project_id, task_key):
     except (TypeError, ValueError):
         last_id = 0
 
-    sse_base = (getattr(cfg, "COLLAB_SSE_BASE_URL", "") or "").strip().rstrip("/")
+    sse_base = _resolve_sse_gateway_base(cfg, request)
     if sse_base and request.args.get("direct") != "1":
         from urllib.parse import urlencode
         from flask import redirect

@@ -35,7 +35,9 @@ Design notes
 from __future__ import annotations
 
 import logging
+import os
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, List, Optional
@@ -180,6 +182,7 @@ class PooledInstance:
     poisoned: bool = field(default=False)
     runs: int = field(default=0)
     retire_on_release: bool = field(default=False)
+    force_retire: bool = field(default=False)
 
     def poison(self) -> None:
         self.poisoned = True
@@ -211,6 +214,7 @@ class SilverInstancePool:
         default_sil_getter: Callable[[], Optional[Path]] | None = None,
         *,
         max_runs: int = 0,
+        clean_room: bool = False,
     ) -> None:
         self._driver = driver
         self._pool_dir = Path(pool_dir)
@@ -225,6 +229,7 @@ class SilverInstancePool:
         self._in_use = 0        # currently borrowed
         self._target = 0        # desired number of instances (== license count)
         self._max_runs = max(0, int(max_runs))
+        self._clean_room = bool(clean_room)
         self._closed = False
         # Instance uids double as the run-folder label (``inst_<uid>``). A slot
         # allocator recycles released numbers so the labels stay bounded to
@@ -347,11 +352,13 @@ class SilverInstancePool:
     # ---------------------- borrow / return --------------------------------- #
     def acquire(
         self,
-        sil_path: Path,
+        sil_path: Optional[Path] = None,
         should_cancel: Callable[[], bool] | None = None,
         poll: float = 0.5,
         blocking: bool = True,
         *,
+        cancel_check: Callable[[], bool] | None = None,
+        timeout: Optional[float] = None,
         clean_room: bool = False,
     ) -> Optional[PooledInstance]:
         """Borrow an idle instance, blocking until one is free.
@@ -365,10 +372,23 @@ class SilverInstancePool:
         retiring a warm idle instance if needed to stay within ``target``, and
         marking the borrowed instance for retirement on release.
         """
-        should_cancel = should_cancel or (lambda: False)
+        if sil_path is None:
+            sil_path = self._default_sil_getter() or Path("model.sil")
+        if should_cancel is None and cancel_check is not None:
+            check_cancel = cancel_check
+        elif should_cancel is not None and cancel_check is not None:
+            check_cancel = lambda: bool(should_cancel() or cancel_check())
+        else:
+            check_cancel = should_cancel or (lambda: False)
+        eff_clean_room = bool(
+            clean_room
+            or self._clean_room
+            or os.environ.get("SILVER_CLEAN_ROOM", "").strip().lower() in ("1", "true", "yes", "on")
+        )
+        deadline = (time.monotonic() + float(timeout)) if timeout is not None else None
         while True:
             self._retry_retiring()
-            if should_cancel():
+            if check_cancel():
                 return None
             reserve_uid: Optional[int] = None
             stale: Optional[PooledInstance] = None
@@ -376,7 +396,7 @@ class SilverInstancePool:
             with self._cond:
                 if self._closed:
                     return None
-                if clean_room:
+                if eff_clean_room:
                     # Prefer an already-poisoned entry for immediate cleanup, else
                     # look for a cold (runs == 0) idle instance.
                     if self._idle and self._idle[-1].poisoned:
@@ -404,7 +424,13 @@ class SilverInstancePool:
                         elif not blocking:
                             return None
                         else:
-                            self._cond.wait(timeout=poll)
+                            wait_s = poll
+                            if deadline is not None:
+                                rem = deadline - time.monotonic()
+                                if rem <= 0:
+                                    return None
+                                wait_s = min(poll, rem)
+                            self._cond.wait(timeout=wait_s)
                             continue
                 elif self._idle:
                     inst = self._idle.pop()
@@ -420,7 +446,13 @@ class SilverInstancePool:
                 elif not blocking:
                     return None
                 else:
-                    self._cond.wait(timeout=poll)
+                    wait_s = poll
+                    if deadline is not None:
+                        rem = deadline - time.monotonic()
+                        if rem <= 0:
+                            return None
+                        wait_s = min(poll, rem)
+                    self._cond.wait(timeout=wait_s)
                     continue
             if candidate is not None:
                 try:
@@ -442,7 +474,8 @@ class SilverInstancePool:
                         self._retiring.add(candidate)
                         stale = candidate
                     else:
-                        if clean_room:
+                        if eff_clean_room:
+                            candidate.force_retire = True
                             candidate.retire_on_release = True
                         self._in_use += 1
                         return candidate
@@ -474,7 +507,8 @@ class SilverInstancePool:
                     # shutdown already released its slot and zeroed the counters.
                     self._cond.notify_all()
                     return None
-                if clean_room:
+                if eff_clean_room:
+                    inst.force_retire = True
                     inst.retire_on_release = True
                 self._in_use += 1
             return inst
@@ -492,7 +526,11 @@ class SilverInstancePool:
             if inst not in self._live or inst in self._retiring or inst in self._idle:
                 return
             self._in_use = max(0, self._in_use - 1)
-            if (inst.poisoned or inst.retire_on_release
+            env_clean_room = os.environ.get("SILVER_CLEAN_ROOM", "").strip().lower() in (
+                "1", "true", "yes", "on"
+            )
+            if (inst.poisoned or inst.force_retire or inst.retire_on_release
+                    or self._clean_room or env_clean_room
                     or (self._max_runs > 0 and inst.runs >= self._max_runs)
                     or self._size - len(self._retiring) > self._target
                     or self._closed):

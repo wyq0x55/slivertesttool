@@ -1,7 +1,9 @@
-"""The shared Huey instance backed by PostgreSQL.
+"""The shared Huey instances backed by PostgreSQL.
 
 Both the web process (which enqueues) and the worker process (which consumes)
-import this single instance. The queue is stored in PostgreSQL via
+import ``huey`` (Silver simulation + periodic maintenance) and ``aux_huey``
+(physically isolated queue for UT compilation and AI generation). Both queues
+are stored in PostgreSQL via
 :class:`huey.contrib.sql_huey.SqlHuey` (peewee), reusing the same LAN database
 server as the application data. This removes the former local SQLite queue file
 *and* avoids needing a separate broker (Redis/RabbitMQ) -- matching the offline,
@@ -16,6 +18,8 @@ from __future__ import annotations
 import os
 import re
 
+from huey.contrib.sql_huey import SqlStorage
+
 from ..config import Config
 
 # ``immediate`` runs tasks synchronously in-process; handy for tests. Enabled by
@@ -23,6 +27,16 @@ from ..config import Config
 _immediate = os.environ.get("HUEY_IMMEDIATE", "").strip().lower() in (
     "1", "true", "yes", "on"
 )
+
+
+class _BootstrapOwnedSqlStorage(SqlStorage):
+    """Huey SQL storage whose DDL runs only from explicit platform bootstrap."""
+
+    def create_tables(self):
+        return None
+
+    def initialize_tables(self) -> None:
+        super().create_tables()
 
 
 def _peewee_url(sqlalchemy_url: str) -> str:
@@ -43,21 +57,14 @@ if _immediate:
     from huey import MemoryHuey
 
     huey = MemoryHuey(name=Config.HUEY_NAME, immediate=True)
+    aux_huey = MemoryHuey(name=Config.HUEY_AUX_NAME, immediate=True)
 else:
     # Huey 2.5 SqlStorage normally creates its three tables from __init__.
     # That makes any web/worker import a schema owner, which conflicts with the
     # platform's explicit one-owner bootstrap. Suppress only that constructor
     # DDL; bootstrap_app() calls ensure_huey_schema() before services start.
     from huey.api import Huey
-    from huey.contrib.sql_huey import SqlStorage
     from playhouse.db_url import connect as _pw_connect
-
-    class _BootstrapOwnedSqlStorage(SqlStorage):
-        def create_tables(self):
-            return None
-
-        def initialize_tables(self) -> None:
-            super().create_tables()
 
     _pg_database = _pw_connect(_peewee_url(Config.HUEY_DATABASE_URL))
 
@@ -67,11 +74,18 @@ else:
         database=_pg_database,
         immediate=False,
     )
+    aux_huey = Huey(
+        name=Config.HUEY_AUX_NAME,
+        storage_class=_BootstrapOwnedSqlStorage,
+        database=_pg_database,
+        immediate=False,
+    )
 
 
 def ensure_huey_schema() -> None:
     """Create Huey's SQL tables from the explicit bootstrap owner only."""
-    storage = getattr(huey, "storage", None)
-    initialize = getattr(storage, "initialize_tables", None)
-    if initialize is not None:
-        initialize()
+    for queue in (huey, aux_huey):
+        storage = getattr(queue, "storage", None)
+        initialize = getattr(storage, "initialize_tables", None)
+        if initialize is not None:
+            initialize()

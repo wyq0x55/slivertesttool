@@ -128,6 +128,7 @@ def create_task(
     project_id: Optional[int] = None,
     submitter_id: Optional[int] = None,
     commit: bool = True,
+    clean_room: bool = False,
 ) -> Task:
     """Persist a new QUEUED task and assign its public key."""
     task = Task(
@@ -145,6 +146,7 @@ def create_task(
         workspace=workspace,
         project_id=project_id,
         submitter_id=submitter_id,
+        clean_room=bool(clean_room),
     )
     db.session.add(task)
     db.session.flush()  # obtain the autoincrement id
@@ -226,7 +228,8 @@ def fail_submission(task_id: int, run_count: int, message: str) -> None:
 def _reset_for_run(task: Task, *, task_name: str, file_name: str,
                    submitter: str, sil_relpath: str, sil_name: str,
                    workspace: str, submitter_id: Optional[int],
-                   sil_version: str = "", sil_model_id: Optional[int] = None) -> Task:
+                   sil_version: str = "", sil_model_id: Optional[int] = None,
+                   clean_room: bool = False) -> Task:
     """Reset one existing row back to QUEUED, in place.
 
     Shared by :func:`upsert_task` and :func:`requeue_task` so a re-queue can
@@ -244,6 +247,7 @@ def _reset_for_run(task: Task, *, task_name: str, file_name: str,
     task.sil_version = sil_version or ""
     task.sil_model_id = sil_model_id
     task.workspace = workspace
+    task.clean_room = bool(clean_room)
     task.status = TaskStatus.QUEUED.value
     task.progress = 0
     task.result = ""
@@ -270,6 +274,7 @@ def requeue_task(
     submitter: str = "",
     submitter_id: Optional[int] = None,
     commit: bool = True,
+    clean_room: bool = False,
 ) -> Task:
     """Re-queue **this exact task row** (the "重新测试" path).
 
@@ -294,7 +299,7 @@ def requeue_task(
         file_name=file_name, submitter=submitter or task.submitter,
         sil_relpath=sil_relpath, sil_name=sil_name, workspace=workspace,
         submitter_id=submitter_id, sil_version=sil_version,
-        sil_model_id=sil_model_id)
+        sil_model_id=sil_model_id, clean_room=clean_room)
     if commit:
         db.session.commit()
     return task
@@ -314,6 +319,7 @@ def upsert_task(
     submitter_id: Optional[int] = None,
     commit: bool = True,
     recover_stale: bool = False,
+    clean_room: bool = False,
 ) -> tuple[Task, bool]:
     """Create or re-queue the task for ``(project_id, test_id)``.
 
@@ -339,7 +345,7 @@ def upsert_task(
             test_id=test_id, sil_relpath=sil_relpath, sil_name=sil_name,
             sil_version=sil_version, sil_model_id=sil_model_id,
             workspace=workspace, project_id=project_id, submitter_id=submitter_id,
-            commit=commit), True
+            commit=commit, clean_room=clean_room), True
 
     if not recover_stale and TaskStatus(existing.status) in (TaskStatus.QUEUED, TaskStatus.RUNNING):
         return existing, False
@@ -348,7 +354,8 @@ def upsert_task(
         existing, task_name=task_name or test_id, file_name=file_name,
         submitter=submitter, sil_relpath=sil_relpath, sil_name=sil_name,
         sil_version=sil_version, sil_model_id=sil_model_id,
-        workspace=workspace, submitter_id=submitter_id)
+        workspace=workspace, submitter_id=submitter_id,
+        clean_room=clean_room)
     if commit:
         db.session.commit()
     return existing, True

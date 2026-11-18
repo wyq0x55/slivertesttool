@@ -137,6 +137,10 @@ class Config:
     )
     # Name of the huey queue (also used as the table prefix in PostgreSQL).
     HUEY_NAME = os.environ.get("HUEY_NAME", "silvetestapp")
+    # Dedicated Huey queue name & consumer threads physically isolating UT
+    # compilation and AI generation from Silver simulation license waits.
+    HUEY_AUX_NAME = os.environ.get("HUEY_AUX_NAME", "").strip() or f"{HUEY_NAME}_aux"
+    HUEY_AUX_WORKERS = _as_int(os.environ.get("HUEY_AUX_WORKERS"), 4)
     # Worker process concurrency. Keep this comfortably above the license
     # limit; the effective number of concurrent Silver runs is enforced by the
     # runtime-adjustable DB license gate, not by this pool size.
@@ -242,6 +246,10 @@ class Config:
         for p in os.environ.get("UT_ALLOWED_TOOLCHAINS", "").replace("\n", ";").split(";")
         if p.strip()
     ]
+    # Optional JSON object mapping named UT toolchain profile IDs (e.g.
+    # "llvm-18-win64") to {"label": ..., "host_clang": ..., "host_llvm_cov": ...,
+    # "host_llvm_profdata": ..., "host_profile_runtime": ...}.
+    UT_TOOLCHAIN_PROFILES = os.environ.get("UT_TOOLCHAIN_PROFILES", "").strip()
 
     # --- Upload limits ---
     MAX_UPLOAD_BYTES = _as_int(
@@ -380,6 +388,8 @@ class Config:
     # Explicit WebSocket base for the collab server (e.g. "wss://host:1234").
     # When empty the frontend derives it from window.location.
     COLLAB_WS_URL = os.environ.get("COLLAB_WS_URL", "").strip()
+    COLLAB_HOST = os.environ.get("COLLAB_HOST", "0.0.0.0").strip() or "0.0.0.0"
+    COLLAB_PORT = _as_int(os.environ.get("COLLAB_PORT"), 1234)
     # Room lifecycle: the collab server keeps one in-memory room (Y.Doc +
     # Materializer) per open project. To bound memory on a long-running server,
     # a background sweeper evicts rooms that have had no connected client for
@@ -418,6 +428,11 @@ class Config:
     # issues a signed 307 redirect so EventSource streams run on uvicorn's async
     # loop with PostgreSQL LISTEN/NOTIFY instead of pinning Waitress WSGI threads.
     COLLAB_SSE_BASE_URL = os.environ.get("COLLAB_SSE_BASE_URL", "").strip()
+    # Automatically delegate SSE streams to the local async collab/uvicorn
+    # gateway (derived from the browser's request host + COLLAB_PORT) whenever
+    # run_collab.py is reachable. Enabled automatically by run.py when collab
+    # starts, and safe to enable in split deployments running run_collab.py.
+    COLLAB_SSE_AUTO = _as_bool(os.environ.get("COLLAB_SSE_AUTO"), True)
     # How often the SSE endpoint polls task_events for new rows (seconds).
     SSE_POLL_SECONDS = float(os.environ.get("SSE_POLL_SECONDS", "0.5"))
     # Idle heartbeat interval to keep proxies from closing the stream.

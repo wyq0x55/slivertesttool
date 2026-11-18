@@ -120,7 +120,7 @@ def snapshot_sheet(doc: Doc, sheet: str) -> list[dict[str, Any]]:
             val = row.get(field)
             if isinstance(val, (dict, list)):
                 try:
-                    row[field] = json.dumps(val, ensure_ascii=False)
+                    row[field] = json.dumps(val, ensure_ascii=False, sort_keys=True)
                 except (TypeError, ValueError):
                     pass
     return rows
@@ -327,12 +327,15 @@ def write_row_fields(doc: Doc, sheet: str,
             continue
         ymap = arr[index]
         touched = False
+        steps_field = _steps_field(sheet)
         for key, value in wanted.items():
-            if key == _steps_field(sheet) and isinstance(value, (dict, list)):
+            if key == steps_field and isinstance(value, (dict, list)):
                 try:
-                    value = json.dumps(value, ensure_ascii=False)
+                    value = json.dumps(value, ensure_ascii=False, sort_keys=True)
                 except (TypeError, ValueError):
                     continue
+            if key == steps_field and _same_steps(row.get(key), value):
+                continue
             if row.get(key) != value:
                 ymap[key] = value
                 touched = True

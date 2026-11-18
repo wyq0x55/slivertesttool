@@ -291,6 +291,15 @@
       help: "Worker 将池大小与并发上限对齐的周期",
       unit: "秒", step: 0.5,
     },
+    silver_max_runs_per_instance: {
+      label: "单实例最大复用轮次",
+      help: "单个预热 Silver 进程累计执行达到该次数后自动优雅退休重建（0 表示不限）",
+      unit: "次", step: 5,
+    },
+    silver_clean_room: {
+      label: "车规洁净室模式 (Clean-Room)",
+      help: "启用后每次测试均分配全新冷启动 Silver 进程并在结束后销毁，消除跨用例 C/DLL 全局状态残留（ASPICE 正式签核推荐）",
+    },
     execution_timeout: {
       label: "执行超时",
       help: "单个测试的最长运行时间，超时判定为失败",
@@ -299,6 +308,11 @@
     silver_gui: {
       label: "Silver 图形界面",
       help: "以 GUI 方式启动 Silver；仅对新启动 / 专用实例生效",
+    },
+    silver_max_csv_bytes: {
+      label: "单次运行 output.csv 熔断上限",
+      help: "缺失信号白名单时防止全量录制撑爆磁盘的字节上限（0 表示不限制）",
+      unit: "Byte", step: 16777216,
     },
     task_event_retention: {
       label: "任务事件保留条数",

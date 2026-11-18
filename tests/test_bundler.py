@@ -66,10 +66,14 @@ class TestJudgeBundler(unittest.TestCase):
             judge = _make_project(Path(tmp))
             bundled = judge_bundler.bundle_judge(judge)
             self.assertIn("_BUNDLED_MODULES", bundled)
+            self.assertIn("_ORIG_JUDGE_B64", bundled)
             self.assertIn("Common_Constant", bundled)
             self.assertIn("Bit", bundled)
             # Silver + stdlib imports remain untouched (not inlined).
-            self.assertIn("from synopsys.silver import *", bundled)
+            self.assertNotIn("'synopsys':", bundled)
+            recovered = judge_bundler._recover_original(bundled)
+            self.assertEqual(recovered, JUDGE_HEADER + JUDGE_BODY)
+            self.assertIn("from synopsys.silver import *", recovered)
 
     def test_bundled_script_runs_without_lib_dirs(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -240,6 +244,87 @@ class TestJudgeBundler(unittest.TestCase):
             self.assertIn("<bundled:HelperCalc>", formatted)
             self.assertIn("sentinel_bad_line = 1 / 0", formatted)
             sys.modules.pop("HelperCalc", None)
+
+    def test_main_judge_traceback_has_exact_zero_line_offset(self) -> None:
+        import traceback
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tc = root / "TC"
+            tc.mkdir()
+            lib = root / "Lib"
+            lib.mkdir()
+            (lib / "HelperVal.py").write_text("FACTOR = 0\n", encoding="utf-8")
+            judge = tc / "judge.py"
+            orig_source = (
+                "# coding: UTF-8\n"
+                "import os, sys\n"
+                "sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'Lib'))\n"
+                "from HelperVal import FACTOR\n"
+                "\n"
+                "def step_check():\n"
+                "    marker = 'line_seven'\n"
+                "    exact_judge_crash_line = 42 / FACTOR\n"
+                "    return marker, exact_judge_crash_line\n"
+                "\n"
+                "step_check()\n"
+            )
+            orig_lines = orig_source.splitlines()
+            expected_lineno = next(
+                idx for idx, ln in enumerate(orig_lines, 1)
+                if "exact_judge_crash_line = 42 / FACTOR" in ln
+            )
+            self.assertEqual(expected_lineno, 8)
+
+            judge.write_text(orig_source, encoding="utf-8")
+            bundled = judge_bundler.bundle_judge(judge)
+            # Overwrite judge.py on disk with the bundle, matching real staging.
+            judge.write_text(bundled, encoding="utf-8")
+
+            ns: dict = {"__name__": "__main__", "__file__": str(judge)}
+            try:
+                exec(compile(bundled, str(judge), "exec"), ns)  # noqa: S102
+            except ZeroDivisionError as exc:
+                tb = exc.__traceback__
+                frames = []
+                while tb is not None:
+                    frames.append((tb.tb_frame.f_code.co_filename, tb.tb_lineno))
+                    tb = tb.tb_next
+                formatted = traceback.format_exc()
+            else:
+                self.fail("Expected ZeroDivisionError from main judge.py")
+            finally:
+                sys.modules.pop("HelperVal", None)
+
+            self.assertEqual(frames[-1], (str(judge), expected_lineno))
+            self.assertIn(f'File "{judge}", line {expected_lineno}, in step_check', formatted)
+            self.assertIn("exact_judge_crash_line = 42 / FACTOR", formatted)
+
+    def test_v3_bundle_rebundles_cleanly_to_v4(self) -> None:
+        with TemporaryDirectory() as tmp:
+            judge = _make_project(Path(tmp))
+            orig = judge.read_text(encoding="utf-8")
+            legacy_v3 = (
+                "# coding: UTF-8\n"
+                "# This judge.py was preprocessed by SilverTestApp's judge-bundler (v3).\n"
+                f"{judge_bundler._ORIGINAL_SEP}\n"
+                f"{judge_bundler._strip_leading_coding(orig)}"
+            )
+            self.assertTrue(judge_bundler.is_bundled(legacy_v3))
+            self.assertFalse(judge_bundler.is_current_bundle(legacy_v3))
+            recovered_v3 = judge_bundler._recover_original(legacy_v3)
+            self.assertIsNotNone(recovered_v3)
+            self.assertIn("def run():", recovered_v3)
+
+            judge.write_text(legacy_v3, encoding="utf-8")
+            upgraded = judge_bundler.bundle_judge(judge)
+            self.assertEqual(judge_bundler._BUNDLE_VERSION, "4")
+            self.assertTrue(judge_bundler.is_bundled(upgraded))
+            self.assertTrue(judge_bundler.is_current_bundle(upgraded))
+            self.assertIn("_ORIG_JUDGE_B64", upgraded)
+
+            judge.write_text(upgraded, encoding="utf-8")
+            self.assertEqual(judge_bundler.bundle_judge(judge), upgraded)
 
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from ..extensions import db
-from ..models import Task, TaskStatus, TestItemRow
+from ..models import Project, Task, TaskStatus, TestItemRow
 from ..services import event_service, report_service, runtime_config, task_service, worker_lock
 from ..services import run_evidence_service as evidence
 from . import process_guard, run_layout
@@ -474,6 +474,16 @@ def _execute_backend(app, config, task: Task, pool=None, instance=None,
         eff_timeout = config.EXECUTION_TIMEOUT
         eff_max_csv_bytes = getattr(config, "SILVER_MAX_CSV_BYTES", 0)
 
+    default_signal_list = ""
+    if getattr(task, "project_id", None):
+        try:
+            project = db.session.get(Project, task.project_id)
+            if project is not None:
+                default_signal_list = getattr(project, "default_signal_list", "") or ""
+        except Exception:  # noqa: BLE001 - defensive: never break a run on project read
+            default_signal_list = ""
+
+    task_clean_room = bool(getattr(task, "clean_room", False))
     ctx = RunContext(
         test_id=task.test_id,
         run_dir=run_dir,
@@ -486,7 +496,12 @@ def _execute_backend(app, config, task: Task, pool=None, instance=None,
         reload_model=pooled,
         console_log=console_path,
         max_csv_bytes=eff_max_csv_bytes,
+        clean_room=task_clean_room,
+        default_signal_list=default_signal_list,
     )
+    if pooled and task_clean_room:
+        instance.force_retire = True
+        instance.retire_on_release = True
 
     if pooled:
         event_service.emit_log(

@@ -2608,6 +2608,7 @@
     "task_key": "string"
    },
    "query_params": [
+    "direct",
     "last_id"
    ],
    "response_kind": "stream",
@@ -2615,6 +2616,7 @@
   },
   {
    "body_fields": [
+    "clean_room",
     "expected_inputs",
     "task_keys"
    ],
@@ -2633,6 +2635,7 @@
   },
   {
    "body_fields": [
+    "clean_room",
     "expected_inputs",
     "model",
     "test_ids"
@@ -2809,7 +2812,9 @@
    "path_params": {
     "project_id": "int"
    },
-   "query_params": [],
+   "query_params": [
+    "include_toolchains"
+   ],
    "response_kind": "json",
    "summary": "get config"
   },

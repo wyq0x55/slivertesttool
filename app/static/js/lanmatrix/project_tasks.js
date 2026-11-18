@@ -934,16 +934,17 @@
         // Re-run this test id from the drawer's enqueue button.
         onPrepare: async (json) => { const data = await LMApi.patchItem(pid, row.id, row.version, { steps: json }); row.version = data.item.version; row.steps = data.item.steps; },
         onEnqueue: async (id) => {
+          const targetId = String(id).trim();
           const items = await fetchSheetItems("test");
-          const current = items.find((item) => String(item.test_id || "").trim() === String(id));
+          const matched = items.filter((item) => logicalId(item) === targetId);
           const libs = await fetchSheetItems("lib");
           const constants = await fetchSheetItems("const");
           const expected = {
-            tests: current ? [{ uuid: current.uuid, test_id: String(id).trim(), steps: current.steps }] : [],
+            tests: matched.map((item) => ({ uuid: item.uuid, test_id: targetId, steps: item.steps })),
             lib: libs.map((item) => ({ uuid: item.uuid, name: String(item.lib_func || item.lib_name || item.case_id || "").trim(), steps: item.lib_stb, params: item.lib_para || "", init: item.isinit })),
             const: constants.map((item) => ({ uuid: item.uuid, name: String(item.const_name || "").trim(), value: item.const_value })),
           };
-          const res = await LMApi.runSelectedTasks(pid, { test_ids: [id], expected_inputs: expected });
+          const res = await LMApi.runSelectedTasks(pid, { test_ids: [targetId], expected_inputs: expected });
           const errors = (res.errors || []);
           const missing = (res.missing || []);
           if (errors.length) throw new Error(errors[0].error || "入队失败");

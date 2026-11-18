@@ -160,17 +160,15 @@
 {% include "lanmatrix/_steps_dialog.html" %}
 {% endblock %}
 {% block scripts %}
-{# The Univer UMD bundle is the single heaviest asset on this page. Loading it
-   (and the dependent editor scripts) with `defer` lets the browser finish
-   parsing the HTML and paint the toolbar/grid shell first, instead of blocking
-   first paint on the multi-MB bundle. `defer` preserves in-order execution, so
-   the univer → grid → … → editor dependency chain still runs top-to-bottom
-   after the DOM is ready; `rel="preload"` starts the bundle download early and
-   in parallel so deferring execution does not delay when it becomes usable. #}
+{# The code-split ESM Univer core bundle loads only primary sheet presets for
+   first paint and schedules secondary presets (Find/Replace, Conditional
+   Formatting, Data Validation) on idle after mount. Both `<script type="module">`
+   and `<script defer>` execute in document order before DOMContentLoaded, so
+   `window.LMUniver` is ready before `editor.js` executes. #}
 {% if univer_available %}
 <link rel="stylesheet" href="{{ static_asset_url('vendor/univer/univer.full.umd.css') }}">
-<link rel="preload" as="script" href="{{ static_asset_url('vendor/univer/univer.full.umd.js') }}">
-<script defer src="{{ static_asset_url('vendor/univer/univer.full.umd.js') }}"></script>
+<link rel="modulepreload" href="{{ static_asset_url('vendor/univer/esm/univer-core.js') }}">
+<script type="module" src="{{ static_asset_url('vendor/univer/esm/univer-core.js') }}"></script>
 {% endif %}
 {% if collab_available %}
 <script defer src="{{ static_asset_url('vendor/collab/collab.umd.js') }}"></script>
@@ -181,5 +179,6 @@
 <script defer src="{{ static_asset_url('js/lanmatrix/json_editor.js') }}"></script>
 <script defer src="{{ static_asset_url('js/lanmatrix/steps_editor.js') }}"></script>
 <script defer src="{{ static_asset_url('js/lanmatrix/collab.js') }}"></script>
+<script defer src="{{ static_asset_url('js/lanmatrix/editor_qualification.js') }}"></script>
 <script defer src="{{ static_asset_url('js/lanmatrix/editor.js') }}"></script>
 {% endblock %}

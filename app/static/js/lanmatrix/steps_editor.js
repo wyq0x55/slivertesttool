@@ -710,8 +710,19 @@
       this.errEl.hidden = true;
       try {
         await this._flushEdit();
+        if (this._flushTimer) { clearTimeout(this._flushTimer); this._flushTimer = null; }
         this._pull();
-        if (typeof this.onPrepare === "function") await this.onPrepare(JSON.stringify(this._serialize()));
+        const serialized = this._serialize();
+        if (typeof this.onPrepare === "function") {
+          this._suppressRemote = true;
+          try {
+            await this.onPrepare(JSON.stringify(serialized));
+          } finally {
+            setTimeout(() => { this._suppressRemote = false; }, 0);
+          }
+        } else if (this.live) {
+          this._commitLive();
+        }
         await this.onEnqueue(this.testId);
         this._setStatus("queued");
       } catch (ex) {
@@ -826,6 +837,7 @@
       this.item = item;
       this.live = (opts && opts.live) || null;
       this.onSave = (opts && opts.onSave) || null;
+      this.onPrepare = (opts && opts.onPrepare) || null;
       this.onEnqueue = (opts && opts.onEnqueue) || null;
       this.getStatus = (opts && opts.getStatus) || null;
       this.loadRef = (opts && opts.loadRef) || null;

@@ -19,7 +19,7 @@ from pathlib import Path
 
 from huey import crontab
 
-from .huey_app import huey
+from .huey_app import aux_huey, huey
 
 logger = logging.getLogger("silvetestapp.tasks")
 
@@ -353,17 +353,30 @@ def _run_task_pooled(app, config, task_pk: int, expected_run_count=None) -> None
         # flow resolves it against the enqueue-time staging scripts.
         staged = run_layout.staging_dir(task.workspace, task.test_id) / task.test_id
         sil_path = sil_ref if sil_ref.is_absolute() else (staged / sil_ref).resolve()
+        task_clean_room = bool(getattr(task, "clean_room", False))
 
     pool = get_pool(app, config)
     lease = _DispatchLease(task_pk, expected_run_count)
     lease.renew(force=True)
     try:
-        _run_pooled_attempt(app, pool, task_pk, expected_run_count, sil_path, lease)
+        _run_pooled_attempt(
+            app, pool, task_pk, expected_run_count, sil_path, lease,
+            task_clean_room=task_clean_room,
+        )
     finally:
         lease.release()
 
 
-def _run_pooled_attempt(app, pool, task_pk, expected_run_count, sil_path, lease) -> None:
+def _run_pooled_attempt(
+    app,
+    pool,
+    task_pk,
+    expected_run_count,
+    sil_path,
+    lease,
+    *,
+    task_clean_room: bool = False,
+) -> None:
     from ..extensions import db
     from ..models import Task, TaskStatus
     from ..runners import test_runner
@@ -382,14 +395,15 @@ def _run_pooled_attempt(app, pool, task_pk, expected_run_count, sil_path, lease)
                     or t.status != TaskStatus.QUEUED.value or t.run_count != expected_run_count)
 
     waiting = _try_enter_wait(app)
-    clean_room = bool(getattr(app.config_obj, "SILVER_CLEAN_ROOM", False))
-    try:
-        from ..services import runtime_config
+    clean_room = bool(task_clean_room or getattr(app.config_obj, "SILVER_CLEAN_ROOM", False))
+    if not clean_room:
+        try:
+            from ..services import runtime_config
 
-        with app.app_context():
-            clean_room = runtime_config.get_bool("silver_clean_room")
-    except Exception:  # noqa: BLE001
-        pass
+            with app.app_context():
+                clean_room = runtime_config.get_bool("silver_clean_room")
+        except Exception:  # noqa: BLE001
+            pass
     acquire_kw = {"clean_room": True} if clean_room else {}
     try:
         instance = pool.acquire(sil_path, should_cancel=_should_cancel,
@@ -565,7 +579,7 @@ def publish_ai_generation(draft_pk: int) -> None:
     jobs.publish_once(draft_pk, run_ai_generation)
 
 
-@huey.task()
+@aux_huey.task()
 def run_ai_generation(draft_pk: int, attempt: str | None = None) -> None:
     """Consume a fenced generation attempt without taking a Silver license."""
     app = _get_app()
@@ -590,7 +604,7 @@ def run_ai_generation(draft_pk: int, attempt: str | None = None) -> None:
         if job.get("attempt") != attempt or job.get("state") != "queued":
             return
         if not ai_jobs.acquire_slot():
-            if not huey.immediate:
+            if not (aux_huey.immediate and huey.immediate):
                 run_ai_generation.schedule(args=(draft_pk, attempt), delay=2)
             return
         checkpoint_token = None
@@ -617,6 +631,9 @@ def run_ai_generation(draft_pk: int, attempt: str | None = None) -> None:
             if checkpoint_token is not None:
                 ai_jobs.reset_checkpoint(checkpoint_token)
             ai_jobs.release_slot()
+
+
+run_ai_generation_task = run_ai_generation
 
 
 @huey.periodic_task(crontab(minute="*"))

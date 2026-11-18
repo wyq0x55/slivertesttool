@@ -16,6 +16,7 @@ reports/
 app/static/**/*.gz
 .venv
 .env
+.mcp.json
 __pycache__
 # IDEs and editors
 /.idea

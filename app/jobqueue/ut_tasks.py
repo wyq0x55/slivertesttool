@@ -9,13 +9,17 @@ from __future__ import annotations
 
 import logging
 
-from .huey_app import huey
+from .huey_app import aux_huey
 from .tasks import _get_app
+
+# Keep ``huey`` bound to ``aux_huey`` on this module so UT recovery callers and
+# unit tests inspecting ``ut_tasks.huey`` observe the isolated UT queue.
+huey = aux_huey
 
 logger = logging.getLogger("silvetestapp.ut_tasks")
 
 
-@huey.task()
+@aux_huey.task()
 def ut_generate_batch(batch_id: int) -> None:
     from ..services.ut_pipeline import pipeline
 
@@ -37,7 +41,7 @@ def recover_interrupted_jobs() -> dict:
         return pipeline.recover_interrupted(jobs, batches)
 
 
-@huey.task()
+@aux_huey.task()
 def ut_advance_job(job_id: int) -> None:
     from ..extensions import db
     from ..models import UtJob
@@ -59,3 +63,7 @@ def ut_advance_job(job_id: int) -> None:
                 job.reason = f"内部错误：{type(exc).__name__}: {exc}"
                 job.gate_code = GateCode.INTERNAL_ERROR
                 db.session.commit()
+
+
+run_ut_batch = ut_generate_batch
+run_ut_job = ut_advance_job

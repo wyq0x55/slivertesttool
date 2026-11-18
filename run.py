@@ -100,6 +100,11 @@ def _start_collab() -> subprocess.Popen | None:
     if os.environ.get("START_COLLAB", "1").strip().lower() in ("0", "false", "no", "off"):
         print("START_COLLAB=0 -> not starting the collaboration server.")
         return None
+    os.environ.setdefault("COLLAB_SSE_AUTO", "1")
+    Config.COLLAB_SSE_AUTO = True
+    app.config["COLLAB_SSE_AUTO"] = True
+    if hasattr(app, "config_obj"):
+        app.config_obj.COLLAB_SSE_AUTO = True
     print("Starting collaboration server (run_collab.py)...")
     try:
         proc = subprocess.Popen(

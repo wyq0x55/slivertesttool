@@ -54,7 +54,17 @@ from ..lanmatrix import audit
 from ..lanmatrix import notification_service as notify_svc
 from ..lanmatrix.errors import ServiceError, VersionConflict
 from ..lanmatrix.permissions import PermissionDenied
-from . import binding, diagnostic, host, host_candidate, repair, repair_source, server_paths, timing
+from . import (
+    binding,
+    diagnostic,
+    host,
+    host_candidate,
+    repair,
+    repair_source,
+    server_paths,
+    timing,
+    toolchains,
+)
 from .bridge import BridgeError, BridgeSettings, UtAgentBridge
 
 # Shared extraction is serialised; LLVM executions and model calls can overlap.
@@ -62,15 +72,10 @@ _GENERATION_GATE = threading.Lock()
 _EXPECTED_ATTEMPT_UNSET = object()
 
 _CONFIG_TEXT_FIELDS = ("manifest_path", "index_csv", "product_root",
+                       "toolchain_profile",
                        "repair_model", "stub_mode",
                        "stub_model", "host_clang", "host_llvm_cov", "host_llvm_profdata",
                        "host_profile_runtime")
-_TOOLCHAIN_DEFAULTS: dict[str, frozenset[str]] = {
-    "host_clang": frozenset({"clang", "clang.exe"}),
-    "host_llvm_cov": frozenset({"llvm-cov", "llvm-cov.exe"}),
-    "host_llvm_profdata": frozenset({"llvm-profdata", "llvm-profdata.exe"}),
-    "host_profile_runtime": frozenset({""}),
-}
 _REQUIRED_FIELDS = ("manifest_path", "index_csv", "product_root")
 _JOB_LIST_LIMIT = 500
 
@@ -142,7 +147,7 @@ def save_config(project_id: int, values: dict[str, Any], user_id: int) -> UtPipe
             if any(ch in values[key] for ch in ("\x00", "\r", "\n")):
                 raise ServiceError(f"{key} contains invalid control characters", code="VALIDATION_ERROR")
             value = values[key].strip()
-            limit = 128 if key in ("stub_model", "repair_model") else 1024
+            limit = 64 if key == "toolchain_profile" else (128 if key in ("stub_model", "repair_model") else 1024)
             if len(value) > limit:
                 raise ServiceError(f"{key} exceeds {limit} characters", code="VALIDATION_ERROR")
             normalized[key] = value
@@ -152,24 +157,31 @@ def save_config(project_id: int, values: dict[str, Any], user_id: int) -> UtPipe
     normalized["stub_mode"] = stub_mode
     # Recorded fact, not a choice: every job executes on Clang/LLVM.
     normalized["execution_backend"] = "clang"
-    for key in ("host_clang", "host_llvm_cov", "host_llvm_profdata"):
-        if key in normalized and not normalized[key]:
-            raise ServiceError(f"{key} must not be empty", code="VALIDATION_ERROR")
-    allowed_toolchains = {
-        str(item).strip()
-        for item in (current_app.config.get("UT_ALLOWED_TOOLCHAINS") or ())
-        if str(item).strip()
-    }
-    for key, defaults in _TOOLCHAIN_DEFAULTS.items():
-        if key not in normalized:
+    profile_explicit = "toolchain_profile" in normalized
+    eff_profile_id = (
+        normalized["toolchain_profile"]
+        if profile_explicit
+        else (getattr(existing, "toolchain_profile", None) or "default")
+    ) or "default"
+    selected_profile = toolchains.resolve_profile(eff_profile_id)
+    normalized["toolchain_profile"] = selected_profile["id"]
+    raw_host_override = any(key in normalized for key in toolchains.TOOLCHAIN_KEYS)
+    for key in toolchains.TOOLCHAIN_KEYS:
+        if key in normalized:
             continue
-        val = normalized[key]
-        unchanged = existing is not None and val == getattr(existing, key, None)
-        whitelisted = val in defaults or val in allowed_toolchains
-        if allowed_toolchains and not (unchanged or whitelisted):
-            raise PermissionDenied(f"{key} 不在服务端允许的工具链白名单（UT_ALLOWED_TOOLCHAINS）内")
-        if not is_admin and not (unchanged or whitelisted):
-            raise PermissionDenied("仅系统管理员或服务端白名单可自定义宿主机编译器与覆盖率工具路径")
+        if profile_explicit or existing is None or getattr(existing, key, None) is None:
+            normalized[key] = selected_profile[key]
+        else:
+            normalized[key] = getattr(existing, key)
+    toolchains.verify_toolchain_config(
+        normalized,
+        allow_custom_admin=(
+            is_admin
+            or (existing is not None and not raw_host_override and not profile_explicit)
+        ),
+        admin_override_authorized=bool(is_admin and raw_host_override),
+        project_id=project_id,
+    )
     for key, low, high in (("max_repair_rounds", 0, 20), ("stub_max_rounds", 1, 5)):
         if key in values:
             value = values[key]
@@ -884,6 +896,12 @@ def _execute_host_step(job: UtJob, attempt: UtAttempt, config: dict) -> None:
     """Drive the primary LLVM workflow using typed, version-bound evidence."""
     generation = job.generation or {}
     job.generation = {**generation, "host_step": "execute"}
+    try:
+        toolchains.verify_execution_toolchain(config, project_id=job.project_id)
+    except ServiceError as exc:
+        _gate(job, UtJob.ERROR, f"宿主机工具链校验失败：{exc}", GateCode.INTEGRITY_ERROR)
+        db.session.commit()
+        return
     try:
         _read_attempt_csv(attempt)
     except ServiceError as exc:

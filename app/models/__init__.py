@@ -11,6 +11,10 @@ from .lanmatrix import (
     CollabDoc,
     CollabPresence,
     CollabSyncMark,
+    DashboardCaseFirstRun,
+    DashboardCaseVersionLatest,
+    DashboardDailyRollup,
+    DashboardVersionRollup,
     DataJob,
     FieldDefinition,
     LMUser,
@@ -49,6 +53,10 @@ __all__ = [
     "FieldDefinition",
     "TestItemRow",
     "TestRunRecord",
+    "DashboardCaseFirstRun",
+    "DashboardDailyRollup",
+    "DashboardCaseVersionLatest",
+    "DashboardVersionRollup",
     "RowWriteback",
     "Notification",
     "CellComment",
@@ -64,3 +72,10 @@ __all__ = [
     "UtJob",
     "UtAttempt",
 ]
+
+import sys as _sys
+
+if "app.services.lanmatrix.dashboard_rollup_service" not in _sys.modules:
+    from ..services.lanmatrix.dashboard_rollup_service import register_rollup_listeners
+
+    register_rollup_listeners()

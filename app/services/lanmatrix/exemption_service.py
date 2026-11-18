@@ -66,6 +66,7 @@ from typing import Any, Iterable, Optional
 from ...collab import writeback
 from ...extensions import db
 from ...models import LMUser, Project, ProjectModel, TestItemRow, TestRunRecord
+from . import dashboard_rollup_service
 from . import notification_service as notify_svc
 from . import review_service
 from . import run_writeback_service as rwb
@@ -352,7 +353,7 @@ def write_untestable(project: Project, row: TestItemRow, *,
     # The charts read run records, not row columns -- without this the case is
     # invisible in the per-version breakdown no matter what the row says.
     if _synthetic_record(row) is None:
-        db.session.add(TestRunRecord(
+        synthetic_rec = TestRunRecord(
             project_id=project.id,
             row_uuid=row.uuid,
             test_id=sje.row_test_id(row),
@@ -365,7 +366,9 @@ def write_untestable(project: Project, row: TestItemRow, *,
             executor_name=values.get("executor", ""),
             executed_at=now,
             executed_on=values["exec_date"],
-        ))
+        )
+        db.session.add(synthetic_rec)
+        dashboard_rollup_service.sync_record(synthetic_rec)
     return True
 
 
@@ -379,6 +382,7 @@ def _retract_untestable(row: TestItemRow) -> None:
     record = _synthetic_record(row)
     if record is not None:
         db.session.delete(record)
+        db.session.flush()
     if (row.result or "").strip().lower() == rwb.UNTESTABLE.lower():
         writeback.apply_server_fields(row.project_id, row, {
             "result": "", "exec_date": "", "executor": "",

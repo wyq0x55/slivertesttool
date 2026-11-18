@@ -40,7 +40,7 @@ from ...extensions import db
 from ...models import (LMUser, Project, Task, TestItemRow,
                        TestRunRecord)
 from ...collab import writeback
-from . import review_service, silver_json_export as sje
+from . import dashboard_rollup_service, review_service, silver_json_export as sje
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +196,7 @@ def record_run(task: Task, verdict: str, *, commit=True) -> int:
         project = db.session.get(Project, task.project_id)
 
         changed = 0
+        appended_records: list[TestRunRecord] = []
         for row in rows:
             if writeback.apply_server_fields(task.project_id, row, values):
                 changed += 1
@@ -207,7 +208,7 @@ def record_run(task: Task, verdict: str, *, commit=True) -> int:
             # The record is appended even when no cell value changed: re-running
             # a case that passes again is still a run, and the burn-up chart
             # would otherwise show a flat line during a regression sweep.
-            db.session.add(TestRunRecord(
+            run_record = TestRunRecord(
                 project_id=task.project_id,
                 row_uuid=row.uuid,
                 test_id=task.test_id,
@@ -221,7 +222,12 @@ def record_run(task: Task, verdict: str, *, commit=True) -> int:
                 executor_name=executor_name,
                 executed_at=executed_at,
                 executed_on=executed_on,
-            ))
+            )
+            db.session.add(run_record)
+            appended_records.append(run_record)
+        if appended_records:
+            db.session.flush()
+            dashboard_rollup_service.apply_run_records(appended_records)
         if commit:
             db.session.commit()
         return changed

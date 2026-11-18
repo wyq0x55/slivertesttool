@@ -826,6 +826,7 @@ def test_clean_room_evicts_warm_instance_and_retires_after_run():
     cold = pool.acquire(Path("model.sil"), clean_room=True)
     assert cold is not warm
     assert cold.runs == 0
+    assert cold.force_retire is True
     assert driver.disposed == 1
     assert driver.created == 2
     assert pool.stats()["size"] == 1
@@ -834,6 +835,57 @@ def test_clean_room_evicts_warm_instance_and_retires_after_run():
     pool.release(cold)
     assert driver.disposed == 2
     assert pool.stats()["size"] == 0
+
+
+def test_per_call_clean_room_sets_force_retire_when_global_clean_room_false(monkeypatch=None):
+    import os
+
+    prev = os.environ.pop("SILVER_CLEAN_ROOM", None)
+    try:
+        driver = FakeDriver()
+        pool = _make_pool(driver, target=1)
+        pool.prewarm()
+
+        # Borrow the cold prewarmed instance (runs == 0) in clean_room mode.
+        cold = pool.acquire(Path("model.sil"), clean_room=True)
+        assert cold is not None
+        assert cold.runs == 0
+        assert cold.force_retire is True
+        assert driver.created == 1
+        pool.configure_and_run(cold, _ctx())
+        pool.release(cold)
+        # Even with global SILVER_CLEAN_ROOM unset/False, force_retire destroys it.
+        assert driver.disposed == 1
+        assert pool.stats()["idle"] == 0
+
+        # A subsequent regular (non-clean-room) acquire keeps its instance warm.
+        regular = pool.acquire(Path("model.sil"), clean_room=False)
+        assert regular is not None
+        assert regular.force_retire is False
+        pool.configure_and_run(regular, _ctx())
+        pool.release(regular)
+        assert driver.disposed == 1
+        assert pool.stats()["idle"] == 1
+    finally:
+        if prev is not None:
+            os.environ["SILVER_CLEAN_ROOM"] = prev
+
+
+def test_acquire_supports_cancel_check_and_timeout_and_runner_pool_forwarding():
+    driver = FakeDriver()
+    pool = _make_pool(driver, target=1)
+    held = pool.acquire(Path("model.sil"))
+    assert held is not None
+    assert pool.acquire(Path("model.sil"), poll=0.01, timeout=0.03) is None
+    assert pool.acquire(Path("model.sil"), cancel_check=lambda: True) is None
+    pool.configure_and_run(held, _ctx())
+    pool.release(held)
+
+    runner = SilverRunner(pool=pool)
+    ctx = _ctx()
+    ctx.clean_room = True
+    runner.run(ctx)
+    assert driver.disposed == 2  # warm held evicted + clean_room instance retired
 
 
 # --------------------------------------------------------------------------- #

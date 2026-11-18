@@ -61,6 +61,9 @@ jobs:
       - name: Verify frozen dependency export
         run: python scripts/export_requirements.py --check
 
+      - name: Check repository for sensitive content and secrets
+        run: python scripts/check_sensitive_content.py
+
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip

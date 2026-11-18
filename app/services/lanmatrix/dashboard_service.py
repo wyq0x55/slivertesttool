@@ -51,13 +51,19 @@ Everything here is read-only.
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
 from typing import Optional
 
 from sqlalchemy import case, literal
 
 from ...extensions import db
-from ...models import LMUser, Project, TestItemRow, TestRunRecord
+from ...models import (
+    DashboardDailyRollup,
+    DashboardVersionRollup,
+    LMUser,
+    Project,
+    TestItemRow,
+    TestRunRecord,
+)
 from . import settings
 from . import exemption_service, review_service
 from .comments_service import csv_cell
@@ -235,26 +241,16 @@ def trend(project_id: int, *, limit: int = MAX_TREND_POINTS) -> dict:
     produced an executed outcome, so the line is monotonic and reads as
     "how much of the matrix has ever been covered".
     """
-    case_key = _case_key_expr()
-    first_runs = (
-        db.session.query(
-            db.func.min(TestRunRecord.executed_on).label("first_day"),
-        )
-        .filter(
-            TestRunRecord.project_id == project_id,
-            TestRunRecord.outcome.in_(EXECUTED_OUTCOMES),
-            TestRunRecord.executed_on != "",
-        )
-        .group_by(case_key)
-        .subquery()
-    )
     day_counts = (
         db.session.query(
-            first_runs.c.first_day,
-            db.func.count().label("cnt"),
+            DashboardDailyRollup.executed_on,
+            DashboardDailyRollup.first_case_count,
         )
-        .group_by(first_runs.c.first_day)
-        .order_by(first_runs.c.first_day.asc())
+        .filter(
+            DashboardDailyRollup.project_id == project_id,
+            DashboardDailyRollup.first_case_count > 0,
+        )
+        .order_by(DashboardDailyRollup.executed_on.asc())
         .all()
     )
 
@@ -262,10 +258,8 @@ def trend(project_id: int, *, limit: int = MAX_TREND_POINTS) -> dict:
 
     dates = sorted(per_day)
     if len(dates) > limit:
-        # Keep the most recent window; the cumulative baseline is carried in the
-        # first retained point so the curve does not appear to restart at zero.
         dropped = dates[: len(dates) - limit]
-        carried = sum(per_day[d] for d in dropped)
+        carried = sum(per_day[day] for day in dropped)
         dates = dates[len(dates) - limit :]
     else:
         carried = 0
@@ -295,152 +289,53 @@ def by_version(project_id: int, *, limit: int = MAX_VERSIONS) -> dict:
     keeps a release timeline readable without assuming a version-number format
     the project may not follow.
     """
-    raw_ver_rows = (
-        db.session.query(
-            TestRunRecord.model_version,
-            db.func.min(TestRunRecord.executed_at),
-            db.func.min(TestRunRecord.id),
-        )
+    rollup_rows = (
+        db.session.query(DashboardVersionRollup)
         .filter(
-            TestRunRecord.project_id == project_id,
-            TestRunRecord.outcome.in_(OUTCOMES),
+            DashboardVersionRollup.project_id == project_id,
         )
-        .group_by(TestRunRecord.model_version)
+        .order_by(
+            DashboardVersionRollup.first_seen_at.asc(),
+            DashboardVersionRollup.first_seen_id.asc(),
+        )
         .all()
     )
-    if not raw_ver_rows:
+    if not rollup_rows:
         return {
             "versions": [],
-            "series": {k: [] for k in OUTCOMES},
+            "series": {outcome: [] for outcome in OUTCOMES},
             "folded": 0,
         }
-    first_by_label: dict[str, tuple] = {}
-    has_untrimmed = False
-    for raw_ver, min_at, min_id in raw_ver_rows:
-        raw_str = raw_ver or ""
-        stripped = raw_str.strip()
-        if stripped != raw_str:
-            has_untrimmed = True
-        label = stripped or "(未标注)"
-        stamp = (min_at, min_id)
-        if label not in first_by_label or stamp < first_by_label[label]:
-            first_by_label[label] = stamp
-    versions = [
-        lbl for lbl, _ in sorted(first_by_label.items(), key=lambda kv: kv[1])
-    ]
 
-    if db.engine.dialect.name == "postgresql" and not has_untrimmed:
-        uuid_sub = (
-            db.session.query(
-                TestRunRecord.model_version.label("raw_ver"),
-                TestRunRecord.outcome.label("outcome"),
-            )
-            .distinct(TestRunRecord.model_version, TestRunRecord.row_uuid)
-            .filter(
-                TestRunRecord.project_id == project_id,
-                TestRunRecord.outcome.in_(OUTCOMES),
-                TestRunRecord.row_uuid.isnot(None),
-                TestRunRecord.row_uuid != "",
-            )
-            .order_by(
-                TestRunRecord.model_version.asc(),
-                TestRunRecord.row_uuid.asc(),
-                TestRunRecord.executed_at.desc(),
-                TestRunRecord.id.desc(),
-            )
-            .subquery()
-        )
-        tid_sub = (
-            db.session.query(
-                TestRunRecord.model_version.label("raw_ver"),
-                TestRunRecord.outcome.label("outcome"),
-            )
-            .distinct(TestRunRecord.model_version, TestRunRecord.test_id)
-            .filter(
-                TestRunRecord.project_id == project_id,
-                TestRunRecord.outcome.in_(OUTCOMES),
-                db.or_(
-                    TestRunRecord.row_uuid.is_(None),
-                    TestRunRecord.row_uuid == "",
-                ),
-            )
-            .order_by(
-                TestRunRecord.model_version.asc(),
-                TestRunRecord.test_id.asc(),
-                TestRunRecord.executed_at.desc(),
-                TestRunRecord.id.desc(),
-            )
-            .subquery()
-        )
-        raw_buckets = [
-            *db.session.query(
-                uuid_sub.c.raw_ver, uuid_sub.c.outcome, db.func.count(),
-            ).group_by(uuid_sub.c.raw_ver, uuid_sub.c.outcome).all(),
-            *db.session.query(
-                tid_sub.c.raw_ver, tid_sub.c.outcome, db.func.count(),
-            ).group_by(tid_sub.c.raw_ver, tid_sub.c.outcome).all(),
-        ]
-        bucket_rows = [
-            (((rv or "").strip() or "(未标注)"), outcome, cnt)
-            for rv, outcome, cnt in raw_buckets
-        ]
-    else:
-        case_key = _case_key_expr()
-        trimmed_ver = db.func.trim(db.func.coalesce(TestRunRecord.model_version, ""))
-        ver_label = case(
-            (trimmed_ver != "", trimmed_ver),
-            else_=literal("(未标注)"),
-        )
-        ranked = (
-            db.session.query(
-                ver_label.label("label"),
-                TestRunRecord.outcome.label("outcome"),
-                db.func.row_number().over(
-                    partition_by=(ver_label, case_key),
-                    order_by=(
-                        TestRunRecord.executed_at.desc(),
-                        TestRunRecord.id.desc(),
-                    ),
-                ).label("rn"),
-            )
-            .filter(
-                TestRunRecord.project_id == project_id,
-                TestRunRecord.outcome.in_(OUTCOMES),
-            )
-            .subquery()
-        )
-        bucket_rows = (
-            db.session.query(
-                ranked.c.label,
-                ranked.c.outcome,
-                db.func.count().label("cnt"),
-            )
-            .filter(ranked.c.rn == 1)
-            .group_by(ranked.c.label, ranked.c.outcome)
-            .all()
-        )
-
-    tally: dict[str, dict[str, int]] = defaultdict(lambda: {k: 0 for k in OUTCOMES})
-    for label, outcome, cnt in bucket_rows:
-        if outcome in tally[label]:
-            tally[label][outcome] += int(cnt)
+    versions = [row.version_label for row in rollup_rows]
+    tally: dict[str, dict[str, int]] = {
+        row.version_label: {
+            "pass": int(row.pass_count or 0),
+            "fail": int(row.fail_count or 0),
+            "error": int(row.error_count or 0),
+            "untestable": int(row.untestable_count or 0),
+            "cancelled": int(row.cancelled_count or 0),
+        }
+        for row in rollup_rows
+    }
 
     folded: list[str] = []
     if len(versions) > limit:
-        # Fold the oldest tail rather than truncating it: dropping data silently
-        # would understate historical volume.
         folded = versions[: len(versions) - limit]
         versions = versions[len(versions) - limit :]
-        merged = {k: 0 for k in OUTCOMES}
+        merged = {outcome: 0 for outcome in OUTCOMES}
         for label in folded:
-            for k in OUTCOMES:
-                merged[k] += tally[label][k]
+            for outcome in OUTCOMES:
+                merged[outcome] += tally[label][outcome]
         tally["其他"] = merged
         versions = ["其他"] + versions
 
     return {
         "versions": versions,
-        "series": {k: [tally[v][k] for v in versions] for k in OUTCOMES},
+        "series": {
+            outcome: [tally[ver_label][outcome] for ver_label in versions]
+            for outcome in OUTCOMES
+        },
         "folded": len(folded),
     }
 

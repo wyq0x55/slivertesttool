@@ -125,11 +125,34 @@ def get_project(project_id: int) -> Project:
     return project
 
 
+_MAX_DEFAULT_SIGNAL_LIST_BYTES = 256 * 1024
+
+
+def _normalise_default_signal_list(value: Any) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ServiceError("默认信号列表必须是字符串", code="VALIDATION_ERROR")
+    lines = [
+        line.strip()
+        for line in value.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        if line.strip()
+    ]
+    normalised = "\n".join(lines)
+    if len(normalised.encode("utf-8")) > _MAX_DEFAULT_SIGNAL_LIST_BYTES:
+        raise ServiceError("默认信号列表超过 256 KiB 上限", code="VALIDATION_ERROR")
+    return normalised
+
+
 def update_project(user: LMUser, project: Project, changes: dict[str, Any]) -> Project:
     old = project.to_dict()
     for key in ("name", "description", "status", "owner_id"):
         if key in changes:
             setattr(project, key, changes[key])
+    if "default_signal_list" in changes:
+        project.default_signal_list = _normalise_default_signal_list(
+            changes["default_signal_list"]
+        )
     audit.record("project.update", actor_id=user.id, object_type="project",
                  object_id=project.id, project_id=project.id,
                  old_value=old, new_value=project.to_dict())

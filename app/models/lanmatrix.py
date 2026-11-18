@@ -175,6 +175,10 @@ class Project(db.Model):
     # whole project to one person produces either a bottleneck or a rubber
     # stamp. Matching lives in ``services.lanmatrix.review_routes`` (pure).
     review_routes = db.Column(JSONType, nullable=True)
+    # Project-level fallback signal whitelist (newline-separated signal names)
+    # materialized when neither testcase nor model directory provides output.txt,
+    # preventing full-variable 1ms CSV disk blowups on large MCU models.
+    default_signal_list = db.Column(db.Text, nullable=False, default="")
 
     # The single person reviews are routed to when no 区分 rule matched and the
     # row has no reviewer of its own. Deliberately ONE reviewer rather than a
@@ -244,6 +248,7 @@ class Project(db.Model):
             "owner_id": self.owner_id,
             "default_reviewer_id": self.default_reviewer_id,
             "review_routes": self.review_route_rules(),
+            "default_signal_list": self.default_signal_list or "",
             "member_count": member_count if member_count is not None else len(self.members),
             "created_at": _iso(self.created_at),
             "updated_at": _iso(self.updated_at),
@@ -711,6 +716,72 @@ class TestRunRecord(db.Model):
             "executed_at": _iso(self.executed_at),
             "executed_on": self.executed_on,
         }
+
+
+class DashboardCaseFirstRun(db.Model):
+    __tablename__ = "lm_dashboard_case_first_runs"
+
+    project_id = db.Column(
+        db.Integer,
+        db.ForeignKey("lm_projects.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    case_key = db.Column(db.String(160), primary_key=True)
+    first_executed_on = db.Column(db.String(10), nullable=False)
+
+
+class DashboardDailyRollup(db.Model):
+    __tablename__ = "lm_dashboard_daily_rollups"
+
+    project_id = db.Column(
+        db.Integer,
+        db.ForeignKey("lm_projects.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    executed_on = db.Column(db.String(10), primary_key=True)
+    first_case_count = db.Column(db.Integer, nullable=False, default=0)
+    total_runs = db.Column(db.Integer, nullable=False, default=0)
+
+
+class DashboardCaseVersionLatest(db.Model):
+    __tablename__ = "lm_dashboard_case_version_latest"
+
+    project_id = db.Column(
+        db.Integer,
+        db.ForeignKey("lm_projects.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    version_label = db.Column(db.String(64), primary_key=True)
+    case_key = db.Column(db.String(160), primary_key=True)
+    outcome = db.Column(db.String(24), nullable=False)
+    executed_at = db.Column(db.DateTime, nullable=False)
+    record_id = db.Column(db.Integer, nullable=False)
+
+
+class DashboardVersionRollup(db.Model):
+    __tablename__ = "lm_dashboard_version_rollups"
+    __table_args__ = (
+        db.Index(
+            "ix_dash_ver_rollup_proj_seen",
+            "project_id",
+            "first_seen_at",
+            "first_seen_id",
+        ),
+    )
+
+    project_id = db.Column(
+        db.Integer,
+        db.ForeignKey("lm_projects.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    version_label = db.Column(db.String(64), primary_key=True)
+    first_seen_at = db.Column(db.DateTime, nullable=False)
+    first_seen_id = db.Column(db.Integer, nullable=False)
+    pass_count = db.Column(db.Integer, nullable=False, default=0)
+    fail_count = db.Column(db.Integer, nullable=False, default=0)
+    error_count = db.Column(db.Integer, nullable=False, default=0)
+    untestable_count = db.Column(db.Integer, nullable=False, default=0)
+    cancelled_count = db.Column(db.Integer, nullable=False, default=0)
 
 
 # --------------------------------------------------------------------------- #
