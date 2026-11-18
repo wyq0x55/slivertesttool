@@ -18,17 +18,17 @@
     </div>
   </aside>
   <main class="login-main">
-    <form id="lm-login-form" class="login-card" autocomplete="off">
+    <form id="lm-login-form" class="login-card">
       <h1>欢迎回来</h1>
       <p class="sub">局域网离线部署 · 请使用平台账号登录</p>
       <div class="login-err" id="lm-login-error" hidden></div>
       <div class="field">
-        <label>用户名</label>
-        <input type="text" name="username" id="lm-username" required autofocus placeholder="输入用户名">
+        <label for="lm-username">用户名</label>
+        <input type="text" name="username" id="lm-username" required autofocus autocomplete="username" spellcheck="false" autocorrect="off" autocapitalize="off" placeholder="输入用户名">
       </div>
       <div class="field">
-        <label>密码</label>
-        <input type="password" name="password" id="lm-password" required placeholder="输入密码">
+        <label for="lm-password">密码</label>
+        <input type="password" name="password" id="lm-password" required autocomplete="current-password" placeholder="输入密码">
       </div>
       <button type="submit" class="btn primary">登录</button>
       {% if allow_registration %}
