@@ -288,7 +288,8 @@
       ? d.output.procedures : null;
     if (!procs || d.status === "running") {
       box.hidden = true;
-      list.innerHTML = "";
+      if (typeof list.replaceChildren === "function") list.replaceChildren();
+      else if (Array.isArray(list.children)) list.children.length = 0;
       return;
     }
     box.hidden = false;
@@ -506,7 +507,7 @@
     if (raw && (scenario === "procedure" || scenario === "sbs" || scenario === "lib")) {
       var advanced;
       try { advanced = JSON.parse(raw); }
-      catch (ex) { throw new Error("源码摘录 JSON 无效：" + ex.message); }
+      catch (ex) { throw new Error("源码摘录 JSON 无效：" + ex.message, { cause: ex }); }
       if (!advanced || typeof advanced !== "object" || Array.isArray(advanced) ||
           Object.keys(advanced).some(function (key) { return key !== "source_files"; })) {
         throw new Error("高级 JSON 仅支持 source_files 摘录；项目上下文与版本由服务器组装");

@@ -96,8 +96,8 @@
         (d.truncated ? `（已截断，最多显示前 ${d.rows.length} 行）` : "") +
         ` · ${d.command} · ${d.elapsed_ms} ms` + (d.read_only ? " · 只读" : " · 已提交");
     } else {
-      head.innerHTML = "";
-      body.innerHTML = "";
+      head.replaceChildren();
+      body.replaceChildren();
       meta.textContent = `影响 ${d.rowcount} 行 · ${d.command} · ${d.elapsed_ms} ms` +
         (d.read_only ? " · 只读(已回滚)" : " · 已提交");
     }
@@ -306,7 +306,7 @@
 
   function renderTvPager(pages, page) {
     const el = document.getElementById("lm-db-tv-pager");
-    el.innerHTML = "";
+    el.replaceChildren();
     if (pages <= 1) return;
     const mk = (label, target, disabled) => {
       const b = document.createElement("button");
