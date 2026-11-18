@@ -119,7 +119,7 @@
     const host = $("lm-sbs-editor");
     const hist = $("lm-sbs-history");
     if (!modal || !host) { return; }
-    host.innerHTML = "";
+    host.replaceChildren();
     if (hist) { hist.hidden = true; }
     $("lm-sbs-title").textContent = "：" + modelName;
     modal.hidden = false;

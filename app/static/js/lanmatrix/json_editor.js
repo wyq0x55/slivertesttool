@@ -67,7 +67,7 @@
 
     _build() {
       this.host.classList.add("lm-ce");
-      this.host.innerHTML = "";
+      this.host.replaceChildren();
 
       this.gutter = document.createElement("div");
       this.gutter.className = "lm-ce-gutter";
@@ -175,7 +175,7 @@
     }
 
     dispose() {
-      try { this.host.innerHTML = ""; } catch (_e) { /* noop */ }
+      try { this.host.replaceChildren(); } catch (_e) { /* noop */ }
       this.host.classList.remove("lm-ce", "lm-ce-invalid");
     }
   }

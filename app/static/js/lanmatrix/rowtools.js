@@ -89,7 +89,7 @@
    */
   function render(host, rows) {
     if (!host) return;
-    host.innerHTML = "";
+    host.replaceChildren();
     (rows || []).forEach(function (r) {
       var b = document.createElement("button");
       b.type = "button";
