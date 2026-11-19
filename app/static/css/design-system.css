@@ -393,12 +393,13 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .stack .more{ background:var(--n-150); color:var(--text-2); }
 [data-theme="dark"] .stack .more{ background:var(--surface-2); }
 .upd{ font-size:12px; color:var(--text-3); font-variant-numeric:tabular-nums; }
-/* hover action overlay — keeps the resting card identical to the demo */
+/* hover/focus action overlay — keeps the resting card identical to the demo */
 .card .card-acts{ position:absolute; right:12px; bottom:12px; display:flex; gap:6px;
   opacity:0; transform:translateY(4px); transition:opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
   background:color-mix(in srgb,var(--surface) 88%, transparent); backdrop-filter:blur(6px);
   padding:5px; border-radius:var(--radius-sm); border:1px solid var(--border); z-index:3; }
-.card:hover .card-acts{ opacity:1; transform:none; }
+.card:hover .card-acts,
+.card:focus-within .card-acts{ opacity:1; transform:none; }
 
 /* zoned project card — three independent nav regions (main/tasks/members) */
 .card.zoned{ padding:8px; }
@@ -443,7 +444,13 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 [data-theme="dark"] .prog{ background:var(--surface-2); }
 .prog i{ display:block; height:100%; border-radius:999px; background:linear-gradient(90deg,var(--brand),#7b86e6); transition:width .3s var(--ease); }
 .trow .tacts{ display:flex; gap:2px; justify-content:flex-end; opacity:0; transition:opacity var(--dur) var(--ease); }
-.trow:hover .tacts{ opacity:1; }
+.trow:hover .tacts,
+.trow:focus-within .tacts{ opacity:1; }
+/* no hover (touch or keyboard-only): keep both action overlays visible at rest */
+@media (hover: none) {
+  .card .card-acts{ opacity:1; transform:none; }
+  .trow .tacts{ opacity:1; }
+}
 .trow input[type=checkbox]{ width:15px; height:15px; accent-color:var(--brand); }
 
 .detail-grid{ display:grid; grid-template-columns:300px 1fr; gap:16px; }
