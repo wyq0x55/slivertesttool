@@ -50,20 +50,78 @@ test("SBS editor opens with showModal and closes with close(), not hidden", () =
   assert.doesNotMatch(sbsEditorJs, /\bdlg\.hidden\b/, "the keydown guard must use dialog.open");
 });
 
-test("SBS escape cancels natively, then runs the dirty-checking close()", () => {
-  const handler = sbsEditorJs.match(
-    /addEventListener\(\s*"cancel"\s*,\s*\(e\)\s*=>\s*\{[^}]*\}/,
+test("SBS escape is intercepted at keydown, before the UA close request", () => {
+  const cancel = sbsEditorJs.match(
+    /addEventListener\(\s*"cancel"\s*,\s*\(e\)\s*=>\s*\{[\s\S]*?\n      \}\)/,
   );
-  assert.ok(handler, "SBS dialog must listen for the native cancel event");
-  assert.match(handler[0], /preventDefault\(\)/, "cancel must be prevented so close() decides");
-  assert.match(handler[0], /close\(\)/, "the existing close() (dirty confirm) must run");
+  assert.ok(cancel, "SBS dialog must keep listening for the native cancel event");
+  assert.match(cancel[0], /preventDefault\(\)/, "cancel must be prevented so close() decides");
+  assert.match(cancel[0], /close\(\)/, "the existing close() (dirty confirm) must run");
 
-  // Esc must not be handled directly in the document keydown path any more.
-  assert.doesNotMatch(
-    sbsEditorJs,
-    /e\.key\s*===\s*"Escape"\)\s*\{\s*close\(\)/,
-    "document keydown must not call close() on Escape; cancel owns that path",
+  // Once a dialog's cancel has been prevented, Chromium delivers the next
+  // close request with cancelable:false and closes it anyway, so Escape must be
+  // stopped while it is still a keydown default action.
+  const handler = sbsEditorJs.match(
+    /addEventListener\(\s*"keydown"\s*,[\s\S]*?\},\s*true\s*\)/,
   );
+  assert.ok(handler, "the SBS keydown handler must be registered in the capture phase");
+  assert.match(handler[0], /e\.key === "Escape"/, "Escape must be handled explicitly");
+  assert.match(handler[0], /e\.preventDefault\(\)/, "Escape must prevent the native close request");
+  assert.match(handler[0], /close\(\)/, "Escape must go through the dirty-checking close()");
+  assert.match(
+    handler[0],
+    /confirmOpenAbove\(\)/,
+    "an open confirm dialog owns Escape; the editor must defer to it",
+  );
+  assert.match(sbsEditorJs, /dialog\[open\]/, "the guard must look for the confirm's <dialog>");
+  assert.match(sbsEditorJs, /confirmOpenAbove\(\)/, "the guard must be shared by keydown and cancel");
   // Ctrl/Cmd+S must be preserved.
   assert.match(sbsEditorJs, /e\.ctrlKey\s*\|\|\s*e\.metaKey/, "Ctrl/Cmd+S shortcut must remain");
+});
+test("backdrop dismissal needs one uninterrupted gesture on the backdrop", () => {
+  for (const [label, src, el] of [
+    ["version", projectModelsJs, "verModal"],
+    ["SBS", sbsEditorJs, "modal"],
+  ]) {
+    // A click target is the nearest common ancestor, so a press inside the
+    // panel released outside still clicks the full-viewport dialog.
+    assert.doesNotMatch(
+      src,
+      /\.addEventListener\("click", \(e\) => \{\s*if \(e\.target ===/,
+      `${label} dialog must not dismiss on a click-target check`,
+    );
+    assert.match(
+      src,
+      new RegExp(`backdropPress = e\\.target === ${el}`),
+      `${label} dialog must record where the pointer went down`,
+    );
+    assert.match(
+      src,
+      new RegExp(`pointerup", \\(e\\) => \\{\\s*if \\(backdropPress && e\\.target === ${el}\\)`),
+      `${label} dialog must dismiss only when the same pointer lifts on the backdrop`,
+    );
+    assert.match(src, /addEventListener\("pointercancel"/, `${label} must clear the gesture on pointercancel`);
+  }
+});
+
+test("version dialog restores focus to its trigger, even after save re-renders", () => {
+  assert.match(
+    projectModelsJs,
+    /openVersion\(models\.find\([\s\S]*?\), b\)/,
+    "the clicked button must be handed to openVersion as the trigger",
+  );
+  assert.match(projectModelsJs, /verTrigger = trigger \|\| null/);
+  assert.match(
+    projectModelsJs,
+    /verTrigger && verTrigger\.isConnected/,
+    "focus must go to the trigger when it is still in the document",
+  );
+  const save = projectModelsJs.match(/async function saveVersion\(\)\s*\{[\s\S]*?\n  \}/);
+  assert.ok(save, "saveVersion must exist");
+  assert.match(save[0], /const id = verTarget;/, "the model id must be captured before closeVersion()");
+  assert.match(
+    save[0],
+    /render\(data\.models \|\| \[\]\);[\s\S]*?lm-model-ver\[data-model-id=/,
+    "after render() focus must move to the replacement button",
+  );
 });

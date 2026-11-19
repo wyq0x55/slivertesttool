@@ -352,15 +352,31 @@
     document.querySelectorAll("[data-sbs-close]").forEach((el) =>
       el.addEventListener("click", close));
     const modal = $("lm-sbs-modal");
+    function confirmOpenAbove() {
+      // LMUI.confirm opens a native <dialog> in the top layer and owns Escape
+      // while it is up; the editor must not treat that Escape as its own.
+      return Array.prototype.some.call(
+        document.querySelectorAll("dialog[open]"), (d) => d !== modal);
+    }
     if (modal) {
       // Esc asks a native <dialog> to cancel and close immediately, which would
-      // skip the unsaved-changes confirm. Intercept cancel, then run close(),
-      // which closes the dialog only if the user agrees to discard.
-      modal.addEventListener("cancel", (e) => { e.preventDefault(); close(); });
-      // The dialog itself is the full-viewport overlay; clicks that land on it
-      // (rather than on the panel or its children) are backdrop clicks.
-      modal.addEventListener("click", (e) => {
-        if (e.target === modal) { close(); }
+      // skip the unsaved-changes confirm. Escape is intercepted at keydown time
+      // below, because once a cancel has been prevented Chromium delivers the
+      // next close request with cancelable:false and closes the dialog anyway.
+      // This listener remains as the fallback for other close requests.
+      modal.addEventListener("cancel", (e) => {
+        e.preventDefault();
+        if (!confirmOpenAbove()) { close(); }
+      });
+      // The dialog itself is the full-viewport overlay; a press counts as a
+      // backdrop press only when the same pointer also lifts on it, so a drag
+      // that crosses the panel edge cannot dismiss the editor.
+      let backdropPress = false;
+      modal.addEventListener("pointerdown", (e) => { backdropPress = e.target === modal; });
+      modal.addEventListener("pointercancel", () => { backdropPress = false; });
+      modal.addEventListener("pointerup", (e) => {
+        if (backdropPress && e.target === modal) { close(); }
+        backdropPress = false;
       });
     }
     document.addEventListener("keydown", (e) => {
@@ -371,12 +387,18 @@
         if (e.key === "Escape") { e.preventDefault(); }
         return;
       }
+      if (e.key === "Escape") {
+        if (confirmOpenAbove()) { return; }
+        e.preventDefault();
+        close();
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
         if (!state.dirty) { return; }
         save();
       }
-    });
+    }, true);
   }
 
   if (document.readyState === "loading") {
