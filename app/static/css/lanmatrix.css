@@ -610,8 +610,21 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
 .lm-db-grid th, .lm-db-grid td { white-space: nowrap; max-width: 320px; overflow: hidden;
   text-overflow: ellipsis; font-family: ui-monospace, Menlo, Consolas, monospace; }
 .lm-db-grid thead th { position: sticky; top: 0; z-index: 1; }
-.lm-db-sortable { cursor: pointer; user-select: none; }
-.lm-db-sortable:hover { background: var(--brand-soft); }
+/* Sortable headers: a native <button> fills the <th> so the whole cell is the
+   target, while the <th> itself stays non-interactive. The button supplies the
+   cell padding, so only sortable header cells drop theirs. */
+.lm-db-grid th.lm-db-sortable { padding: 0; user-select: none; }
+.lm-db-sort-btn { display: flex; align-items: center; gap: 6px; width: 100%;
+  min-height: 24px; margin: 0; padding: 11px 12px; border: 0; border-radius: 0;
+  background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.lm-db-sort-btn:hover { background: var(--brand-soft); }
+.lm-db-sort-btn:focus-visible { outline: 2px solid var(--brand-ring); outline-offset: -2px; }
+.lm-db-sort-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.lm-db-sort-icon { flex: none; width: 1em; text-align: center; color: currentColor; opacity: .55; }
+.lm-db-sort-icon::before { content: "↕"; }
+.lm-db-grid th[aria-sort="ascending"] .lm-db-sort-icon::before { content: "▲"; }
+.lm-db-grid th[aria-sort="descending"] .lm-db-sort-icon::before { content: "▼"; }
+.lm-db-grid th[aria-sort] .lm-db-sort-icon { opacity: 1; }
 .lm-db-pk { color: var(--warn-text); }
 .lm-db-opcol { white-space: nowrap; text-align: center; font-family: inherit; }
 .lm-db-opcol .btn { margin: 0 2px; }
