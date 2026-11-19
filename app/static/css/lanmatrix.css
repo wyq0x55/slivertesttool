@@ -612,6 +612,17 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
 .lm-db-grid thead th { position: sticky; top: 0; z-index: 1; }
 .lm-db-sortable { cursor: pointer; user-select: none; }
 .lm-db-sortable:hover { background: var(--brand-soft); }
+
+/* Sortable workspace headers are real buttons so keyboard and screen-reader
+   users can sort at all. Reset the UA button chrome; the caret stays part of
+   the label text, and the focus ring is inset because a table cell clips it. */
+.lm-sort-btn {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; min-height: 24px; padding: 0;
+  background: none; border: 0; font: inherit; color: inherit;
+  text-align: left; cursor: pointer; user-select: none;
+}
+.lm-sort-btn:focus-visible { outline: 2px solid var(--brand-ring); outline-offset: -2px; }
 .lm-db-pk { color: var(--warn-text); }
 .lm-db-opcol { white-space: nowrap; text-align: center; font-family: inherit; }
 .lm-db-opcol .btn { margin: 0 2px; }
