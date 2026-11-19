@@ -151,23 +151,57 @@
   // --- Tabs ------------------------------------------------------------- #
   // Mirrors the 管理台 pattern: active pane lives in `?tab=`, so the SQL console
   // is directly linkable and Back returns to 数据表 instead of leaving the page.
-  const DB_TABS = ["tables", "sql"];
-  const DB_DEFAULT_TAB = DB_TABS[0];
+  const DB_DEFAULT_TAB = "tables";
+  const dbTabList = root.querySelector('[role="tablist"]');
+  const dbTabs = Array.from(dbTabList.querySelectorAll(".lm-db-tab"));
+  const dbPanes = Array.from(root.querySelectorAll(".lm-db-pane"));
+
+  function setDbTabStop(target) {
+    dbTabs.forEach((tab) => { tab.tabIndex = tab === target ? 0 : -1; });
+  }
 
   function activateDbTab(which, opts) {
-    if (!DB_TABS.includes(which)) which = DB_DEFAULT_TAB;
-    document.querySelectorAll(".lm-db-tab").forEach((t) =>
-      t.classList.toggle("is-active", t.dataset.tab === which));
-    document.querySelectorAll(".lm-db-pane").forEach((p) => {
-      p.hidden = p.dataset.pane !== which;
+    const selected = dbTabs.find((tab) => tab.dataset.tab === which)
+      || dbTabs.find((tab) => tab.dataset.tab === DB_DEFAULT_TAB);
+    which = selected.dataset.tab;
+    const focused = document.activeElement;
+    dbTabs.forEach((tab) => {
+      tab.classList.toggle("is-active", tab === selected);
+      tab.setAttribute("aria-selected", String(tab === selected));
     });
+    setDbTabStop(selected);
+    if (dbTabList.contains(focused) || dbPanes.some((pane) =>
+      pane.dataset.pane !== which && pane.contains(focused))) {
+      selected.focus();
+    }
+    dbPanes.forEach((pane) => { pane.hidden = pane.dataset.pane !== which; });
     if (opts && opts.push && window.LMUrl) {
       LMUrl.set({ tab: which === DB_DEFAULT_TAB ? null : which });
     }
   }
 
-  document.querySelectorAll(".lm-db-tab").forEach((tab) => {
+  dbTabs.forEach((tab, index) => {
     tab.addEventListener("click", () => activateDbTab(tab.dataset.tab, { push: true }));
+    tab.addEventListener("keydown", (event) => {
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      let nextIndex;
+      switch (event.key) {
+        case "ArrowLeft": nextIndex = (index + dbTabs.length - 1) % dbTabs.length; break;
+        case "ArrowRight": nextIndex = (index + 1) % dbTabs.length; break;
+        case "Home": nextIndex = 0; break;
+        case "End": nextIndex = dbTabs.length - 1; break;
+        default: return;
+      }
+      event.preventDefault();
+      setDbTabStop(dbTabs[nextIndex]);
+      dbTabs[nextIndex].focus();
+    });
+  });
+
+  dbTabList.addEventListener("focusout", (event) => {
+    if (!dbTabList.contains(event.relatedTarget)) {
+      setDbTabStop(dbTabs.find((tab) => tab.getAttribute("aria-selected") === "true"));
+    }
   });
 
   if (window.LMUrl) {
