@@ -43,6 +43,7 @@ function loadPage(query = "") {
     return {
       dataset: { pane: name },
       hidden: attributes(`data-pane="${name}"`).has("hidden"),
+      contains: () => false,
       classList: {
         contains: (value) => classes.has(value),
         toggle: (value, on) => on ? classes.add(value) : classes.delete(value),
@@ -238,4 +239,28 @@ test("clicks select tabs and keep the ?tab= deep-link contract", async () => {
   const unknown = loadPage("?tab=bogus");
   await unknown.window.LMReady;
   assertSelected(unknown, 0); // unknown values fall back to the default tab
+});
+
+test("restoring a tab follows focus that would otherwise be left at tabindex -1", async () => {
+  const page = loadPage();
+  await page.window.LMReady;
+  const [users, license] = page.tabs;
+  users.focus();
+  license.dispatchEvent(new Event("click"));
+  press(license, "ArrowRight");
+  assert.equal(page.document.activeElement, page.tabs[2]);
+  assert.equal(license.tabIndex, -1, "arrowing leaves the selected tab off the tab stop");
+
+  page.history.go(-1);
+  assertSelected(page, 0);
+  assert.equal(page.document.activeElement, users,
+    "Back moves focus onto the restored tab instead of leaving it on tabindex -1");
+
+  const field = {};
+  page.panes[0].contains = (element) => element === field;
+  page.document.activeElement = field;
+  license.dispatchEvent(new Event("click"));
+  assert.equal(page.document.activeElement, license,
+    "selecting a tab pulls focus out of the pane it is about to hide");
+  assert.equal(page.panes[0].hidden, true);
 });

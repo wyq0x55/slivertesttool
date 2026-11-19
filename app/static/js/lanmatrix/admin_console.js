@@ -126,13 +126,23 @@
   function activateTab(name, opts) {
     opts = opts || {};
     if (!TABS.includes(name)) name = DEFAULT_TAB;
+    const focused = document.activeElement;
+    const panes = Array.from(root.querySelectorAll(".pane"));
     tabEls.forEach((t) => {
       const on = t.dataset.tab === name;
       t.classList.toggle("on", on);
       t.setAttribute("aria-selected", String(on));
     });
-    setTabStop(tabEls.find((t) => t.dataset.tab === name));
-    root.querySelectorAll(".pane").forEach((p) => {
+    const selected = tabEls.find((t) => t.dataset.tab === name);
+    // Selecting moves the roving stop onto the shown tab. Follow focus when it
+    // is still on another tab, or inside a pane this selection is about to
+    // hide — otherwise that control is left at tabindex=-1, or inside hidden.
+    setTabStop(selected);
+    if (selected && tabList && (tabList.contains(focused) || panes.some((pane) =>
+        pane.dataset.pane !== name && pane.contains && pane.contains(focused)))) {
+      selected.focus();
+    }
+    panes.forEach((p) => {
       const on = p.dataset.pane === name;
       p.classList.toggle("on", on);
       p.hidden = !on;
