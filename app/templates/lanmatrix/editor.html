@@ -80,6 +80,7 @@
   <form method="dialog" class="lm-card">
     <h3 id="lm-queue-dlg-title">队列测试 · 选择要入队的测试用例</h3>
     <div class="lm-queue-toolbar">
+      <label for="lm-queue-filter">筛选用例</label>
       <input type="search" id="lm-queue-filter" placeholder="按 test_id 或说明筛选…" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
       <button type="button" class="btn btn-sm" id="lm-queue-sel-all">全选</button>
       <button type="button" class="btn btn-sm" id="lm-queue-sel-none">清空</button>
@@ -134,7 +135,9 @@
         <option value="replace_all">整表替换</option>
       </select>
     </label>
-    <input type="file" id="lm-import-dialog-file" accept=".xlsx">
+    <label for="lm-import-dialog-file">Excel 文件（.xlsx）
+      <input type="file" id="lm-import-dialog-file" accept=".xlsx">
+    </label>
     <div class="lm-extract-io" id="lm-extract-io-block" hidden>
       <p class="lm-muted">或不上传文件，直接从手順中抽取入出力信号（自动去重，按名称 + 路径唯一并入信号池）：</p>
       <div class="lm-extract-io-src">
