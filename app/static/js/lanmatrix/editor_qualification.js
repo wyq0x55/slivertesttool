@@ -154,18 +154,25 @@
       form.method = "dialog";
       form.className = "lm-card";
       const heading = doc.createElement("h3");
+      heading.id = "lm-signal-list-title";
       heading.textContent = "默认信号集配置 (default_signal_list)";
+      dialog.setAttribute("aria-labelledby", heading.id);
       const desc = doc.createElement("p");
+      desc.id = "lm-signal-list-help";
       desc.className = "lm-muted";
       desc.textContent = "每行填写一个观测信号名。当测试用例与模型目录均未提供 output.txt 时自动落盘，避免全量信号采样导致磁盘膨胀。";
       const textarea = doc.createElement("textarea");
       textarea.id = "lm-default-signal-list";
+      textarea.setAttribute("aria-describedby", desc.id);
       textarea.rows = 8;
       if (textarea.style) {
         textarea.style.width = "100%";
         textarea.style.fontFamily = "monospace";
       }
       textarea.placeholder = "例如：\nv_speed\nu1_brake_lamp";
+      const label = doc.createElement("label");
+      label.htmlFor = textarea.id;
+      label.textContent = "观测信号列表";
       const status = doc.createElement("p");
       status.id = "lm-signal-list-status";
       status.className = "lm-muted";
@@ -189,6 +196,7 @@
       menu.appendChild(saveBtnEl);
       form.appendChild(heading);
       form.appendChild(desc);
+      form.appendChild(label);
       form.appendChild(textarea);
       form.appendChild(status);
       form.appendChild(menu);
