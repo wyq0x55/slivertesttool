@@ -174,21 +174,29 @@ class El {
   addEventListener(type, fn) {
     (this._listeners[type] = this._listeners[type] || []).push(fn);
   }
+  contains(node) {
+    for (let cur = node; cur; cur = cur.parent) if (cur === this) return true;
+    return false;
+  }
+  focus() { this.ownerDocument.activeElement = this; }
+  blur() { if (this.ownerDocument.activeElement === this) this.ownerDocument.activeElement = null; }
 }
 
 function setup() {
   const ownerDocument = {
     host: null,
+    activeElement: null,
     announcements: [],
     announce(region, text) { this.announcements.push({ region, text }); },
   };
   const host = new El(ownerDocument, "div", {});
   ownerDocument.host = host;
   const window = {};
-  vm.runInNewContext(fs.readFileSync(pagerPath, "utf8"), { window });
+  vm.runInNewContext(fs.readFileSync(pagerPath, "utf8"), { window, document: ownerDocument });
   return {
     window,
     host,
+    document: ownerDocument,
     announcements: ownerDocument.announcements,
     click(target) {
       for (const fn of host._listeners.click || []) fn({ type: "click", target });
@@ -302,4 +310,18 @@ test("a one-page list hides the control, stays silent, and slice/offset keep the
   assert.equal(dom.host.hidden, true);
   assert.equal(dom.host.querySelector("[data-pager-status]"), status, "the live node survives hiding");
   assert.equal(pager.pageSize(), 20);
+});
+
+test("collapsing to one page moves focus out of the hidden control", () => {
+  const dom = setup();
+  const pager = dom.window.LMPager.create({ host: dom.host, pageSize: 20 });
+  pager.setTotal(60);
+  const next = dom.host.querySelector('[data-pg="next"]');
+  next.focus();
+  assert.equal(dom.document.activeElement, next);
+
+  pager.setTotal(20);
+
+  assert.equal(dom.host.hidden, true);
+  assert.equal(dom.document.activeElement, null, "focus does not stay in hidden content");
 });

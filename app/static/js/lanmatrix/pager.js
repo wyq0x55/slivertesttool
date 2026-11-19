@@ -78,7 +78,13 @@
       var last = pages();
       // One page of results needs no controls.
       host.hidden = total <= pageSize;
-      if (host.hidden) return;
+      if (host.hidden) {
+        // Replacing the children used to drop focus. Hiding the host in place
+        // does not, so a refresh that collapses the list must move it out.
+        var focused = document.activeElement;
+        if (focused && focused !== document.body && host.contains(focused)) focused.blur();
+        return;
+      }
       if (!ui) { build(last); return; }
       var pageText = "第 " + page + " / " + last + " 页";
       var rangeText = ((page - 1) * pageSize + 1) + "–" +
