@@ -1381,3 +1381,37 @@ textarea.lmui-input{ resize:vertical; min-height:76px; }
   .topbar > .spacer{ display:none; }
   .lm-settings-tabs{ overflow-x:auto; white-space:nowrap; }
 }
+
+/* ===== FORCED COLORS · FOCUS VISIBILITY =================================
+   Forced-colors mode (Windows High Contrast and equivalents) discards
+   box-shadow, which is the app's only focus indicator, so every rule above
+   that pairs `outline:none` with a box-shadow ring needs an outline again.
+   System colors are the only palette that survives this mode; `Highlight`
+   is the user's selection/accent color, so it stands out from the
+   CanvasText borders drawn around controls. */
+@media (forced-colors: active){
+  :where(input,select,textarea,button,a,[tabindex]):focus-visible,
+  .search input:focus,
+  input:focus,select:focus,textarea:focus,
+  .stepper:focus-within,
+  .roleselect:focus,
+  .addbar .search input:focus,
+  .selbox:focus,
+  .mcard.selectable:focus-visible,
+  .ipt:focus,
+  .lm-db-sql:focus,
+  .lm-db-row-form .lm-db-field:focus,
+  .lmui-input:focus{
+    outline:3px solid Highlight;
+    outline-offset:2px;
+  }
+  /* Surfaces that fill or clip their parent draw the ring inside the box. */
+  .cv-canvas-wrap canvas:focus-visible,
+  .lm-steps-json-body:focus-within,
+  .lm-sbs-editor:focus-within{
+    outline:3px solid Highlight;
+    outline-offset:-3px;
+  }
+  /* Mirror the light/dark design: one ring around the group, not the field. */
+  .stepper input:focus{ outline:none; }
+}
