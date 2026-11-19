@@ -726,12 +726,13 @@
   });
   document.getElementById("lm-ai-d-close").addEventListener("click", closeDetail);
   document.getElementById("lm-ai-f-scenario").addEventListener("change", load);
-  document.querySelectorAll("#lm-ai-f-seg button").forEach(function (b) {
-    b.addEventListener("click", function () {
-      document.querySelectorAll("#lm-ai-f-seg button").forEach(function (x) {
-        x.classList.remove("on");
+  document.querySelectorAll("#lm-ai-f-seg button").forEach(function (button) {
+    button.addEventListener("click", function () {
+      document.querySelectorAll("#lm-ai-f-seg button").forEach(function (candidate) {
+        var selected = candidate === button;
+        candidate.classList.toggle("on", selected);
+        candidate.setAttribute("aria-pressed", String(selected));
       });
-      b.classList.add("on");
       load();
     });
   });
