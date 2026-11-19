@@ -133,7 +133,7 @@
     const histBtn = $("lm-sbs-history-toggle");
     if (histBtn) { histBtn.setAttribute("aria-expanded", "false"); }
     $("lm-sbs-title").textContent = "：" + modelName;
-    modal.hidden = false;
+    if (!modal.open) { modal.showModal(); }
     setStatus("载入中…");
     if ($("lm-sbs-save")) { $("lm-sbs-save").disabled = true; }
     loadBundle();  // in parallel with the .sbs request below
@@ -181,7 +181,7 @@
       if (!ok) { return; }
     }
     const modal = $("lm-sbs-modal");
-    if (modal) { modal.hidden = true; }
+    if (modal && modal.open) { modal.close(); }
     if (state.editor) { try { state.editor.destroy(); } catch (e) { /* ignore */ } }
     state.editor = null;
   }
@@ -351,11 +351,26 @@
     if (histBtn) { histBtn.addEventListener("click", toggleHistory); }
     document.querySelectorAll("[data-sbs-close]").forEach((el) =>
       el.addEventListener("click", close));
+    const modal = $("lm-sbs-modal");
+    if (modal) {
+      // Esc asks a native <dialog> to cancel and close immediately, which would
+      // skip the unsaved-changes confirm. Intercept cancel, then run close(),
+      // which closes the dialog only if the user agrees to discard.
+      modal.addEventListener("cancel", (e) => { e.preventDefault(); close(); });
+      // The dialog itself is the full-viewport overlay; clicks that land on it
+      // (rather than on the panel or its children) are backdrop clicks.
+      modal.addEventListener("click", (e) => {
+        if (e.target === modal) { close(); }
+      });
+    }
     document.addEventListener("keydown", (e) => {
-      const modal = $("lm-sbs-modal");
-      if (!modal || modal.hidden) { return; }
-      if (e.isComposing || e.keyCode === 229) { return; }
-      if (e.key === "Escape") { close(); }
+      const dlg = $("lm-sbs-modal");
+      if (!dlg || !dlg.open) { return; }
+      if (e.isComposing || e.keyCode === 229) {
+        // Esc ends an IME composition; it must not also dismiss the dialog.
+        if (e.key === "Escape") { e.preventDefault(); }
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
         if (!state.dirty) { return; }

@@ -228,7 +228,7 @@
   function closeVersion() {
     verTarget = null;
     verTargetName = "";
-    if (verModal) { verModal.hidden = true; }
+    if (verModal && verModal.open) { verModal.close(); }
     verError("");
   }
 
@@ -240,7 +240,7 @@
     $("lm-ver-input").value = model.version || "";
     $("lm-ver-note").value = model.version_note || "";
     verError("");
-    verModal.hidden = false;
+    if (!verModal.open) { verModal.showModal(); }
     const input = $("lm-ver-input");
     input.focus();
     input.select();
@@ -276,8 +276,11 @@
       if (e.isComposing || e.keyCode === 229) return;
       if (e.key === "Enter") { e.preventDefault(); saveVersion(); }
     });
-    verModal.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") { e.stopPropagation(); closeVersion(); }
+    // Native <dialog>: Esc fires "cancel", and a click on the backdrop targets
+    // the dialog element itself (the panel covers the rest). Both dismiss it.
+    verModal.addEventListener("cancel", (e) => { e.preventDefault(); closeVersion(); });
+    verModal.addEventListener("click", (e) => {
+      if (e.target === verModal) { closeVersion(); }
     });
   }
 
