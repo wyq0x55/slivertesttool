@@ -83,10 +83,13 @@
   }
 
   function buildNotificationItem(n) {
-    const el = document.createElement(n.link_url ? "a" : "div");
+    const el = document.createElement("div");
     el.className = "lm-notif-item" + (n.is_read ? "" : " unread");
-    if (n.link_url) el.setAttribute("href", String(n.link_url));
     el.dataset.id = String(n.id == null ? "" : n.id);
+
+    const content = document.createElement(n.link_url ? "a" : "div");
+    content.className = "lm-notif-content";
+    if (n.link_url) content.setAttribute("href", String(n.link_url));
 
     const ico = document.createElement("span");
     ico.className = "lm-notif-ico";
@@ -113,7 +116,7 @@
     main.appendChild(title);
 
     if (n.body) {
-      const body = document.createElement("div");
+      const body = document.createElement("span");
       body.className = "lm-notif-body";
       body.textContent = String(n.body);
       main.appendChild(body);
@@ -124,7 +127,8 @@
     time.textContent = ago(n.created_at);
     main.appendChild(time);
 
-    el.append(ico, main);
+    content.append(ico, main);
+    el.appendChild(content);
     // Archived rows are already filed; offering "×" again would suggest a
     // delete this control does not perform.
     if (!n.archived) {
