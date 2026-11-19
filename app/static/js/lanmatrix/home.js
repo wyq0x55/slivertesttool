@@ -151,7 +151,7 @@
   function applyUrlFilters() {
     if (!window.LMUrl) return;
     const all = LMUrl.all();
-    $("lm-h-status").value = all.status || "";
+    setStatus(all.status || "");
     $("lm-h-mine").checked = all.mine === "1";
     $("lm-h-text").value = all.q || "";
     // On first load the <option>s do not exist yet, so park the value; on a
@@ -167,9 +167,6 @@
       $("lm-h-project").value = "";
       pendingProject = null;
     }
-    document.querySelectorAll("#lm-h-seg button").forEach((b) => {
-      b.classList.toggle("on", (b.dataset.status || "") === (all.status || ""));
-    });
     syncKpiSelection();
   }
 
@@ -769,10 +766,18 @@
     typing = setTimeout(onFilterChange, 250);
   }
 
+  // The segmented control is one group of mutually exclusive filters, so each
+  // button is a toggle: aria-pressed carries the state assistive technology
+  // reads, while .on paints it. Both are written together here so the two can
+  // never disagree -- applyUrlFilters (deep link + popstate) and setStatus's
+  // callers (seg click, KPI shortcut, mine shortcut) all land on this function.
   function setStatus(status) {
-    $("lm-h-status").value = status || "";
+    const effective = status || "";
+    $("lm-h-status").value = effective;
     document.querySelectorAll("#lm-h-seg button").forEach((b) => {
-      b.classList.toggle("on", (b.dataset.status || "") === (status || ""));
+      const on = (b.dataset.status || "") === effective;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-pressed", String(on));
     });
   }
 
