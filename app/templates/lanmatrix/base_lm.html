@@ -166,16 +166,17 @@
               <b>通知</b>
               <button type="button" class="btn ghost small" id="lm-notif-readall">全部已读</button>
             </div>
-            {# Two scopes, not one endless stream. Without a history tab the only
+            {# Two scopes, not one endless stream. Without a history scope the only
                way to stop an item from reappearing is to delete it, so people
                delete evidence they may still need. #}
-            <div class="lm-notif-tabs" id="lm-notif-tabs" role="tablist">
-              <button type="button" class="lm-notif-tab is-active" role="tab"
+            <div class="lm-notif-tabs" id="lm-notif-tabs" role="group"
+                 aria-label="通知范围">
+              <button type="button" class="lm-notif-tab is-active"
                       data-scope="unread" id="lm-notif-tab-unread"
-                      aria-selected="true">未读 <span data-count="unread"></span></button>
-              <button type="button" class="lm-notif-tab" role="tab"
+                      aria-pressed="true">未读 <span data-count="unread"></span></button>
+              <button type="button" class="lm-notif-tab"
                       data-scope="history" id="lm-notif-tab-history"
-                      aria-selected="false">历史 <span data-count="history"></span></button>
+                      aria-pressed="false">历史 <span data-count="history"></span></button>
             </div>
             <div class="lm-notif-list" id="lm-notif-list"></div>
             <div class="lm-notif-empty" id="lm-notif-empty" hidden>暂无通知</div>
