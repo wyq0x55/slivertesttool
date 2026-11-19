@@ -512,10 +512,15 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .jsteps{ display:flex; flex-direction:column; border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden; }
 .jstep{ border-bottom:1px solid var(--border); }
 .jstep:last-child{ border-bottom:none; }
-.jhead{ display:flex; align-items:center; gap:12px; padding:11px 14px; cursor:pointer;
+.jhead{ display:flex; align-items:center; gap:12px; padding:11px 14px;
   font-family:var(--mono); font-size:12.5px; transition:background var(--dur) var(--ease); }
 .jhead:hover{ background:var(--surface-2); }
-.jhead:focus-visible{ outline:2px solid var(--brand-ring); outline-offset:-2px; }
+/* The disclosure is a real button (the curve action is its sibling), so keep
+   the pre-existing row typography and let the native button reset handle the
+   rest. Focus uses the shared button ring, including forced-colors mode. */
+.jhead-toggle{ flex:1; min-width:0; align-self:stretch; display:flex; align-items:center; gap:12px;
+  margin:0; padding:0; border:0; background:none; color:inherit; font:inherit;
+  text-align:left; cursor:pointer; }
 .jchev{ width:15px; height:15px; color:var(--text-3); flex:0 0 15px; transition:transform var(--dur) var(--ease); }
 .jstep.open .jchev{ transform:rotate(90deg); }
 .jhead .ji{ flex:0 0 auto; color:var(--text-3); min-width:54px; }
