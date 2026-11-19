@@ -344,7 +344,14 @@
     const n = selectedKeys().length;
     $("lm-batch-status").textContent = `已选 ${n} 个`;
     const vis = visibleTasks();
-    $("lm-check-all").checked = vis.length > 0 && vis.every((t) => selected.has(t.task_id));
+    const checkAll = $("lm-check-all");
+    const total = vis.length;
+    const ticked = vis.filter((t) => selected.has(t.task_id)).length;
+    // Both properties every time: .checked does not clear a previously mixed
+    // state, so a full selection after a partial one would keep painting the
+    // indeterminate dash unless it is written explicitly.
+    checkAll.checked = total > 0 && ticked === total;
+    checkAll.indeterminate = ticked > 0 && ticked < total;
   }
 
   function batchDownload() {

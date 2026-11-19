@@ -336,7 +336,14 @@
     const st = $("lm-h-batch-status");
     if (st) st.textContent = n ? `已选 ${n} 个 Silver 运行` : "";
     const all = $("lm-h-check-all");
-    if (all) all.checked = taskRows.length > 0 && taskRows.every((t) => selected.has(t.task_id));
+    if (all) {
+      const total = taskRows.length;
+      // Both properties every time: .checked does not clear a previously mixed
+      // state, so a full selection after a partial one would keep painting the
+      // indeterminate dash unless it is written explicitly.
+      all.checked = total > 0 && n === total;
+      all.indeterminate = n > 0 && n < total;
+    }
     // 删除所选 only appears when at least one selected row lives in a project
     // the user may delete in — task.delete is project_admin only, and the
     // workspace mixes projects with different roles.
