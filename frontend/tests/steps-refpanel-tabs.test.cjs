@@ -92,7 +92,8 @@ test("each pane is a tabpanel labelled by its tab", () => {
   assert.equal(jsonPane.get("role"), "tabpanel");
   assert.equal(jsonPane.get("aria-labelledby"), "lm-refpanel-tab-json");
   assert.equal(jsonPane.get("data-pane"), "json");
-  assert.equal(jsonPane.get("tabindex"), "0", "read-only content is reachable by keyboard");
+  assert.equal(jsonPane.has("tabindex"), false,
+    "the JSON pane hosts a textarea, so the panel itself must not be a tab stop");
   assert.ok(jsonPane.has("hidden"), "the JSON pane starts hidden");
   const { html } = tablist();
   [refPane, jsonPane].forEach((pane) => {
@@ -135,6 +136,11 @@ class FakeTab extends EventTarget {
   focus() { doc.activeElement = this; }
 }
 
+class FakeTabList extends EventTarget {
+  constructor(tabs) { super(); this._tabs = tabs; }
+  contains(node) { return this._tabs.indexOf(node) !== -1; }
+}
+
 function makeEditor() {
   const panes = [
     { dataset: { pane: "ref" }, hidden: false },
@@ -144,6 +150,7 @@ function makeEditor() {
   ed.activeTab = "ref";
   ed.panelEl = { hidden: false, querySelectorAll: () => panes };
   ed.panelTabs = [new FakeTab("ref"), new FakeTab("json")];
+  ed.panelTabList = new FakeTabList(ed.panelTabs);
   ed.panelCollapseBtn = null;
   ed.refPanel = null;
   ed.widths = {};
@@ -192,6 +199,19 @@ test("activating a tab syncs aria-selected, the tab stop and the panes", () => {
   assert.ok(!ref.classList.contains("is-on"));
   assert.equal(panes[0].hidden, true);
   assert.equal(panes[1].hidden, false);
+});
+
+test("leaving the tablist returns the tab stop to the selected tab", () => {
+  const { ed, tabs } = makeEditor();
+  const [ref, json] = tabs;
+  press(ref, "ArrowRight");
+  assert.equal(json.tabIndex, 0, "arrowing moves the tab stop");
+  assert.equal(ref.getAttribute("aria-selected"), "true", "arrowing does not select");
+  ed.panelTabList.dispatchEvent(Object.assign(new Event("focusout"), { relatedTarget: json }));
+  assert.equal(json.tabIndex, 0, "moving between tabs keeps the arrowed tab stop");
+  ed.panelTabList.dispatchEvent(Object.assign(new Event("focusout"), { relatedTarget: null }));
+  assert.equal(ref.tabIndex, 0, "the selected tab is the tab stop again");
+  assert.equal(json.tabIndex, -1);
 });
 
 test("arrow keys move focus and the tab stop without activating", () => {

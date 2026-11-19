@@ -174,6 +174,9 @@
       this.panelTabs = this.panelEl
         ? Array.prototype.slice.call(this.panelEl.querySelectorAll(".lm-refpanel-tab"))
         : [];
+      this.panelTabList = this.panelEl
+        ? this.panelEl.querySelector(".lm-refpanel-tabs")
+        : null;
       this.panelCollapseBtn = dialog.querySelector("#lm-refpanel-collapse");
       this.panelResizer = dialog.querySelector("#lm-refpanel-resizer");
       this.activeTab = "ref";
@@ -309,6 +312,16 @@
           self.panelTabs[nextIndex].focus();
         });
       });
+      // Roving tabindex follows focus while arrowing, so put it back on the
+      // selected tab when focus leaves the group. Otherwise the next Tab into
+      // the strip lands on a tab that is not the one actually shown.
+      if (this.panelTabList) {
+        this.panelTabList.addEventListener("focusout", (event) => {
+          if (self.panelTabList.contains(event.relatedTarget)) return;
+          const selected = self.panelTabs.find((b) => b.getAttribute("aria-selected") === "true");
+          self._setTabStop(selected || null);
+        });
+      }
       if (this.panelCollapseBtn) {
         this.panelCollapseBtn.addEventListener("click",
           (e) => { e.preventDefault(); self._collapsePanel(); });
