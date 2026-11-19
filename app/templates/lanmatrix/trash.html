@@ -10,7 +10,7 @@
   {{ settings_tabs(project_id, "trash") }}
   <div class="page-head">
     <div class="ttl">
-      <h1>回收站</h1>
+      <h1 id="lm-trash-page-title">回收站</h1>
       <!-- The retention policy is stated on the page, not only per row: a user
            who lands here needs to know the rules before scanning the list.
            Filled in from the server's own RETENTION_DAYS so the copy cannot
@@ -36,7 +36,7 @@
 
   <p id="lm-trash-info" class="lm-muted" role="status" aria-live="polite">加载中…</p>
 
-  <div class="tablecard"><div style="overflow-x:auto">
+  <div class="tablecard"><div style="overflow-x:auto" tabindex="0" role="region" aria-labelledby="lm-trash-page-title">
   <table class="lm-table lm-trash-table">
     <thead>
       <tr>

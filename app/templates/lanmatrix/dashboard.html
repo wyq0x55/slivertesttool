@@ -89,11 +89,11 @@
        Clang/LLVM is useful; one that proposes nothing only costs the wait. #}
     <div class="lm-chart-card wide" id="ut-repair-card">
       <div class="lm-chart-head">
-        <h3>模型修订效果</h3>
+        <h3 id="lm-ut-repair-title">模型修订效果</h3>
         <span class="muted">每轮调用模型的结果；"有效"指产出了进入 Clang/LLVM 执行的候选</span>
       </div>
       <div class="ut-repair-sum" id="ut-repair-sum"></div>
-      <div style="overflow-x:auto">
+      <div style="overflow-x:auto" tabindex="0" role="region" aria-labelledby="lm-ut-repair-title">
         <table class="dt ut-table ut-repair-table">
           <thead><tr><th>模型</th><th>作业</th><th>轮次</th><th>有效</th><th>无进展</th>
             <th>其他未产出</th><th>输入 token/轮</th><th>缓存命中</th><th>平均耗时</th></tr></thead>
