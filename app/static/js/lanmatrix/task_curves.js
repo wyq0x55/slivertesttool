@@ -1063,8 +1063,15 @@
     if (item) item.focus();
   }
   function closeMenu(restore) {
+    // Clicking a non-focusable area blurs the menuitem, so by the time the
+    // document click listener runs the focus is either still inside the menu
+    // or has fallen back to the page. Both mean it was in content that is
+    // about to hide. A click that landed on another control is left alone.
+    const active = document.activeElement;
+    const lostToPage = !active || active === document.body;
+    const inside = menuList.contains(active);
     menuList.hidden = true; menuBtn.setAttribute("aria-expanded", "false");
-    if (restore) menuBtn.focus();
+    if (restore || inside || lostToPage) menuBtn.focus();
   }
   function stepMenu(key) {
     const items = menuItems();
@@ -1079,6 +1086,7 @@
   }
   menuBtn.addEventListener("click", () => { if (menuOpen()) closeMenu(true); else openMenu(); });
   menuBtn.addEventListener("keydown", event => {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       const items = menuItems();
@@ -1088,10 +1096,13 @@
     }
   });
   menuList.addEventListener("keydown", event => {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
     if (event.key === "Escape") { event.preventDefault(); closeMenu(true); return; }
     // Tab leaves the menu; closing from here and refocusing the trigger keeps focus
     // out of hidden content and lets the browser continue the Tab order from it.
+    // Shift+Tab must still take this path, so Shift is not part of the guard above.
     if (event.key === "Tab") { closeMenu(true); return; }
+    if (event.shiftKey) return;
     if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
       event.preventDefault(); stepMenu(event.key);
     }

@@ -69,6 +69,10 @@ function makeElement(id, props) {
       this.listeners.get(type).push(handler);
     },
     focus() { activeDocument.activeElement = this; },
+    contains(node) {
+      for (let cur = node; cur; cur = cur.parent) if (cur === this) return true;
+      return false;
+    },
     closest(selector) {
       for (let node = this; node; node = node.parent) if (matches(node, selector)) return node;
       return null;
@@ -275,16 +279,30 @@ test("selecting a menuitem closes the menu and still runs the download action", 
   assert.equal(elements.get("cv-status").textContent, "没有可导出的泳道。");
 });
 
-test("an outside click closes the menu without stealing focus", () => {
-  const { document, trigger, menu, items } = load();
+test("an outside click on plain page area returns focus to the trigger", () => {
+  const { document, trigger, menu } = load();
   fire(trigger, "click");
-  const outside = makeElement("outside");
+  // Clicking a non-focusable area blurs the menuitem before the document
+  // listener runs; focus must not stay in the menu that is about to hide.
+  document.activeElement = document.body;
 
-  fire(document, "click", { target: outside });
+  fire(document, "click", { target: makeElement("outside") });
 
   assert.equal(menu.hidden, true);
   assert.equal(expanded(trigger), "false");
-  assert.equal(document.activeElement, items[0], "focus stays where the user clicked");
+  assert.equal(document.activeElement, trigger, "focus leaves the hidden menu");
+});
+
+test("an outside click that lands focus elsewhere is not stolen back", () => {
+  const { document, trigger, menu } = load();
+  fire(trigger, "click");
+  const link = makeElement("other-link");
+  document.activeElement = link;
+
+  fire(document, "click", { target: link });
+
+  assert.equal(menu.hidden, true);
+  assert.equal(document.activeElement, link, "the user's own focus target wins");
 });
 
 test("a click inside the menu container does not close it", () => {
