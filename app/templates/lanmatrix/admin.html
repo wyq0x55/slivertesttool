@@ -45,14 +45,14 @@
     </div>
   </div>
 
-  <div class="tabs" role="tablist">
-    <button class="tab on" data-tab="users">账号管理</button>
-    <button class="tab" data-tab="license">授权 / 并发</button>
-    <button class="tab" data-tab="tasks">任务管理</button>
+  <div class="tabs" role="tablist" aria-label="管理员控制台分区">
+    <button type="button" class="tab on" id="lm-admin-tab-users" data-tab="users" role="tab" aria-selected="true" tabindex="0">账号管理</button>
+    <button type="button" class="tab" id="lm-admin-tab-license" data-tab="license" role="tab" aria-selected="false" tabindex="-1">授权 / 并发</button>
+    <button type="button" class="tab" id="lm-admin-tab-tasks" data-tab="tasks" role="tab" aria-selected="false" tabindex="-1">任务管理</button>
   </div>
 
   <!-- Accounts -->
-  <section class="pane on" data-pane="users">
+  <section class="pane on" data-pane="users" role="tabpanel" aria-labelledby="lm-admin-tab-users">
     <div class="tablecard">
       <div class="tc-head">
         <h3>账号（Submitter / 管理员）</h3>
@@ -70,7 +70,7 @@
   </section>
 
   <!-- License -->
-  <section class="pane" data-pane="license" hidden>
+  <section class="pane" data-pane="license" role="tabpanel" aria-labelledby="lm-admin-tab-license" hidden>
     <div class="lic-grid">
       <div class="gauge-card">
         <div class="ring" id="lm-ring" style="--p:0">
@@ -108,7 +108,7 @@
   </section>
 
   <!-- Tasks -->
-  <section class="pane" data-pane="tasks" hidden>
+  <section class="pane" data-pane="tasks" role="tabpanel" aria-labelledby="lm-admin-tab-tasks" hidden>
     <div class="tablecard">
       <div class="tc-head">
         <h3>全部任务</h3>
