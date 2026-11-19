@@ -40,7 +40,9 @@ function makeDialog() {
       listeners.get(type).push(fn);
     },
     fire(type, event) {
-      (listeners.get(type) || []).forEach((fn) => fn(event));
+      // A real pointer event always carries `button`; the cases below describe
+      // primary-button gestures unless they say otherwise.
+      (listeners.get(type) || []).forEach((fn) => fn(Object.assign({ button: 0 }, event)));
     },
   };
 }
@@ -110,4 +112,25 @@ test("the dialog no longer dismisses from a bare click on the dialog", () => {
 test("ui.js wires the helper instead of a click handler", () => {
   assert.match(source, /wireBackdropDismiss\(dlg, reject\)/);
   assert.doesNotMatch(source, /addEventListener\("click", function \(e\) \{\s*if \(e\.target === dlg\)/);
+});
+test("a secondary button on the backdrop does not dismiss", () => {
+  // `click` only fires for the primary button, so the old listener ignored a
+  // right-click, middle-click or pen barrel press. Pointer events fire for
+  // every button and must be filtered the same way.
+  const { dialog, dismissals } = harness();
+  const panel = { tag: "form" };
+
+  dialog.fire("pointerdown", { target: dialog, pointerId: 1, button: 2 });
+  dialog.fire("pointerup", { target: dialog, pointerId: 1, button: 2 });
+  assert.equal(dismissals(), 0, "a right-click on the backdrop must not cancel");
+
+  dialog.fire("pointerdown", { target: dialog, pointerId: 1, button: 1 });
+  dialog.fire("pointerup", { target: dialog, pointerId: 1, button: 1 });
+  assert.equal(dismissals(), 0, "a middle-click on the backdrop must not cancel");
+
+  // A right-click mid-gesture must not swallow the armed primary press.
+  dialog.fire("pointerdown", { target: dialog, pointerId: 7, button: 0 });
+  dialog.fire("pointerup", { target: panel, pointerId: 8, button: 2 });
+  dialog.fire("pointerup", { target: dialog, pointerId: 7, button: 0 });
+  assert.equal(dismissals(), 1, "the primary gesture still completes");
 });

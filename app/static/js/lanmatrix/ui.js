@@ -74,13 +74,20 @@
    */
   function wireBackdropDismiss(dlg, onDismiss) {
     var pressId = null;
+    // Only the primary button may dismiss. `click` was implicitly limited to
+    // button 0; pointer events fire for every button, so a right-click,
+    // middle-click or pen barrel press on the backdrop would otherwise cancel
+    // a half-filled prompt. A non-primary press must also leave an armed
+    // primary gesture alone, or a right-click mid-press would swallow it.
     dlg.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0) return;
       pressId = e.target === dlg ? e.pointerId : null;
     });
     dlg.addEventListener("pointercancel", function () {
       pressId = null;
     });
     dlg.addEventListener("pointerup", function (e) {
+      if (e.button !== 0) return;
       var dismiss =
         pressId !== null && pressId === e.pointerId && e.target === dlg;
       pressId = null;
