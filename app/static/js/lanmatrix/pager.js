@@ -35,6 +35,7 @@
     var onChange = typeof options.onChange === "function" ? options.onChange : null;
     var page = 1;
     var total = 0;
+    var ui = null; // control skeleton, built once so its status node survives renders
 
     function pages() {
       return Math.max(1, Math.ceil(total / pageSize));
@@ -44,21 +45,48 @@
       return Math.min(pages(), Math.max(1, n || 1));
     }
 
+    function build(last) {
+      var from = (page - 1) * pageSize + 1;
+      var to = Math.min(total, page * pageSize);
+      // The page number is a persistent live region: a screen reader only
+      // announces changes made to a node that was already in the DOM, so it
+      // is created once here (with its initial text, which reads as initial
+      // content rather than an update) and every later render edits this same
+      // node. The range is a sibling outside the live region so a poll that
+      // only changes the totals does not trigger an announcement.
+      host.innerHTML =
+        '<button type="button" class="btn small" data-pg="prev"' +
+        (page <= 1 ? " disabled" : "") + ">上一页</button>" +
+        '<span class="lm-pager-info">' +
+        '<span role="status" aria-live="polite" aria-atomic="true" data-pager-status>第 ' +
+        page + " / " + last + " 页</span>" +
+        " · " +
+        '<span data-pager-range>' + from + "–" + to + " / " + total +
+        " 条</span></span>" +
+        '<button type="button" class="btn small" data-pg="next"' +
+        (page >= last ? " disabled" : "") + ">下一页</button>";
+      ui = {
+        prev: host.querySelector('[data-pg="prev"]'),
+        next: host.querySelector('[data-pg="next"]'),
+        status: host.querySelector("[data-pager-status]"),
+        range: host.querySelector("[data-pager-range]"),
+      };
+    }
+
     function render() {
       if (!host) return;
       var last = pages();
       // One page of results needs no controls.
       host.hidden = total <= pageSize;
-      if (host.hidden) { host.replaceChildren(); return; }
-      var from = (page - 1) * pageSize + 1;
-      var to = Math.min(total, page * pageSize);
-      host.innerHTML =
-        '<button type="button" class="btn small" data-pg="prev"' +
-        (page <= 1 ? " disabled" : "") + ">上一页</button>" +
-        '<span class="lm-pager-info">第 ' + page + " / " + last +
-        " 页 · " + from + "–" + to + " / " + total + " 条</span>" +
-        '<button type="button" class="btn small" data-pg="next"' +
-        (page >= last ? " disabled" : "") + ">下一页</button>";
+      if (host.hidden) return;
+      if (!ui) { build(last); return; }
+      var pageText = "第 " + page + " / " + last + " 页";
+      var rangeText = ((page - 1) * pageSize + 1) + "–" +
+        Math.min(total, page * pageSize) + " / " + total + " 条";
+      if (ui.status.textContent !== pageText) ui.status.textContent = pageText;
+      if (ui.range.textContent !== rangeText) ui.range.textContent = rangeText;
+      ui.prev.disabled = page <= 1;
+      ui.next.disabled = page >= last;
     }
 
     function goto(next, silent) {
