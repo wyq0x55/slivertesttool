@@ -36,7 +36,8 @@ function dom(template) {
         toggle(name, on) { if (on) classes.add(name); else classes.delete(name); },
       },
       addEventListener(type, callback) { this.listeners[type] = callback; },
-      setAttribute(name, value) { this[name] = value; },
+      getAttribute(name) { return attrs[name] ?? null; },
+      setAttribute(name, value) { attrs[name] = String(value); this[name] = value; },
       appendChild(child) { this.children.push(child); return child; },
       querySelector() { return null; },
       querySelectorAll(selector) {
@@ -61,6 +62,7 @@ function dom(template) {
         for (const match of value.matchAll(/<(input|button)\b([^>]*)>/g)) {
           const attrs2 = attributes(match[2]);
           const child = element(attrs2.id || "", attrs2);
+          child.tagName = match[1].toUpperCase();
           child.checked = /\bchecked\b/.test(match[2]);
           this.children.push(child);
         }
@@ -78,6 +80,8 @@ function dom(template) {
     node.disabled = /\bdisabled\b/.test(match[2]);
     nodes.set(node.id, node);
   }
+  const statusGroup = nodes.get("lm-ai-f-seg");
+  if (statusGroup) statusGroup.innerHTML = template.match(/<div\b[^>]* id="lm-ai-f-seg"[^>]*>([\s\S]*?)<\/div>/)[1];
   const templateIds = new Set(nodes.keys());
   const get = (id) => {
     if (id === "lm-ai-settings") return null;
@@ -97,6 +101,7 @@ function dom(template) {
     },
     querySelectorAll(selector) {
       if (selector === "[data-ai-scenarios]") return [...nodes.values()].filter((node) => node.dataset.aiScenarios);
+      if (selector === "#lm-ai-f-seg button") return statusGroup?.children.filter((node) => node.tagName === "BUTTON") || [];
       if (selector.includes("#lm-ai-gen-panel")) return [...nodes.values()].filter((node) =>
         node.id.startsWith("lm-ai-gen-") && ["INPUT", "SELECT", "TEXTAREA"].includes(node.tagName));
       return [];
@@ -795,6 +800,40 @@ test("normalizing a prototype-like step property cannot ignore a dirty value", a
   await harness.ready();
   await harness.click();
   assert.equal(harness.calls.length, 0);
+});
+
+test("draft status buttons keep one pressed filter and preserve list queries", async () => {
+  const queries = [];
+  const harness = draftHarness({ listAiDrafts: async (query) => { queries.push(plain(query)); return []; } });
+  const group = harness.get("lm-ai-f-seg");
+  const buttons = harness.document.querySelectorAll("#lm-ai-f-seg button");
+  const all = buttons.find((button) => button.dataset.status === "");
+  const pending = buttons.find((button) => button.dataset.status === "pending");
+  const assertSelection = (selected) => {
+    for (const button of buttons) {
+      assert.equal(button.getAttribute("aria-pressed"), String(button === selected), button.dataset.status);
+      assert.equal(button.classList.contains("on"), button === selected, button.dataset.status);
+    }
+  };
+
+  assert.equal(group.getAttribute("role"), "group");
+  assert.ok(group.getAttribute("aria-label"));
+  assert.ok(all && pending);
+  assertSelection(all);
+  pending.listeners.click();
+  assertSelection(pending);
+  const scenario = harness.get("lm-ai-f-scenario");
+  scenario.value = "procedure";
+  await scenario.listeners.change();
+  assertSelection(pending);
+  all.listeners.click();
+  assertSelection(all);
+  assert.deepEqual(queries, [
+    { project_id: "1" },
+    { project_id: "1", status: "pending" },
+    { project_id: "1", scenario: "procedure", status: "pending" },
+    { project_id: "1", scenario: "procedure" },
+  ]);
 });
 
 test("draft list escapes document errors and distinguishes queued from generating", async () => {

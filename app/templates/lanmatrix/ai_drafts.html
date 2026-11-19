@@ -126,14 +126,14 @@
       <option value="lib">lib 编写</option>
       <option value="failure">失败分析</option>
     </select>
-    <div class="segmented" id="lm-ai-f-seg" role="tablist">
-      <button type="button" class="on" data-status="">全部</button>
-      <button type="button" data-status="running">生成中</button>
-      <button type="button" data-status="pending">待审</button>
-      <button type="button" data-status="approved">已通过</button>
-      <button type="button" data-status="rejected">已驳回</button>
-      <button type="button" data-status="error">生成失败</button>
-      <button type="button" data-status="cancelled">已取消</button>
+    <div class="segmented" id="lm-ai-f-seg" role="group" aria-label="按草稿状态筛选">
+      <button type="button" class="on" data-status="" aria-pressed="true">全部</button>
+      <button type="button" data-status="running" aria-pressed="false">生成中</button>
+      <button type="button" data-status="pending" aria-pressed="false">待审</button>
+      <button type="button" data-status="approved" aria-pressed="false">已通过</button>
+      <button type="button" data-status="rejected" aria-pressed="false">已驳回</button>
+      <button type="button" data-status="error" aria-pressed="false">生成失败</button>
+      <button type="button" data-status="cancelled" aria-pressed="false">已取消</button>
     </div>
   </div>
 
