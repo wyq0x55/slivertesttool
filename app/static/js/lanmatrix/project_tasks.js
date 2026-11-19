@@ -329,13 +329,32 @@
       }));
   }
 
+  // Sole writer of aria-sort. It goes on the ``th`` (a columnheader), not on
+  // the button inside it: that is where assistive technology looks for it, and
+  // an inactive column must have no attribute at all -- aria-sort="none" on
+  // every other header is noise.
+  function applySortState() {
+    document.querySelectorAll(".lm-tasks-table thead th[data-sort]").forEach((th) => {
+      if (th.getAttribute("data-sort") === sortKey) {
+        th.setAttribute("aria-sort", sortDir === 1 ? "ascending" : "descending");
+      } else {
+        th.removeAttribute("aria-sort");
+      }
+    });
+  }
+
   function updateSortIndicators() {
     document.querySelectorAll(".lm-tasks-table thead th[data-sort]").forEach((th) => {
       const key = th.getAttribute("data-sort");
-      const base = th.textContent.replace(/[ \u25b2\u25bc]+$/, "");
-      th.textContent = key === sortKey ? base + (sortDir === 1 ? " \u25b2" : " \u25bc") : base;
+      // The header's text lives in the button now (the th is just its scope
+      // cell), so the arrow has to move there too.
+      const label = th.querySelector(".lm-sort-btn") || th;
+      const base = label.textContent.replace(/[ \u25b2\u25bc]+$/, "");
+      label.textContent = key === sortKey
+        ? base + (sortDir === 1 ? " \u25b2" : " \u25bc") : base;
       th.classList.toggle("lm-sorted", key === sortKey);
     });
+    applySortState();
   }
   function selectedKeys() {
     return Array.from(selected).filter((k) => allTasks.some((t) => t.task_id === k));
@@ -1251,10 +1270,13 @@
   $("lm-batch-cancel").addEventListener("click", batchCancel);
   $("lm-batch-retest").addEventListener("click", batchRetest);
   $("lm-batch-delete").addEventListener("click", batchDelete);
-  document.querySelectorAll(".lm-tasks-table thead th[data-sort]").forEach((th) => {
-    th.style.cursor = "pointer";
-    th.addEventListener("click", () => {
-      const key = th.getAttribute("data-sort");
+  // The sort button, not the th, takes the handler: a native button is
+  // focusable and fires on Enter/Space, so the sort works without a pointer.
+  // The thead is static in the template, so the button survives every row
+  // repaint and keeps focus -- no focus management is needed here.
+  document.querySelectorAll(".lm-tasks-table thead th[data-sort] .lm-sort-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const key = btn.getAttribute("data-sort");
       // Same rule as the workspace list: keys whose interesting end is the high
       // one start descending (待审核 before 已通过, latest finish first).
       if (key === sortKey) sortDir = -sortDir;
