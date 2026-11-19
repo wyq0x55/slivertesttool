@@ -58,15 +58,20 @@
 .lm-notif-list { max-height: 420px; overflow-y: auto; }
 
 .lm-notif-item {
-  display: flex;
-  gap: 10px;
-  padding: 10px 12px;
+  position: relative;
   border-bottom: 1px solid var(--border);
   color: var(--text);
-  text-decoration: none;
   font-size: 13px;
   transition: background var(--dur) var(--ease);
 }
+.lm-notif-content, .lm-notif-item.muted { padding: 10px 12px; }
+.lm-notif-content {
+  display: flex;
+  gap: 10px;
+  color: inherit;
+  text-decoration: none;
+}
+.lm-notif-content:not(:last-child) { padding-right: 40px; }
 .lm-notif-item:last-child { border-bottom: 0; }
 .lm-notif-item:hover { background: var(--surface-2); }
 
@@ -131,15 +136,13 @@
   border-top: 1px solid var(--line);
 }
 
-/* Per-row archive control. Hidden until hover so the list stays readable, but
-   always focusable for keyboard users. */
-.lm-notif-item { position: relative; }
+/* Per-row archive control. */
 .lm-notif-x {
   position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 18px;
-  height: 18px;
+  top: 3px;
+  right: 3px;
+  min-width: 24px;
+  min-height: 24px;
   padding: 0;
   border: 0;
   border-radius: 4px;
@@ -148,10 +151,21 @@
   font-size: 13px;
   line-height: 18px;
   cursor: pointer;
-  opacity: 0;
 }
-.lm-notif-item:hover .lm-notif-x,
-.lm-notif-x:focus-visible { opacity: 1; }
+.lm-notif-content:focus-visible,
+.lm-notif-x:focus-visible {
+  outline: 2px solid var(--brand-text);
+  outline-offset: -2px;
+  box-shadow: none;
+}
+@media (hover: hover) {
+  .lm-notif-x { opacity: 0; }
+  .lm-notif-item:hover .lm-notif-x,
+  .lm-notif-item:focus-within .lm-notif-x { opacity: 1; }
+}
+@media (any-pointer: coarse) {
+  .lm-notif-x { min-width: 32px; min-height: 32px; opacity: 1; }
+}
 .lm-notif-x:hover { background: var(--surface-2); color: var(--text-1); }
 
 /* --------------------------------------------------------------------------
