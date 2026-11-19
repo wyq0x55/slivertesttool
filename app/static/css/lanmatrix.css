@@ -918,19 +918,3 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
   padding: 0 5px;
 }
 .lm-sbs-rev-act { display: flex; gap: 4px; }
-
-/* ── Workspace sortable table headers ───────────────────────────────────────
-   The home task table used to sort from a bare click on the <th>, so a keyboard
-   user could not sort at all and no screen reader heard the sort direction.
-   Each cell now holds a real <button>, so the whole cell stays the target and
-   the control is reachable and operable from the keyboard. The caret remains
-   part of the label text; the focus ring is inset because a table cell clips an
-   outward outline. Placement here keeps this block away from the admin-DB
-   header rules it deliberately does not share. */
-.lm-sort-btn {
-  display: flex; align-items: center; gap: 6px;
-  width: 100%; min-height: 24px; padding: 0;
-  background: none; border: 0; font: inherit; color: inherit;
-  text-align: left; cursor: pointer; user-select: none;
-}
-.lm-sort-btn:focus-visible { outline: 2px solid var(--brand-ring); outline-offset: -2px; }
