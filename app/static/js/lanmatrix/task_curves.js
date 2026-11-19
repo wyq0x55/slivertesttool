@@ -1055,14 +1055,18 @@
   // arrow/Home/End keys move within it, Escape closes and restores focus, and Tab
   // closes without being trapped so focus continues from the trigger.
   const menuBtn = $("cv-export"), menuList = $("cv-export-menu");
-  const menuItems = () => Array.from(menuList.querySelectorAll('[role="menuitem"]'));
+  // Only items the user can actually reach take part in the arrow sequence. The
+  // download entry stays in the DOM while it has no address or no permission, so
+  // without this filter a wrapped step lands on it and focus() becomes a no-op.
+  const menuItems = () => Array.from(menuList.querySelectorAll('[role="menuitem"]'))
+    .filter(item => !item.hidden && !item.disabled && item.getAttribute("aria-disabled") !== "true");
   const menuOpen = () => !menuList.hidden;
   function openMenu(first) {
     menuList.hidden = false; menuBtn.setAttribute("aria-expanded", "true");
     const item = first || menuItems()[0];
     if (item) item.focus();
   }
-  function closeMenu(restore) {
+  function closeMenu(restore, clickTarget) {
     // Clicking a non-focusable area blurs the menuitem, so by the time the
     // document click listener runs the focus is either still inside the menu
     // or has fallen back to the page. Both mean it was in content that is
@@ -1070,8 +1074,13 @@
     const active = document.activeElement;
     const lostToPage = !active || active === document.body;
     const inside = menuList.contains(active);
+    // Safari leaves the focus where it was when a <button> is clicked, so a
+    // click on another control also reads as "lost to the page" there. That
+    // control owns the focus decision; do not pull it back to the trigger.
+    const clickedControl = clickTarget && clickTarget.closest
+      && clickTarget.closest("button, a, input, select, textarea, label, summary");
     menuList.hidden = true; menuBtn.setAttribute("aria-expanded", "false");
-    if (restore || inside || lostToPage) menuBtn.focus();
+    if (restore || inside || (lostToPage && !clickedControl)) menuBtn.focus();
   }
   function stepMenu(key) {
     const items = menuItems();
@@ -1102,6 +1111,12 @@
     // out of hidden content and lets the browser continue the Tab order from it.
     // Shift+Tab must still take this path, so Shift is not part of the guard above.
     if (event.key === "Tab") { closeMenu(true); return; }
+    // Buttons activate on Enter and Space by themselves; a <a role="menuitem">
+    // does not, and Space would scroll the page instead.
+    const active = document.activeElement;
+    if ((event.key === " " || event.key === "Enter") && active && active.tagName === "A") {
+      event.preventDefault(); active.click(); return;
+    }
     if (event.shiftKey) return;
     if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
       event.preventDefault(); stepMenu(event.key);
@@ -1114,7 +1129,7 @@
     if (picked.dataset.export === "csv") exportCsv(); else exportImage(picked.dataset.export);
   });
   document.addEventListener("click", event => {
-    if (!event.target.closest(".cv-menu") && menuOpen()) closeMenu(false);
+    if (!event.target.closest(".cv-menu") && menuOpen()) closeMenu(false, event.target);
   });
   $("cv-search").addEventListener("input", tree);
   document.querySelectorAll(".cv-chip").forEach(b => b.addEventListener("click", () => { filter = b.dataset.filter; syncFilterChips(); tree(); }));

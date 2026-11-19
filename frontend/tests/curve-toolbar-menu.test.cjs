@@ -68,7 +68,14 @@ function makeElement(id, props) {
       if (!this.listeners.has(type)) this.listeners.set(type, []);
       this.listeners.get(type).push(handler);
     },
-    focus() { activeDocument.activeElement = this; },
+    focus() {
+      // A display:none element cannot take focus: mimic the browser instead of
+      // recording focus on an item the user could never reach, or a broken
+      // arrow sequence would still look green here.
+      for (let node = this; node; node = node.parent) if (node.hidden) return;
+      activeDocument.activeElement = this;
+    },
+    click() { fire(this, "click"); },
     contains(node) {
       for (let cur = node; cur; cur = cur.parent) if (cur === this) return true;
       return false;
@@ -154,10 +161,10 @@ function load() {
   trigger.setAttribute("aria-expanded", "false");
   // Items are queried lazily, so attaching them after the script runs is enough.
   menu.children = [
-    makeElement("mi-png", { dataset: { export: "png" }, parent: menu, tabIndex: -1 }),
-    makeElement("mi-svg", { dataset: { export: "svg" }, parent: menu, tabIndex: -1 }),
-    makeElement("mi-csv", { dataset: { export: "csv" }, parent: menu, tabIndex: -1 }),
-    makeElement("cv-download", { parent: menu, tabIndex: -1 }),
+    makeElement("mi-png", { tagName: "BUTTON", dataset: { export: "png" }, parent: menu, tabIndex: -1 }),
+    makeElement("mi-svg", { tagName: "BUTTON", dataset: { export: "svg" }, parent: menu, tabIndex: -1 }),
+    makeElement("mi-csv", { tagName: "BUTTON", dataset: { export: "csv" }, parent: menu, tabIndex: -1 }),
+    makeElement("cv-download", { tagName: "A", href: "#", hidden: true, parent: menu, tabIndex: -1 }),
   ];
   for (const item of menu.children) item.attributes.set("role", "menuitem");
 
@@ -180,6 +187,9 @@ test("the export dropdown declares a proper menu button", () => {
   const items = menuMarkup.match(/role="menuitem"[^>]*/g) || [];
   assert.equal(items.length, 4, "four menuitems stay in the export menu");
   for (const item of items) assert.match(item, /tabindex="-1"/, "menuitems leave the Tab order to the trigger");
+  // Until load() resolves the curve data, the download link still points at "#";
+  // shipping it hidden keeps Enter/Space from jumping the page to the top.
+  assert.match(template, /<a role="menuitem" tabindex="-1" id="cv-download" href="#" hidden>/);
 });
 
 test("source keeps the menu keyboard handling and mirrors aria-expanded", () => {
@@ -207,8 +217,37 @@ test("clicking the trigger opens the menu and focuses the first item", () => {
   assert.equal(document.activeElement, trigger, "closing returns focus to the trigger");
 });
 
+test("items that are hidden or disabled stay out of the arrow sequence", () => {
+  const { document, trigger, items } = load();
+  const press = key => fire(document.activeElement, "keydown", { key });
+  fire(trigger, "click");
+
+  press("End");
+  assert.equal(document.activeElement, items[2], "the hidden download link is not a target");
+  press("ArrowDown");
+  assert.equal(document.activeElement, items[0], "wrapping skips the hidden link");
+
+  items[2].disabled = true;
+  press("End");
+  assert.equal(document.activeElement, items[1], "a disabled item is skipped too");
+});
+
+test("Space on a menu link opens it instead of scrolling the page", () => {
+  const { document, trigger, menu, items } = load();
+  items[3].hidden = false;
+  fire(trigger, "click");
+  fire(document.activeElement, "keydown", { key: "End" });
+  assert.equal(document.activeElement, items[3]);
+
+  const space = fire(items[3], "keydown", { key: " " });
+  assert.equal(space.defaultPrevented, true, "Space does not scroll the page");
+  assert.equal(menu.hidden, true, "activating an item closes the menu");
+  assert.equal(document.activeElement, trigger, "focus returns to the trigger");
+});
+
 test("ArrowDown/ArrowUp cycle with wraparound and Home/End jump", () => {
   const { document, trigger, items } = load();
+  items[3].hidden = false;
   const press = key => fire(document.activeElement, "keydown", { key });
   fire(trigger, "click");
 
