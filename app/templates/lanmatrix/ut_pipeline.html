@@ -8,7 +8,7 @@
 <div class="content lm-ut" data-project="{{ project_id }}">
   <div class="page-head">
     <div class="ttl">
-      <h1>实施一览</h1>
+      <h1 id="lm-ut-page-title">实施一览</h1>
       <p>项目索引中的待测函数。勾选后加入队列：ut-agent 生成 → 项目执行器校验 → 候选与证据 → 人工审核</p>
     </div>
     <div class="head-actions">
@@ -45,7 +45,7 @@
   </div>
 
   <div class="tablecard">
-    <div style="overflow-x:auto">
+    <div style="overflow-x:auto" tabindex="0" role="region" aria-labelledby="lm-ut-page-title">
       <table class="dt ut-table lm-tasks-table">
         <thead>
           <tr>

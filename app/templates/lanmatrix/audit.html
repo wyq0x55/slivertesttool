@@ -8,7 +8,7 @@
   {{ settings_tabs(project_id, "audit") }}
   <div class="page-head">
     <div class="ttl">
-      <h1>审计日志</h1>
+      <h1 id="lm-audit-page-title">审计日志</h1>
       <p>项目内的配置、导入、执行与审核操作记录</p>
     </div>
     <div class="head-actions">
@@ -58,7 +58,7 @@
 
   <p id="lm-audit-info" class="lm-muted" role="status" aria-live="polite">加载中…</p>
 
-  <div class="tablecard"><div style="overflow-x:auto">
+  <div class="tablecard"><div style="overflow-x:auto" tabindex="0" role="region" aria-labelledby="lm-audit-page-title">
   <table class="dt lm-table">
     <thead>
       <tr><th>时间</th><th>操作</th><th>对象</th><th>操作人</th><th>字段变更</th></tr>

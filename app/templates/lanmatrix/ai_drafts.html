@@ -6,7 +6,7 @@
 <div class="content lm-ai-drafts" data-project="{{ project_id }}">
   <div class="page-head">
     <div class="ttl">
-      <h1>AI 草稿</h1>
+      <h1 id="lm-ai-page-title">AI 草稿</h1>
       <p>测试资产生成（观点 / 手顺 / SBS / lib / 失败分析）——AI 只出草稿，人工在这里审核落库</p>
     </div>
     <div class="head-actions">
@@ -138,7 +138,7 @@
   </div>
 
   <div class="tablecard">
-    <div style="overflow-x:auto">
+    <div style="overflow-x:auto" tabindex="0" role="region" aria-labelledby="lm-ai-page-title">
       <table class="dt">
         <thead>
           <tr>

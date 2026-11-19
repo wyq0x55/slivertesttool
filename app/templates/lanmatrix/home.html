@@ -100,7 +100,7 @@
 
     <div class="pane on" id="lm-pane-tasks" role="tabpanel" aria-labelledby="lm-tab-tasks" tabindex="0">
     <div class="lm-sec-head">
-      <h2>最近任务</h2>
+      <h2 id="lm-h-recent-title">最近任务</h2>
       <span class="muted" id="lm-home-count"></span>
     </div>
 
@@ -153,7 +153,7 @@
        alone does not say where the row lives. Rows are rendered by the shared
        LMTaskRow module, so both pages stay in step. #}
     <div class="tablecard" id="lm-h-runs-card">
-      <div style="overflow-x:auto">
+      <div style="overflow-x:auto" tabindex="0" role="region" aria-labelledby="lm-h-recent-title">
         <table class="dt lm-tasks-table">
           <thead>
             <tr>
@@ -235,7 +235,7 @@
     </div>
 
     <div class="tablecard" id="lm-h-rv-card" hidden>
-      <div style="overflow-x:auto">
+      <div style="overflow-x:auto" tabindex="0" role="region" aria-labelledby="lm-h-rv-title">
         <table class="lm-rv-table">
           <thead>
             <tr>

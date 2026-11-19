@@ -12,7 +12,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
         返回我的工作台
       </a>
-      <h1>任务/运行</h1>
+      <h1 id="lm-ut-tasks-title">任务/运行</h1>
     <p>单元测试作业：生成、Clang/LLVM 执行与覆盖率校验、模型补例，最终停在人工审核</p>
     </div>
     <div class="head-actions">
@@ -61,7 +61,7 @@
   <div class="ut-batch-info" id="ut-batch-info" hidden></div>
 
   <div class="tablecard">
-    <div style="overflow-x:auto">
+    <div style="overflow-x:auto" tabindex="0" role="region" aria-labelledby="lm-ut-tasks-title">
       <table class="dt ut-table lm-tasks-table">
         <thead>
           <tr>
@@ -179,8 +179,8 @@
   </div>
 
   <div class="panel" style="margin-top:20px">
-    <div class="panel-bar"><h4>版本历史 <span class="submuted">· 每个候选的来源、执行与机器判定</span></h4></div>
-    <div style="overflow-x:auto">
+    <div class="panel-bar"><h4 id="lm-ut-attempts-title">版本历史 <span class="submuted">· 每个候选的来源、执行与机器判定</span></h4></div>
+    <div style="overflow-x:auto" tabindex="0" role="region" aria-labelledby="lm-ut-attempts-title">
       <table class="dt ut-table ut-attempts lm-tasks-table">
         <thead><tr><th>#</th><th>来源</th><th>机器判定</th><th>主要问题</th><th>覆盖率</th><th>说明</th><th>时间</th><th class="lm-row-actions"></th></tr></thead>
         <tbody id="ut-d-attempts"></tbody>
