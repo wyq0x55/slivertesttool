@@ -61,6 +61,34 @@
   }
 
   /**
+   * Pressing the backdrop cancels, matching the rest of the console.
+   *
+   * It must be ONE uninterrupted gesture that both starts and ends on the
+   * dialog itself. A press that begins inside the panel (selecting text in the
+   * prompt field, dragging out of the input) and is released over the backdrop
+   * still dispatches a click whose target is the dialog, and must not dismiss
+   * a type-to-confirm or a half-filled prompt.
+   *
+   * @param {HTMLDialogElement} dlg
+   * @param {function} onDismiss
+   */
+  function wireBackdropDismiss(dlg, onDismiss) {
+    var pressId = null;
+    dlg.addEventListener("pointerdown", function (e) {
+      pressId = e.target === dlg ? e.pointerId : null;
+    });
+    dlg.addEventListener("pointercancel", function () {
+      pressId = null;
+    });
+    dlg.addEventListener("pointerup", function (e) {
+      var dismiss =
+        pressId !== null && pressId === e.pointerId && e.target === dlg;
+      pressId = null;
+      if (dismiss) onDismiss();
+    });
+  }
+
+  /**
    * Core dialog builder shared by confirm/prompt/alert.
    *
    * @param {object} o
@@ -213,10 +241,7 @@
       dlg.addEventListener("close", function () {
         if (!settled) reject();
       });
-      // Click on the backdrop = cancel, matching the rest of the console.
-      dlg.addEventListener("click", function (e) {
-        if (e.target === dlg) reject();
-      });
+      wireBackdropDismiss(dlg, reject);
 
       if (isCritical) {
         okBtn.disabled = true;
