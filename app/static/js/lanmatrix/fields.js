@@ -225,23 +225,50 @@
     return true;
   }
 
+  // Keyboard reorder keys are queued and applied one at a time. Every applied
+  // move ends with commitOrder(), which reloads and rebuilds all rows, so a
+  // second move running against the pre-reload DOM would diff the wrong order
+  // and could persist it. A queued job therefore stores only the field id and
+  // the key; the row and its neighbours are resolved again when the job runs.
+  const REORDER_KEYS = {
+    ArrowUp: (from) => from - 1,
+    ArrowDown: (from) => from + 1,
+    Home: () => 0,
+    End: (from, list) => list.length - 1,
+  };
+  const moveQueue = [];
+  let pumpingMoves = false;
+
   function onGripKey(ev, grip) {
     const key = ev.key;
-    if (key !== "ArrowUp" && key !== "ArrowDown" && key !== "Home" && key !== "End") return;
+    const target = REORDER_KEYS[key];
+    if (!target) return;
     if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
     ev.preventDefault(); // a handled reorder key must not scroll the page
     const tr = grip.closest("tr");
-    if (!tr) return;
-    const list = orderedRows();
-    const from = list.indexOf(tr);
-    if (from < 0) return;
-    let to = from;
-    if (key === "ArrowUp") to = from - 1;
-    else if (key === "ArrowDown") to = from + 1;
-    else if (key === "Home") to = 0;
-    else to = list.length - 1;
-    if (to === from || to < 0 || to >= list.length) return; // ends are no-ops
-    reorderField(tr, to);
+    if (!tr || !tr.dataset.id) return;
+    moveQueue.push({ id: Number(tr.dataset.id), key: key });
+    pumpMoves();
+  }
+
+  async function pumpMoves() {
+    if (pumpingMoves) return;
+    pumpingMoves = true;
+    try {
+      while (moveQueue.length) {
+        const job = moveQueue.shift();
+        const tr = orderedRows().find((r) => Number(r.dataset.id) === job.id);
+        if (!tr) continue; // the row was deleted while the move was queued
+        const list = orderedRows();
+        const from = list.indexOf(tr);
+        if (from < 0) continue;
+        const to = REORDER_KEYS[job.key](from, list);
+        if (to === from || to < 0 || to >= list.length) continue; // ends are no-ops
+        await reorderField(tr, to);
+      }
+    } finally {
+      pumpingMoves = false;
+    }
   }
 
   // Drag-to-reorder, registered ONCE on the persistent <tbody>. Rows are

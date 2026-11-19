@@ -475,3 +475,41 @@ test("fields: ArrowUp/Down/Home/End reorder, announce, and persist once per key"
   for (const handler of fx.rows.listeners.get("mousedown") || []) handler({ target: grip });
   assert.equal(fx.rowOf(3).draggable, true);
 });
+test("fields: repeated keys queue behind the in-flight commit", async () => {
+  const fx = await open([
+    makeField(1, "字段A", 0), makeField(2, "字段B", 1), makeField(3, "字段C", 2),
+  ]);
+
+  // Two presses land in the same task, before the first commit's reload. The
+  // second move has to wait for that reload: every commit rebuilds the rows and
+  // re-derives display_order from the DOM, so two overlapping commits diff
+  // against different DOM snapshots and can persist an order the table never
+  // shows. Track how many PATCHes are in flight at once to prove serialization.
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const realPatch = fx.api.patchField.bind(fx.api);
+  fx.api.patchField = async (...args) => {
+    inFlight += 1;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    try {
+      return await realPatch(...args);
+    } finally {
+      inFlight -= 1;
+    }
+  };
+
+  const loadsBefore = fx.api.listCalls;
+  press(fx.gripOf(1), "ArrowDown");
+  press(fx.gripOf(1), "ArrowDown");
+  await settle();
+
+  assert.equal(maxInFlight, 1, "a second reorder must not patch while the first is still saving");
+  assert.deepEqual(fx.ids(), [2, 3, 1], "both presses apply, in order, to the reloaded rows");
+  assert.deepEqual(fx.orders(), [2, 3, 1]);
+  assert.equal(fx.api.listCalls - loadsBefore, 2, "one reload per applied move");
+  assert.deepEqual(
+    fx.api.patches.filter((p) => p.id === 1).map((p) => p.display_order),
+    [1, 2],
+  );
+  assert.match(fx.status.textContent, /第 3 位/);
+});
