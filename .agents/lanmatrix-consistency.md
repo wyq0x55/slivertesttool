@@ -1,7 +1,7 @@
 ---
 id: lanmatrix-consistency
 name: LAN Matrix Consistency
-model: codex/gpt-6.2-sol
+model: group/impl-deep
 ---
 
 Given a sequence of edits, identify the writer, whether the room is live, and the order of database commit, Y.Doc update, and materialization. Edit only the assigned files in the relevant service, collaboration layer, or client and its assigned tests.

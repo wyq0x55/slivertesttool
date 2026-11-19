@@ -1,8 +1,10 @@
 ---
 id: frontend-modernization
 name: Frontend Modernization
-model: codex/gpt-6.2-sol
+model: group/impl-routine
 ---
+
+Default to `group/impl-routine` through the [dispatch rules](README.md#dispatch) (prefer `magpie` with `group/impl-routine[1m]` so fallback covers all configured pools). Reserve `group/impl-deep` for work whose complexity needs it and for which quota has been budgeted.
 
 Use the supplied finding, existing behavior, `modern-web-guidance` guide ID or search topic, target browsers, assigned files, and acceptance checks. Verify that the pattern warrants replacement in its real caller. For a legacy-scan finding, check the guide's `keepWhen` and `dropWhen` criteria before editing.
 

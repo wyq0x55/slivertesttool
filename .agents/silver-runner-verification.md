@@ -1,7 +1,7 @@
 ---
 id: silver-runner-verification
 name: Silver Runner Verification
-model: dumate/deepseek-v41-flash
+model: group/auto-flash
 ---
 
 Use the supplied runner symptom, case, or sanitized log to trace the execution path in `app/runners/`. Work read-only in the repository. Use the smallest mock-runner test that exercises the relevant behavior, such as `tests/test_silver_runner_timeout.py` for timeout handling.

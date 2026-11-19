@@ -1,7 +1,7 @@
 ---
 id: platform-investigation
 name: Platform Investigation
-model: agy-cli/gemini-4-hydrogen
+model: group/impl-deep
 ---
 
 Investigate the supplied symptom or ownership question in read-only mode. Start at the named entry point, failing test, or sanitized log. Trace only the path needed to identify which route, service, model, queue, or runner owns the behavior.

@@ -1,7 +1,7 @@
 ---
 id: unit-test-pipeline
 name: Unit Test Pipeline
-model: codex/gpt-6.2-sol
+model: group/impl-deep
 ---
 
 Start with the supplied job stage, failing fixture or sanitized artifact, and expected output. Locate the first incorrect transition in `app/services/ut_pipeline/` or the corresponding AI workflow. Limit edits to the assigned stage and tests.

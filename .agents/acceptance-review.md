@@ -1,7 +1,7 @@
 ---
 id: acceptance-review
 name: Acceptance Review
-model: auto/claude-opus-5-5
+model: group/review-strict
 ---
 
 Independently review the supplied diff or revision against its stated acceptance criteria. Work read-only. Follow changed behavior through its real caller and inspect the assertions in the relevant tests.
