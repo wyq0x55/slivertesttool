@@ -78,7 +78,7 @@
     <div class="toolbar">
       <div class="search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>
-        <input type="search" id="lm-f-text" placeholder="搜索任务 / test id…" autocomplete="off">
+        <input type="search" id="lm-f-text" placeholder="搜索任务 / test id…" aria-label="搜索任务 / test id…" autocomplete="off">
       </div>
       <select id="lm-f-submitter" class="selbox" title="按提交者筛选">
         <option value="">全部提交者</option>
@@ -252,7 +252,7 @@
       <p class="cv-status" id="cv-status" role="status" aria-live="polite">尚未读取 output.csv。</p>
       <div class="cv-body" id="cv-body" hidden>
         <aside class="cv-signals" aria-label="变量">
-          <input id="cv-search" type="search" placeholder="搜索变量名或显示名…" autocomplete="off">
+          <input id="cv-search" type="search" placeholder="搜索变量名或显示名…" aria-label="搜索变量名或显示名…" autocomplete="off">
           <div class="cv-filters" role="group" aria-label="变量筛选">
             <button type="button" class="cv-chip" data-filter="judged" aria-pressed="true">判定涉及</button>
             <button type="button" class="cv-chip" data-filter="changed" aria-pressed="false">有变化</button>

@@ -23,9 +23,9 @@
     <div class="row">
       <div class="search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>
-        <input id="lm-mem-search" placeholder="搜索用户名 / 姓名，或从下方直接选择…" autocomplete="off">
+        <input id="lm-mem-search" placeholder="搜索用户名 / 姓名，或从下方直接选择…" aria-label="搜索用户名 / 姓名，或从下方直接选择…" autocomplete="off">
       </div>
-      <select id="lm-mem-role" class="selbox">
+      <select id="lm-mem-role" class="selbox" aria-label="成员角色">
         <option value="reader">reader（只读）</option>
         <option value="reviewer">reviewer（评审）</option>
         <option value="editor" selected>editor（编辑）</option>
@@ -79,10 +79,10 @@
        that no rule claims; without it the chain ends at the project owner. #}
     <div class="lm-rv-policy-row" style="align-items:center">
       <span>
-        <strong>默认审核人（兜底）</strong>
+        <strong id="lm-rv-pol-reviewer-name">默认审核人（兜底）</strong>
         <em>未被上述区分规则覆盖、且行未指定审核人时由 TA 审核；留空则回退到项目负责人。</em>
       </span>
-      <select id="lm-rv-pol-reviewer" class="input" style="max-width:220px">
+      <select id="lm-rv-pol-reviewer" class="input" style="max-width:220px" aria-labelledby="lm-rv-pol-reviewer-name">
         <option value="">（未设置 · 回退项目负责人）</option>
       </select>
     </div>
