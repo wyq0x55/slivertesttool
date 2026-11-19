@@ -5,6 +5,7 @@ Pick a template by the question the child should answer. Each Markdown file carr
 | Task | Template | T3 `role` | Access |
 | --- | --- | --- | --- |
 | Trace a symptom to its owning module | [Platform investigation](platform-investigation.md) | `research` | Read-only |
+| Modernize a verified frontend pattern | [Frontend modernization](frontend-modernization.md) | `implementation` | Assigned files |
 | Fix a Flask service, PostgreSQL workflow, or bootstrap regression | [Backend workflow](backend-workflow.md) | `implementation` | Assigned files |
 | Fix a lost edit or stale LAN Matrix write | [LAN Matrix consistency](lanmatrix-consistency.md) | `implementation` | Assigned files |
 | Repair a unit-test generation, review, or export step | [Unit-test pipeline](unit-test-pipeline.md) | `implementation` | Assigned files |
@@ -16,6 +17,8 @@ Pick a template by the question the child should answer. Each Markdown file carr
 Read the chosen template. Check `orchestrator_capabilities` before the first `delegate_task` in the thread. Select the table's `role` and pass the front matter's `model` as `target.model` on a child-capable provider. Report an unavailable model to the user. The child receives only `task`, so include the template body, objective, input paths or revision, exact write scope, and acceptance condition.
 
 For a read-only review of uncommitted changes, use `isolation: "shared"` and specify the diff to inspect. For parallel writers, assign disjoint files, including tests. A separate `worktree` starts at the parent commit. Supply any required uncommitted input explicitly. The root agent owns cross-component decisions, final diff inspection, and delivery.
+
+For rolling modernization, the root agent adjusts active concurrency as findings are verified and work completes. Dispatch more independent items while test resources and review capacity are available. Serialize items that share files or depend on each other, and slow dispatch when verification or review backs up. Apply the host's limits and count all delegated roles toward any cumulative budget set for the run.
 
 Example request to the root agent:
 
