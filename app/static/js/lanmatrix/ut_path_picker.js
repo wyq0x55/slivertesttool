@@ -19,7 +19,7 @@
     var list = $("ut-path-list"), status = $("ut-path-status"), location = $("ut-path-location");
     var up = $("ut-path-up"), choose = $("ut-path-choose");
     var kind = options.kind === "csv" ? "csv" : "directory";
-    var listing = null, picked = null, token = 0, lastFocused = document.activeElement;
+    var listing = null, picked = null, pending = false, token = 0, lastFocused = document.activeElement;
     var controller = new AbortController();
 
     $("ut-path-title").textContent = options.title || "选择路径";
@@ -29,11 +29,26 @@
       status.textContent = message || "";
       status.classList.toggle("is-error", !!isError);
     }
-    function refresh() {
+    function updateChoose() {
+      choose.disabled = pending || (kind === "csv" ? !picked : !(listing && listing.path));
+    }
+    function setPending(value) {
+      pending = value;
+      if (pending) {
+        list.setAttribute("aria-busy", "true");
+        list.setAttribute("aria-disabled", "true");
+      } else {
+        list.removeAttribute("aria-busy");
+        list.removeAttribute("aria-disabled");
+      }
+      updateChoose();
+    }
+    function refresh(error) {
       up.disabled = !listing || listing.parent === null;
       choose.textContent = kind === "csv" ? "选择文件" : "选择此目录";
-      choose.disabled = kind === "csv" ? !picked : !(listing && listing.path);
-      if (kind === "csv") say(picked ? "已选中：" + picked : "请选择一个 CSV 文件。");
+      updateChoose();
+      if (error) say(error, true);
+      else if (kind === "csv") say(picked ? "已选中：" + picked : "请选择一个 CSV 文件。");
       else say(listing && listing.path ? "将选择：" + listing.path : "请先进入一个目录。");
     }
     function render() {
@@ -67,9 +82,9 @@
     }
     // `initial`: a bound value the server rejects (e.g. a relative path) opens
     // the root list instead of an empty dialog.
-    async function go(path, initial) {
+    async function go(path, initial, initialError) {
       var mine = ++token;
-      list.setAttribute("aria-busy", "true");
+      setPending(true);
       say("正在读取…");
       try {
         var result = await LMApi.utServerPaths(options.pid, kind, path);
@@ -78,14 +93,15 @@
         location.value = result.path;
         picked = kind === "csv" ? result.selected : null;
         render();
-        refresh();
+        refresh(initialError);
       } catch (e) {
         if (mine !== token) return;
-        var message = e.message || "读取失败";
-        if (initial && path) { await go(""); say(message, true); return; }
+        var message = initialError || e.message || "读取失败";
+        if (initial && path) return go("", false, message);
+        if (listing) location.value = listing.path;
         say(message, true);
       } finally {
-        if (mine === token) list.removeAttribute("aria-busy");
+        if (mine === token) setPending(false);
       }
     }
 
@@ -93,12 +109,14 @@
       function done(value) {
         controller.abort();
         token++;
+        setPending(false);
         if (dialog.open) dialog.close();
         try { if (lastFocused && lastFocused.focus) lastFocused.focus(); } catch (e) { /* trigger may be gone */ }
         resolve(value);
       }
       var signal = { signal: controller.signal };
       list.addEventListener("click", function (event) {
+        if (pending) return;
         var row = event.target.closest(".ut-path-entry");
         if (!row) return;
         if (row.classList.contains("is-directory")) { go(row.dataset.path); return; }
@@ -109,6 +127,7 @@
         refresh();
       }, signal);
       list.addEventListener("dblclick", function (event) {
+        if (pending) return;
         var row = event.target.closest(".ut-path-entry.is-file");
         if (row) done(row.dataset.path);
       }, signal);
