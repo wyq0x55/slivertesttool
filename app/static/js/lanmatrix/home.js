@@ -31,6 +31,7 @@
   // exemption_service.row_review_dict.
   const VIEWS = ["tasks", "reviews", "projects"];
   const DEFAULT_VIEW = "tasks";
+  const TAB_SELECTOR = "#lm-home-tabs .tab[data-view]";
   let view = DEFAULT_VIEW;
 
   // Rows currently held for each paged list, so switching page repaints from
@@ -68,19 +69,32 @@
     return VIEWS.indexOf(String(v || "")) >= 0 ? String(v) : DEFAULT_VIEW;
   }
 
+  function setTabStop(tabs, target) {
+    tabs.forEach((tab) => { tab.tabIndex = tab === target ? 0 : -1; });
+  }
+
   function paintView() {
-    document.querySelectorAll("#lm-home-tabs .tab").forEach((b) => {
-      const on = b.dataset.view === view;
-      b.classList.toggle("on", on);
-      b.setAttribute("aria-selected", on ? "true" : "false");
+    const tabs = Array.from(document.querySelectorAll(TAB_SELECTOR));
+    const focusedTab = tabs.find((tab) => tab === document.activeElement);
+    const selectedTab = tabs.find((tab) => tab.dataset.view === view);
+    setTabStop(tabs, focusedTab || selectedTab);
+    tabs.forEach((tab) => {
+      const on = tab.dataset.view === view;
+      tab.classList.toggle("on", on);
+      tab.setAttribute("aria-selected", String(on));
     });
     VIEWS.forEach((v) => {
       const pane = $(`lm-pane-${v}`);
       if (!pane) return;
+      if (selectedTab && v !== view && !pane.hidden && pane.contains(document.activeElement)) {
+        selectedTab.focus();
+      }
       pane.classList.toggle("on", v === view);
       // hidden as well as the class: a display:none pane must also be out of
       // the accessibility tree, not just invisible.
       pane.hidden = v !== view;
+      if (pane.hidden) pane.removeAttribute("tabindex");
+      else pane.tabIndex = 0;
     });
   }
 
@@ -766,10 +780,29 @@
       });
     }
 
-    const tabs = $("lm-home-tabs");
-    if (tabs) tabs.addEventListener("click", (e) => {
-      const btn = e.target.closest(".tab");
-      if (btn) setView(btn.dataset.view, true);
+    const tablist = $("lm-home-tabs");
+    const tabs = Array.from(document.querySelectorAll(TAB_SELECTOR));
+    tabs.forEach((tab, index) => {
+      tab.addEventListener("click", () => setView(tab.dataset.view, true));
+      tab.addEventListener("focus", () => setTabStop(tabs, tab));
+      tab.addEventListener("keydown", (event) => {
+        if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.isComposing) return;
+        let next;
+        switch (event.key) {
+          case "ArrowLeft": next = (index - 1 + tabs.length) % tabs.length; break;
+          case "ArrowRight": next = (index + 1) % tabs.length; break;
+          case "Home": next = 0; break;
+          case "End": next = tabs.length - 1; break;
+          default: return;
+        }
+        event.preventDefault();
+        tabs[next].focus();
+      });
+    });
+    if (tablist) tablist.addEventListener("focusout", (event) => {
+      if (!tablist.contains(event.relatedTarget)) {
+        setTabStop(tabs, tabs.find((tab) => tab.dataset.view === view));
+      }
     });
 
     // Sortable headers, mirroring the project task list.

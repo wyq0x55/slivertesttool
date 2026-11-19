@@ -80,25 +80,25 @@
        links already use (?view=reviews). #}
     <nav class="tabs lm-home-tabs" id="lm-home-tabs" role="tablist"
          aria-label="工作台视图">
-      <button type="button" class="tab on" role="tab" data-view="tasks"
-              aria-selected="true" aria-controls="lm-pane-tasks">
+      <button type="button" class="tab on" id="lm-tab-tasks" role="tab" data-view="tasks"
+              tabindex="0" aria-selected="true" aria-controls="lm-pane-tasks">
         最近任务 <span class="tab-n" data-tabcount="tasks"></span>
       </button>
-      <button type="button" class="tab" role="tab" data-view="reviews"
-              aria-selected="false" aria-controls="lm-pane-reviews">
+      <button type="button" class="tab" id="lm-tab-reviews" role="tab" data-view="reviews"
+              tabindex="-1" aria-selected="false" aria-controls="lm-pane-reviews">
         待我审核 <span class="tab-n warn" data-tabcount="reviews"></span>
       </button>
       {# Separate from 待我审核 on purpose: that queue asks "is this result
          correct", this one asks "may this case be dropped from the plan at
          all". Approving the first is not agreeing to the second, and one list
          whose rows meant either thing would invite exactly that mistake. #}
-      <button type="button" class="tab" role="tab" data-view="projects"
-              aria-selected="false" aria-controls="lm-pane-projects">
+      <button type="button" class="tab" id="lm-tab-projects" role="tab" data-view="projects"
+              tabindex="-1" aria-selected="false" aria-controls="lm-pane-projects">
         我的项目 <span class="tab-n" data-tabcount="projects"></span>
       </button>
     </nav>
 
-    <div class="pane on" id="lm-pane-tasks" role="tabpanel">
+    <div class="pane on" id="lm-pane-tasks" role="tabpanel" aria-labelledby="lm-tab-tasks" tabindex="0">
     <div class="lm-sec-head">
       <h2>最近任务</h2>
       <span class="muted" id="lm-home-count"></span>
@@ -194,7 +194,7 @@
        does not get done. Every row carries its full action set (通过 / 驳回 /
        打开), not just a "view" link -- a queue you can only look at is a queue
        that sends you somewhere else to do the actual job. #}
-    <div class="pane" id="lm-pane-reviews" role="tabpanel" hidden>
+    <div class="pane" id="lm-pane-reviews" role="tabpanel" aria-labelledby="lm-tab-reviews" hidden>
     <div class="lm-sec-head" id="lm-h-rv-head">
       <h2 id="lm-h-rv-title">待我审核</h2>
       <span class="muted" id="lm-h-rv-count"></span>
@@ -270,7 +270,7 @@
        progress figure drifted. The server now keeps an unapproved claim in the
        denominator; this pane is where the claim is actually answered. #}
 
-    <div class="pane" id="lm-pane-projects" role="tabpanel" hidden>
+    <div class="pane" id="lm-pane-projects" role="tabpanel" aria-labelledby="lm-tab-projects" hidden>
     <div class="lm-sec-head">
       <h2>我的项目</h2>
       <a class="btn ghost small" href="{{ url_for('lanmatrix_pages.projects') }}">查看全部</a>
