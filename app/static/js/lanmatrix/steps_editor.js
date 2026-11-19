@@ -289,14 +289,34 @@
 
     _initPanel() {
       const self = this;
-      this.panelTabs.forEach((btn) => {
+      this.panelTabs.forEach((btn, index) => {
         btn.addEventListener("click", (e) => { e.preventDefault(); self._setTab(btn.dataset.tab); });
+        // Arrow keys / Home / End move focus (and with it the roving tab stop)
+        // without activating: showing a tab loads the ref lookup or starts the
+        // JSON poll, so selection stays on click / Enter / Space.
+        btn.addEventListener("keydown", (event) => {
+          if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+          let nextIndex;
+          switch (event.key) {
+            case "ArrowLeft": nextIndex = (index + self.panelTabs.length - 1) % self.panelTabs.length; break;
+            case "ArrowRight": nextIndex = (index + 1) % self.panelTabs.length; break;
+            case "Home": nextIndex = 0; break;
+            case "End": nextIndex = self.panelTabs.length - 1; break;
+            default: return;
+          }
+          event.preventDefault();
+          self._setTabStop(self.panelTabs[nextIndex]);
+          self.panelTabs[nextIndex].focus();
+        });
       });
       if (this.panelCollapseBtn) {
         this.panelCollapseBtn.addEventListener("click",
           (e) => { e.preventDefault(); self._collapsePanel(); });
       }
       this._initPanelResize();
+      // The markup already carries the default state; syncing keeps the ARIA
+      // state authoritative if the markup and activeTab ever drift apart.
+      this._syncTabA11y();
       // Start collapsed (the requirement: default folded).
       if (this.panelEl) this.panelEl.hidden = true;
     }
@@ -351,6 +371,24 @@
 
     _isPanelOpen() { return !!(this.panelEl && !this.panelEl.hidden); }
 
+    // Roving tab stop: exactly one tab (the active one) is in the page tab order,
+    // so Tab leaves the tablist instead of stepping through every tab.
+    _setTabStop(target) {
+      this.panelTabs.forEach((b) => { b.tabIndex = b === target ? 0 : -1; });
+    }
+
+    // Mirror the active tab into the ARIA tab semantics (aria-selected plus the
+    // roving tab stop). Called wherever the is-on class is synced so the two
+    // never drift apart.
+    _syncTabA11y() {
+      const selected = this.panelTabs.find((b) => b.dataset.tab === this.activeTab)
+        || this.panelTabs[0] || null;
+      this.panelTabs.forEach((b) => {
+        b.setAttribute("aria-selected", String(b === selected));
+      });
+      this._setTabStop(selected);
+    }
+
     _openPanel(tab) {
       if (!this.panelEl) return;
       this.panelEl.hidden = false;
@@ -372,6 +410,7 @@
       if (tab !== "ref" && tab !== "json") tab = "ref";
       this.activeTab = tab;
       this.panelTabs.forEach((b) => b.classList.toggle("is-on", b.dataset.tab === tab));
+      this._syncTabA11y();
       this.panelEl.querySelectorAll(".lm-refpanel-pane")
         .forEach((p) => { p.hidden = p.dataset.pane !== tab; });
       if (tab === "ref") {
@@ -398,6 +437,7 @@
           .forEach((p) => { p.hidden = p.dataset.pane !== "ref"; });
       }
       this.panelTabs.forEach((b) => b.classList.toggle("is-on", b.dataset.tab === "ref"));
+      this._syncTabA11y();
       this._syncPanelButtons();
     }
 

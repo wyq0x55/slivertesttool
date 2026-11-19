@@ -397,6 +397,8 @@ body.lm-refpanel-resizing { cursor: col-resize; user-select: none; }
   border-radius: 8px; background: var(--surface); }
 .lm-refpanel-tabbar { display: flex; align-items: center; gap: 6px; padding: 6px;
   border-bottom: 1px solid var(--border); background: var(--surface); }
+/* The tablist wraps the tabs only; the spacer and the ✕ stay its siblings. */
+.lm-refpanel-tabs { display: flex; align-items: center; gap: 6px; }
 .lm-refpanel-tab { padding: 5px 10px; color: var(--text-2); border: 1px solid var(--border-strong); border-radius: 6px;
   background: var(--surface); cursor: pointer; font: inherit; font-size: 12px; }
 .lm-refpanel-tab.is-on { background: var(--brand); color: #fff; border-color: var(--brand); }
