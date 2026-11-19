@@ -5,7 +5,7 @@
 <div class="content lm-dbadmin">
   <div class="page-head">
     <div class="ttl">
-      <h1>数据库管理</h1>
+      <h1 id="lm-db-title">数据库管理</h1>
       <p>直接浏览与维护 PostgreSQL 数据表，或在 SQL 控制台执行查询</p>
     </div>
     <div class="head-actions">
@@ -17,13 +17,15 @@
     </div>
   </div>
 
-  <div class="tabs" role="tablist">
-    <button class="tab lm-db-tab is-active" data-tab="tables">表管理（无需 SQL）</button>
-    <button class="tab lm-db-tab" data-tab="sql">SQL 控制台</button>
+  <div class="tabs" role="tablist" aria-labelledby="lm-db-title">
+    <button type="button" class="tab lm-db-tab is-active" id="lm-db-tab-tables" data-tab="tables"
+            role="tab" aria-selected="true" tabindex="0">表管理（无需 SQL）</button>
+    <button type="button" class="tab lm-db-tab" id="lm-db-tab-sql" data-tab="sql"
+            role="tab" aria-selected="false" tabindex="-1">SQL 控制台</button>
   </div>
 
   <!-- ============ 表管理（无需 SQL） ============ -->
-  <div class="lm-db-pane" data-pane="tables">
+  <div class="lm-db-pane" data-pane="tables" role="tabpanel" aria-labelledby="lm-db-tab-tables" tabindex="0">
     <div class="tablecard lm-db-browser">
       <aside class="lm-db-tablelist">
         <div class="lm-db-tablelist-head">数据表</div>
@@ -49,7 +51,7 @@
   </div>
 
   <!-- ============ SQL 控制台 ============ -->
-  <div class="lm-db-body lm-db-pane" data-pane="sql" hidden>
+  <div class="lm-db-body lm-db-pane" data-pane="sql" role="tabpanel" aria-labelledby="lm-db-tab-sql" hidden>
     <section class="tablecard lm-db-overview">
       <div class="tc-head"><h3>连接概览</h3></div>
       <div class="lm-db-section">
