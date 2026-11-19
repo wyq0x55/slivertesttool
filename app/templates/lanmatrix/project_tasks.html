@@ -238,12 +238,12 @@
           <button class="btn small" id="cv-fit" type="button" title="显示全程 (0)">全程</button>
           <button class="btn small" id="cv-link" type="button" title="复制可还原当前视图的链接">复制链接</button>
           <div class="cv-menu">
-            <button class="btn small" id="cv-export" type="button" aria-haspopup="true" aria-expanded="false">导出</button>
-            <div class="cv-menu-list" id="cv-export-menu" role="menu" hidden>
-              <button type="button" role="menuitem" data-export="png">当前视图 PNG</button>
-              <button type="button" role="menuitem" data-export="svg">当前视图 SVG</button>
-              <button type="button" role="menuitem" data-export="csv">选中变量 · 当前区间 CSV</button>
-              <a role="menuitem" id="cv-download" href="#">原始 output.csv</a>
+            <button class="btn small" id="cv-export" type="button" aria-haspopup="menu" aria-expanded="false">导出</button>
+            <div class="cv-menu-list" id="cv-export-menu" role="menu" aria-labelledby="cv-export" hidden>
+              <button type="button" role="menuitem" tabindex="-1" data-export="png">当前视图 PNG</button>
+              <button type="button" role="menuitem" tabindex="-1" data-export="svg">当前视图 SVG</button>
+              <button type="button" role="menuitem" tabindex="-1" data-export="csv">选中变量 · 当前区间 CSV</button>
+              <a role="menuitem" tabindex="-1" id="cv-download" href="#" hidden>原始 output.csv</a>
             </div>
           </div>
           <button class="btn small" id="cv-full" type="button" aria-pressed="false" title="全屏 (Esc 退出)">全屏</button>
@@ -253,7 +253,7 @@
       <div class="cv-body" id="cv-body" hidden>
         <aside class="cv-signals" aria-label="变量">
           <input id="cv-search" type="search" placeholder="搜索变量名或显示名…" autocomplete="off">
-          <div class="cv-filters" role="radiogroup" aria-label="变量筛选">
+          <div class="cv-filters" role="group" aria-label="变量筛选">
             <button type="button" class="cv-chip" data-filter="judged" aria-pressed="true">判定涉及</button>
             <button type="button" class="cv-chip" data-filter="changed" aria-pressed="false">有变化</button>
             <button type="button" class="cv-chip" data-filter="all" aria-pressed="false">全部</button>
