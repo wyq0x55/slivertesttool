@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import hashlib
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -78,10 +79,20 @@ class FakeBridge:
         return {"rules": [{"rule_id": "psd.4.compare", "meaning": "境界值"}],
                 "revision_rules": ["列不得改动"], "coverage_policy": {"c1": True}, "effective_test_policy": {"version": "1", "c1": True, "mcdc": False}, "test_policy_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "test_rules_ref": "universal-test-rules@1", "test_rules": {"version": "1"}}
 
-    def generate(self, manifest, index_csv, product_root, out, functions, *, progress_dir, on_unit=None):
+    def generate(self, manifest, index_csv, product_root, out, functions, *, progress_dir,
+                 on_unit=None, on_forecast=None, history_dir=None):
         self.progress_dir = progress_dir
+        self.history_dir = history_dir
         if self.generate_error:
             raise BridgeError(self.generate_error)
+        if on_forecast is not None and functions:
+            # One mid-run observation, shaped exactly like ut-agent's report.
+            on_forecast({"schema": "ut-agent.progress-forecast/1", "intervene": True,
+                         "intervening": [functions[0]],
+                         "functions": {functions[0]: {"intervene": True, "signals": ["history"],
+                                                      "reason": "history", "steps_used": 1,
+                                                      "step_limit": 2, "projected_steps": None,
+                                                      "snapshot": "/server/only/f.json"}}})
         out.mkdir(parents=True, exist_ok=True)
         units = []
         sources = {row["function"]: row["source_rel"] for row in self.index(manifest, index_csv, product_root)}
@@ -439,6 +450,52 @@ def test_generating_job_exposes_ut_agent_live_progress(env, app_ctx):
     assert progress["function"] == snapshot
     assert progress["project"] is None
     assert progress["observed_at"].endswith("Z")
+
+
+def test_the_budget_forecast_is_recorded_and_never_gates_the_job(env, app_ctx):
+    targets = _configure(env)
+    [job_id] = _enqueue(env, targets["f"])
+    with app_ctx.app_context():
+        from app.extensions import db
+        from app.models import UtJob
+
+        job = db.session.get(UtJob, job_id)
+        root = pipeline._generation_progress_dir(job.project_id, job.batch_id)
+        history = pipeline._forecast_history_dir(job.project_id, job.batch_id)
+
+        # History comes from earlier jobs only, and only a budget exhaustion counts.
+        assert env.bridge.history_dir == history
+        assert json.loads((history / "f.json").read_text(encoding="utf-8")) == {}
+
+        observed = json.loads((root / "forecast.json").read_text(encoding="utf-8"))
+        assert observed["intervene"] is True and observed["intervening"] == ["f"]
+        assert observed["schema"] == "ut-agent.progress-forecast/1"
+        # Server paths stay server-side: only the verdict is kept.
+        assert "snapshot" not in observed["functions"]["f"]
+        # Advisory only: the job reached its normal human gate.
+        assert job.state == UtJob.AWAITING_REVIEW
+
+    assert _job(env, job_id)["timing"]["generation_forecast"]["intervening"] == ["f"]
+
+
+def test_forecast_history_remembers_only_a_previous_budget_exhaustion(env, app_ctx):
+    targets = _configure(env)
+    [first] = _enqueue(env, targets["f"])
+    with app_ctx.app_context():
+        from app.extensions import db
+        from app.models import UtJob
+
+        previous = db.session.get(UtJob, first)
+        assert pipeline._forecast_history(previous) == {}
+        previous.reason = ("生成失败：GENERATION_BUDGET_EXHAUSTED: f: semantic evaluation "
+                           "exceeded 250000000 steps")
+        db.session.commit()
+        # A later job for the same target only needs identity, not a row.
+        newer = SimpleNamespace(id=previous.id + 1, project_id=previous.project_id,
+                                target_id=previous.target_id)
+
+        history = pipeline._forecast_history(newer)
+        assert history == {"budget_exhausted": True, "source_job": previous.id}
 
 
 def test_coverage_gap_without_a_missing_case_does_not_call_the_model(env, monkeypatch):
@@ -1007,3 +1064,4 @@ def test_review_does_not_reclassify_machine_evidence(env, monkeypatch, failure, 
                              json={"decision": decision, "note": "human assessment"})
     assert response == 200, body
     assert snapshot() == ([job_id], 1)
+

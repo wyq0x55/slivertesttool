@@ -36,6 +36,7 @@ from __future__ import annotations
 from copy import deepcopy
 import hashlib
 import json
+import os
 import re
 import threading
 from collections.abc import Callable
@@ -355,6 +356,67 @@ def _generation_progress_dir(project_id: int, batch_id: int) -> Path:
     return _batch_dir(project_id, batch_id) / "generation-progress"
 
 
+# ut-agent's read-only budget forecast of the functions a batch is generating.
+_FORECAST_SCHEMA = "ut-agent.progress-forecast/1"
+_BUDGET_EXHAUSTED = "GENERATION_BUDGET_EXHAUSTED"
+
+
+def _forecast_history_dir(project_id: int, batch_id: int) -> Path:
+    return _batch_dir(project_id, batch_id) / "forecast-history"
+
+
+def _forecast_history(job: UtJob) -> dict[str, Any]:
+    """What the same target did last time — the only history the forecast uses.
+
+    Only a run that already exhausted its semantic step budget carries signal;
+    any other earlier outcome says nothing about this one's budget fit.
+    """
+    previous = (UtJob.query
+                .filter(UtJob.project_id == job.project_id,
+                        UtJob.target_id == job.target_id,
+                        UtJob.id < job.id)
+                .order_by(UtJob.id.desc())
+                .first())
+    if previous is None or _BUDGET_EXHAUSTED not in (previous.reason or ""):
+        return {}
+    return {"budget_exhausted": True, "source_job": previous.id}
+
+
+def _write_forecast_history(directory: Path, jobs: list[UtJob]) -> None:
+    for job in jobs:
+        function = job.target.function if job.target else ""
+        if not _C_IDENTIFIER.fullmatch(function):
+            continue
+        _write_json_atomic(directory / f"{function}.json", _forecast_history(job))
+
+
+def _write_json_atomic(path: Path, document: dict[str, Any]) -> None:
+    """Observation file.  A disk problem here must never disturb generation."""
+    temporary = path.with_name(path.name + ".tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+        os.replace(temporary, path)
+    except (OSError, TypeError, ValueError):
+        pass
+
+
+def _forecast_record(report: dict[str, Any], observed_at: str) -> dict[str, Any]:
+    """The verdict as the platform keeps it: no server paths, no snapshot text."""
+    functions: dict[str, Any] = {}
+    for name, verdict in (report.get("functions") or {}).items():
+        if isinstance(verdict, dict):
+            functions[str(name)] = {key: value for key, value in verdict.items()
+                                    if key != "snapshot"}
+    return {
+        "schema": report.get("schema") or _FORECAST_SCHEMA,
+        "observed_at": observed_at,
+        "intervene": bool(report.get("intervene")),
+        "intervening": [str(name) for name in report.get("intervening") or ()],
+        "functions": functions,
+    }
+
+
 def _job_dir(job: UtJob) -> Path:
     return _batch_dir(job.project_id, job.batch_id) / f"j{job.id}"
 
@@ -567,12 +629,24 @@ def _run_generation(batch_id: int, on_ready: Callable[[int], None] | None) -> li
     try:
         batch.constraints = bridge.constraints(config["manifest_path"])
         db.session.commit()
+        progress_dir = _generation_progress_dir(batch.project_id, batch.id)
+        # History first: the forecast reads one document per function, so the
+        # in-flight run cannot observe itself.
+        history_dir = _forecast_history_dir(batch.project_id, batch.id)
+        _write_forecast_history(history_dir, jobs)
+
+        def observe_forecast(report: dict[str, Any]) -> None:
+            _write_json_atomic(progress_dir / "forecast.json",
+                               _forecast_record(report, _iso(_utcnow())))
+
         document = bridge.generate(
             config["manifest_path"], config["index_csv"], config["product_root"],
             _batch_dir(batch.project_id, batch.id) / "generation",
             list(by_function),
-            progress_dir=_generation_progress_dir(batch.project_id, batch.id),
+            progress_dir=progress_dir,
             on_unit=completed,
+            on_forecast=observe_forecast,
+            history_dir=history_dir,
         )
         for unit in document.get("units", ()):
             accept(unit, document.get("provenance"))
@@ -1704,12 +1778,12 @@ _PROGRESS_SCHEMA = "ut-agent.generation-progress/1"
 _C_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
-def _read_progress(path: Path) -> Optional[dict[str, Any]]:
+def _read_progress(path: Path, schema: str = _PROGRESS_SCHEMA) -> Optional[dict[str, Any]]:
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    if not isinstance(document, dict) or document.get("schema") != _PROGRESS_SCHEMA:
+    if not isinstance(document, dict) or document.get("schema") != schema:
         return None
     return document
 
@@ -1727,6 +1801,9 @@ def _generation_progress(job: UtJob) -> dict[str, Any]:
         "project": _read_progress(root / "__project__.json"),
         "function": (_read_progress(root / f"{function}.json")
                      if _C_IDENTIFIER.fullmatch(function) else None),
+        # Advisory only: whether this batch looks like it will exhaust its
+        # semantic step budget before it finishes.  Never gates anything.
+        "forecast": _read_progress(root / "forecast.json", _FORECAST_SCHEMA),
     }
 
 
