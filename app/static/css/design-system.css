@@ -160,7 +160,11 @@ code{
   ::-webkit-scrollbar-thumb:hover{ background:var(--text-3); }
 }
 @media (prefers-reduced-motion: reduce){
-  *{ transition-duration:.01ms !important; animation-duration:.01ms !important; }
+  *{
+    transition-duration:.01ms !important;
+    animation-duration:.01ms !important;
+    animation-iteration-count:1 !important;
+  }
 }
 
 /* ===== PART 3 · APP SHELL ================================================ */
