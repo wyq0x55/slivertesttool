@@ -11,24 +11,22 @@ const test = require("node:test");
 const templates = path.resolve(__dirname, "../../app/templates/lanmatrix");
 const read = (file) => fs.readFileSync(path.join(templates, file), "utf8");
 
-// file -> how many table scroll wrappers it holds (home and ut_tasks have two
-// tables each, so they need two different names).
+// file -> how many table scroll wrappers it holds (admin, home and ut_tasks
+// have two tables each, so each of them needs two different heading names).
+// admin.html and project_tasks.html were held back from the first pass while
+// other branches wrote them; they are covered here now that the writers landed.
 const REGION_FILES = {
+  "admin.html": 2,
   "ai_drafts.html": 1,
   "audit.html": 1,
   "dashboard.html": 1,
   "fields.html": 1,
   "home.html": 2,
+  "project_tasks.html": 1,
   "tokens.html": 1,
   "trash.html": 1,
   "ut_pipeline.html": 1,
   "ut_tasks.html": 2,
-};
-
-// Owned by other open branches: these keep their bare wrappers.
-const UNTOUCHED_FILES = {
-  "admin.html": 2,
-  "project_tasks.html": 1,
 };
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -77,18 +75,5 @@ test("each scrolling table is a named, keyboard-scrollable region", () => {
       new Set(names).size, names.length,
       `${file} must not point two scroll regions at the same heading (got ${names.join(", ")})`,
     );
-  }
-});
-
-test("admin.html and project_tasks.html keep their bare wrappers", () => {
-  for (const [file, expected] of Object.entries(UNTOUCHED_FILES)) {
-    const wrappers = tableScrollWrappers(read(file));
-    assert.equal(wrappers.length, expected, `${file} should still hold ${expected} table scroll wrappers`);
-    for (const { openTag, offset } of wrappers) {
-      assert.doesNotMatch(
-        openTag, /(?:^|\s)role="region"(?=\s|>)/,
-        `${file} scroll wrapper at offset ${offset} belongs to another branch and must stay untouched`,
-      );
-    }
   }
 });
