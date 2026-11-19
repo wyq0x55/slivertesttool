@@ -26,12 +26,12 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
       <input id="lm-proj-search" type="search" placeholder="搜索项目编码或名称…">
     </div>
-    <div class="segmented" id="lm-proj-seg">
-      <button data-s="all" class="on">全部</button>
-      <button data-s="active">进行中</button>
-      <button data-s="draft">草稿</button>
-      <button data-s="frozen">冻结</button>
-      <button data-s="archived">归档</button>
+    <div class="segmented" id="lm-proj-seg" role="group" aria-label="按项目状态筛选">
+      <button type="button" data-s="all" class="on" aria-pressed="true">全部</button>
+      <button type="button" data-s="active" aria-pressed="false">进行中</button>
+      <button type="button" data-s="draft" aria-pressed="false">草稿</button>
+      <button type="button" data-s="frozen" aria-pressed="false">冻结</button>
+      <button type="button" data-s="archived" aria-pressed="false">归档</button>
     </div>
   </div>
 
