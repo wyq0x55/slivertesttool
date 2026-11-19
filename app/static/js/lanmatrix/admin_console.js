@@ -112,15 +112,37 @@
   const loaders = { users: loadUsers, license: loadLicense, tasks: loadTasks };
   const TABS = Object.keys(loaders);
   const DEFAULT_TAB = TABS[0];
+  const tabEls = Array.from(root.querySelectorAll(".tab"));
+  const tabList = root.querySelector('[role="tablist"]');
+
+  // The roving tab stop marks the one tab reachable with Tab. It follows focus
+  // while arrowing, and returns to the selected tab when focus leaves the group.
+  function setTabStop(target) {
+    tabEls.forEach((tab) => { tab.tabIndex = tab === target ? 0 : -1; });
+  }
 
   // Single source of truth for "show tab X": both the click handler and the
   // URL restore path go through here, so they can never drift apart.
   function activateTab(name, opts) {
     opts = opts || {};
     if (!TABS.includes(name)) name = DEFAULT_TAB;
-    root.querySelectorAll(".tab").forEach((t) =>
-      t.classList.toggle("on", t.dataset.tab === name));
-    root.querySelectorAll(".pane").forEach((p) => {
+    const focused = document.activeElement;
+    const panes = Array.from(root.querySelectorAll(".pane"));
+    tabEls.forEach((t) => {
+      const on = t.dataset.tab === name;
+      t.classList.toggle("on", on);
+      t.setAttribute("aria-selected", String(on));
+    });
+    const selected = tabEls.find((t) => t.dataset.tab === name);
+    // Selecting moves the roving stop onto the shown tab. Follow focus when it
+    // is still on another tab, or inside a pane this selection is about to
+    // hide — otherwise that control is left at tabindex=-1, or inside hidden.
+    setTabStop(selected);
+    if (selected && tabList && (tabList.contains(focused) || panes.some((pane) =>
+        pane.dataset.pane !== name && pane.contains && pane.contains(focused)))) {
+      selected.focus();
+    }
+    panes.forEach((p) => {
       const on = p.dataset.pane === name;
       p.classList.toggle("on", on);
       p.hidden = !on;
@@ -133,9 +155,36 @@
     }
   }
 
-  root.querySelectorAll(".tab").forEach((tab) => {
+  tabEls.forEach((tab, index) => {
     tab.addEventListener("click", () => activateTab(tab.dataset.tab, { push: true }));
+    // Selection by activation: arrows move focus only, because selecting a tab
+    // rewrites `?tab=` and starts a data load. Enter/Space activate the focused
+    // tab through the click handler above (native button behavior).
+    tab.addEventListener("keydown", (event) => {
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      let nextIndex;
+      switch (event.key) {
+        case "ArrowLeft": nextIndex = (index + tabEls.length - 1) % tabEls.length; break;
+        case "ArrowRight": nextIndex = (index + 1) % tabEls.length; break;
+        case "Home": nextIndex = 0; break;
+        case "End": nextIndex = tabEls.length - 1; break;
+        default: return;
+      }
+      event.preventDefault();
+      setTabStop(tabEls[nextIndex]);
+      tabEls[nextIndex].focus();
+    });
   });
+
+  // Roving tabindex follows focus while arrowing, so put it back on the selected
+  // tab when focus leaves the group — Tab re-entry must land on the shown panel.
+  if (tabList) {
+    tabList.addEventListener("focusout", (event) => {
+      if (!tabList.contains(event.relatedTarget)) {
+        setTabStop(tabEls.find((t) => t.getAttribute("aria-selected") === "true"));
+      }
+    });
+  }
 
   if (window.LMUrl) {
     LMUrl.onPop((q) => activateTab(q.tab || DEFAULT_TAB));
