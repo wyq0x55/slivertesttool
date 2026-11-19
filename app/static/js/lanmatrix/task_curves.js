@@ -1050,18 +1050,60 @@
       catch (_e) { status("复制失败；请直接复制浏览器地址栏中的链接。"); }
     }, 300);
   });
-  $("cv-export").addEventListener("click", () => {
-    const menu = $("cv-export-menu"); menu.hidden = !menu.hidden;
-    $("cv-export").setAttribute("aria-expanded", String(!menu.hidden));
+  // The export dropdown advertises role="menu", so it follows the ARIA menu button
+  // pattern: the trigger is the single tab stop, opening moves focus into the list,
+  // arrow/Home/End keys move within it, Escape closes and restores focus, and Tab
+  // closes without being trapped so focus continues from the trigger.
+  const menuBtn = $("cv-export"), menuList = $("cv-export-menu");
+  const menuItems = () => Array.from(menuList.querySelectorAll('[role="menuitem"]'));
+  const menuOpen = () => !menuList.hidden;
+  function openMenu(first) {
+    menuList.hidden = false; menuBtn.setAttribute("aria-expanded", "true");
+    const item = first || menuItems()[0];
+    if (item) item.focus();
+  }
+  function closeMenu(restore) {
+    menuList.hidden = true; menuBtn.setAttribute("aria-expanded", "false");
+    if (restore) menuBtn.focus();
+  }
+  function stepMenu(key) {
+    const items = menuItems();
+    if (!items.length) return;
+    const at = items.indexOf(document.activeElement);
+    let next;
+    if (key === "Home") next = 0;
+    else if (key === "End") next = items.length - 1;
+    else if (key === "ArrowDown") next = at < 0 ? 0 : (at + 1) % items.length;
+    else next = at <= 0 ? items.length - 1 : at - 1;
+    items[next].focus();
+  }
+  menuBtn.addEventListener("click", () => { if (menuOpen()) closeMenu(true); else openMenu(); });
+  menuBtn.addEventListener("keydown", event => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const items = menuItems();
+      openMenu(event.key === "ArrowDown" ? items[0] : items[items.length - 1]);
+    } else if (event.key === "Escape" && menuOpen()) {
+      event.preventDefault(); closeMenu(true);
+    }
   });
-  $("cv-export-menu").addEventListener("click", ev => {
-    const b = ev.target.closest("[data-export]");
-    $("cv-export-menu").hidden = true; $("cv-export").setAttribute("aria-expanded", "false");
-    if (!b) return;
-    if (b.dataset.export === "csv") exportCsv(); else exportImage(b.dataset.export);
+  menuList.addEventListener("keydown", event => {
+    if (event.key === "Escape") { event.preventDefault(); closeMenu(true); return; }
+    // Tab leaves the menu; closing from here and refocusing the trigger keeps focus
+    // out of hidden content and lets the browser continue the Tab order from it.
+    if (event.key === "Tab") { closeMenu(true); return; }
+    if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+      event.preventDefault(); stepMenu(event.key);
+    }
   });
-  document.addEventListener("click", ev => {
-    if (!ev.target.closest(".cv-menu")) { $("cv-export-menu").hidden = true; $("cv-export").setAttribute("aria-expanded", "false"); }
+  menuList.addEventListener("click", event => {
+    const picked = event.target.closest("[data-export]");
+    closeMenu(true);
+    if (!picked) return;
+    if (picked.dataset.export === "csv") exportCsv(); else exportImage(picked.dataset.export);
+  });
+  document.addEventListener("click", event => {
+    if (!event.target.closest(".cv-menu") && menuOpen()) closeMenu(false);
   });
   $("cv-search").addEventListener("input", tree);
   document.querySelectorAll(".cv-chip").forEach(b => b.addEventListener("click", () => { filter = b.dataset.filter; syncFilterChips(); tree(); }));
