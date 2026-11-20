@@ -1,6 +1,12 @@
 {% extends "lanmatrix/base_lm.html" %}
 {% block title %}注册{% endblock %}
 {% block content %}
+<style>
+  /* Both boxes are mounted live regions so changing their text is announced;
+     collapse the empty state so no bare styled box shows before the first result. */
+  .login-card .login-err:empty { margin: 0; padding: 0; background: transparent; border-radius: 0; }
+  .login-card .login-ok { background: var(--ok-soft); color: var(--ok); }
+</style>
 <div class="login-wrap">
   <aside class="login-aside">
     <div class="la-brand">
@@ -16,8 +22,8 @@
     <form id="lm-register-form" class="login-card">
       <h1>注册新账号</h1>
       <p class="sub">局域网离线部署 · 创建平台账号</p>
-      <div class="login-err" id="lm-register-error" hidden></div>
-      <div class="login-err" id="lm-register-ok" hidden style="background:var(--ok-soft);color:var(--ok)"></div>
+      <div class="login-err" id="lm-register-error" role="alert"></div>
+      <div class="login-err login-ok" id="lm-register-ok" role="status"></div>
       <div class="field">
         <label for="lm-username">用户名</label>
         <input type="text" name="username" id="lm-username" required autofocus autocomplete="username" spellcheck="false" autocorrect="off" autocapitalize="off"
@@ -50,12 +56,11 @@ document.getElementById('lm-register-form').addEventListener('submit', async (e)
   e.preventDefault();
   const err = document.getElementById('lm-register-error');
   const okBox = document.getElementById('lm-register-ok');
-  err.hidden = true; okBox.hidden = true;
+  err.textContent = ''; okBox.textContent = '';
   const pw = document.getElementById('lm-password').value;
   const pw2 = document.getElementById('lm-password2').value;
   if (pw !== pw2) {
     err.textContent = '两次输入的密码不一致';
-    err.hidden = false;
     return;
   }
   try {
@@ -67,14 +72,12 @@ document.getElementById('lm-register-form').addEventListener('submit', async (e)
     });
     if (data && data.pending) {
       okBox.textContent = '注册成功，账号待管理员审核激活后即可登录。';
-      okBox.hidden = false;
       e.target.querySelector('button[type=submit]').disabled = true;
       return;
     }
     window.location = LM.urls.home || LM.urls.projects;
   } catch (ex) {
     err.textContent = ex.message || '注册失败';
-    err.hidden = false;
   }
 });
 </script>
