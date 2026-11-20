@@ -658,9 +658,19 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .dt .row-acts{ display:flex; gap:4px; opacity:0; transition:opacity var(--dur) var(--ease); }
 .dt tbody tr:hover .row-acts{ opacity:1; }
 .dt .u-name{ display:flex; align-items:center; gap:10px; }
-.dt th.lm-sortable{ cursor:pointer; user-select:none; }
+.dt th.lm-sortable{ cursor:pointer; user-select:none; padding:0; }
 .dt th.lm-sortable:hover{ color:var(--text-2); }
 .dt th.lm-sorted{ color:var(--brand-text); }
+/* A sortable header is a real <button>, not a bare clickable cell: the cell
+   drops its padding and the button supplies it, so the whole header stays the
+   target while the sort becomes reachable and operable from the keyboard. The
+   focus ring is inset because a table cell clips an outward outline. */
+.lm-sort-btn{ display:flex; align-items:center; gap:6px; width:100%; min-height:24px;
+  margin:0; padding:11px 16px; border:0; background:none; color:inherit; font:inherit;
+  letter-spacing:inherit; text-transform:inherit; text-align:left;
+  cursor:pointer; user-select:none; }
+.lm-sort-btn:hover{ background:var(--surface); }
+.lm-sort-btn:focus-visible{ outline:2px solid var(--brand-ring); outline-offset:-2px; }
 
 .sw{ position:relative; display:inline-flex; align-items:center; cursor:pointer; }
 .sw input{ position:absolute; opacity:0; width:0; height:0; }
