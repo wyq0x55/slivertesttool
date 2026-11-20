@@ -35,7 +35,7 @@
         <div class="lm-db-tableview-head" id="lm-db-tv-head">
           <span class="lm-muted">← 请选择左侧的表</span>
         </div>
-        <div class="lm-error" id="lm-db-tv-error" hidden></div>
+        <div class="lm-error" id="lm-db-tv-error" role="alert"></div>
         <div class="lm-db-grid-wrap">
           <table class="lm-table lm-db-grid">
             <thead id="lm-db-grid-head"></thead>
@@ -83,7 +83,7 @@
         <div class="lm-db-write-warn" id="lm-db-write-warn" hidden>
           ⚠ 写模式已开启：语句将<strong>直接提交</strong>到数据库，请谨慎操作（建议先备份）。
         </div>
-        <div class="lm-error" id="lm-db-error" hidden></div>
+        <div class="lm-error" id="lm-db-error" role="alert"></div>
         <div class="lm-db-result-meta lm-muted" id="lm-db-meta"></div>
         <div class="lm-db-result-wrap">
           <table class="lm-table lm-db-result">
@@ -100,7 +100,7 @@
   <form method="dialog" class="lm-card">
     <h3 id="lm-db-row-title">编辑行</h3>
     <div id="lm-db-row-form" class="lm-db-row-form"></div>
-    <div class="lm-error" id="lm-db-row-error" hidden></div>
+    <div class="lm-error" id="lm-db-row-error" role="alert"></div>
     <menu>
       <button value="cancel" class="btn">取消</button>
       <button value="save" id="lm-db-row-save" class="btn btn-primary">保存</button>

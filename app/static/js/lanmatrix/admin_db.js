@@ -108,8 +108,8 @@
     if (running) return;
     const sql = document.getElementById("lm-db-sql").value.trim();
     const err = document.getElementById("lm-db-error");
-    err.hidden = true;
-    if (!sql) { err.textContent = "请输入 SQL 语句"; err.hidden = false; return; }
+    err.textContent = "";
+    if (!sql) { err.textContent = "请输入 SQL 语句"; return; }
     const readOnly = document.getElementById("lm-db-readonly").checked;
     // Raw SQL against production in write mode: no undo, no scope limit.
     if (!readOnly && !(await LMUI.confirm({
@@ -128,7 +128,6 @@
       if (!readOnly) { toast("已执行并提交", true); loadOverview(); }
     } catch (ex) {
       err.textContent = ex.message || "执行失败";
-      err.hidden = false;
       document.getElementById("lm-db-meta").textContent = "";
     } finally {
       running = false;
@@ -267,7 +266,6 @@
   function showTvError(msg) {
     const e = document.getElementById("lm-db-tv-error");
     e.textContent = msg || "";
-    e.hidden = !msg;
   }
 
   async function loadTableRows() {
@@ -406,7 +404,7 @@
     const isEdit = !!ctx;
     document.getElementById("lm-db-row-title").textContent =
       (isEdit ? "编辑行 · " : "新增行 · ") + currentTable;
-    document.getElementById("lm-db-row-error").hidden = true;
+    document.getElementById("lm-db-row-error").textContent = "";
     const form = document.getElementById("lm-db-row-form");
     const rowObj = ctx ? ctx.row : {};
     form.innerHTML = (currentSchema.columns || []).map((c) => {
@@ -445,7 +443,7 @@
   document.getElementById("lm-db-row-save").addEventListener("click", async (e) => {
     e.preventDefault();
     const errEl = document.getElementById("lm-db-row-error");
-    errEl.hidden = true;
+    errEl.textContent = "";
     const values = {};
     document.querySelectorAll("#lm-db-row-form .lm-db-field").forEach((f) => {
       if (f.disabled) return;
@@ -463,7 +461,6 @@
       await loadTableRows();
     } catch (ex) {
       errEl.textContent = ex.message || "保存失败";
-      errEl.hidden = false;
     }
   });
 

@@ -149,7 +149,8 @@ test("closed import dialog ignores old commit failure", async () => {
   harness.get("lm-import-dialog").close();
   harness.commits[0].reject(new Error("old failure"));
   await committing;
-  assert.equal(harness.get("lm-import-error").hidden, true);
+  // The alert region stays mounted; suppressing the message means leaving it empty.
+  assert.equal(harness.get("lm-import-error").textContent, "");
   assert.equal(harness.get("lm-import-format").disabled, false);
 });
 
@@ -160,7 +161,6 @@ test("failed commit restores controls and keeps the preview for retry", async ()
   harness.commits[0].reject(new Error("permission denied"));
   await committing;
   assert.equal(harness.get("lm-import-error").textContent, "permission denied");
-  assert.equal(harness.get("lm-import-error").hidden, false);
   assert.equal(harness.get("lm-import-mode").disabled, false);
   assert.equal(harness.get("lm-import-commit").disabled, false);
   assert.equal(harness.toasts.length, 0);
