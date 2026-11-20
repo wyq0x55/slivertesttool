@@ -777,6 +777,41 @@
     const text = (s.description || []).slice(0, 3).join("　").slice(0, 120);
     return text || (s.phase ? s.phase : "步骤 " + s.step);
   }
+  // One judge step. The row head is a plain flex container: the disclosure is a
+  // native button and the curve action is a sibling button, because nesting an
+  // interactive control inside another one is invalid and breaks activation.
+  function judgeStepHtml(s, i) {
+    const r = s.result === "FAIL" ? "fail" : s.result === "PASS" ? "pass" : "";
+    const bodyId = "jbody-" + i;
+    return `<div class="jstep ${r || "none"}" data-step="${esc(s.step)}">
+       <div class="jhead">
+         <button class="jhead-toggle" type="button" aria-expanded="false" aria-controls="${bodyId}">
+           <svg class="jchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg>
+           <span class="ji">Step.${esc(s.step)}</span>
+           <span class="jt">${esc(judgeTitle(s))}</span>
+           ${s.at ? `<span class="submuted">${esc(s.at)}</span>` : ""}
+           ${stepBadge(r)}
+         </button>
+         <button class="btn small ghost jcurve" type="button" aria-label="曲线：定位 Step.${esc(s.step)}">曲线</button>
+       </div>
+       <pre class="jbody" id="${bodyId}" hidden>${bodyHtml(s.lines || [])}</pre>
+     </div>`;
+  }
+  // Native buttons handle Enter/Space themselves, so only the shared open state
+  // is wired here; the curve button stops at its own click handler.
+  function wireJudgeStep(step) {
+    const toggleBtn = step.querySelector(".jhead-toggle");
+    const body = step.querySelector(".jbody");
+    const toggle = (open) => {
+      body.hidden = open === undefined ? !body.hidden : !open;
+      step.classList.toggle("open", !body.hidden);
+      toggleBtn.setAttribute("aria-expanded", body.hidden ? "false" : "true");
+    };
+    step._toggle = toggle;
+    toggleBtn.addEventListener("click", () => toggle());
+    step.querySelector(".jcurve").addEventListener("click", () =>
+      document.dispatchEvent(new CustomEvent("lm-curves-focus-step", { detail: { step: step.dataset.step } })));
+  }
   function renderJudge() {
     const el = $("lm-d-judge");
     const failOnly = $("lm-d-failonly").checked;
@@ -795,37 +830,8 @@
       el.innerHTML = '<div class="jempty">无失败步骤。</div>';
       return;
     }
-    el.innerHTML = rows.map((s) => {
-      const r = s.result === "FAIL" ? "fail" : s.result === "PASS" ? "pass" : "";
-      return `<div class="jstep ${r || "none"}" data-step="${esc(s.step)}">
-         <div class="jhead" role="button" tabindex="0" aria-expanded="false">
-           <svg class="jchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
-           <span class="ji">Step.${esc(s.step)}</span>
-           <span class="jt">${esc(judgeTitle(s))}</span>
-           ${s.at ? `<span class="submuted">${esc(s.at)}</span>` : ""}
-           ${stepBadge(r)}
-           <button class="btn small ghost jcurve" type="button" title="在变量曲线中定位该步骤">曲线</button>
-         </div>
-         <pre class="jbody" hidden>${bodyHtml(s.lines || [])}</pre>
-       </div>`;
-    }).join("");
-    el.querySelectorAll(".jstep .jhead").forEach((h) => {
-      const step = h.parentElement;
-      const toggle = (open) => {
-        const body = step.querySelector(".jbody");
-        body.hidden = open === undefined ? !body.hidden : !open;
-        step.classList.toggle("open", !body.hidden);
-        h.setAttribute("aria-expanded", body.hidden ? "false" : "true");
-      };
-      step._toggle = toggle;
-      h.addEventListener("click", (e) => { if (!e.target.closest(".jcurve")) toggle(); });
-      h.addEventListener("keydown", (e) => {
-        if (e.target.closest(".jcurve")) return;
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
-      });
-      h.querySelector(".jcurve").addEventListener("click", () =>
-        document.dispatchEvent(new CustomEvent("lm-curves-focus-step", { detail: { step: step.dataset.step } })));
-    });
+    el.innerHTML = rows.map((s, i) => judgeStepHtml(s, i)).join("");
+    el.querySelectorAll(".jstep").forEach(wireJudgeStep);
   }
   // The curve view asks to show one step here (double-click on its step band).
   document.addEventListener("lm-judge-focus-step", (ev) => {
