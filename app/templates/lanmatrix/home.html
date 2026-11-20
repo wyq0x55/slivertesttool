@@ -205,18 +205,21 @@
        a pending list the product had nowhere at all to see what had been
        approved or -- the case that actually matters -- rejected: the executor
        was told nothing and could find nothing. These three scopes are the same
-       queue read from the two sides of the review. #}
-    <div class="lm-rv-scopes" role="tablist" aria-label="审核范围">
-      <button class="btn small lm-rv-scope is-on" type="button" role="tab"
-              data-role="reviewer" data-status="pending" aria-selected="true">
+       queue read from the two sides of the review. They are independent toggle
+       buttons over one list, not a tab widget: each one re-queries the same
+       queue with a different filter, so they expose aria-pressed rather than
+       claiming arrow-key/tabpanel semantics they do not implement. #}
+    <div class="lm-rv-scopes" role="group" aria-label="审核范围">
+      <button class="btn small lm-rv-scope is-on" type="button"
+              data-role="reviewer" data-status="pending" aria-pressed="true">
         待我审核 <span class="lm-rv-badge" id="lm-h-rv-n-pending"></span>
       </button>
-      <button class="btn small ghost lm-rv-scope" type="button" role="tab"
-              data-role="requester" data-status="rejected" aria-selected="false">
+      <button class="btn small ghost lm-rv-scope" type="button"
+              data-role="requester" data-status="rejected" aria-pressed="false">
         我被驳回 <span class="lm-rv-badge" id="lm-h-rv-n-rejected"></span>
       </button>
-      <button class="btn small ghost lm-rv-scope" type="button" role="tab"
-              data-role="reviewer" data-status="decided" aria-selected="false">
+      <button class="btn small ghost lm-rv-scope" type="button"
+              data-role="reviewer" data-status="decided" aria-pressed="false">
         我已处理 <span class="lm-rv-badge" id="lm-h-rv-n-decided"></span>
       </button>
     </div>
