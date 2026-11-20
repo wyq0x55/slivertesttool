@@ -113,12 +113,12 @@
         <option value="">全部项目</option>
       </select>
       <input type="hidden" id="lm-h-status" value="">
-      <div class="segmented" id="lm-h-seg" role="tablist" aria-label="按状态筛选">
-        <button type="button" class="on" data-status="">全部</button>
-        <button type="button" data-status="running">运行中</button>
-        <button type="button" data-status="queued">排队中</button>
-        <button type="button" data-status="failed">失败</button>
-        <button type="button" data-status="passed">通过</button>
+      <div class="segmented" id="lm-h-seg" role="group" aria-label="按状态筛选">
+        <button type="button" class="on" data-status="" aria-pressed="true">全部</button>
+        <button type="button" data-status="running" aria-pressed="false">运行中</button>
+        <button type="button" data-status="queued" aria-pressed="false">排队中</button>
+        <button type="button" data-status="failed" aria-pressed="false">失败</button>
+        <button type="button" data-status="passed" aria-pressed="false">通过</button>
       </div>
       <label class="lm-check-inline">
         <input type="checkbox" id="lm-h-mine"> 只看我提交的
