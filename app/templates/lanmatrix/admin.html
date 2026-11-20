@@ -91,13 +91,14 @@
         </div>
         <div class="ctrl-row">
           <div class="cl">
-            <b>并发上限</b>
-            <small>同时运行的测试任务上限，超出的任务将进入队列等待</small>
+            <b id="lm-license-count-label">并发上限</b>
+            <small id="lm-license-count-hint">同时运行的测试任务上限，超出的任务将进入队列等待</small>
           </div>
           <div class="cr">
             <div class="stepper">
               <button type="button" id="lm-lic-dec" aria-label="减少">−</button>
-              <input type="number" id="lm-license-count" min="1" value="1">
+              <input type="number" id="lm-license-count" min="1" value="1"
+                aria-labelledby="lm-license-count-label" aria-describedby="lm-license-count-hint">
               <button type="button" id="lm-lic-inc" aria-label="增加">+</button>
             </div>
           </div>
