@@ -931,3 +931,32 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
   padding: 0 5px;
 }
 .lm-sbs-rev-act { display: flex; gap: 4px; }
+
+/* Fields table: the reorder grip is a real <button> (keyboard reorder), reset
+   back to the plain 22px box that .grip defines for its old <span> form. The
+   shared :focus-visible ring in design-system.css still applies by button. */
+.lm-fields .grip {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  line-height: inherit;
+  vertical-align: middle;
+}
+
+/* Keyboard reorder status: always mounted for the live region, clipped from
+   sight instead of hidden so the region is never removed from the a11y tree. */
+.lm-fields-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

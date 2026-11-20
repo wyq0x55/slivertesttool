@@ -35,6 +35,21 @@
   function emptyRow(text) {
     return el("tr", null, [el("td", { colSpan: 9, className: "muted", text: text })]);
   }
+  // The reorder grip is a real button: it is reachable with Tab, and its
+  // accessible name states both the action and the keys that perform it. The
+  // ⠿ glyph is decoration, so it is hidden from assistive technology.
+  function gripButton(field) {
+    const glyph = el("span", { text: "⠿" });
+    glyph.setAttribute("aria-hidden", "true");
+    const name = field.display_name || field.field_key || "";
+    return el("button", {
+      type: "button",
+      className: "grip lm-drag-handle",
+      title: "拖拽排序，或用上下方向键移动",
+      ariaLabel: `调整顺序：${name}，按住拖动，或用上下方向键移动`,
+    }, [glyph]);
+  }
+
   function toast(msg, ok) {
     const t = document.getElementById("lm-toast");
     t.textContent = msg; t.className = "lm-toast " + (ok ? "lm-ok" : "lm-err");
@@ -77,12 +92,7 @@
           className: f.is_active ? null : "row-off",
           dataset: { id: String(f.id) },
         }, [
-          el("td", null, [el("span", {
-            className: "grip lm-drag-handle",
-            title: "拖拽排序",
-            ariaLabel: "拖拽排序",
-            text: "⠿",
-          })]),
+          el("td", null, [gripButton(f)]),
           el("td", null, [el("span", { className: "tag", text: f.sheet || "test" })]),
           el("td", null, [el("code", { text: f.field_key == null ? "" : String(f.field_key) })]),
           el("td", { text: f.display_name == null ? "" : String(f.display_name) }),
@@ -147,6 +157,120 @@
     } catch (ex) { toast(ex.message, false); await load(); }
   }
 
+  // Keyboard reorder: the grip exposes ArrowUp/ArrowDown (one step) and
+  // Home/End (first/last). Order is table-global, so an inactive row moves
+  // exactly like an active one. The row node itself is moved, never the row
+  // re-rendered, so the grip keeps focus; the live region below is persistent
+  // and only its text changes.
+  function orderedRows() {
+    return Array.from(rows.querySelectorAll("tr[data-id]"));
+  }
+
+  function gripFor(id) {
+    for (const tr of orderedRows()) {
+      if (Number(tr.dataset.id) === Number(id)) {
+        return tr.querySelector(".lm-drag-handle");
+      }
+    }
+    return null;
+  }
+
+  function focusGrip(id) {
+    const grip = gripFor(id);
+    if (!grip) return;
+    const tr = grip.closest("tr");
+    if (tr && typeof tr.scrollIntoView === "function") {
+      tr.scrollIntoView({ block: "nearest" });
+    }
+    grip.focus({ preventScroll: true });
+  }
+
+  let announceTimer = 0;
+
+  // A live region only speaks when its text changes, so the previous message
+  // is cleared first: moving the same field twice must be announced twice.
+  function announce(message) {
+    const live = document.getElementById("lm-fields-status");
+    if (!live) return;
+    clearTimeout(announceTimer);
+    live.textContent = "";
+    announceTimer = setTimeout(() => { live.textContent = message; }, 80);
+  }
+
+  function moveRowTo(tr, targetIndex) {
+    const list = orderedRows();
+    const from = list.indexOf(tr);
+    if (from < 0) return -1;
+    const to = Math.max(0, Math.min(list.length - 1, targetIndex));
+    if (to === from) return -1;
+    const ref = list[to];
+    const before = to > from ? ref.nextElementSibling : ref;
+    // moveBefore() carries focus and element state across the move; the
+    // insertBefore() fallback covers browsers without it.
+    if (typeof rows.moveBefore === "function") rows.moveBefore(tr, before);
+    else rows.insertBefore(tr, before);
+    return to;
+  }
+
+  async function reorderField(tr, targetIndex) {
+    const id = Number(tr.dataset.id);
+    const field = currentFields.find((f) => Number(f.id) === id);
+    const to = moveRowTo(tr, targetIndex);
+    if (to < 0) return false;
+    const name = field ? (field.display_name || field.field_key) : "";
+    announce(`「${name}」已移动到第 ${to + 1} 位`);
+    focusGrip(id);
+    await commitOrder(); // reloads the list, so re-focus the rebuilt grip
+    focusGrip(id);
+    return true;
+  }
+
+  // Keyboard reorder keys are queued and applied one at a time. Every applied
+  // move ends with commitOrder(), which reloads and rebuilds all rows, so a
+  // second move running against the pre-reload DOM would diff the wrong order
+  // and could persist it. A queued job therefore stores only the field id and
+  // the key; the row and its neighbours are resolved again when the job runs.
+  const REORDER_KEYS = {
+    ArrowUp: (from) => from - 1,
+    ArrowDown: (from) => from + 1,
+    Home: () => 0,
+    End: (from, list) => list.length - 1,
+  };
+  const moveQueue = [];
+  let pumpingMoves = false;
+
+  function onGripKey(ev, grip) {
+    const key = ev.key;
+    const target = REORDER_KEYS[key];
+    if (!target) return;
+    if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
+    ev.preventDefault(); // a handled reorder key must not scroll the page
+    const tr = grip.closest("tr");
+    if (!tr || !tr.dataset.id) return;
+    moveQueue.push({ id: Number(tr.dataset.id), key: key });
+    pumpMoves();
+  }
+
+  async function pumpMoves() {
+    if (pumpingMoves) return;
+    pumpingMoves = true;
+    try {
+      while (moveQueue.length) {
+        const job = moveQueue.shift();
+        const tr = orderedRows().find((r) => Number(r.dataset.id) === job.id);
+        if (!tr) continue; // the row was deleted while the move was queued
+        const list = orderedRows();
+        const from = list.indexOf(tr);
+        if (from < 0) continue;
+        const to = REORDER_KEYS[job.key](from, list);
+        if (to === from || to < 0 || to >= list.length) continue; // ends are no-ops
+        await reorderField(tr, to);
+      }
+    } finally {
+      pumpingMoves = false;
+    }
+  }
+
   // Drag-to-reorder, registered ONCE on the persistent <tbody>. Rows are
   // rebuilt on every load(), but this delegated wiring survives, so it must
   // not be re-added inside wire() (that would stack duplicate handlers and
@@ -195,6 +319,10 @@
   function wire(fieldList) {
     const byId = {};
     fieldList.forEach((f) => { byId[f.id] = f; });
+
+    rows.querySelectorAll(".lm-drag-handle").forEach((b) => {
+      b.addEventListener("keydown", (ev) => onGripKey(ev, b));
+    });
 
     rows.querySelectorAll(".lm-toggle").forEach((b) => {
       b.addEventListener("click", async () => {
