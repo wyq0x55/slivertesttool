@@ -1133,12 +1133,28 @@
   });
   $("cv-search").addEventListener("input", tree);
   document.querySelectorAll(".cv-chip").forEach(b => b.addEventListener("click", () => { filter = b.dataset.filter; syncFilterChips(); tree(); }));
-  document.querySelectorAll("[data-lower]").forEach(tab => tab.addEventListener("click", () => {
+  // The lower tablist shares one activation path for clicks and arrow keys, so
+  // aria-selected, the roving tabindex, the visible pane and the data load can
+  // never drift apart.
+  function activateLower(tab) {
     lower = tab.dataset.lower;
     document.querySelectorAll("[data-lower]").forEach(t => { const on = t === tab; t.setAttribute("aria-selected", String(on)); t.tabIndex = on ? 0 : -1; });
     document.querySelectorAll("[data-pane]").forEach(p => { p.hidden = p.dataset.pane !== lower; });
     loadLower();
-  }));
+  }
+  document.querySelectorAll("[data-lower]").forEach((tab, i, tabs) => {
+    tab.addEventListener("click", () => activateLower(tab));
+    tab.addEventListener("keydown", event => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.isComposing || event.keyCode === 229) return;
+      event.preventDefault();
+      const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
+        : event.key === "ArrowRight" ? (i + 1) % tabs.length : (i + tabs.length - 1) % tabs.length;
+      activateLower(tabs[next]);
+      tabs[next].focus();
+    });
+  });
   ["cv-events-lanes", "cv-events-range"].forEach(id => $(id).addEventListener("change", () => { eventsOffset = 0; loadEvents(); }));
   $("cv-events-prev").addEventListener("click", () => { eventsOffset = Math.max(0, eventsOffset - 200); loadEvents(); });
   $("cv-events-next").addEventListener("click", () => { eventsOffset += 200; loadEvents(); });

@@ -280,19 +280,19 @@
       </div>
       <div class="cv-lower" id="cv-lower" hidden>
         <div class="curve-tabs" role="tablist" aria-label="明细">
-          <button class="curve-tab" type="button" role="tab" data-lower="events" aria-selected="true">事件列表</button>
-          <button class="curve-tab" type="button" role="tab" data-lower="checks" aria-selected="false" tabindex="-1">判定检查点</button>
-          <button class="curve-tab" type="button" role="tab" data-lower="raw" aria-selected="false" tabindex="-1">原始数据</button>
+          <button class="curve-tab" type="button" role="tab" id="cv-lower-tab-events" data-lower="events" aria-selected="true" aria-controls="cv-lower-pane-events">事件列表</button>
+          <button class="curve-tab" type="button" role="tab" id="cv-lower-tab-checks" data-lower="checks" aria-selected="false" aria-controls="cv-lower-pane-checks" tabindex="-1">判定检查点</button>
+          <button class="curve-tab" type="button" role="tab" id="cv-lower-tab-raw" data-lower="raw" aria-selected="false" aria-controls="cv-lower-pane-raw" tabindex="-1">原始数据</button>
         </div>
-        <div data-pane="events">
+        <div data-pane="events" id="cv-lower-pane-events" role="tabpanel" aria-labelledby="cv-lower-tab-events">
           <div class="cv-pane-bar"><label class="jchk"><input type="checkbox" id="cv-events-lanes" checked><span>只看泳道中的变量</span></label><label class="jchk"><input type="checkbox" id="cv-events-range" checked><span>只看当前区间</span></label><span class="submuted" id="cv-events-info"></span></div>
           <div class="cv-table-wrap"><table class="tbl cv-table" id="cv-events"></table></div>
           <div class="cv-pager"><button class="btn small" id="cv-events-prev" type="button">上一页</button><button class="btn small" id="cv-events-next" type="button">下一页</button></div>
         </div>
-        <div data-pane="checks" hidden>
+        <div data-pane="checks" hidden id="cv-lower-pane-checks" role="tabpanel" aria-labelledby="cv-lower-tab-checks">
           <div class="cv-table-wrap"><table class="tbl cv-table" id="cv-checks"></table></div>
         </div>
-        <div data-pane="raw" hidden>
+        <div data-pane="raw" hidden id="cv-lower-pane-raw" role="tabpanel" aria-labelledby="cv-lower-tab-raw">
           <div class="cv-table-wrap"><table class="tbl cv-table" id="cv-raw"></table></div>
           <div class="cv-pager"><button class="btn small" id="cv-raw-prev" type="button">上一页</button><span class="submuted" id="cv-raw-page"></span><button class="btn small" id="cv-raw-next" type="button">下一页</button></div>
         </div>
