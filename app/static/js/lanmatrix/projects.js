@@ -311,7 +311,11 @@
   if (segEl) segEl.addEventListener("click", (e) => {
     const b = e.target.closest("button[data-s]");
     if (!b) return;
-    segEl.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+    segEl.querySelectorAll("button").forEach((x) => {
+      const selected = x === b;
+      x.classList.toggle("on", selected);
+      x.setAttribute("aria-pressed", String(selected));
+    });
     filter.s = b.getAttribute("data-s");
     render();
   });
