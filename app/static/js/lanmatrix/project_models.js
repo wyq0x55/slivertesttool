@@ -103,7 +103,7 @@
     rowsEl.querySelectorAll(".lm-model-ver").forEach((b) =>
       b.addEventListener("click", (e) => {
         e.stopPropagation();
-        openVersion(models.find((m) => m.id === Number(b.dataset.modelId)));
+        openVersion(models.find((m) => m.id === Number(b.dataset.modelId)), b);
       }));
     rowsEl.querySelectorAll(".lm-model-cur").forEach((b) =>
       b.addEventListener("click", (e) => { e.stopPropagation(); setCurrent(b.dataset.modelId, b.dataset.name); }));
@@ -217,6 +217,7 @@
   const verModal = $("lm-ver-modal");
   let verTarget = null;
   let verTargetName = "";
+  let verTrigger = null;
 
   function verError(msg) {
     const box = $("lm-ver-err");
@@ -226,21 +227,32 @@
   }
 
   function closeVersion() {
+    const id = verTarget;
     verTarget = null;
     verTargetName = "";
-    if (verModal) { verModal.hidden = true; }
+    if (verModal && verModal.open) { verModal.close(); }
     verError("");
+    // Browsers do not focus a clicked button on every platform (Safari does
+    // not), so the UA's own restore can land on the control used before the
+    // dialog was opened. Restore the trigger explicitly; when a save has
+    // already replaced it, render() rebuilds the same button from the data.
+    const target = verTrigger && verTrigger.isConnected
+      ? verTrigger
+      : rowsEl.querySelector(`.lm-model-ver[data-model-id="${id}"]`);
+    verTrigger = null;
+    if (target) { target.focus(); }
   }
 
-  function openVersion(model) {
+  function openVersion(model, trigger) {
     if (!model || !verModal) { return; }
     verTarget = model.id;
     verTargetName = model.name;
+    verTrigger = trigger || null;
     $("lm-ver-title").textContent = ` — ${model.name}`;
     $("lm-ver-input").value = model.version || "";
     $("lm-ver-note").value = model.version_note || "";
     verError("");
-    verModal.hidden = false;
+    if (!verModal.open) { verModal.showModal(); }
     const input = $("lm-ver-input");
     input.focus();
     input.select();
@@ -256,8 +268,13 @@
     try {
       const data = await LMApi.updateProjectModelVersion(pid, verTarget, version, note);
       const name = verTargetName;
+      const id = verTarget;
       closeVersion();
       render(data.models || []);
+      // closeVersion() restored focus to the old trigger, which render() has
+      // just replaced; move it to the equivalent new button.
+      const restored = rowsEl.querySelector(`.lm-model-ver[data-model-id="${id}"]`);
+      if (restored) { restored.focus(); }
       toast(version ? `「${name}」版本已设为 ${version}` : `已清除「${name}」的版本号`, true);
     } catch (ex) {
       verError(ex.message);
@@ -276,8 +293,19 @@
       if (e.isComposing || e.keyCode === 229) return;
       if (e.key === "Enter") { e.preventDefault(); saveVersion(); }
     });
-    verModal.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") { e.stopPropagation(); closeVersion(); }
+    // Native <dialog>: Esc fires "cancel", and a press on the backdrop targets
+    // the dialog element itself (the panel covers the rest). Both dismiss it.
+    verModal.addEventListener("cancel", (e) => { e.preventDefault(); closeVersion(); });
+    // Dismiss only when the same pointer goes down AND up on the backdrop. A
+    // press that starts inside the panel and ends outside (or the reverse)
+    // still dispatches a click on the full-viewport dialog, which must not
+    // count as a backdrop click.
+    let backdropPress = false;
+    verModal.addEventListener("pointerdown", (e) => { backdropPress = e.target === verModal; });
+    verModal.addEventListener("pointercancel", () => { backdropPress = false; });
+    verModal.addEventListener("pointerup", (e) => {
+      if (backdropPress && e.target === verModal) { closeVersion(); }
+      backdropPress = false;
     });
   }
 

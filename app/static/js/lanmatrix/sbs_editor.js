@@ -133,7 +133,7 @@
     const histBtn = $("lm-sbs-history-toggle");
     if (histBtn) { histBtn.setAttribute("aria-expanded", "false"); }
     $("lm-sbs-title").textContent = "：" + modelName;
-    modal.hidden = false;
+    if (!modal.open) { modal.showModal(); }
     setStatus("载入中…");
     if ($("lm-sbs-save")) { $("lm-sbs-save").disabled = true; }
     loadBundle();  // in parallel with the .sbs request below
@@ -181,7 +181,7 @@
       if (!ok) { return; }
     }
     const modal = $("lm-sbs-modal");
-    if (modal) { modal.hidden = true; }
+    if (modal && modal.open) { modal.close(); }
     if (state.editor) { try { state.editor.destroy(); } catch (e) { /* ignore */ } }
     state.editor = null;
   }
@@ -351,17 +351,54 @@
     if (histBtn) { histBtn.addEventListener("click", toggleHistory); }
     document.querySelectorAll("[data-sbs-close]").forEach((el) =>
       el.addEventListener("click", close));
+    const modal = $("lm-sbs-modal");
+    function confirmOpenAbove() {
+      // LMUI.confirm opens a native <dialog> in the top layer and owns Escape
+      // while it is up; the editor must not treat that Escape as its own.
+      return Array.prototype.some.call(
+        document.querySelectorAll("dialog[open]"), (d) => d !== modal);
+    }
+    if (modal) {
+      // Esc asks a native <dialog> to cancel and close immediately, which would
+      // skip the unsaved-changes confirm. Escape is intercepted at keydown time
+      // below, because once a cancel has been prevented Chromium delivers the
+      // next close request with cancelable:false and closes the dialog anyway.
+      // This listener remains as the fallback for other close requests.
+      modal.addEventListener("cancel", (e) => {
+        e.preventDefault();
+        if (!confirmOpenAbove()) { close(); }
+      });
+      // The dialog itself is the full-viewport overlay; a press counts as a
+      // backdrop press only when the same pointer also lifts on it, so a drag
+      // that crosses the panel edge cannot dismiss the editor.
+      let backdropPress = false;
+      modal.addEventListener("pointerdown", (e) => { backdropPress = e.target === modal; });
+      modal.addEventListener("pointercancel", () => { backdropPress = false; });
+      modal.addEventListener("pointerup", (e) => {
+        if (backdropPress && e.target === modal) { close(); }
+        backdropPress = false;
+      });
+    }
     document.addEventListener("keydown", (e) => {
-      const modal = $("lm-sbs-modal");
-      if (!modal || modal.hidden) { return; }
-      if (e.isComposing || e.keyCode === 229) { return; }
-      if (e.key === "Escape") { close(); }
+      const dlg = $("lm-sbs-modal");
+      if (!dlg || !dlg.open) { return; }
+      if (e.isComposing || e.keyCode === 229) {
+        // Esc ends an IME composition; it must not also dismiss the dialog.
+        if (e.key === "Escape") { e.preventDefault(); }
+        return;
+      }
+      if (e.key === "Escape") {
+        if (confirmOpenAbove()) { return; }
+        e.preventDefault();
+        close();
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
         if (!state.dirty) { return; }
         save();
       }
-    });
+    }, true);
   }
 
   if (document.readyState === "loading") {

@@ -798,19 +798,35 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
 /* --------------------------------------------------------------------- */
 /* In-app SBS editor modal (models page)                                  */
 /* --------------------------------------------------------------------- */
+/* These elements are native <dialog>s opened with showModal(), so the UA gives
+   them focus containment, an inert page and top-layer stacking. Each dialog is
+   the full-viewport transparent overlay; the .lm-modal-panel child is the
+   visible frame. The flex centring is scoped to [open] because an author
+   `display` on a closed dialog would override the UA's hiding. */
 .lm-modal {
   position: fixed;
   inset: 0;
   z-index: 1000;
+}
+dialog.lm-modal {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  overscroll-behavior: contain;
+}
+dialog.lm-modal[open] {
   display: flex;
   align-items: center;
   justify-content: center;
 }
-.lm-modal[hidden] { display: none; }
-.lm-modal-backdrop {
-  position: absolute;
-  inset: 0;
+dialog.lm-modal::backdrop {
   background: rgba(15, 23, 42, 0.45);
+  overflow: hidden;
+  overscroll-behavior: contain;
 }
 .lm-modal-panel {
   position: relative;
