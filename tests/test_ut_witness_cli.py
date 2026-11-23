@@ -14,7 +14,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.services.ut_pipeline.bridge import BridgeError, BridgeSettings, UtAgentBridge
+from app.services.ut_pipeline.bridge import (
+    BridgeError, BridgeSettings, UtAgentBridge, WITNESS_API_KEY_ENV,
+)
 
 
 def _bridge(tmp_path):
@@ -31,8 +33,11 @@ def _completion(bridge, monkeypatch, *, returncode=0, stdout=b"", stderr=b""):
         seen["timeout"] = timeout
         return subprocess.CompletedProcess(command, returncode, stdout, stderr)
 
-    monkeypatch.setattr(UtAgentBridge, "_popen",
-                        staticmethod(lambda command, root, env: None))
+    def popen(command, root, env):
+        seen["env"] = env
+        return None
+
+    monkeypatch.setattr(UtAgentBridge, "_popen", staticmethod(popen))
     monkeypatch.setattr(UtAgentBridge, "_wait", wait)
     seen["bridge"] = bridge
     return seen
@@ -86,6 +91,28 @@ def test_propose_omits_the_token_limit_when_undeclared(tmp_path, monkeypatch):
                               base_url="http://127.0.0.1:1/v1", model="qwen")
 
     assert "--max-tokens" not in seen["command"]
+
+
+def test_a_proposal_carries_the_key_in_the_environment_not_argv(tmp_path, monkeypatch):
+    monkeypatch.setenv(WITNESS_API_KEY_ENV, "not-the-key")
+    seen = _completion(_bridge(tmp_path), monkeypatch, stdout=b'{"status": "PROPOSABLE"}')
+
+    _bridge(tmp_path).propose(manifest="m", ir="i", suite="s", out="o",
+                              base_url="http://127.0.0.1:1/v1", model="qwen",
+                              api_key="sk-local-secret")
+
+    assert seen["env"][WITNESS_API_KEY_ENV] == "sk-local-secret"
+    assert "sk-local-secret" not in " ".join(seen["command"])
+
+
+def test_a_triage_run_does_not_touch_the_model_key(tmp_path, monkeypatch):
+    monkeypatch.setenv(WITNESS_API_KEY_ENV, "inherited")
+    seen = _completion(_bridge(tmp_path), monkeypatch, stdout=b'{"status": "PROPOSABLE"}')
+
+    _bridge(tmp_path).triage(manifest="m", ir="i", suite="s", out="o")
+
+    # The tool's own inherited value is left alone: triage calls no model.
+    assert seen["env"][WITNESS_API_KEY_ENV] == "inherited"
 
 
 def test_a_timeout_names_the_command(tmp_path, monkeypatch):

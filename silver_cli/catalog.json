@@ -3050,6 +3050,38 @@
    "query_params": [],
    "response_kind": "json",
    "summary": "validate manifest"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "ut_pipeline.witness_propose",
+   "path": "/api/v1/projects/<int:project_id>/ut/jobs/<int:job_id>/witness/propose",
+   "path_params": {
+    "job_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Ask the local model for candidates. Only this endpoint may call a model."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "ut_pipeline.witness_triage",
+   "path": "/api/v1/projects/<int:project_id>/ut/jobs/<int:job_id>/witness/triage",
+   "path_params": {
+    "job_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Sort this job's unsolved obligations. Operator-triggered, no model call."
   }
  ]
 }

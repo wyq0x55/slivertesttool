@@ -28,6 +28,9 @@ FORECAST_INTERVAL = 5.0
 # One forecast is a short CLI call; a hung one must not hold the generation
 # stream for the whole bridge timeout.
 FORECAST_TIMEOUT = 30
+# ut-agent reads the model key from this variable when ``--api-key-env`` is not
+# given; passing the configured key this way keeps it out of the command line.
+WITNESS_API_KEY_ENV = "UT_AGENT_JEV_API_KEY"
 
 
 class BridgeError(RuntimeError):
@@ -279,13 +282,17 @@ class UtAgentBridge:
     # ut-agent's own proposal default; triage is deterministic and needs far less.
     WITNESS_TIMEOUT = 900
 
-    def _witness(self, args: list[str], *, timeout: int) -> dict[str, Any]:
+    def _witness(self, args: list[str], *, timeout: int,
+                 api_key: str | None = None) -> dict[str, Any]:
         """Run one ``ut-agent witness`` command and return its JSON document.
 
         Witness is a top-level command, not a bridge one: it prints its document
         without a contract key, and reports a failed run as exit code 2 plus a
         message on stderr.  The exit code therefore decides failure; a document
         is only read from a run that exited zero.
+
+        The API key travels in ut-agent's own environment variable, never argv:
+        a command line is readable by other processes on the same host.
         """
         root, python = self.settings.root, self.settings.python
         if not root or not python:
@@ -294,6 +301,8 @@ class UtAgentBridge:
         env["PYTHONPATH"] = os.pathsep.join(
             part for part in (str(Path(root) / "src"), env.get("PYTHONPATH", "")) if part)
         env["PYTHONIOENCODING"] = "utf-8"
+        if api_key:
+            env[WITNESS_API_KEY_ENV] = api_key
         command = [python, "-m", "ut_agent", "witness", *args]
         try:
             proc = self._wait(self._popen(command, root, env), command, timeout)
@@ -330,6 +339,7 @@ class UtAgentBridge:
     def propose(self, *, manifest: str, ir: str, suite: str, out: Path,
                 base_url: str, model: str, batch_size: int = 8,
                 max_tokens: int | None = None,
+                api_key: str | None = None,
                 timeout: int | None = None) -> dict[str, Any]:
         """Ask the operator's local model for candidate inputs from a triage.
 
@@ -341,8 +351,7 @@ class UtAgentBridge:
                 "--batch-size", str(batch_size)]
         if max_tokens is not None:
             args += ["--max-tokens", str(max_tokens)]
-        return self._witness(args, timeout=timeout or self.WITNESS_TIMEOUT)
-
+        return self._witness(args, timeout=timeout or self.WITNESS_TIMEOUT, api_key=api_key)
 
     @staticmethod
     def _host_args(ir_json: Path, intents: Path, reference: Path,
