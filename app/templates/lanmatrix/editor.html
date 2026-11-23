@@ -24,6 +24,10 @@
 </div>
 {% endblock %}
 {% block content %}
+{# The editor is a full-bleed grid, so the page's top-level heading is visually
+   hidden: it exists for heading navigation (WCAG 1.3.1 / 2.4.6), not the eye.
+   The crumb's <b> is not a heading and the <title> is outside the document. #}
+<h1 class="lm-sr-only">矩阵编辑</h1>
 <div class="lm-editor" data-project-id="{{ project_id }}" data-collab="{{ '1' if collab_available else '0' }}">
   {# Editor controls. Under the Univer engine the adapter adopts #lm-toolbar-left
      (status + collaboration presence) into Univer's left tab-row slot, while row
