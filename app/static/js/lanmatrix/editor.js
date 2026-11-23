@@ -316,11 +316,11 @@
   }
 
   function toast(msg, ok) {
-    const t = document.getElementById("lm-toast");
-    t.textContent = msg;
-    t.className = "lm-toast " + (ok ? "lm-ok" : "lm-err");
-    t.hidden = false;
-    setTimeout(() => { t.hidden = true; }, 3200);
+    // Single implementation lives in ui.js (LMUI.toast), which also mirrors the
+    // message into the #lm-toast-live live region for screen readers.
+    if (typeof LMUI !== "undefined" && typeof LMUI.toast === "function") {
+      LMUI.toast(msg, ok);
+    }
   }
   window.LMToast = toast;
 

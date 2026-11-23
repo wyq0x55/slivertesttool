@@ -331,6 +331,11 @@ select.lm-cell-control[multiple] { min-height: 46px; }
 .lm-toast.lm-ok { background: var(--ok); }
 .lm-toast.lm-err { background: var(--danger); }
 .lm-toast .btn { margin-left: 10px; background: rgba(255,255,255,.2); color: var(--surface); border-color: rgba(255,255,255,.5); }
+/* Screen-reader-only mirror of the toast (base_lm.html). Visually clipped but
+   deliberately NOT display:none / visibility:hidden / hidden: those remove the
+   node from the accessibility tree, and a live region outside that tree does
+   not announce. */
+#lm-toast-live { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); border: 0; }
 
 /* --- Row operations toolbar + context menu (v2.9.0) ------------------- */
 .lm-toolbar-rowops { padding: 6px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }

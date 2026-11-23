@@ -98,12 +98,11 @@
       + `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
   }
   function toast(msg, ok) {
-    const t = $("lm-toast");
-    if (!t) return;
-    t.textContent = msg;
-    t.className = "lm-toast " + (ok ? "lm-ok" : "lm-err");
-    t.hidden = false;
-    setTimeout(() => { t.hidden = true; }, 3200);
+    // Single implementation lives in ui.js (LMUI.toast), which also mirrors the
+    // message into the #lm-toast-live live region for screen readers.
+    if (typeof LMUI !== "undefined" && typeof LMUI.toast === "function") {
+      LMUI.toast(msg, ok);
+    }
   }
 
   // --- tabs ---------------------------------------------------------------- //

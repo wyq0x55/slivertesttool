@@ -327,7 +327,16 @@
     toast: function (msg, ok) {
       var el = document.getElementById("lm-toast");
       if (!el) return;
-      el.textContent = String(msg == null ? "" : msg);
+      var text = String(msg == null ? "" : msg);
+      /* Mirror the message into the screen-reader live region. Clear first:
+         assigning the same string to textContent twice frequently does not
+         re-announce, so the intermediate empty value forces a mutation. */
+      var live = document.getElementById("lm-toast-live");
+      if (live) {
+        live.textContent = "";
+        live.textContent = text;
+      }
+      el.textContent = text;
       el.className = "lm-toast " + (ok ? "lm-ok" : "lm-err");
       el.hidden = false;
       if (el._lmTimer) clearTimeout(el._lmTimer);

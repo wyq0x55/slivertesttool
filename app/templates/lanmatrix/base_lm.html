@@ -208,6 +208,11 @@
   {{ self.content() }}
 {% endif %}
   <div id="lm-toast" class="lm-toast" hidden></div>
+  {# Always-present live region mirroring #lm-toast. The visual strip is
+     display:none (hidden) while its text is written, so a live region on the
+     strip itself would never announce; this one is clipped visually by CSS
+     but stays in the accessibility tree. #}
+  <div id="lm-toast-live" role="status" aria-live="polite" aria-atomic="true"></div>
   <script>
     window.LM = {
       projectId: {{ project_id if project_id is defined else 'null' }},
