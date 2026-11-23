@@ -38,6 +38,7 @@
         <div class="lm-error" id="lm-db-tv-error" role="alert"></div>
         <div class="lm-db-grid-wrap">
           <table class="lm-table lm-db-grid">
+            <caption class="lm-sr-only">数据表内容</caption>
             <thead id="lm-db-grid-head"></thead>
             <tbody id="lm-db-grid-body"></tbody>
           </table>
@@ -60,7 +61,8 @@
         <h4 class="lm-db-subhead">数据表 <span class="lm-muted" id="lm-db-tblcount"></span></h4>
         <div class="lm-db-tables-wrap">
           <table class="lm-table lm-db-tables">
-            <thead><tr><th scope="col">模式</th><th scope="col">表名</th><th scope="col" class="num">估计行数</th><th scope="col" class="num">占用空间</th><th scope="col"></th></tr></thead>
+            <caption class="lm-sr-only">数据表列表</caption>
+            <thead><tr><th scope="col">模式</th><th scope="col">表名</th><th scope="col" class="num">估计行数</th><th scope="col" class="num">占用空间</th><th scope="col"><span class="lm-sr-only">操作</span></th></tr></thead>
             <tbody id="lm-db-tables"></tbody>
           </table>
         </div>
@@ -87,6 +89,7 @@
         <div class="lm-db-result-meta lm-muted" id="lm-db-meta"></div>
         <div class="lm-db-result-wrap">
           <table class="lm-table lm-db-result">
+            <caption class="lm-sr-only">SQL 查询结果</caption>
             <thead id="lm-db-result-head"></thead>
             <tbody id="lm-db-result-body"></tbody>
           </table>
