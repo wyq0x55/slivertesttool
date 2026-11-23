@@ -135,10 +135,13 @@
         <a href="{{ url_for('lanmatrix_pages.password') }}" class="btn ghost">
           <span>修改密码</span>
         </a>
-        <a href="#" id="lm-logout" class="btn ghost">
+        {# Signing out is an action, not a destination: a native button reports the
+           right role and keeps Enter/Space activation. api.js still delegates on
+           #lm-logout, so the id is the contract, not the tag. #}
+        <button type="button" id="lm-logout" class="btn ghost">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
           <span>退出登录</span>
-        </a>
+        </button>
       </div>
     </aside>
     <div class="main">
@@ -279,7 +282,7 @@
         else{ app.classList.toggle('side-open'); }
       });
       /* Give collapsed nav icons a native tooltip from their label text. */
-      document.querySelectorAll('.nav a, .side-foot a').forEach(function(a){
+      document.querySelectorAll('.nav a, .side-foot a, .side-foot button').forEach(function(a){
         var s=a.querySelector('span'); if(s&&!a.title) a.title=s.textContent.trim();
       });
       /* Highlight the current nav link. A link may also declare
