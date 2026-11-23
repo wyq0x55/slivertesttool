@@ -107,7 +107,13 @@
   function setStatus(msg, kind) {
     const el = $("lm-sbs-status");
     if (!el) { return; }
-    el.textContent = msg || "";
+    const text = msg || "";
+    // Live regions announce changes, not assignments: re-writing an identical
+    // string is silently dropped by assistive tech. Clear first so repeated
+    // outcomes (e.g. "无改动") are announced again. The clear and the rewrite
+    // happen in one task, so nothing flickers on screen.
+    if (text && el.textContent === text) { el.textContent = ""; }
+    el.textContent = text;
     el.className = "lm-sbs-status" + (kind ? " lm-sbs-" + kind : "");
   }
 
