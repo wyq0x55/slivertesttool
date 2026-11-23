@@ -119,6 +119,7 @@
     <div class="tablecard">
       <div style="overflow-x:auto" tabindex="0" role="region" aria-labelledby="lm-tasks-page-title">
         <table class="dt lm-tasks-table">
+          <caption class="lm-sr-only">任务运行记录</caption>
           <thead>
             <tr>
               <th scope="col" class="lm-col-check" style="width:36px"><input type="checkbox" id="lm-check-all" title="全选/全不选（当前筛选）" aria-label="全选/全不选（当前筛选）"></th>
@@ -129,7 +130,7 @@
               <th scope="col" class="lm-sortable" data-sort="review"><button type="button" class="lm-sort-btn" data-sort="review">审核</button></th>
               <th scope="col" class="lm-sortable" data-sort="progress"><button type="button" class="lm-sort-btn" data-sort="progress">进度</button></th>
               <th scope="col" class="lm-sortable" data-sort="finished_at"><button type="button" class="lm-sort-btn" data-sort="finished_at">完成时间</button></th>
-              <th scope="col" style="width:1%"></th>
+              <th scope="col" style="width:1%"><span class="lm-sr-only">操作</span></th>
             </tr>
           </thead>
           <tbody id="lm-task-rows">
@@ -286,14 +287,14 @@
         </div>
         <div data-pane="events" id="cv-lower-pane-events" role="tabpanel" aria-labelledby="cv-lower-tab-events">
           <div class="cv-pane-bar"><label class="jchk"><input type="checkbox" id="cv-events-lanes" checked><span>只看泳道中的变量</span></label><label class="jchk"><input type="checkbox" id="cv-events-range" checked><span>只看当前区间</span></label><span class="submuted" id="cv-events-info"></span></div>
-          <div class="cv-table-wrap"><table class="tbl cv-table" id="cv-events"></table></div>
+          <div class="cv-table-wrap"><table class="tbl cv-table" id="cv-events" aria-label="事件列表"></table></div>
           <div class="cv-pager"><button class="btn small" id="cv-events-prev" type="button">上一页</button><button class="btn small" id="cv-events-next" type="button">下一页</button></div>
         </div>
         <div data-pane="checks" hidden id="cv-lower-pane-checks" role="tabpanel" aria-labelledby="cv-lower-tab-checks">
-          <div class="cv-table-wrap"><table class="tbl cv-table" id="cv-checks"></table></div>
+          <div class="cv-table-wrap"><table class="tbl cv-table" id="cv-checks" aria-label="判定检查点"></table></div>
         </div>
         <div data-pane="raw" hidden id="cv-lower-pane-raw" role="tabpanel" aria-labelledby="cv-lower-tab-raw">
-          <div class="cv-table-wrap"><table class="tbl cv-table" id="cv-raw"></table></div>
+          <div class="cv-table-wrap"><table class="tbl cv-table" id="cv-raw" aria-label="原始数据"></table></div>
           <div class="cv-pager"><button class="btn small" id="cv-raw-prev" type="button">上一页</button><span class="submuted" id="cv-raw-page"></span><button class="btn small" id="cv-raw-next" type="button">下一页</button></div>
         </div>
       </div>

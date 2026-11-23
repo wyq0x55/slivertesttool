@@ -63,6 +63,7 @@
   <div class="tablecard">
     <div style="overflow-x:auto" tabindex="0" role="region" aria-labelledby="lm-ut-tasks-title">
       <table class="dt ut-table lm-tasks-table">
+        <caption class="lm-sr-only">单元测试作业列表</caption>
         <thead>
           <tr>
             <th scope="col" class="ut-check"><input type="checkbox" id="ut-requeue-all" title="选择可重新入队的作业" aria-label="选择可重新入队的作业"></th>
@@ -73,7 +74,7 @@
             <th scope="col">模型修正</th>
             <th scope="col" title="当前版本的 Clang/LLVM 实测覆盖率（HOST_EXECUTION），不计入目标机证据">覆盖率 <span class="submuted">· 主机</span></th>
             <th scope="col">更新时间</th>
-            <th scope="col" class="lm-row-actions"></th>
+            <th scope="col" class="lm-row-actions"><span class="lm-sr-only">操作</span></th>
           </tr>
         </thead>
         <tbody id="ut-rows"><tr><td colspan="9" class="muted">加载中…</td></tr></tbody>
@@ -182,7 +183,8 @@
     <div class="panel-bar"><h4 id="lm-ut-attempts-title">版本历史 <span class="submuted">· 每个候选的来源、执行与机器判定</span></h4></div>
     <div style="overflow-x:auto" tabindex="0" role="region" aria-labelledby="lm-ut-attempts-title">
       <table class="dt ut-table ut-attempts lm-tasks-table">
-        <thead><tr><th scope="col">#</th><th scope="col">来源</th><th scope="col">机器判定</th><th scope="col">主要问题</th><th scope="col">覆盖率</th><th scope="col">说明</th><th scope="col">时间</th><th scope="col" class="lm-row-actions"></th></tr></thead>
+        <caption class="lm-sr-only">版本历史</caption>
+        <thead><tr><th scope="col">#</th><th scope="col">来源</th><th scope="col">机器判定</th><th scope="col">主要问题</th><th scope="col">覆盖率</th><th scope="col">说明</th><th scope="col">时间</th><th scope="col" class="lm-row-actions"><span class="lm-sr-only">操作</span></th></tr></thead>
         <tbody id="ut-d-attempts"></tbody>
       </table>
     </div>
