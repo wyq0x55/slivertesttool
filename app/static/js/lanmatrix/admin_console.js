@@ -273,7 +273,7 @@
   const dlg = $("lm-user-dialog");
   function openUser(id) {
     const u = (window._lmUsers || []).find((x) => x.id === id) || null;
-    $("lm-user-error").hidden = true;
+    $("lm-user-error").textContent = "";
     $("lm-user-dlg-title").textContent = u ? "编辑账号" : "新建账号";
     $("lm-user-id").value = u ? u.id : "";
     $("lm-user-username").value = u ? u.username : "";
@@ -290,7 +290,7 @@
     e.preventDefault();
     const id = $("lm-user-id").value;
     const err = $("lm-user-error");
-    err.hidden = true;
+    err.textContent = "";
     try {
       if (id) {
         const changes = {
@@ -314,7 +314,7 @@
       dlg.close();
       toast("账号已保存", true);
       loadUsers();
-    } catch (ex) { err.textContent = ex.message; err.hidden = false; }
+    } catch (ex) { err.textContent = ex.message; }
   });
   async function delUser(id) {
     if (!(await LMUI.confirm({

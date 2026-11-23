@@ -1005,6 +1005,7 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
 .lm-err,.lm-error,.login-err{ color:var(--danger-text); font-size:13px; }
 .lm-error,.login-err{ margin-top:8px; }
 .lm-error:empty{ margin-top:0; }
+.login-err:empty{ margin-top:0; padding:0; background:transparent; }
 .lm-req{ color:var(--danger-text); margin-left:2px; }
 .lm-page-head,.page-head{ display:flex; align-items:flex-end; justify-content:space-between;
   gap:24px; margin-bottom:24px; }

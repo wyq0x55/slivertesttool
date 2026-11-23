@@ -71,7 +71,7 @@
     $("lm-f-options").value = field ? (field.options || []).join(", ") : "";
     $("lm-f-help").value = field ? (field.help_text || "") : "";
     $("lm-f-required").checked = field ? !!field.is_required : false;
-    $("lm-f-error").hidden = true;
+    $("lm-f-error").textContent = "";
   }
 
   async function load() {
@@ -397,7 +397,7 @@
       }
       dialog.close();
       await load();
-    } catch (ex) { err.textContent = ex.message; err.hidden = false; }
+    } catch (ex) { err.textContent = ex.message; }
   });
 
   initDragSort();
