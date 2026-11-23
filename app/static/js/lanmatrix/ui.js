@@ -284,6 +284,26 @@
     });
   }
 
+  /* Speak a toast through the always-mounted live region (#lm-toast-live in
+   * base_lm.html). The visible #lm-toast alone is silent to assistive tech: it
+   * is [hidden] at load, so un-hiding it in the same frame as its text change
+   * gives the screen reader no container that was already in the page. This
+   * region never leaves the accessibility tree.
+   *
+   * Assistive tech only speaks when the region MUTATES, so writing the same
+   * message twice in a row would otherwise be silent the second time. We
+   * alternate a trailing no-break space, which changes the text without
+   * changing what is spoken. The flip flag lives on the element, so the helper
+   * holds no module-level state and is safe to reuse from page scripts.
+   */
+  function announce(msg) {
+    var live = document.getElementById("lm-toast-live");
+    if (!live) return;
+    live._lmAnnounceFlip = !live._lmAnnounceFlip;
+    live.textContent =
+      String(msg == null ? "" : msg) + (live._lmAnnounceFlip ? "\u00a0" : "");
+  }
+
   var LMUI = {
     /** @returns {Promise<boolean>} */
     confirm: function (opts) {
@@ -327,12 +347,19 @@
     toast: function (msg, ok) {
       var el = document.getElementById("lm-toast");
       if (!el) return;
-      el.textContent = String(msg == null ? "" : msg);
+      var text = String(msg == null ? "" : msg);
+      el.textContent = text;
       el.className = "lm-toast " + (ok ? "lm-ok" : "lm-err");
       el.hidden = false;
       if (el._lmTimer) clearTimeout(el._lmTimer);
       el._lmTimer = setTimeout(function () { el.hidden = true; }, 3200);
+      announce(text);
     },
+
+    /* Page-local toast() copies (admin_console, admin_db, editor) write the
+     * visible strip themselves; they call this so their messages are spoken
+     * too. */
+    announce: announce,
   };
 
   window.LMUI = LMUI;
