@@ -124,7 +124,7 @@
     { keys: ["Esc"], scope: "对话框",
       desc: "关闭右键菜单、步骤明细等弹出层" },              // grid.js / steps_editor.js
     { keys: ["Tab"], scope: "JSON 编辑",
-      desc: "在 JSON 编辑框内插入缩进，而不是跳到下一个控件" }, // json_editor.js
+      desc: "在 JSON 编辑框内插入缩进，而不是跳到下一个控件；Shift+Tab 退回上一个控件" }, // json_editor.js
     { keys: ["?"], scope: "全局", desc: "打开 / 关闭本快捷键面板" },
   ];
 
