@@ -80,7 +80,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>
         <input type="search" id="lm-f-text" placeholder="搜索任务 / test id…" aria-label="搜索任务 / test id…" autocomplete="off">
       </div>
-      <select id="lm-f-submitter" class="selbox" title="按提交者筛选">
+      <select id="lm-f-submitter" class="selbox" title="按提交者筛选" aria-label="按提交者筛选">
         <option value="">全部提交者</option>
       </select>
       <input type="hidden" id="lm-f-status" value="">
@@ -121,7 +121,7 @@
         <table class="dt lm-tasks-table">
           <thead>
             <tr>
-              <th scope="col" class="lm-col-check" style="width:36px"><input type="checkbox" id="lm-check-all" title="全选/全不选（当前筛选）"></th>
+              <th scope="col" class="lm-col-check" style="width:36px"><input type="checkbox" id="lm-check-all" title="全选/全不选（当前筛选）" aria-label="全选/全不选（当前筛选）"></th>
               <th scope="col" class="lm-sortable" data-sort="test_id"><button type="button" class="lm-sort-btn" data-sort="test_id">test id</button></th>
               <th scope="col" class="lm-sortable" data-sort="sil_name"><button type="button" class="lm-sort-btn" data-sort="sil_name">模型</button></th>
               <th scope="col" class="lm-sortable" data-sort="submitter"><button type="button" class="lm-sort-btn" data-sort="submitter">提交者</button></th>
