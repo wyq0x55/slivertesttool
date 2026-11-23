@@ -216,3 +216,19 @@ test("a running generation leaves the panel and aria-expanded untouched", async 
     input: { _context: { items: [] } }, output: {}, meta: {} });
   await settle();
 });
+test("a successful generation collapses the panel and reports aria-expanded=false", async () => {
+  const harness = disclosureHarness({
+    createAiDraft: async () => ({ id: 51, project_id: 1, scenario: "procedure", status: "pending",
+      input: { _context: { items: [] } }, output: {}, meta: {} }),
+  });
+  await settle();
+  harness.openToggle();
+  assert.equal(harness.panel.hidden, false);
+  assert.equal(harness.button.getAttribute("aria-expanded"), "true");
+
+  harness.submit();
+  await settle();
+
+  assert.equal(harness.panel.hidden, true);
+  assert.equal(harness.button.getAttribute("aria-expanded"), "false");
+});

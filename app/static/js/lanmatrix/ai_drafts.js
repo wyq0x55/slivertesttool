@@ -593,6 +593,9 @@
       load();
       if (detailEpoch === epoch && detailId === null) {
         panel.hidden = true;
+        // Collapsing the panel here must report the same state as a manual
+        // collapse, or the toggle keeps claiming it is expanded.
+        openButton.setAttribute("aria-expanded", "false");
         openDetail(draft.id);
       }
     });
