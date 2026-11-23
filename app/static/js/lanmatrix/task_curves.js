@@ -839,7 +839,7 @@
       const page = await api("/raw", params({ offset: rawOffset, count: 100 }));
       if (!page) return;
       const head = document.createElement("thead"), tr = document.createElement("tr");
-      ["记录", ...page.header].forEach(n => { const th = document.createElement("th"); th.textContent = n; tr.append(th); });
+      ["记录", ...page.header].forEach(n => { const th = document.createElement("th"); th.scope = "col"; th.textContent = n; tr.append(th); });
       head.append(tr);
       const body = document.createElement("tbody");
       page.rows.forEach(r => {
