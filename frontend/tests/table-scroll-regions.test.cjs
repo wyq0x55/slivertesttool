@@ -19,7 +19,7 @@ const REGION_FILES = {
   "admin.html": 2,
   "ai_drafts.html": 1,
   "audit.html": 1,
-  "dashboard.html": 1,
+  "dashboard.html": 3,
   "fields.html": 1,
   "home.html": 2,
   "project_tasks.html": 1,
