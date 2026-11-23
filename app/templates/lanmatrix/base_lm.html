@@ -37,6 +37,11 @@
 </head>
 <body class="lm-body{% if user %} lm-has-side{% endif %}">
 {% if user %}
+  {# First focusable element on every signed-in page: keyboard users land here
+     before the sidebar/topbar and can jump straight into <main>. Inside this
+     branch only, so the login page (which renders self.content() below) never
+     gets a link pointing at a landmark it does not contain. #}
+  <a class="lm-skip" href="#lm-main">跳到主要内容</a>
   <div class="app" id="lm-app">
     <aside class="side" id="lm-side">
       {# The collapse control belongs to the sidebar it controls, so it sits in
@@ -189,7 +194,9 @@
           <span id="lm-theme-ic"></span>
         </button>
       </header>
-      <main class="lm-main">
+      {# tabindex="-1" makes the landmark programmatically focusable (skip-link
+         target under screen magnifiers) without adding it to the tab order. #}
+      <main class="lm-main" id="lm-main" tabindex="-1">
         {% if project_capabilities is defined and not project_capabilities.view %}
         <div class="content">
           <div class="state err" role="alert">
