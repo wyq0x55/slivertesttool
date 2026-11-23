@@ -166,3 +166,56 @@ test("判定检查点 header cells are scoped columns", () => {
   assert.match(table.children[0].innerHTML, /没有判定检查点/,
     "the empty-checks message is unchanged");
 });
+
+test("判定检查点 pass/fail glyphs are hidden and carry text alternatives", () => {
+  const { run, elements } = executeFunction("renderChecks", {
+    ctx: {
+      judge: {
+        steps: [{
+          step: 3,
+          checks: [
+            { ok: true, at: 1.5, var: null, name: "", expected: "A", observed: "A", timing: "立即" },
+            { ok: false, at: 2.5, var: null, name: "", expected: "A", observed: "B", timing: "立即" },
+          ],
+        }],
+      },
+    },
+    columnByName: () => null,
+    esc: value => String(value === undefined || value === null ? "" : value),
+    R: { fmtValue: value => String(value) },
+  });
+  run();
+
+  const table = elements.get("cv-checks");
+  const rows = table.children[0].children;
+  assert.equal(rows.length, 2, "both check rows are rendered");
+
+  function resultCell(row) {
+    const cells = [...row.innerHTML.matchAll(/<td\b([^>]*)>([\s\S]*?)<\/td>/gi)];
+    assert.equal(cells.length, 7, "each check row keeps seven cells");
+    return cells[1][2];
+  }
+
+  const pass = resultCell(rows[0]);
+  assert.match(pass, /<span class="jbadge pass" aria-hidden="true">✓<\/span>/,
+    "the pass glyph keeps its visual class and is hidden from assistive tech");
+  assert.match(pass, /<span class="lm-sr-only">通过<\/span>/,
+    "the pass result still exposes 通过 to assistive tech");
+  assert.doesNotMatch(pass, /class="lm-sr-only"[^>]*aria-hidden/,
+    "the 通过 text alternative is not itself hidden");
+
+  const fail = resultCell(rows[1]);
+  assert.match(fail, /<span class="jbadge fail" aria-hidden="true">✕<\/span>/,
+    "the fail glyph keeps its visual class and is hidden from assistive tech");
+  assert.match(fail, /<span class="lm-sr-only">未通过<\/span>/,
+    "the fail result still exposes 未通过 to assistive tech");
+  assert.doesNotMatch(fail, /class="lm-sr-only"[^>]*aria-hidden/,
+    "the 未通过 text alternative is not itself hidden");
+
+  // Removing the hidden glyph leaves exactly the words a screen reader gets.
+  const spoken = pass
+    .replace(/<span\b[^>]*aria-hidden="true"[^>]*>[\s\S]*?<\/span>/gi, "")
+    .replace(/<[^>]*>/g, "")
+    .trim();
+  assert.equal(spoken, "通过", "assistive tech reads the pass result as text, not a glyph");
+});
