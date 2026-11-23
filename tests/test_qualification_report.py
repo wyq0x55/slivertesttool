@@ -37,6 +37,7 @@ def test_preserves_reference_css_logo_statistics_and_offline_links():
         for href in re.findall(r'href="([^"]+)"', page):
             assert href.startswith("#") or href in pages
         assert 'src="http' not in page
+        assert '<html lang="zh-CN" xml:lang="zh-CN">' in page
 
 
 def test_case_detail_controls_are_native_disclosure_buttons():
