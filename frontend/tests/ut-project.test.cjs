@@ -249,6 +249,7 @@ test("generation shows the live ut-agent snapshot and calls the step ratio a bud
   assert.match(steps, /语义步数 63M \/ 250M（预算占比 25%）/);
   assert.match(steps, /不代表剩余时间/);
   assert.doesNotMatch(steps, /未更新/);
+  assert.doesNotMatch(steps, /预算预估/);
 
   h.click("ut-d-refresh");
   await settle();
@@ -258,6 +259,40 @@ test("generation shows the live ut-agent snapshot and calls the step ratio a bud
       steps_used: 62500000, step_limit: 250000000, updated_at: "2026-10-23T04:00:29Z" } } });
   await settle();
   assert.match(h.get("ut-d-progress-steps").innerHTML, /进度已 271 秒未更新/);
+});
+
+test("the budget forecast is shown only when it projects this function over budget", async () => {
+  const h = harness();
+  const generating = { ...job(null, "generating"), attempts: [], last_verdict: null };
+  const forecast = {
+    schema: "ut-agent.progress-forecast/1", intervene: true,
+    intervening: ["f", "other_function"],
+    functions: {
+      f: { intervene: true, signals: ["projected"], projected_steps: 11372010148,
+           step_limit: 250000000, steps_used: 109005298, obligation_id: "b1:F" },
+      other_function: { intervene: true, projected_steps: 900000000, step_limit: 250000000 },
+    },
+  };
+  await ready(h, { ...generating, generation_progress: {
+    observed_at: "2026-10-23T04:00:30Z", project: { phase: "generating" }, forecast,
+    function: { phase: "solving", obligations_done: 5, obligations_total: 139,
+      steps_used: 110005343, step_limit: 250000000, updated_at: "2026-10-23T04:00:29Z" } } });
+  const steps = h.get("ut-d-progress-steps").innerHTML;
+  assert.match(steps, /预算预估：按已完成义务的耗步外推约 11372M 步，超出 250M 的预算上限/);
+  assert.match(steps, /按 109M 步时的快照外推，此后仍在消耗/);
+  assert.match(steps, /仅供参考，不影响本次生成/);
+  // The other function in the batch has its own page.
+  assert.doesNotMatch(steps, /other_function/);
+
+  h.click("ut-d-refresh");
+  await settle();
+  h.details.at(-1).resolve({ ...generating, generation_progress: {
+    observed_at: "2026-10-23T04:00:35Z", project: { phase: "generating" },
+    forecast: { ...forecast, functions: { f: { intervene: false, signals: [] } } },
+    function: { phase: "solving", obligations_done: 5, obligations_total: 139,
+      steps_used: 110005343, step_limit: 250000000, updated_at: "2026-10-23T04:00:34Z" } } });
+  await settle();
+  assert.doesNotMatch(h.get("ut-d-progress-steps").innerHTML, /预算预估/);
 });
 
 test("finished generation keeps its step count and names budget exhaustion", async () => {
