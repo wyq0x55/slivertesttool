@@ -56,6 +56,20 @@ def ut_witness_propose(job_id: int, actor_id: int | None = None) -> None:
         witness.propose(job.project_id, job.id, actor_id=actor_id)
 
 
+@aux_huey.task()
+def ut_witness_confirm(job_id: int, actor_id: int | None = None,
+                       write: bool = False) -> None:
+    """Replay candidates on the host toolchain; only an operator action enqueues this."""
+    from ..models import UtJob
+    from ..services.ut_pipeline import witness
+
+    with _get_app().app_context():
+        job = UtJob.query.filter_by(id=job_id).one_or_none()
+        if job is None:
+            return
+        witness.confirm(job.project_id, job.id, actor_id=actor_id, write=write)
+
+
 def recover_interrupted_jobs() -> dict:
     """Start-up recovery; the caller must run it before consumers start."""
     from ..services.ut_pipeline import pipeline

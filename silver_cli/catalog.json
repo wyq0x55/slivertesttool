@@ -3052,6 +3052,24 @@
    "summary": "validate manifest"
   },
   {
+   "body_fields": [
+    "write"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "ut_pipeline.witness_confirm",
+   "path": "/api/v1/projects/<int:project_id>/ut/jobs/<int:job_id>/witness/confirm",
+   "path_params": {
+    "job_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Replay the proposed candidates on this batch's frozen host toolchain."
+  },
+  {
    "body_fields": [],
    "file_fields": [],
    "form_fields": [],

@@ -219,7 +219,8 @@
 .ut-witness-facts{ display:grid; grid-template-columns:auto 1fr; gap:6px 16px; margin:0 0 14px; font-size:12px; }
 .ut-witness-facts dt{ color:var(--text-3); }
 .ut-witness-facts dd{ margin:0; color:var(--text-2); overflow-wrap:anywhere; }
-.ut-witness-actions{ display:flex; gap:8px; flex-wrap:wrap; }
+.ut-witness-actions{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.ut-witness-write{ font-size:12px; color:var(--text-3); }
 .ut-witness-note{ margin:12px 0 0; font-size:12px; color:var(--text-3); line-height:1.6; }
 .ut-witness-note:empty{ display:none; }
 #ut-d-review-section:not([hidden]){ margin-top:20px; padding-top:18px; border-top:1px solid var(--border); }

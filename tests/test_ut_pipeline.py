@@ -71,6 +71,8 @@ class FakeBridge:
         # Witness documents the fake tool returns; a tuple raises instead.
         self.triage_result = None
         self.propose_result = None
+        # Confirmation summary the fake tool returns; a list sets the entries.
+        self.confirm_result = None
 
     def index(self, manifest, index_csv, product_root):
         return [
@@ -139,9 +141,32 @@ class FakeBridge:
             raise self.propose_result
         out = Path(out)
         out.mkdir(parents=True, exist_ok=False)
-        result = self.propose_result or {"status": "PROPOSABLE", "proposable": 2, "batches": 1}
+        result = self.propose_result or {"status": "UNCONFIRMED_CANDIDATES", "proposable": 2,
+                                        "batches": 1}
         (out / "candidates.json").write_text(json.dumps({"batches": []}), encoding="utf-8")
         return result
+
+    def confirm(self, *, manifest, ir, candidates, out, clang, llvm_cov, llvm_profdata,
+                profile_runtime="", write=False, timeout=None):
+        self.confirm_arguments = {"manifest": manifest, "ir": ir, "candidates": candidates,
+                                  "out": Path(out), "clang": clang, "llvm_cov": llvm_cov,
+                                  "llvm_profdata": llvm_profdata,
+                                  "profile_runtime": profile_runtime, "write": write,
+                                  "timeout": timeout}
+        if isinstance(self.confirm_result, Exception):
+            raise self.confirm_result
+        out = Path(out)
+        out.mkdir(parents=True, exist_ok=False)
+        entries = self.confirm_result if isinstance(self.confirm_result, list) else [
+            {"obligation_id": "a", "coverage": "observed"}]
+        report = out / "confirm-report.json"
+        report.write_text(json.dumps({"entries": entries}), encoding="utf-8")
+        summary = {"confirm_report": str(report), "confirmed": len(entries)}
+        if write and entries:
+            ledger = Path(manifest).parent / "witness-ledger.json"
+            ledger.write_text(json.dumps({"entries": entries}), encoding="utf-8")
+            summary["ledger"] = str(ledger)
+        return summary
 
     def execute(self, *args, **kwargs):
         """Primary LLVM entry. The old positional WinAMS runner is not a workflow step."""

@@ -636,10 +636,17 @@
       if (proposal) {
         if (proposal.status === "RUNNING") lines.push("本地模型提议中…");
         else if (proposal.status === "FAILED") lines.push("提议失败：" + (proposal.error || "—"));
-        else lines.push("提议：模型 " + (proposal.model || "—") + "，候选 "
-          + (proposal.candidates || 0) + "（仍需人工确认）");
+        else lines.push("提议：模型 " + (proposal.model || "—") + "，可提议义务 "
+          + (proposal.proposable == null ? "—" : proposal.proposable) + "（候选仍需人工确认）");
       }
-      if (handoff.ledger_confirmed) lines.push("台账已包含该函数的确认记录。");
+      var confirm = witness.confirm;
+      if (confirm) {
+        if (confirm.status === "RUNNING") lines.push("宿主确认中…");
+        else if (confirm.status === "FAILED") lines.push("确认失败：" + (confirm.error || "—"));
+        else lines.push("确认：已确认 " + (confirm.confirmed || 0) + " 项"
+          + (confirm.write ? "，已写入项目台账" : "，未写入项目台账")
+          + "；宿主执行只是观测，不计为目标证据。");
+      }
       return lines.join(" ");
     }
     function renderWitness() {
@@ -670,14 +677,25 @@
       proposeButton.hidden = triage.status !== "PROPOSABLE";
       proposeButton.disabled = running || witnessPending != null || !editable;
       proposeButton.textContent = proposal.status ? "用本地模型重新提议" : "用本地模型提议";
+      // Confirmation replays the candidates on the batch's frozen host
+      // toolchain; it needs candidates and never changes this batch's verdict.
+      var confirm = witness.confirm || {}, candidatesReady = proposal.status === "UNCONFIRMED_CANDIDATES";
+      var confirmButton = $("ut-d-witness-confirm");
+      confirmButton.hidden = !candidatesReady;
+      confirmButton.disabled = running || witnessPending != null || !editable;
+      confirmButton.textContent = confirm.status ? "重新确认候选" : "在宿主上确认候选";
+      var writeLine = $("ut-d-witness-write-line");
+      writeLine.hidden = !candidatesReady;
+      $("ut-d-witness-write").disabled = running || witnessPending != null || !editable;
       $("ut-d-witness-note").textContent = witnessNote(witness, handoff)
-        || "分拣与提议只读生成输入；结果仍需人工确认后才可能进入新批次。";
+        || "分拣与提议只读生成输入；候选需经宿主确认，且确认只对下一批生效。";
       clearTimeout(witnessTimer);
       witnessTimer = running ? setTimeout(refresh, 3000) : null;
     }
     async function startWitness(step) {
       if (!detailFresh || !job || witnessPending != null || !U.can("edit")) return;
       var id = job.id;
+      var ledger = false;
       if (step === "propose") {
         var ok = await LMUI.confirm({
           title: "调用本地模型",
@@ -687,12 +705,28 @@
         });
         if (!ok) return;
       }
+      if (step === "confirm") {
+        ledger = !!$("ut-d-witness-write").checked;
+        var confirmed = await LMUI.confirm({
+          title: ledger ? "确认并写入项目台账" : "在宿主上确认候选",
+          body: "这次确认用该批次冻结的 Clang/LLVM 工具链，为作业 #" + id
+            + " 的候选逐个编译并运行单例 harness，记录覆盖是否观测到，写出确认报告。"
+            + (ledger
+              ? "已勾选写入：确认记录会合并进项目清单声明的台账文件，台账只在下一批生成时绑定，当前批次结论不变。"
+              : "未勾选写入：只记录确认结果，不改动项目台账。")
+            + "宿主执行只是观测，不计为目标证据或交付验证。",
+          confirmText: ledger ? "确认并写入" : "开始确认"
+        });
+        if (!confirmed) return;
+      }
       witnessPending = step;
       renderWitness();
       try {
         if (step === "propose") await LMApi.utWitnessPropose(pid, id);
+        else if (step === "confirm") await LMApi.utWitnessConfirm(pid, id, ledger);
         else await LMApi.utWitnessTriage(pid, id);
-        say((step === "propose" ? "提议" : "分拣") + "已排队（作业 #" + id + "），完成后刷新即可查看");
+        say((step === "propose" ? "提议" : step === "confirm" ? "确认" : "分拣")
+          + "已排队（作业 #" + id + "），完成后刷新即可查看");
       } catch (e) {
         say(e.message, true);
       } finally {
@@ -1828,6 +1862,9 @@
     });
     $("ut-d-witness-propose").addEventListener("click", function() {
       startWitness("propose");
+    });
+    $("ut-d-witness-confirm").addEventListener("click", function() {
+      startWitness("confirm");
     });
     $("ut-d-close").addEventListener("click", function() {
       closeJob();

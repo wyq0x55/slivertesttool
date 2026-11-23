@@ -18,6 +18,7 @@
     POST /jobs/<id>/retry                blocked / error / stopped → resume (item.edit)
     POST /jobs/<id>/witness/triage       sort unsolved obligations (item.edit)
     POST /jobs/<id>/witness/propose      local model proposes candidates (item.edit)
+    POST /jobs/<id>/witness/confirm      replay candidates on the host toolchain (item.edit)
     POST /jobs/<id>/stop                 stop an active job (item.edit)
     POST /batches/<id>/stop              stop every active job of a batch (item.edit)
 """
@@ -260,6 +261,20 @@ def witness_propose(project_id: int, job_id: int):
     witness.check(project_id, job_id, "propose")
     ut_tasks.ut_witness_propose(job_id, g.user.id)
     return ok({"status": "QUEUED", "step": "propose"}, status=202)
+
+
+@bp.post("/jobs/<int:job_id>/witness/confirm")
+@login_required
+def witness_confirm(project_id: int, job_id: int):
+    """Replay the proposed candidates on this batch's frozen host toolchain."""
+    _project_and_role(project_id, "item.edit")
+    body = _body()
+    write = body.get("write", False)
+    if not isinstance(write, bool):
+        return err("VALIDATION_ERROR", "write 必须是布尔值", status=400)
+    witness.check(project_id, job_id, "confirm", write=write)
+    ut_tasks.ut_witness_confirm(job_id, g.user.id, write)
+    return ok({"status": "QUEUED", "step": "confirm", "write": write}, status=202)
 
 
 @bp.post("/jobs/<int:job_id>/stop")
