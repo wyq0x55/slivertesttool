@@ -195,6 +195,7 @@
   color:var(--text-2); font-size:12px; line-height:1.7; overflow-wrap:anywhere; }
 .ut-gen-meter{ display:block; width:100%; max-width:320px; height:6px; margin:6px 0 2px; accent-color:var(--run); }
 .ut-gen-stale{ color:var(--warn-text); }
+.ut-gen-forecast{ color:var(--warn-text); }
 /* Each pipeline stage carries its duration; its step records fold beneath it. */
 .ut-progress-step-head .ut-stage-time{ margin-left:auto; color:var(--text-2); font-variant-numeric:tabular-nums; }
 .ut-stage-timing{ margin-top:6px; }

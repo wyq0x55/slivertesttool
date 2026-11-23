@@ -603,7 +603,29 @@ export interface UtJobItem {
     if (age > GEN_STALE_SECONDS) {
       html += '<br><span class="ut-gen-stale">进度已 ' + Math.round(age) + " 秒未更新，生成进程可能卡住</span>";
     }
+    html += forecastLine(live.forecast, fn.steps_used);
     return { summary: "正在生成：" + label + "。", html: html };
+  }
+
+  // The budget forecast is advisory only: it never gates generation, and it
+  // says so.  A verdict names a function only when that function is the one
+  // this job is generating — the report also carries the other functions in
+  // the batch, which belong on their own pages.
+  function forecastLine(report: any, stepsUsed: number | null): string {
+    if (!report || report.schema !== "ut-agent.progress-forecast/1") return "";
+    var verdict = report.functions && report.functions[job.target.function];
+    if (!verdict || !verdict.intervene) return "";
+    var projected = verdict.projected_steps;
+    var text = projected && verdict.step_limit
+      ? "预算预估：按已完成义务的耗步外推约 " + megaSteps(projected) + " 步，超出 " +
+        megaSteps(verdict.step_limit) + " 的预算上限，预计会在求解完所有义务前耗尽"
+      : "预算预估：预计会在求解完所有义务前耗尽语义步数预算";
+    if (verdict.obligation_id && stepsUsed != null && verdict.steps_used != null &&
+        verdict.steps_used < stepsUsed) {
+      text += "（按 " + megaSteps(verdict.steps_used) + " 步时的快照外推，此后仍在消耗）";
+    }
+    text += "。仅供参考，不影响本次生成";
+    return '<br><span class="ut-gen-forecast">' + esc(text) + "</span>";
   }
 
   function renderProgress() {
