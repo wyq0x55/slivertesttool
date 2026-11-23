@@ -65,12 +65,18 @@
       }
       actions += `<button class="btn btn-sm btn-danger lm-model-del" data-model-id="${m.id}" data-name="${esc(m.name)}">删除</button>`;
     }
-    // Managers can click anywhere on a (non-current) card to make it current;
-    // the inner action buttons stop propagation so they keep their own intent.
+    // Managers can click anywhere on a (non-current) card to make it current.
+    // The card itself stays a plain div: a role="button" wrapping the real
+    // action buttons would be an invalid nested interactive. Instead one
+    // stretched, invisible native button covers the card (see .mcard-select),
+    // and the action row sits above it so each button keeps its own intent.
     const selectable = canManage && !cur;
+    const selectBtn = selectable
+      ? `<button type="button" class="mcard-select" data-model-id="${m.id}" data-name="${esc(m.name)}">设为当前模型：${esc(m.name)}</button>`
+      : "";
     return `
-      <div class="mcard${cur ? " current" : ""}${selectable ? " selectable" : ""}" data-model-id="${m.id}" data-name="${esc(m.name)}"
-           ${selectable ? 'role="button" tabindex="0" title="设为当前模型"' : ""}>
+      <div class="mcard${cur ? " current" : ""}${selectable ? " selectable" : ""}" data-model-id="${m.id}" data-name="${esc(m.name)}">
+        ${selectBtn}
         <div class="top">
           <span class="mico">${CUBE}</span>
           <div class="who"><b title="${esc(m.name)}">${esc(m.name)}</b>${verBadge}</div>
@@ -107,13 +113,10 @@
       }));
     rowsEl.querySelectorAll(".lm-model-cur").forEach((b) =>
       b.addEventListener("click", (e) => { e.stopPropagation(); setCurrent(b.dataset.modelId, b.dataset.name); }));
-    // Whole-card selection for managers (buttons above stop propagation).
-    rowsEl.querySelectorAll(".mcard.selectable").forEach((c) => {
-      c.addEventListener("click", () => setCurrent(c.dataset.modelId, c.dataset.name));
-      c.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setCurrent(c.dataset.modelId, c.dataset.name); }
-      });
-    });
+    // The stretched select button carries "make current" for managers. It is a
+    // native button, so Enter and Space work without extra wiring.
+    rowsEl.querySelectorAll(".mcard-select").forEach((b) =>
+      b.addEventListener("click", () => setCurrent(b.dataset.modelId, b.dataset.name)));
   }
 
   async function setCurrent(modelId, name) {
