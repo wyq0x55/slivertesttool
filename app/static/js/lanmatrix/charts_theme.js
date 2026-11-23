@@ -95,6 +95,11 @@
       valueAxis: axis,
       logAxis: axis,
       timeAxis: axis,
+      // Every chart here is canvas-only, so assistive tech sees nothing but the
+      // card heading. Enabling aria makes ECharts put role="img" and a generated
+      // text summary on the chart container; the wording follows the locale
+      // passed to init(). Still not a data table, but no longer silence.
+      aria: { enabled: true },
     };
   }
 
@@ -117,7 +122,9 @@
     ec = ec || global.echarts;
     if (!ec || !el) return null;
     ensureRegistered();
-    var chart = ec.init(el, THEME, { renderer: "canvas" });
+    // Pin the aria summary language instead of guessing from <html lang>, so
+    // the screen-reader text matches the Chinese UI on every page.
+    var chart = ec.init(el, THEME, { renderer: "canvas", locale: "ZH" });
     instances.push({ chart: chart, el: el });
     return chart;
   }
