@@ -1286,14 +1286,22 @@ textarea.lmui-input{ resize:vertical; min-height:76px; }
 }
 
 .lm-help-table{ width:100%; border-collapse:collapse; margin:4px 0 12px; }
-.lm-help-table td{
+.lm-help-table td,
+.lm-help-table th{
   padding:6px 10px 6px 0; vertical-align:top;
   font-size:13px; color:var(--text);
   border-bottom:1px solid var(--line);
 }
-.lm-help-table tr:last-child td{ border-bottom:none; }
-.lm-help-table td.lm-help-keys{ white-space:nowrap; width:1%; }
-.lm-help-table td.lm-muted{ color:var(--text-3); white-space:nowrap; width:1%; }
+.lm-help-table tr:last-child td,
+.lm-help-table tr:last-child th{ border-bottom:none; }
+.lm-help-table td.lm-help-keys,
+.lm-help-table th.lm-help-keys{ white-space:nowrap; width:1%; }
+.lm-help-table td.lm-muted,
+.lm-help-table th.lm-muted{ color:var(--text-3); white-space:nowrap; width:1%; }
+/* Each row's first cell is a <th scope="row"> so the shortcut or gesture name
+   is announced as the label for its description. The UA's bold, centered
+   header styling would otherwise visibly change this dialog. */
+.lm-help-table th{ font-weight:inherit; text-align:start; }
 .lm-help-sub{ margin:14px 0 0; font-size:13px; color:var(--text-2); }
 
 .lm-help-table kbd{
