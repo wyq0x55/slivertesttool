@@ -1761,6 +1761,7 @@
           const headRow = document.createElement("tr");
           ["行", "列", "问题"].forEach((colLabel) => {
             const th = document.createElement("th");
+            th.scope = "col";
             th.textContent = colLabel;
             headRow.appendChild(th);
           });
@@ -1798,7 +1799,7 @@
           `<p>《${esc(file.name)}》按${esc(spec.label)}预览：共 ${Number(preview.total) || 0} 行，` +
           `新增 ${Number(preview.insert) || 0}，更新 ${Number(preview.update) || 0}，` +
           `错误 ${invalid}。</p>` + replaceWarning +
-          (errors ? `<table class="lm-table lm-preview"><thead><tr><th>行</th><th>列</th><th>问题</th></tr></thead><tbody>${errors}</tbody></table>` : "") +
+          (errors ? `<table class="lm-table lm-preview"><thead><tr><th scope="col">行</th><th scope="col">列</th><th scope="col">问题</th></tr></thead><tbody>${errors}</tbody></table>` : "") +
           ((preview.errors || []).length > 20
             ? `<p class="lm-muted">仅显示前 20 项错误。</p>` : "");
       }
