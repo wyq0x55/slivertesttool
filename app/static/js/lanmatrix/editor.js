@@ -791,7 +791,8 @@
       keys.replaceChildren();
       LMRowTools.shortcutRows().forEach((r) => {
         const tr = document.createElement("tr");
-        const kt = document.createElement("td");
+        const kt = document.createElement("th");
+        kt.setAttribute("scope", "row");
         kt.className = "lm-help-keys";
         r.keys.forEach((k, i) => {
           if (i) kt.appendChild(document.createTextNode(" + "));
@@ -812,7 +813,8 @@
       gestures.replaceChildren();
       LMRowTools.GESTURES.forEach((g) => {
         const tr = document.createElement("tr");
-        const a = document.createElement("td");
+        const a = document.createElement("th");
+        a.setAttribute("scope", "row");
         a.textContent = g.what;
         const b = document.createElement("td");
         b.textContent = g.desc;
