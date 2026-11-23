@@ -19,7 +19,7 @@
     </div>
   </div>
 
-  <div class="state err" id="lm-dash-err" hidden></div>
+  <div class="state err" id="lm-dash-err" role="alert" hidden></div>
 
   {# Numbers first, charts second. The counters are the answer; the charts are
      a reading aid. This ordering is also why a missing chart bundle costs the
@@ -145,7 +145,7 @@
       </div>
     </form>
     <p id="lm-vc-summary" class="lm-muted" role="status" style="margin:0 16px 8px"></p>
-    <div class="state err" id="lm-vc-err" hidden></div>
+    <div class="state err" id="lm-vc-err" role="alert" hidden></div>
     <table class="lm-table" id="lm-vc-table">
       <thead>
         <tr><th scope="col">用例</th><th scope="col">左侧结果</th><th scope="col">右侧结果</th><th scope="col">变化</th></tr>
@@ -160,7 +160,7 @@
       <h4 id="lm-vc-history-title">用例运行历史</h4>
       <p class="lm-muted">只显示写回矩阵的运行摘要；历史报告文件不按次存档。</p>
       <p id="lm-vc-history-status" class="lm-muted" role="status"></p>
-      <div class="state err" id="lm-vc-history-error" hidden></div>
+      <div class="state err" id="lm-vc-history-error" role="alert" hidden></div>
       <table class="lm-table">
         <thead>
           <tr><th scope="col">执行时间</th><th scope="col">结果</th><th scope="col">模型版本</th><th scope="col">执行者</th><th scope="col">矩阵行</th></tr>
