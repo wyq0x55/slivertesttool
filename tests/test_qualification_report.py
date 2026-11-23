@@ -236,3 +236,9 @@ def test_unsealed_attempt_cannot_inherit_a_live_pass_or_missing_final_outcome(tm
     selected.status = "passed"
     with pytest.raises(service().EvidenceError, match="no sealed outcome"):
         build_qualification_report(project)
+
+
+def test_result_table_header_cells_carry_column_scope():
+    detail = render_reports(report([case()]), "Report")["Report_SYS.html"]
+    assert re.findall(r'<th scope="col" class="TableHeadingCell"[^>]*>([^<]+)</th>', detail) == [
+        "Timestamp", "TestStep", "Description", "Result"]
