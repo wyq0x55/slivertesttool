@@ -100,9 +100,11 @@ calls no model. Proposal (`POST /jobs/<id>/witness/propose`) runs
 only from that operator action; nothing in the batch lifecycle schedules it. It
 requires a finished `PROPOSABLE` triage and writes candidates only - no expected
 values, no manifest or ledger write, no job state change. Each run writes a new
-`run<N>` directory under the batch's `witness/job<job_id>/`, never reusing an
-existing one, and a failed run is recorded with its message rather than left
-running.
+directory under the batch's `witness/job<job_id>/`, never reusing an existing
+one - `run<N>/triage` for triage, `run<N>/propose<N>` for proposal, so a second
+proposal keeps the earlier candidates - and a failed run is recorded with its
+message rather than left running. The model key reaches the child in ut-agent's
+own environment variable, never on a command line.
 
 ## Job lifecycle
 

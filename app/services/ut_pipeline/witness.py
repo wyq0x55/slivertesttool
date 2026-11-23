@@ -105,6 +105,19 @@ def _next_run(job: UtJob) -> int:
     return max(used) + 1
 
 
+def _next_subrun(parent: Path, name: str) -> Path:
+    """The first unused ``name``/``name2``/``name3`` directory under ``parent``.
+
+    A proposal is not a triage: asking the model again must not overwrite the
+    candidates an earlier run produced, so each attempt gets its own directory.
+    """
+    candidate, index = parent / name, 1
+    while candidate.exists():
+        index += 1
+        candidate = parent / f"{name}{index}"
+    return candidate
+
+
 def _store(job: UtJob, section: str, value: dict) -> dict:
     document = copy.deepcopy(handoff.document(job))
     document["contract"] = handoff.CONTRACT
@@ -195,8 +208,11 @@ def clear_running() -> int:
         changed = False
         for section, label in (("triage", "分拣"), ("proposal", "提议"), ("confirm", "确认")):
             if _running(document, section):
+                # Keep the run directory and actor so the operator can see where
+                # the interrupted attempt stopped.
                 document = _store(job, section, {
-                    "status": "FAILED", "error": f"worker 在{label}阶段中断，请重新发起",
+                    **document[section], "status": "FAILED",
+                    "error": f"worker 在{label}阶段中断，请重新发起",
                     "finished_at": _iso_now()})
                 changed = True
         if changed:
@@ -224,16 +240,21 @@ def _require_triage(job: UtJob) -> dict:
     return section
 
 
-def _model() -> tuple[str, str]:
-    """The configured local model, refusing a non-loopback base URL up front."""
+def _model() -> tuple[str, str, str]:
+    """The configured local model, refusing a non-loopback base URL up front.
+
+    The key is returned for the child's environment only; it is never written
+    to the witness record, an audit entry or a log line.
+    """
     settings = ai_config.get_ai_config(include_secret=True)
     base_url = str(settings.get(ai_config.KEY_API_BASE) or "")
     model = str(settings.get(ai_config.KEY_MODEL) or "")
-    if not base_url or not model or not settings.get(ai_config.KEY_API_KEY):
+    api_key = str(settings.get(ai_config.KEY_API_KEY) or "")
+    if not base_url or not model or not api_key:
         raise ServiceError("本地模型未配置完整（需要 base URL、模型名与 API key）",
                            code="VALIDATION_ERROR")
     _loopback(base_url)
-    return base_url, model
+    return base_url, model, api_key
 
 
 def check(project_id: int, job_id: int, step: str) -> None:
@@ -259,19 +280,17 @@ def propose(project_id: int, job_id: int, *, actor_id: int | None = None,
     _reject_running(job, "proposal", "提议")
     triage_result = _require_triage(job)
     manifest, ir, suite = _inputs(job)
-    base_url, model = _model()
+    base_url, model, api_key = _model()
     run = int(triage_result.get("run") or 0)
-    out = _witness_root(job) / f"run{run}" / "propose"
+    out = _next_subrun(_witness_root(job) / f"run{run}", "propose")
     out.parent.mkdir(parents=True, exist_ok=True)
-    if out.exists():
-        raise ServiceError("提议目录已存在，拒绝覆盖既有证据", code="CONFLICT")
     _store(job, "proposal", {"status": RUNNING, "out": str(out), "run": run,
                              "source": "PROPOSE", "model": model,
                              "started_at": _iso_now(), "actor_id": actor_id})
     db.session.commit()
     result = _call("提议", lambda: _bridge(bridge).propose(
         manifest=manifest, ir=ir, suite=suite, out=out, base_url=base_url,
-        model=model, batch_size=batch_size),
+        model=model, batch_size=batch_size, api_key=api_key),
         on_failure=lambda failure: _store(job, "proposal", {
             "status": "FAILED", "source": "PROPOSE", "error": str(failure),
             "out": str(out), "run": run, "model": model,

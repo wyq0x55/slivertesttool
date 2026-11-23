@@ -307,3 +307,39 @@ def test_a_superseded_job_offers_no_handoff_action(workflow_env):
     assert _job(env, job_id)["superseded_by"] is not None
     status, body = env.call("post", f"/jobs/{job_id}/witness/triage", json={})
     assert status == 400 and body["error"]["code"] == "SUPERSEDED"
+
+def test_reproposing_keeps_the_earlier_candidates(workflow_env):
+    env = workflow_env
+    job_id = _ready(env)
+    env.call("post", f"/jobs/{job_id}/witness/triage", json={})
+    env.call("post", f"/jobs/{job_id}/witness/propose", json={})
+    first = _frozen(env, job_id)["proposal"]["out"]
+
+    env.call("post", f"/jobs/{job_id}/witness/propose", json={})
+
+    second = _frozen(env, job_id)["proposal"]["out"]
+    assert Path(first).name == "propose" and Path(second).name == "propose2"
+    assert Path(first).is_dir() and Path(second).is_dir()
+
+
+def test_start_up_parks_an_interrupted_witness_run(workflow_env):
+    env = workflow_env
+    job_id = _ready(env)
+    env.call("post", f"/jobs/{job_id}/witness/triage", json={})
+    out = _frozen(env, job_id)["triage"]["out"]
+
+    from app.extensions import db
+    from app.models import UtJob
+    from app.services.ut_pipeline import witness
+
+    with env.client.application.app_context():
+        job = UtJob.query.filter_by(id=job_id).one()
+        job.witness = {**job.witness, "triage": {**job.witness["triage"],
+                                                 "status": "RUNNING"}}
+        db.session.commit()
+        assert witness.clear_running() == 1
+        db.session.commit()
+
+    triage = _frozen(env, job_id)["triage"]
+    assert triage["status"] == "FAILED" and "中断" in triage["error"]
+    assert triage["out"] == out and Path(out).is_dir()

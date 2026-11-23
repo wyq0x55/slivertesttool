@@ -133,7 +133,7 @@ class FakeBridge:
         return result
 
     def propose(self, *, manifest, ir, suite, out, base_url, model, batch_size=8,
-                max_tokens=None, timeout=None):
+                max_tokens=None, api_key=None, timeout=None):
         self.propose_arguments = {"base_url": base_url, "model": model, "out": Path(out)}
         if isinstance(self.propose_result, Exception):
             raise self.propose_result
