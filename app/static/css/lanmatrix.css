@@ -976,3 +976,32 @@ dialog.lm-modal::backdrop {
   white-space: nowrap;
   border: 0;
 }
+
+/* Skip link: first focusable element of the signed-in shell, so keyboard users
+   can bypass the sidebar and topbar. It stays above the viewport (transform,
+   not display:none/visibility:hidden, which would make it unfocusable) until it
+   is focused, then appears as a normal button at the top-left. #lm-main carries
+   tabindex="-1" so the target is programmatically focusable in every browser. */
+.lm-skip {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 1100;
+  padding: 8px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-md);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-decoration: none;
+  transform: translateY(-200%);
+}
+.lm-skip:focus,
+.lm-skip:focus-visible {
+  transform: none;
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
