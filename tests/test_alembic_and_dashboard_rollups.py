@@ -154,14 +154,14 @@ def test_reconcile_schema_sets_alembic_version_and_is_idempotent(monkeypatch, tm
             rev_first = conn.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalars().all()
-        assert rev_first == ["0002_rollups"]
+        assert rev_first == ["0003_step_budget"]
 
         reconcile_schema()
         with db.engine.connect() as conn:
             rev_second = conn.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalars().all()
-        assert rev_second == ["0002_rollups"]
+        assert rev_second == ["0003_step_budget"]
 
         existing_tables = set(inspect(db.engine).get_table_names())
         assert {
@@ -278,12 +278,13 @@ def test_legacy_db_upgrade_adds_governance_columns_and_backfills_rollups(
         task_cols = {col["name"] for col in inspector.get_columns("tasks")}
         proj_cols = {col["name"] for col in inspector.get_columns("lm_projects")}
         assert "toolchain_profile" in ut_cols
+        assert "function_step_limit" in ut_cols
         assert "clean_room" in task_cols
         assert "default_signal_list" in proj_cols
 
         with db.engine.connect() as conn:
             rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        assert rev == "0002_rollups"
+        assert rev == "0003_step_budget"
 
         assert DashboardCaseFirstRun.query.filter_by(project_id=project_id).count() == 2
         assert DashboardDailyRollup.query.filter_by(project_id=project_id).count() == 2
@@ -694,7 +695,7 @@ def test_postgresql_disposable_schema_alembic_and_rollups(monkeypatch, tmp_path)
                         .scalars()
                         .all()
                     )
-                assert revisions == ["0002_rollups"]
+                assert revisions == ["0003_step_budget"]
 
                 with db.engine.begin() as conn:
                     conn.execute(

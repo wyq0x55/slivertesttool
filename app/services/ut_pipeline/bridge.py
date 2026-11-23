@@ -251,10 +251,17 @@ class UtAgentBridge:
                  functions: list[str], *, progress_dir: Path,
                  on_unit: Callable[[dict], None] | None = None,
                  on_forecast: Callable[[dict], None] | None = None,
-                 history_dir: Path | None = None) -> dict[str, Any]:
+                 history_dir: Path | None = None,
+                 function_step_limit: int | None = None) -> dict[str, Any]:
+        if function_step_limit is not None and (
+                type(function_step_limit) is not int or function_step_limit < 1):
+            raise BridgeError("function_step_limit must be a positive integer")
         args = ["generate", *self._manifest(manifest), "--index-csv", index_csv,
                 "--product-root", product_root, "--out", str(out),
                 "--progress-dir", str(progress_dir)]
+        # Omitted, never defaulted here: ut-agent keeps its own ceiling.
+        if function_step_limit is not None:
+            args += ["--function-step-limit", str(function_step_limit)]
         for name in functions:
             args += ["--function", name]
         if self.settings.extractor:

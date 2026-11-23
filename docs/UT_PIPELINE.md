@@ -57,8 +57,22 @@ contract and does not require a WinAMS installation.
 Stub mode is deterministic or local-model candidates. `stub_model` and
 `stub_max_rounds` control stub proposals; `repair_model` and
 `max_repair_rounds` independently control missing input cases. Both are available
-on the LLVM settings page. A batch freezes the effective configuration and
-versioned requirements when queued.
+on the LLVM settings page.
+
+`function_step_limit`, when declared, is the per-function semantic step ceiling
+handed to `ut-agent bridge generate --function-step-limit`. It is estimated from
+the number of input obligations, never from a measured share of one run, so the
+same inputs keep producing the same deliverable. Empty is not zero: the flag is
+omitted and ut-agent keeps its own ceiling of 250,000,000 steps. A function that
+exhausts its budget stops with the cases it completed and the rest of the batch
+continues. ut-agent builds that predate the flag reject the launch before any
+work starts, so the affected jobs are blocked as an environment problem naming
+the version requirement, not reported as a generation failure.
+
+A batch freezes the effective configuration and
+versioned requirements when queued. Changing `function_step_limit` therefore
+affects only batches created afterwards; a queued, running or delivered batch
+keeps the value it froze.
 
 ## Job lifecycle
 

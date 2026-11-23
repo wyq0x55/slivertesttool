@@ -80,9 +80,10 @@ class FakeBridge:
                 "revision_rules": ["列不得改动"], "coverage_policy": {"c1": True}, "effective_test_policy": {"version": "1", "c1": True, "mcdc": False}, "test_policy_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "test_rules_ref": "universal-test-rules@1", "test_rules": {"version": "1"}}
 
     def generate(self, manifest, index_csv, product_root, out, functions, *, progress_dir,
-                 on_unit=None, on_forecast=None, history_dir=None):
+                 on_unit=None, on_forecast=None, history_dir=None, function_step_limit=None):
         self.progress_dir = progress_dir
         self.history_dir = history_dir
+        self.step_limit = function_step_limit
         if self.generate_error:
             raise BridgeError(self.generate_error)
         if on_forecast is not None and functions:

@@ -65,6 +65,10 @@
         <label class="ut-check-option"><input id="ut-m-execution_contract-const_volatile_single_invocation_stable" type="checkbox" aria-describedby="ut-contract-volatile-hint"><span><span class="ut-check-title">const volatile 在单次调用内读取稳定</span><span class="ut-hint" id="ut-contract-volatile-hint">仅当环境保证无硬件或中断改变这些输入时勾选。未勾选不作此假设；更改后需重新验收。</span></span></label>
       </div>
       <div class="ut-subsection">
+        <h3>生成预算</h3>
+        <div class="ut-fields"><div class="field"><label for="ut-c-function_step_limit">函数语义步数上限</label><input id="ut-c-function_step_limit" type="number" min="1" max="1000000000" step="1" placeholder="留空沿用 ut-agent 默认值"><p class="ut-hint">按义务数估算的单函数上限，写入批次快照后只对之后新建的批次生效。某函数耗尽预算即停下，批次继续生成其余函数。</p></div></div>
+      </div>
+      <div class="ut-subsection">
         <h3>AI 辅助</h3>
         <label class="ut-check-option"><input id="ut-c-stub_mode" type="checkbox" aria-describedby="ut-stub-mode-hint"><span><span class="ut-check-title">使用模型提议 Stub 候选</span><span class="ut-hint" id="ut-stub-mode-hint">默认自动生成确定性 Stub。启用后，模型候选仍须校验和人工审核。</span></span></label>
         <div id="ut-stub-llm-controls" hidden>

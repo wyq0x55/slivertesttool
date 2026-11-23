@@ -34,6 +34,8 @@ class UtPipelineConfig(db.Model):
     stub_mode = db.Column(db.String(16), nullable=False, default="deterministic")
     stub_model = db.Column(db.String(128), nullable=False, default="")
     stub_max_rounds = db.Column(db.Integer, nullable=False, default=2)
+    # Per-function semantic step ceiling handed to ut-agent; NULL keeps its own default.
+    function_step_limit = db.Column(db.Integer, nullable=True, default=None)
     host_clang = db.Column(db.String(1024), nullable=False, default="clang")
     host_llvm_cov = db.Column(db.String(1024), nullable=False, default="llvm-cov")
     host_llvm_profdata = db.Column(db.String(1024), nullable=False, default="llvm-profdata")
@@ -55,6 +57,7 @@ class UtPipelineConfig(db.Model):
             "stub_mode": self.stub_mode,
             "stub_model": self.stub_model,
             "stub_max_rounds": self.stub_max_rounds,
+            "function_step_limit": self.function_step_limit,
             "host_clang": self.host_clang,
             "host_llvm_cov": self.host_llvm_cov,
             "host_llvm_profdata": self.host_llvm_profdata,
