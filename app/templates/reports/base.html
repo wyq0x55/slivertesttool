@@ -42,15 +42,35 @@
         var button = document.getElementById('lnk_all');
         if (button) {
           button.setAttribute('data-expanded', expanded ? 'true' : 'false');
-          button.setAttribute('aria-label', expanded ? 'Hide all test case details' : 'Show all test case details');
+          button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+          button.setAttribute('aria-label', expanded ? '收起全部用例详情' : '展开全部用例详情');
           button.textContent = expanded ? '[-]' : '[+]';
         }
       }
+      /* Individual case toggles can leave some cases open and some closed.
+         There is then no single true aggregate state, so the global control
+         exposes none rather than guessing. */
+      function syncAllState() {
+        var cases = document.querySelectorAll('button[data-collapse="case"]');
+        var button = document.getElementById('lnk_all');
+        if (!button || !cases.length) return;
+        var open = 0;
+        for (var i = 0; i < cases.length; i++) {
+          if (cases[i].getAttribute('aria-expanded') === 'true') open++;
+        }
+        if (open === 0) button.setAttribute('aria-expanded', 'false');
+        else if (open === cases.length) button.setAttribute('aria-expanded', 'true');
+        else button.removeAttribute('aria-expanded');  // mixed: claim nothing
+      }
       function switchAll(id, expanded) {
-        if (id) setCaseExpanded(id, expanded); else setAllExpanded(expanded);
+        if (id) {
+          setCaseExpanded(id, expanded);
+          syncAllState();
+        } else setAllExpanded(expanded);
       }
       function showTC(id) {
         setCaseExpanded(id, true);
+        syncAllState();
       }
       window.addEventListener('load', function () {
         var link = document.getElementById('lnk_all');
