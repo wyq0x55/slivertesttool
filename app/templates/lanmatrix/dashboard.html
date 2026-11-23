@@ -95,9 +95,9 @@
       <div class="ut-repair-sum" id="ut-repair-sum"></div>
       <div style="overflow-x:auto" tabindex="0" role="region" aria-labelledby="lm-ut-repair-title">
         <table class="dt ut-table ut-repair-table">
+          <caption class="lm-sr-only">模型修订效果</caption>
           <thead><tr><th scope="col">模型</th><th scope="col">作业</th><th scope="col">轮次</th><th scope="col">有效</th><th scope="col">无进展</th>
-            <th scope="col">其他未产出</th><th scope="col">输入 token/轮</th><th scope="col">缓存命中</th><th scope="col">平均耗时</th></tr></thead>
-          <tbody id="ut-repair-rows"><tr><td colspan="9" class="muted">加载中…</td></tr></tbody>
+            <th scope="col">其他未产出</th><th scope="col">输入 token/轮</th><th scope="col">缓存命中</th><th scope="col">平均耗时</th></tr></thead>          <tbody id="ut-repair-rows"><tr><td colspan="9" class="muted">加载中…</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -147,6 +147,7 @@
     <p id="lm-vc-summary" class="lm-muted" role="status" style="margin:0 16px 8px"></p>
     <div class="state err" id="lm-vc-err" role="alert" hidden></div>
     <table class="lm-table" id="lm-vc-table">
+      <caption class="lm-sr-only">版本结果对比</caption>
       <thead>
         <tr><th scope="col">用例</th><th scope="col">左侧结果</th><th scope="col">右侧结果</th><th scope="col">变化</th></tr>
       </thead>
@@ -162,6 +163,7 @@
       <p id="lm-vc-history-status" class="lm-muted" role="status"></p>
       <div class="state err" id="lm-vc-history-error" role="alert" hidden></div>
       <table class="lm-table">
+        <caption class="lm-sr-only">用例运行历史</caption>
         <thead>
           <tr><th scope="col">执行时间</th><th scope="col">结果</th><th scope="col">模型版本</th><th scope="col">执行者</th><th scope="col">矩阵行</th></tr>
         </thead>
