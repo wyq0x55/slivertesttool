@@ -494,8 +494,8 @@ export interface UtJobItem {
     $("ut-d-stub-rounds").innerHTML = "<p>Stub 模式：" + esc(generation.mode || "deterministic") +
       (generation.model ? " · 模型：" + esc(generation.model) : "") +
       (generation.skipped ? " · " + esc(generation.skipped) : "") + "</p>" +
-      ((generation.rounds || []).length ? '<table class="ut-issue-table"><thead><tr><th>轮次</th><th>状态</th>' +
-        '<th>Token（输入 / 输出）</th><th>说明</th></tr></thead><tbody>' + generation.rounds.map(function (round) {
+      ((generation.rounds || []).length ? '<table class="ut-issue-table"><thead><tr><th scope="col">轮次</th><th scope="col">状态</th>' +
+        '<th scope="col">Token（输入 / 输出）</th><th scope="col">说明</th></tr></thead><tbody>' + generation.rounds.map(function (round) {
           var usage = round.usage || {};
           return "<tr><td>" + esc(round.round) + "</td><td>" + esc(round.status) + "</td><td>" +
             esc(usage.input_tokens == null ? "—" : usage.input_tokens) + " / " +
@@ -784,8 +784,8 @@ export interface UtJobItem {
     if (!s.rows.length) return "";
     var key = "stage:" + index;
     return '<details class="ut-stage-timing" data-keep="' + key + '"' + (openDetails[key] ? " open" : "") +
-      "><summary>步骤用时 · " + s.rows.length + ' 项</summary><table aria-label="步骤用时"><thead><tr><th>步骤</th>' +
-      "<th>版本 / 轮次</th><th>状态</th><th>用时</th></tr></thead><tbody>" + s.rows.map(function (t) {
+      "><summary>步骤用时 · " + s.rows.length + ' 项</summary><table aria-label="步骤用时"><thead><tr><th scope="col">步骤</th>' +
+      '<th scope="col">版本 / 轮次</th><th scope="col">状态</th><th scope="col">用时</th></tr></thead><tbody>' + s.rows.map(function (t) {
         return "<tr" + (t.group ? ' class="is-group"' : "") + ' title="' + esc(timingStamp(t.started) + " – " +
           timingStamp(t.ended)) + '"><td>' + esc(t.label) + "</td><td>" + esc(t.version) + "</td><td>" +
           esc(t.stateLabel) + "</td><td>" + esc((t.running ? "已用 " : "") + timingDuration(t.duration)) + "</td></tr>";
@@ -1165,7 +1165,8 @@ export interface UtJobItem {
     });
     var listing = r.reason ? '<p class="ut-batch-err">' + esc(r.reason) + "</p>"
       : '<div class="ut-cov-wrap"><table class="ut-cov-lines" aria-label="\u9010\u884c\u8986\u76d6\u7387"><thead><tr>' +
-        "<th>\u884c</th><th>C0</th><th>\u6b21\u6570</th><th>" + esc(c1Label) + "</th><th>MC/DC</th><th>\u6e90\u4ee3\u7801</th>" +
+        '<th scope="col">\u884c</th><th scope="col">C0</th><th scope="col">\u6b21\u6570</th><th scope="col">' +
+        esc(c1Label) + '</th><th scope="col">MC/DC</th><th scope="col">\u6e90\u4ee3\u7801</th>' +
         "</tr></thead><tbody>" + (shown.map(function (l) {
           return '<tr class="' + (required.c0 === true && l.c0 === "NOT_COVERED" ? "is-miss" : decisionGap(l, required) ? "is-gap" : "") + '">' +
             '<td class="ut-num">' + esc(l.line) + "</td><td>" +
@@ -1498,7 +1499,7 @@ export interface UtJobItem {
     function table(items) {
       return '<table class="ut-issue-table' + (extraClass ? " " + extraClass : "") +
         '"><thead><tr>' + keys.map(function (k) {
-        return '<th class="k-' + esc(k) + '">' + esc(DETAIL_KEYS[k] || k) + "</th>";
+        return '<th scope="col" class="k-' + esc(k) + '">' + esc(DETAIL_KEYS[k] || k) + "</th>";
       }).join("") + "</tr></thead><tbody>" + body(items) + "</tbody></table>";
     }
     var head = list.slice(0, PREVIEW_ROWS), rest = list.slice(PREVIEW_ROWS);
