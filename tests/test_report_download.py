@@ -224,7 +224,7 @@ def test_project_report_includes_all_rows_beyond_task_window_without_extra_sheet
     with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
         overview, detail = [archive.read(name).decode() for name in archive.namelist()]
     assert 'id="testall">211</td>' in overview
-    assert detail.count('<table class="TestCaseTable">') == 211
+    assert detail.count('<table class="TestCaseTable" role="presentation">') == 211
     assert "Case UNRUN-204 : Untested" in detail
     assert detail.count("Case TC-4 : Untested") == 2
     assert "Case - : Untested" in detail

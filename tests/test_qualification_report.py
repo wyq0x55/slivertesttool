@@ -31,8 +31,8 @@ def test_preserves_reference_css_logo_statistics_and_offline_links():
     assert "61% of executed test cases" in overview
     assert "46% of all test cases" in overview
     assert "Test failed" in overview
-    assert '<table class="TestCaseTable">' in detail
-    assert '<table class="TestCaseTable">' not in overview
+    assert '<table class="TestCaseTable" role="presentation">' in detail
+    assert '<table class="TestCaseTable" role="presentation">' not in overview
     for page in pages.values():
         for href in re.findall(r'href="([^"]+)"', page):
             assert href.startswith("#") or href in pages
