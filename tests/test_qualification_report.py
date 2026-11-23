@@ -45,10 +45,9 @@ def test_case_detail_controls_are_native_disclosure_buttons():
     global_tag = re.search(r'<button[^>]*id="lnk_all"[^>]*>', detail).group(0)
     assert 'type="button"' in global_tag
     assert 'data-collapse="all"' in global_tag
-    assert 'aria-label="Hide all test case details"' in global_tag
-    # Case states can be mixed, so the global control names its next action
-    # instead of exposing one aggregate expanded state.
-    assert "aria-expanded" not in global_tag
+    assert 'aria-label="收起全部用例详情"' in global_tag
+    # The global control is a disclosure too: it exposes its aggregate state.
+    assert 'aria-expanded="true"' in global_tag
     assert "href=" not in global_tag
     for anchor in ("case-1", "case-2"):
         tag = re.search(rf'<button[^>]*id="lnk_{anchor}"[^>]*>', detail).group(0)
@@ -62,6 +61,16 @@ def test_case_detail_controls_are_native_disclosure_buttons():
     # Real navigation affordances stay links.
     assert '<a href="#TestDetail">back</a>' in detail
     assert '<a href="#case-1" onclick="showTC(\'case-1\')">Case TC-1</a>' in detail
+
+
+def test_expand_all_control_exposes_state_with_a_chinese_name():
+    detail = render_reports(report([case(), case("Failed")]), "Report")["Report_SYS.html"]
+    global_tag = re.search(r'<button[^>]*id="lnk_all"[^>]*>', detail).group(0)
+    assert 'aria-expanded="true"' in global_tag
+    assert 'aria-label="收起全部用例详情"' in global_tag
+    script = re.search(r'<script type="text/javascript">(.*?)</script>', detail, re.S).group(1)
+    assert "button.setAttribute('aria-expanded', expanded ? 'true' : 'false')" in script
+    assert "'收起全部用例详情' : '展开全部用例详情'" in script
 
 
 def test_detail_script_keeps_reference_toggle_behavior():

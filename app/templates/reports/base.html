@@ -42,7 +42,8 @@
         var button = document.getElementById('lnk_all');
         if (button) {
           button.setAttribute('data-expanded', expanded ? 'true' : 'false');
-          button.setAttribute('aria-label', expanded ? 'Hide all test case details' : 'Show all test case details');
+          button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+          button.setAttribute('aria-label', expanded ? '收起全部用例详情' : '展开全部用例详情');
           button.textContent = expanded ? '[-]' : '[+]';
         }
       }
