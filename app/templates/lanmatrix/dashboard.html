@@ -128,7 +128,7 @@
     {# Read-only left-to-right compare. The link uses row_uuid. #}
   <section class="lm-chart-card" id="lm-version-compare" style="margin-top:16px">
     <div class="lm-chart-head">
-      <h3>版本结果对比</h3>
+      <h3 id="lm-vc-title">版本结果对比</h3>
       <span class="muted">按模型名称和版本比较。没有版本的模型填裸名称。取消的运行不计入。</span>
     </div>
     <form id="lm-vc-form" class="lm-filters" style="margin:12px 16px">
@@ -146,6 +146,7 @@
     </form>
     <p id="lm-vc-summary" class="lm-muted" role="status" style="margin:0 16px 8px"></p>
     <div class="state err" id="lm-vc-err" role="alert" hidden></div>
+    <div style="overflow-x:auto" tabindex="0" role="region" aria-labelledby="lm-vc-title">
     <table class="lm-table" id="lm-vc-table">
       <caption class="lm-sr-only">版本结果对比</caption>
       <thead>
@@ -153,6 +154,7 @@
       </thead>
       <tbody id="lm-vc-rows"><tr><td colspan="4" class="lm-muted">选择左右模型后对比。</td></tr></tbody>
     </table>
+    </div>
     <div class="lm-more-wrap" style="margin:12px 16px">
       <button type="button" class="btn" id="lm-vc-prev" hidden>上一页</button>
       <button type="button" class="btn" id="lm-vc-next" hidden>下一页</button>
@@ -162,6 +164,7 @@
       <p class="lm-muted">只显示写回矩阵的运行摘要；历史报告文件不按次存档。</p>
       <p id="lm-vc-history-status" class="lm-muted" role="status"></p>
       <div class="state err" id="lm-vc-history-error" role="alert" hidden></div>
+      <div style="overflow-x:auto" tabindex="0" role="region" aria-labelledby="lm-vc-history-title">
       <table class="lm-table">
         <caption class="lm-sr-only">用例运行历史</caption>
         <thead>
@@ -169,6 +172,7 @@
         </thead>
         <tbody id="lm-vc-history-rows"></tbody>
       </table>
+      </div>
       <div class="lm-more-wrap" style="margin-top:12px">
         <button type="button" class="btn" id="lm-vc-history-prev" hidden>上一页</button>
         <button type="button" class="btn" id="lm-vc-history-next" hidden>下一页</button>
