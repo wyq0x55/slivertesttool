@@ -634,10 +634,10 @@
       fmtTok(stats.totals.output_tokens) + " tokens</p>" +
       '<div class="row wrap" style="gap:24px;align-items:flex-start">' +
       '<div style="min-width:260px"><table class="dt"><thead><tr>' +
-      "<th>场景</th><th>草稿数</th><th>输入</th><th>输出</th></tr></thead>" +
+      '<th scope="col">场景</th><th scope="col">草稿数</th><th scope="col">输入</th><th scope="col">输出</th></tr></thead>' +
       "<tbody>" + byScenario + "</tbody></table></div>" +
       '<div style="min-width:220px"><table class="dt"><thead><tr>' +
-      "<th>月份</th><th>草稿数</th><th>输入</th><th>输出</th></tr></thead>" +
+      '<th scope="col">月份</th><th scope="col">草稿数</th><th scope="col">输入</th><th scope="col">输出</th></tr></thead>' +
       "<tbody>" + byMonth + "</tbody></table></div></div>";
   }
 

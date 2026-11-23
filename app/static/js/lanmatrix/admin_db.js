@@ -90,7 +90,7 @@
     const body = document.getElementById("lm-db-result-body");
     const meta = document.getElementById("lm-db-meta");
     if (d.returns_rows) {
-      head.innerHTML = `<tr>${(d.columns || []).map((c) => `<th>${esc(c)}</th>`).join("")}</tr>`;
+      head.innerHTML = `<tr>${(d.columns || []).map((c) => `<th scope="col">${esc(c)}</th>`).join("")}</tr>`;
       body.innerHTML = (d.rows || []).map((r) =>
         `<tr>${r.map((v) => `<td>${v === null ? '<span class="lm-null">NULL</span>' : esc(v)}</td>`).join("")}</tr>`
       ).join("") || `<tr><td class="lm-muted">（无数据）</td></tr>`;
