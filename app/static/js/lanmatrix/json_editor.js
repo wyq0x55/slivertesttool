@@ -104,10 +104,13 @@
       this.ta.addEventListener("input", onInput);
       // Keep the highlight + gutter glued to the textarea while scrolling.
       this.ta.addEventListener("scroll", () => this._syncScroll());
-      // Insert two spaces on Tab instead of leaving the field.
+      // Insert two spaces on an unmodified Tab instead of leaving the field.
+      // Modified Tabs must fall through to the browser: Shift+Tab is the way
+      // back out of the textarea, and swallowing it would trap the keyboard
+      // user inside the field (WCAG 2.1.2 No Keyboard Trap).
       this.ta.addEventListener("keydown", (e) => {
         if (e.isComposing || e.keyCode === 229) return;
-        if (e.key === "Tab") {
+        if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
           e.preventDefault();
           this._insertAtCaret("  ");
           this._value = this.ta.value;
