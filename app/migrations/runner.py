@@ -10,7 +10,7 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy.engine import Connection, Engine
 
-HEAD_REVISION = "0004_witness_handoff"
+HEAD_REVISION = "0005_batch_lineage"
 _MIGRATIONS_DIR = Path(__file__).resolve().parent
 
 
@@ -36,10 +36,14 @@ def _reconcile_head_invariants(conn: Connection) -> None:
     witness_mod = importlib.import_module(
         "app.migrations.versions.0004_witness_handoff"
     )
+    lineage_mod = importlib.import_module(
+        "app.migrations.versions.0005_batch_lineage"
+    )
     baseline_mod.reconcile_baseline_schema(conn)
     rollups_mod.reconcile_governance_and_rollups(conn)
     step_budget_mod.reconcile_step_budget(conn)
     witness_mod.reconcile_witness_handoff(conn)
+    lineage_mod.reconcile_batch_lineage(conn)
 
 
 def _run_with_connection(conn: Connection, *, force_reconcile: bool = False) -> str:

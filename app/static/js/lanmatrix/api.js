@@ -460,6 +460,12 @@
         { body: { target_ids: targetIds, label: label || "" } });
     },
     utBatches(pid) { return request("GET", `/projects/${pid}/ut/batches`); },
+    utDeriveBatch(pid, batchId, body) {
+      return request("POST", `/projects/${pid}/ut/batches/${batchId}/derive`, { body: body || {} });
+    },
+    utCompareBatches(pid, batchId, against) {
+      return request("GET", `/projects/${pid}/ut/batches/${batchId}/compare?against=${encodeURIComponent(against)}`);
+    },
     utJobs(pid, query) {
       return request("GET", `/projects/${pid}/ut/jobs`, { query: query || {} });
     },

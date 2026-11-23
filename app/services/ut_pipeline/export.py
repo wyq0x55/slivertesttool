@@ -38,6 +38,97 @@ _MANIFEST_COLUMNS = (
 )
 
 
+def compare_batches(project_id: int, base_id: int, derived_id: int) -> dict[str, Any]:
+    """Read-only, per-function view of what a derived batch changed.
+
+    Nothing is stored: every figure comes from the two batches' frozen columns,
+    so the comparison cannot drift from them and cannot rewrite either batch.
+    A figure the source never recorded is ``None``, never a guessed zero.
+    """
+    base = _batch(project_id, base_id)
+    derived = _batch(project_id, derived_id)
+    derived_jobs = {job.target.function: job for job in _jobs(derived)}
+    rows = [_compare_row(job, derived_jobs.get(job.target.function), base, derived)
+            for job in _jobs(base)]
+    return {
+        "base": _batch_view(base),
+        "derived": _batch_view(derived),
+        "derived_from_batch_id": derived.derived_from_batch_id,
+        "functions": rows,
+    }
+
+
+def _batch(project_id: int, batch_id: int) -> UtBatch:
+    batch = UtBatch.query.filter_by(id=batch_id, project_id=project_id).one_or_none()
+    if batch is None:
+        raise ServiceError("批次不存在", code="NOT_FOUND")
+    return batch
+
+
+def _jobs(batch: UtBatch) -> list[UtJob]:
+    return (UtJob.query.filter_by(batch_id=batch.id)
+            .order_by(UtJob.id).all())
+
+
+def _batch_view(batch: UtBatch) -> dict[str, Any]:
+    snapshot = batch.config_snapshot or {}
+    return {
+        "id": batch.id,
+        "status": batch.status,
+        "function_step_limit": snapshot.get("function_step_limit"),
+        "generation_step_limit": (batch.provenance or {}).get("generation_step_limit"),
+    }
+
+
+def _compare_row(base_job: UtJob, derived_job: UtJob | None,
+                 base: UtBatch, derived: UtBatch) -> dict[str, Any]:
+    target = base_job.target
+    return {
+        "function": target.function,
+        "source_rel": target.source_rel,
+        "base": _side(base_job, base),
+        "derived": _side(derived_job, derived) if derived_job is not None else None,
+    }
+
+
+def _side(job: UtJob, batch: UtBatch) -> dict[str, Any]:
+    witness = job.witness if isinstance(job.witness, dict) else {}
+    record = witness.get("handoff") if isinstance(witness.get("handoff"), dict) else {}
+    budget = record.get("budget") if isinstance(record.get("budget"), dict) else {}
+    obligations = record.get("obligations") if isinstance(record.get("obligations"), dict) else {}
+    admissible = record.get("admissible") if isinstance(record.get("admissible"), dict) else {}
+    confirm = witness.get("confirm") if isinstance(witness.get("confirm"), dict) else {}
+    generation = job.generation if isinstance(job.generation, dict) else {}
+    snapshot = batch.config_snapshot or {}
+    return {
+        "job_id": job.id,
+        "state": job.state,
+        "step_limit": snapshot.get("function_step_limit"),
+        "generation_step_limit": (batch.provenance or {}).get("generation_step_limit"),
+        "handoff_state": record.get("state"),
+        "obligations_total": obligations.get("total"),
+        "obligations_completed": budget.get("completed"),
+        "obligations_remaining": budget.get("remaining"),
+        "admissible_count": (admissible.get("count") if isinstance(admissible.get("count"), int) else None),
+        "by_cause": obligations.get("by_cause"),
+        "stopped_at": record.get("error") or record.get("reason"),
+        "resolved": _resolved(generation),
+        "replay": {
+            "verdict": job.last_verdict or None,
+            "confirm_status": confirm.get("status"),
+            "confirmed": confirm.get("confirmed"),
+        },
+    }
+
+
+def _resolved(generation: dict) -> int | None:
+    """Assertions the generated suite recorded, or ``None`` when it recorded none."""
+    summary = generation.get("intent_summary")
+    if isinstance(summary, dict) and isinstance(summary.get("assertions"), int):
+        return summary["assertions"]
+    return None
+
+
 def _archive_path(source_rel: str, function: str) -> str:
     """``<source_rel>/<function>.csv`` with every segment kept inside the archive."""
     parts = [part for part in PurePosixPath(source_rel.replace("\\", "/")).parts

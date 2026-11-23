@@ -127,6 +127,26 @@ change the job's verdict, the batch status or the candidates, and a ledger it
 writes binds only the *next* batch whose generation reads it - the current batch
 keeps the conclusion it already reached.
 
+## Derived batches and comparison
+
+`POST /batches/<id>/derive` queues a new batch for the functions whose witness
+run confirmed entries, and never writes the source batch: its frozen config,
+provenance, status and step ceiling stay as delivered. The new batch records
+`derived_from_batch_id` and freezes the config current at derivation, so a
+`function_step_limit` in the body changes only what batches created afterwards
+see. Without an explicit `targets` list it takes the source jobs whose handoff
+is `HANDOFF_READY` or `NO_ADMISSIBLE_OBLIGATION` and whose confirmation is
+`CONFIRMED`, one target per function; a function with no confirmed entry is not
+regenerated, and an empty selection is refused.
+
+`GET /batches/<id>/compare?against=<id>` compares the two batches per function -
+the frozen ceiling, the generation-reported ceiling, the obligation totals, the
+completed and remaining counts, where generation stopped, the assertion count
+the suite recorded, and the replay verdict and confirmation. It stores nothing
+and changes nothing, and a figure the source never recorded comes back `null`
+rather than a guessed zero. Calibration of the per-obligation step coefficient
+reads these records and does not write back to a delivered batch.
+
 ## Job lifecycle
 
 Each attempt (`GENERATOR`, `LLM`, `HUMAN`, `HOST_DERIVED`) retains its exact CSV,
