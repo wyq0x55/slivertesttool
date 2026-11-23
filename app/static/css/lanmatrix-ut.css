@@ -213,6 +213,15 @@
 .ut-progress.is-stale .ut-progress-marker{ border-color:var(--border-strong); background:var(--surface-2); color:var(--text-3); }
 .ut-progress.is-stale .ut-progress-step-head span{ color:var(--text-3); }
 .ut-progress.is-stale .ut-progress-sync{ color:var(--warn-text); }
+.ut-witness:not([hidden]){ margin-top:20px; padding-top:18px; border-top:1px solid var(--border); }
+.ut-witness-state{ margin:0 0 12px; color:var(--text-2); font-size:13px; line-height:1.7; overflow-wrap:anywhere; }
+.ut-witness-state.warn{ color:var(--warn-text); }
+.ut-witness-facts{ display:grid; grid-template-columns:auto 1fr; gap:6px 16px; margin:0 0 14px; font-size:12px; }
+.ut-witness-facts dt{ color:var(--text-3); }
+.ut-witness-facts dd{ margin:0; color:var(--text-2); overflow-wrap:anywhere; }
+.ut-witness-actions{ display:flex; gap:8px; flex-wrap:wrap; }
+.ut-witness-note{ margin:12px 0 0; font-size:12px; color:var(--text-3); line-height:1.6; }
+.ut-witness-note:empty{ display:none; }
 #ut-d-review-section:not([hidden]){ margin-top:20px; padding-top:18px; border-top:1px solid var(--border); }
 .ut-reason{ margin:0; white-space:pre-wrap; }
 .ut-review textarea{ width:100%; min-height:72px; resize:vertical; }

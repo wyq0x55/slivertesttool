@@ -145,6 +145,17 @@
         <p id="ut-d-timing-note" class="ut-timing-note"></p>
         <p id="ut-d-sync" class="ut-progress-sync"></p>
       </section>
+      {# Budget-exhaustion handoff: an observation of generation, not job state. #}
+      <section id="ut-d-witness" class="ut-witness" aria-labelledby="ut-d-witness-title" hidden>
+        <div class="panel-bar"><h4 id="ut-d-witness-title">预算耗尽分拣</h4></div>
+        <p id="ut-d-witness-state" class="ut-witness-state" role="status" aria-live="polite"></p>
+        <dl class="ut-witness-facts" id="ut-d-witness-facts" hidden></dl>
+        <div class="ut-witness-actions">
+          <button class="btn small" id="ut-d-witness-triage" type="button" hidden>分拣未完成义务</button>
+          <button class="btn small" id="ut-d-witness-propose" type="button" hidden>用本地模型提议</button>
+        </div>
+        <p class="ut-witness-note" id="ut-d-witness-note"></p>
+      </section>
       <div id="ut-d-review-section" hidden>
       <h4>审核</h4>
       <p class="muted" id="ut-d-gate-hint"></p>
