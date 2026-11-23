@@ -1380,6 +1380,15 @@ textarea.lmui-input{ resize:vertical; min-height:76px; }
   background:var(--surface-2); color:var(--text); font-size:13.5px;
   margin:12px 0;
 }
+/* The one-time token banner is a mounted live region that is filled on
+   success; until then it must not paint an empty bordered box. It is clipped
+   rather than display:none: a live region that is out of the accessibility
+   tree when its text arrives is not announced reliably. */
+.lm-banner:empty{
+  position:absolute; width:1px; height:1px; margin:-1px; padding:0;
+  overflow:hidden; clip-path:inset(50%);
+  border-color:transparent; background:transparent;
+}
 .lm-banner-warn{
   background:var(--warn-soft); color:var(--warn-text); border-color:transparent;
 }
