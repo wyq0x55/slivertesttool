@@ -1131,7 +1131,7 @@
       return `<div class="lm-se-block">
         <h4>${label}</h4>
         <table class="lm-table lm-se-table">
-          <thead><tr><th>#</th><th>名称(路径)</th><th></th></tr></thead>
+          <thead><tr><th scope="col">#</th><th scope="col">名称(路径)</th><th scope="col"></th></tr></thead>
           <tbody>${rows || `<tr><td colspan="3" class="lm-muted">无</td></tr>`}</tbody>
         </table>
         <div class="lm-se-actions">
@@ -1146,10 +1146,10 @@
       const field = (s, i, f, cls) =>
         `<td><input class="lm-input lm-st-cell${cls || ""}" data-i="${i}" data-f="${f}" value="${esc(s[f])}"${ro}></td>`;
       const head =
-        layout.left.map((c) => `<th${c[0] === "no" ? ' class="lm-st-no"' : ""}>${esc(c[1])}</th>`).join("") +
-        inNames.map((n) => `<th class="lm-st-sig-in" title="入力信号">${esc(n)}</th>`).join("") +
-        exNames.map((n) => `<th class="lm-st-sig-ex" title="期待信号">${esc(n)}</th>`).join("") +
-        layout.right.map((c) => `<th>${esc(c[1])}</th>`).join("") + (readOnly ? "" : "<th></th>");
+        layout.left.map((c) => `<th scope="col"${c[0] === "no" ? ' class="lm-st-no"' : ""}>${esc(c[1])}</th>`).join("") +
+        inNames.map((n) => `<th scope="col" class="lm-st-sig-in" title="入力信号">${esc(n)}</th>`).join("") +
+        exNames.map((n) => `<th scope="col" class="lm-st-sig-ex" title="期待信号">${esc(n)}</th>`).join("") +
+        layout.right.map((c) => `<th scope="col">${esc(c[1])}</th>`).join("") + (readOnly ? "" : '<th scope="col"></th>');
       const rows = this.doc.steps.map((s, i) => {
         const commentRows = layout.commentField && s[layout.commentField]
           ? String(s[layout.commentField]).split(/\r\n?|\n/).map((line, index) =>

@@ -323,7 +323,7 @@
       if (panel.hidden) return;
       $("ut-d-host-summary").innerHTML = "<p><b>" + esc(execution.status || "") + "</b>" + (execution.reason ? " · " + esc(execution.reason) : "") + "</p>" + (execution.has_coverage_report ? "" : coverage(execution));
       var generation = execution.stub_generation || {};
-      $("ut-d-stub-rounds").innerHTML = "<p>Stub 模式：" + esc(generation.mode || "deterministic") + (generation.model ? " · 模型：" + esc(generation.model) : "") + (generation.skipped ? " · " + esc(generation.skipped) : "") + "</p>" + ((generation.rounds || []).length ? '<table class="ut-issue-table"><thead><tr><th>轮次</th><th>状态</th><th>Token（输入 / 输出）</th><th>说明</th></tr></thead><tbody>' + generation.rounds.map(function(round) {
+      $("ut-d-stub-rounds").innerHTML = "<p>Stub 模式：" + esc(generation.mode || "deterministic") + (generation.model ? " · 模型：" + esc(generation.model) : "") + (generation.skipped ? " · " + esc(generation.skipped) : "") + "</p>" + ((generation.rounds || []).length ? '<table class="ut-issue-table"><thead><tr><th scope="col">轮次</th><th scope="col">状态</th><th scope="col">Token（输入 / 输出）</th><th scope="col">说明</th></tr></thead><tbody>' + generation.rounds.map(function(round) {
         var usage = round.usage || {};
         return "<tr><td>" + esc(round.round) + "</td><td>" + esc(round.status) + "</td><td>" + esc(usage.input_tokens == null ? "—" : usage.input_tokens) + " / " + esc(usage.output_tokens == null ? "—" : usage.output_tokens) + "</td><td>" + esc(round.reason || round.proposal_status || "") + "</td></tr>";
       }).join("") + "</tbody></table>" : "");
@@ -577,7 +577,7 @@
     function stageTimingHtml(index, s) {
       if (!s.rows.length) return "";
       var key = "stage:" + index;
-      return '<details class="ut-stage-timing" data-keep="' + key + '"' + (openDetails[key] ? " open" : "") + "><summary>步骤用时 · " + s.rows.length + ' 项</summary><table aria-label="步骤用时"><thead><tr><th>步骤</th><th>版本 / 轮次</th><th>状态</th><th>用时</th></tr></thead><tbody>' + s.rows.map(function(t) {
+      return '<details class="ut-stage-timing" data-keep="' + key + '"' + (openDetails[key] ? " open" : "") + "><summary>步骤用时 · " + s.rows.length + ' 项</summary><table aria-label="步骤用时"><thead><tr><th scope="col">步骤</th><th scope="col">版本 / 轮次</th><th scope="col">状态</th><th scope="col">用时</th></tr></thead><tbody>' + s.rows.map(function(t) {
         return "<tr" + (t.group ? ' class="is-group"' : "") + ' title="' + esc(timingStamp(t.started) + " – " + timingStamp(t.ended)) + '"><td>' + esc(t.label) + "</td><td>" + esc(t.version) + "</td><td>" + esc(t.stateLabel) + "</td><td>" + esc((t.running ? "已用 " : "") + timingDuration(t.duration)) + "</td></tr>";
       }).join("") + "</tbody></table></details>";
     }
@@ -886,7 +886,7 @@
       var shown = lines.filter(function(l) {
         return coverageView === "gaps" ? lineGap(l, required) : coverageView === "decisions" ? l.c1.length || l.mcdc.length : true;
       });
-      var listing = r.reason ? '<p class="ut-batch-err">' + esc(r.reason) + "</p>" : '<div class="ut-cov-wrap"><table class="ut-cov-lines" aria-label="逐行覆盖率"><thead><tr><th>行</th><th>C0</th><th>次数</th><th>' + esc(c1Label) + "</th><th>MC/DC</th><th>源代码</th></tr></thead><tbody>" + (shown.map(function(l) {
+      var listing = r.reason ? '<p class="ut-batch-err">' + esc(r.reason) + "</p>" : '<div class="ut-cov-wrap"><table class="ut-cov-lines" aria-label="逐行覆盖率"><thead><tr><th scope="col">行</th><th scope="col">C0</th><th scope="col">次数</th><th scope="col">' + esc(c1Label) + '</th><th scope="col">MC/DC</th><th scope="col">源代码</th></tr></thead><tbody>' + (shown.map(function(l) {
         return '<tr class="' + (required.c0 === true && l.c0 === "NOT_COVERED" ? "is-miss" : decisionGap(l, required) ? "is-gap" : "") + '"><td class="ut-num">' + esc(l.line) + "</td><td>" + (l.c0 === "COVERED" ? '<span class="is-full">○</span>' : l.c0 === "NOT_COVERED" ? '<span class="is-miss">×</span>' : "") + '</td><td class="ut-num">' + (l.count == null ? "" : esc(l.count)) + "</td><td>" + c1Cell(l.c1) + "</td><td>" + mcdcCell(l.mcdc) + '</td><td class="ut-cov-src"><code>' + esc(l.text) + "</code></td></tr>";
       }).join("") || '<tr><td colspan="6" class="muted">' + (coverageView === "gaps" ? "没有已测得的未满足行；未测量或无法判定的项请在全部视图查看" : "没有符合条件的行") + "</td></tr>") + "</tbody></table></div>";
       var unplaced = [
@@ -1264,7 +1264,7 @@
       }
       function table(items) {
         return '<table class="ut-issue-table' + (extraClass ? " " + extraClass : "") + '"><thead><tr>' + keys.map(function(k) {
-          return '<th class="k-' + esc(k) + '">' + esc(DETAIL_KEYS[k] || k) + "</th>";
+          return '<th scope="col" class="k-' + esc(k) + '">' + esc(DETAIL_KEYS[k] || k) + "</th>";
         }).join("") + "</tr></thead><tbody>" + body(items) + "</tbody></table>";
       }
       var head = list.slice(0, PREVIEW_ROWS), rest = list.slice(PREVIEW_ROWS);
