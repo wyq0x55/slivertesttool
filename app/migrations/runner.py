@@ -10,7 +10,7 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy.engine import Connection, Engine
 
-HEAD_REVISION = "0002_rollups"
+HEAD_REVISION = "0003_step_budget"
 _MIGRATIONS_DIR = Path(__file__).resolve().parent
 
 
@@ -30,8 +30,12 @@ def _reconcile_head_invariants(conn: Connection) -> None:
     rollups_mod = importlib.import_module(
         "app.migrations.versions.0002_governance_and_dashboard_rollups"
     )
+    step_budget_mod = importlib.import_module(
+        "app.migrations.versions.0003_step_budget"
+    )
     baseline_mod.reconcile_baseline_schema(conn)
     rollups_mod.reconcile_governance_and_rollups(conn)
+    step_budget_mod.reconcile_step_budget(conn)
 
 
 def _run_with_connection(conn: Connection, *, force_reconcile: bool = False) -> str:

@@ -77,6 +77,8 @@ _CONFIG_TEXT_FIELDS = ("manifest_path", "index_csv", "product_root",
                        "repair_model", "stub_mode",
                        "stub_model", "host_clang", "host_llvm_cov", "host_llvm_profdata",
                        "host_profile_runtime")
+# Numeric settings that may stay undeclared; NULL keeps the ut-agent default.
+_OPTIONAL_NUMERIC_FIELDS = (("function_step_limit", 1, 1_000_000_000),)
 _REQUIRED_FIELDS = ("manifest_path", "index_csv", "product_root")
 _JOB_LIST_LIMIT = 500
 
@@ -135,6 +137,27 @@ def require_config(project_id: int) -> UtPipelineConfig:
     return config
 
 
+def frozen_step_limit(config: dict[str, Any]) -> Optional[int]:
+    """The batch's frozen per-function ceiling; ``None`` leaves ut-agent's own limit."""
+    value = config.get("function_step_limit")
+    if value is None:
+        return None
+    if type(value) is not int or value < 1:
+        raise BridgeError("Invalid frozen function_step_limit")
+    return value
+
+
+def _step_limit_unsupported(exc: Exception, limit: Optional[int]) -> bool:
+    """True when this ut-agent predates ``--function-step-limit``.
+
+    The flag is rejected by argparse before any work starts, so the batch fails
+    with one subprocess call and no partial generation. PR #255 did not add a
+    capability key to ``configuration-options``, so a version probe cannot
+    distinguish the builds; the launch itself is the only reliable test.
+    """
+    return bool(limit) and "unrecognized arguments: --function-step-limit" in str(exc)
+
+
 def save_config(project_id: int, values: dict[str, Any], user_id: int) -> UtPipelineConfig:
     existing = get_config(project_id)
     before = existing.to_dict() if existing else None
@@ -189,6 +212,17 @@ def save_config(project_id: int, values: dict[str, Any], user_id: int) -> UtPipe
             if type(value) is not int or not low <= value <= high:
                 raise ServiceError(f"{key} must be an integer from {low} to {high}", code="VALIDATION_ERROR")
             normalized[key] = value
+    for key, low, high in _OPTIONAL_NUMERIC_FIELDS:
+        if key not in values:
+            continue
+        value = values[key]
+        if value is None or value == "":
+            normalized[key] = None
+            continue
+        if type(value) is not int or not low <= value <= high:
+            raise ServiceError(f"{key} must be an integer from {low} to {high}, or empty",
+                               code="VALIDATION_ERROR")
+        normalized[key] = value
     explicit_roots = server_paths.parse_roots(current_app.config.get("UT_ALLOWED_SOURCE_ROOTS"))
     if not is_admin or explicit_roots:
         source_roots = (explicit_roots
@@ -626,9 +660,12 @@ def _run_generation(batch_id: int, on_ready: Callable[[int], None] | None) -> li
             raise BridgeError("Completed TestCsv receipt has no digest")
         accept(unit, receipt["provenance"], digest)
 
+    # Declared before the attempt: a constraint failure precedes the frozen read.
+    limit: Optional[int] = None
     try:
         batch.constraints = bridge.constraints(config["manifest_path"])
         db.session.commit()
+        limit = frozen_step_limit(config)
         progress_dir = _generation_progress_dir(batch.project_id, batch.id)
         # History first: the forecast reads one document per function, so the
         # in-flight run cannot observe itself.
@@ -647,6 +684,7 @@ def _run_generation(batch_id: int, on_ready: Callable[[int], None] | None) -> li
             on_unit=completed,
             on_forecast=observe_forecast,
             history_dir=history_dir,
+            function_step_limit=limit,
         )
         for unit in document.get("units", ()):
             accept(unit, document.get("provenance"))
@@ -660,9 +698,15 @@ def _run_generation(batch_id: int, on_ready: Callable[[int], None] | None) -> li
         batch.finished_at = _utcnow()
         unfinished = (UtJob.query.filter_by(batch_id=batch_id, state=UtJob.GENERATING)
                       .with_for_update(of=UtJob).populate_existing().all())
+        unsupported = _step_limit_unsupported(exc, limit)
         for job in unfinished:
             if job.stop_requested_at is not None:
                 _halt(job)
+            elif unsupported:
+                _gate(job, UtJob.BLOCKED,
+                      "当前 ut-agent 不支持 --function-step-limit：请升级到包含该参数的版本，"
+                      "或把「函数语义步数上限」留空后重建批次。",
+                      GateCode.ENV_BLOCKED)
             else:
                 _gate(job, UtJob.ERROR, f"生成失败：{exc}", GateCode.GENERATION_FAILED)
         db.session.commit()
