@@ -816,6 +816,11 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .lm-ver-hint{ margin:0 0 4px; font-size:12px; color:var(--text-3); line-height:1.6; }
 .lm-ver-err{ background:var(--danger-soft); color:var(--danger-text); border-radius:var(--radius-sm);
   padding:9px 12px; font-size:13px; font-weight:550; }
+/* A live region that is out of the accessibility tree when its text arrives is
+   not announced reliably, so the empty box is clipped from sight instead of
+   being display:none'd (which would remove it from the tree). */
+.lm-ver-err:empty{ position:absolute; width:1px; height:1px; margin:-1px; padding:0;
+  overflow:hidden; clip-path:inset(50%); background:transparent; }
 
 /* ===== PART 10 · FIELDS ================================================= */
 .grip{ cursor:grab; color:var(--text-3); display:inline-grid; place-items:center; width:22px; height:22px;

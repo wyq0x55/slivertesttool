@@ -35,6 +35,24 @@ test("#lm-ver-err is announced as an alert", () => {
   const tags = modelsHtml.match(/<[^>]*\bid="lm-ver-err"[^>]*>/g) || [];
   assert.equal(tags.length, 1, "expected exactly one #lm-ver-err element");
   assert.match(tags[0], /\brole="alert"/, "validation errors must be announced, not just shown");
+  assert.doesNotMatch(tags[0], /\shidden\b/,
+    "the alert must stay mounted and in the a11y tree; visibility is CSS-driven");
+});
+
+test("verError drives #lm-ver-err by text content only", () => {
+  const verErrorBody = projectModelsJs.match(/function verError\([^)]*\)\s*{([\s\S]*?)\n  }/);
+  assert.ok(verErrorBody, "verError must exist");
+  assert.doesNotMatch(verErrorBody[1], /\.hidden\s*=/,
+    "verError must not toggle hidden — an un-hidden live region is announced reliably");
+  assert.match(verErrorBody[1], /box\.textContent\s*=/, "verError must set the box text");
+});
+
+test(".lm-ver-err:empty collapses without leaving the a11y tree", () => {
+  const css = read("app/static/css/design-system.css");
+  const rule = css.match(/\.lm-ver-err:empty\s*{[^}]*}/);
+  assert.ok(rule, "an :empty rule must visually collapse the unused alert");
+  assert.doesNotMatch(rule[0], /display\s*:\s*none/,
+    "display:none would drop the live region from the accessibility tree");
 });
 
 test("version modal opens with showModal and closes with close(), not hidden", () => {
