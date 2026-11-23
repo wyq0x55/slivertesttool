@@ -166,7 +166,9 @@
         && btn.dataset.status === scope.status;
       btn.classList.toggle("is-on", on);
       btn.classList.toggle("ghost", !on);
-      btn.setAttribute("aria-selected", on ? "true" : "false");
+      // Toggle buttons, not tabs: each scope re-queries the same queue with a
+      // different filter, so the pressed state is what assistive tech needs.
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
     });
   }
 

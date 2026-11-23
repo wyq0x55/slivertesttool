@@ -332,6 +332,16 @@ select.lm-cell-control[multiple] { min-height: 46px; }
 .lm-toast.lm-err { background: var(--danger); }
 .lm-toast .btn { margin-left: 10px; background: rgba(255,255,255,.2); color: var(--surface); border-color: rgba(255,255,255,.5); }
 
+/* Visually hidden, still exposed to assistive tech. Used by the toast live
+   region (#lm-toast-live), which must stay mounted for its text changes to be
+   announced: display:none / visibility:hidden would remove it from the
+   accessibility tree entirely. */
+.lm-visually-hidden {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%);
+  white-space: nowrap; border: 0;
+}
+
 /* --- Row operations toolbar + context menu (v2.9.0) ------------------- */
 .lm-toolbar-rowops { padding: 6px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
 .lm-toolbar-rowops .lm-hint { font-size: 12px; }
@@ -445,6 +455,7 @@ body.lm-refpanel-resizing { cursor: col-resize; user-select: none; }
 .lm-ce-kw    { color: #569cd6; }
 .lm-ce-punct { color: #d4d4d4; }
 #lm-steps-json-error { margin-top: 8px; }
+#lm-steps-json-error:empty { margin-top: 0; margin-bottom: 0; padding: 0; border-radius: 0; background: transparent; }
 @media (max-width: 760px) {
   .lm-refpanel { min-width: 200px; }
 }
@@ -610,8 +621,21 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
 .lm-db-grid th, .lm-db-grid td { white-space: nowrap; max-width: 320px; overflow: hidden;
   text-overflow: ellipsis; font-family: ui-monospace, Menlo, Consolas, monospace; }
 .lm-db-grid thead th { position: sticky; top: 0; z-index: 1; }
-.lm-db-sortable { cursor: pointer; user-select: none; }
-.lm-db-sortable:hover { background: var(--brand-soft); }
+/* Sortable headers: a native <button> fills the <th> so the whole cell is the
+   target, while the <th> itself stays non-interactive. The button supplies the
+   cell padding, so only sortable header cells drop theirs. */
+.lm-db-grid th.lm-db-sortable { padding: 0; user-select: none; }
+.lm-db-sort-btn { display: flex; align-items: center; gap: 6px; width: 100%;
+  min-height: 24px; margin: 0; padding: 11px 12px; border: 0; border-radius: 0;
+  background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.lm-db-sort-btn:hover { background: var(--brand-soft); }
+.lm-db-sort-btn:focus-visible { outline: 2px solid var(--brand-ring); outline-offset: -2px; }
+.lm-db-sort-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.lm-db-sort-icon { flex: none; width: 1em; text-align: center; color: currentColor; opacity: .55; }
+.lm-db-sort-icon::before { content: "↕"; }
+.lm-db-grid th[aria-sort="ascending"] .lm-db-sort-icon::before { content: "▲"; }
+.lm-db-grid th[aria-sort="descending"] .lm-db-sort-icon::before { content: "▼"; }
+.lm-db-grid th[aria-sort] .lm-db-sort-icon { opacity: 1; }
 .lm-db-pk { color: var(--warn-text); }
 .lm-db-opcol { white-space: nowrap; text-align: center; font-family: inherit; }
 .lm-db-opcol .btn { margin: 0 2px; }
@@ -785,19 +809,35 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
 /* --------------------------------------------------------------------- */
 /* In-app SBS editor modal (models page)                                  */
 /* --------------------------------------------------------------------- */
+/* These elements are native <dialog>s opened with showModal(), so the UA gives
+   them focus containment, an inert page and top-layer stacking. Each dialog is
+   the full-viewport transparent overlay; the .lm-modal-panel child is the
+   visible frame. The flex centring is scoped to [open] because an author
+   `display` on a closed dialog would override the UA's hiding. */
 .lm-modal {
   position: fixed;
   inset: 0;
   z-index: 1000;
+}
+dialog.lm-modal {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  overscroll-behavior: contain;
+}
+dialog.lm-modal[open] {
   display: flex;
   align-items: center;
   justify-content: center;
 }
-.lm-modal[hidden] { display: none; }
-.lm-modal-backdrop {
-  position: absolute;
-  inset: 0;
+dialog.lm-modal::backdrop {
   background: rgba(15, 23, 42, 0.45);
+  overflow: hidden;
+  overscroll-behavior: contain;
 }
 .lm-modal-panel {
   position: relative;
@@ -918,3 +958,61 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
   padding: 0 5px;
 }
 .lm-sbs-rev-act { display: flex; gap: 4px; }
+
+/* Fields table: the reorder grip is a real <button> (keyboard reorder), reset
+   back to the plain 22px box that .grip defines for its old <span> form. The
+   shared :focus-visible ring in design-system.css still applies by button. */
+.lm-fields .grip {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  line-height: inherit;
+  vertical-align: middle;
+}
+
+/* Keyboard reorder status: always mounted for the live region, clipped from
+   sight instead of hidden so the region is never removed from the a11y tree. */
+.lm-fields-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Skip link: first focusable element of the signed-in shell, so keyboard users
+   can bypass the sidebar and topbar. It stays above the viewport (transform,
+   not display:none/visibility:hidden, which would make it unfocusable) until it
+   is focused, then appears as a normal button at the top-left. #lm-main carries
+   tabindex="-1" so the target is programmatically focusable in every browser. */
+.lm-skip {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 1100;
+  padding: 8px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-md);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-decoration: none;
+  transform: translateY(-200%);
+}
+.lm-skip:focus,
+.lm-skip:focus-visible {
+  transform: none;
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}

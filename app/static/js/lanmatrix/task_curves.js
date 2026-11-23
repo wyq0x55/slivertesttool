@@ -794,7 +794,7 @@
       const data = await api("/events", q);
       if (!data) return;
       const table = $("cv-events");
-      table.innerHTML = "<thead><tr><th>时间 (s)</th><th>记录</th><th>变量</th><th>从</th><th>到</th><th>步骤</th></tr></thead>";
+      table.innerHTML = "<thead><tr><th scope=\"col\">时间 (s)</th><th scope=\"col\">记录</th><th scope=\"col\">变量</th><th scope=\"col\">从</th><th scope=\"col\">到</th><th scope=\"col\">步骤</th></tr></thead>";
       const body = document.createElement("tbody");
       data.events.forEach(e => {
         const c = columnById(e.id), s = stepAt(e.t);
@@ -814,7 +814,7 @@
   }
   function renderChecks() {
     const table = $("cv-checks");
-    table.innerHTML = "<thead><tr><th>步骤</th><th>结果</th><th>时刻 (s)</th><th>变量</th><th>期望</th><th>实测</th><th>确认时机</th></tr></thead>";
+    table.innerHTML = "<thead><tr><th scope=\"col\">步骤</th><th scope=\"col\">结果</th><th scope=\"col\">时刻 (s)</th><th scope=\"col\">变量</th><th scope=\"col\">期望</th><th scope=\"col\">实测</th><th scope=\"col\">确认时机</th></tr></thead>";
     const body = document.createElement("tbody");
     (ctx.judge.steps || []).forEach(s => s.checks.forEach(c => {
       const tr = document.createElement("tr"); tr.tabIndex = 0;
@@ -839,7 +839,7 @@
       const page = await api("/raw", params({ offset: rawOffset, count: 100 }));
       if (!page) return;
       const head = document.createElement("thead"), tr = document.createElement("tr");
-      ["记录", ...page.header].forEach(n => { const th = document.createElement("th"); th.textContent = n; tr.append(th); });
+      ["记录", ...page.header].forEach(n => { const th = document.createElement("th"); th.scope = "col"; th.textContent = n; tr.append(th); });
       head.append(tr);
       const body = document.createElement("tbody");
       page.rows.forEach(r => {
@@ -1133,12 +1133,28 @@
   });
   $("cv-search").addEventListener("input", tree);
   document.querySelectorAll(".cv-chip").forEach(b => b.addEventListener("click", () => { filter = b.dataset.filter; syncFilterChips(); tree(); }));
-  document.querySelectorAll("[data-lower]").forEach(tab => tab.addEventListener("click", () => {
+  // The lower tablist shares one activation path for clicks and arrow keys, so
+  // aria-selected, the roving tabindex, the visible pane and the data load can
+  // never drift apart.
+  function activateLower(tab) {
     lower = tab.dataset.lower;
     document.querySelectorAll("[data-lower]").forEach(t => { const on = t === tab; t.setAttribute("aria-selected", String(on)); t.tabIndex = on ? 0 : -1; });
     document.querySelectorAll("[data-pane]").forEach(p => { p.hidden = p.dataset.pane !== lower; });
     loadLower();
-  }));
+  }
+  document.querySelectorAll("[data-lower]").forEach((tab, i, tabs) => {
+    tab.addEventListener("click", () => activateLower(tab));
+    tab.addEventListener("keydown", event => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.isComposing || event.keyCode === 229) return;
+      event.preventDefault();
+      const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
+        : event.key === "ArrowRight" ? (i + 1) % tabs.length : (i + tabs.length - 1) % tabs.length;
+      activateLower(tabs[next]);
+      tabs[next].focus();
+    });
+  });
   ["cv-events-lanes", "cv-events-range"].forEach(id => $(id).addEventListener("change", () => { eventsOffset = 0; loadEvents(); }));
   $("cv-events-prev").addEventListener("click", () => { eventsOffset = Math.max(0, eventsOffset - 200); loadEvents(); });
   $("cv-events-next").addEventListener("click", () => { eventsOffset += 200; loadEvents(); });

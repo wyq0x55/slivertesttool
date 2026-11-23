@@ -37,6 +37,11 @@
 </head>
 <body class="lm-body{% if user %} lm-has-side{% endif %}">
 {% if user %}
+  {# First focusable element on every signed-in page: keyboard users land here
+     before the sidebar/topbar and can jump straight into <main>. Inside this
+     branch only, so the login page (which renders self.content() below) never
+     gets a link pointing at a landmark it does not contain. #}
+  <a class="lm-skip" href="#lm-main">跳到主要内容</a>
   <div class="app" id="lm-app">
     <aside class="side" id="lm-side">
       {# The collapse control belongs to the sidebar it controls, so it sits in
@@ -135,10 +140,13 @@
         <a href="{{ url_for('lanmatrix_pages.password') }}" class="btn ghost">
           <span>修改密码</span>
         </a>
-        <a href="#" id="lm-logout" class="btn ghost">
+        {# Signing out is an action, not a destination: a native button reports the
+           right role and keeps Enter/Space activation. api.js still delegates on
+           #lm-logout, so the id is the contract, not the tag. #}
+        <button type="button" id="lm-logout" class="btn ghost">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
           <span>退出登录</span>
-        </a>
+        </button>
       </div>
     </aside>
     <div class="main">
@@ -166,16 +174,17 @@
               <b>通知</b>
               <button type="button" class="btn ghost small" id="lm-notif-readall">全部已读</button>
             </div>
-            {# Two scopes, not one endless stream. Without a history tab the only
+            {# Two scopes, not one endless stream. Without a history scope the only
                way to stop an item from reappearing is to delete it, so people
                delete evidence they may still need. #}
-            <div class="lm-notif-tabs" id="lm-notif-tabs" role="tablist">
-              <button type="button" class="lm-notif-tab is-active" role="tab"
+            <div class="lm-notif-tabs" id="lm-notif-tabs" role="group"
+                 aria-label="通知范围">
+              <button type="button" class="lm-notif-tab is-active"
                       data-scope="unread" id="lm-notif-tab-unread"
-                      aria-selected="true">未读 <span data-count="unread"></span></button>
-              <button type="button" class="lm-notif-tab" role="tab"
+                      aria-pressed="true">未读 <span data-count="unread"></span></button>
+              <button type="button" class="lm-notif-tab"
                       data-scope="history" id="lm-notif-tab-history"
-                      aria-selected="false">历史 <span data-count="history"></span></button>
+                      aria-pressed="false">历史 <span data-count="history"></span></button>
             </div>
             <div class="lm-notif-list" id="lm-notif-list"></div>
             <div class="lm-notif-empty" id="lm-notif-empty" hidden>暂无通知</div>
@@ -188,7 +197,9 @@
           <span id="lm-theme-ic"></span>
         </button>
       </header>
-      <main class="lm-main">
+      {# tabindex="-1" makes the landmark programmatically focusable (skip-link
+         target under screen magnifiers) without adding it to the tab order. #}
+      <main class="lm-main" id="lm-main" tabindex="-1">
         {% if project_capabilities is defined and not project_capabilities.view %}
         <div class="content">
           <div class="state err" role="alert">
@@ -207,6 +218,14 @@
   {{ self.content() }}
 {% endif %}
   <div id="lm-toast" class="lm-toast" hidden></div>
+  {# A toast must also be spoken, which #lm-toast cannot do itself: it starts
+     [hidden], and revealing it in the same frame as its text change leaves
+     assistive tech with no container that was already in the page. This second
+     region is mounted on load and never hidden, and ui.js writes the same
+     message into it. It is a named region as well as an assertive live region,
+     so screen-reader users can also navigate to it. #}
+  <div id="lm-toast-live" class="lm-visually-hidden" role="region"
+       aria-label="通知" aria-live="assertive" aria-atomic="true"></div>
   <script>
     window.LM = {
       projectId: {{ project_id if project_id is defined else 'null' }},
@@ -278,7 +297,7 @@
         else{ app.classList.toggle('side-open'); }
       });
       /* Give collapsed nav icons a native tooltip from their label text. */
-      document.querySelectorAll('.nav a, .side-foot a').forEach(function(a){
+      document.querySelectorAll('.nav a, .side-foot a, .side-foot button').forEach(function(a){
         var s=a.querySelector('span'); if(s&&!a.title) a.title=s.textContent.trim();
       });
       /* Highlight the current nav link. A link may also declare

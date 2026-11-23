@@ -35,3 +35,19 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
    than the `hidden` attribute. Mirrors design-system's `[hidden]` rule so the
    two agree instead of fighting over specificity. */
 .hidden { display: none !important; }
+
+/* Accessible-only text: read by assistive technology, never rendered. Used for
+   table <caption>s, which the accessibility guide requires even when the visual
+   design already states the table's purpose in a heading. */
+.lm-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

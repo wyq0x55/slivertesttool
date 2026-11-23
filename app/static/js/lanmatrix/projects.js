@@ -311,13 +311,17 @@
   if (segEl) segEl.addEventListener("click", (e) => {
     const b = e.target.closest("button[data-s]");
     if (!b) return;
-    segEl.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+    segEl.querySelectorAll("button").forEach((x) => {
+      const selected = x === b;
+      x.classList.toggle("on", selected);
+      x.setAttribute("aria-pressed", String(selected));
+    });
     filter.s = b.getAttribute("data-s");
     render();
   });
 
   /* --- new project dialog --- */
-  function openNew() { document.getElementById("lm-np-error").hidden = true; dialog.showModal(); }
+  function openNew() { document.getElementById("lm-np-error").textContent = ""; dialog.showModal(); }
   document.getElementById("lm-new-project").addEventListener("click", openNew);
   const emptyNew = document.getElementById("lm-empty-new");
   if (emptyNew) emptyNew.addEventListener("click", openNew);
@@ -342,7 +346,6 @@
         : `/lanmatrix/projects/${data.project.id}`;
     } catch (ex) {
       err.textContent = ex.message;
-      err.hidden = false;
     }
   });
 
@@ -354,7 +357,7 @@
     document.getElementById("lm-ep-desc").value = p.description || "";
     document.getElementById("lm-ep-status").value = p.status || "draft";
     const err = document.getElementById("lm-ep-error");
-    if (err) err.hidden = true;
+    if (err) err.textContent = "";
     editDialog.showModal();
   }
   const epOk = document.getElementById("lm-ep-ok");
@@ -369,7 +372,6 @@
     };
     if (!changes.name) {
       err.textContent = "项目名称不能为空";
-      err.hidden = false;
       return;
     }
     try {
@@ -387,7 +389,6 @@
     } catch (ex) {
       if (ex.status === 401) { window.location = LM.urls.login; return; }
       err.textContent = ex.message || "更新失败";
-      err.hidden = false;
     }
   });
 

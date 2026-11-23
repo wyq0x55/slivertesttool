@@ -24,18 +24,14 @@
     </div>
   </form>
 
-  <div id="lm-token-secret" class="lm-banner" role="status" hidden>
-    <p><b>请立即复制保存，此 Token 只显示这一次。</b>之后在命令行设置
-       <code>SILVER_CLI_TOKEN</code> 即可使用。</p>
-    <p><code id="lm-token-value"></code>
-       <button type="button" class="btn" id="lm-token-copy">复制</button></p>
-  </div>
+  <div id="lm-token-secret" class="lm-banner" role="status" aria-atomic="true"></div>
 
   <p id="lm-token-info" class="lm-muted" role="status" aria-live="polite">加载中…</p>
   <div class="tablecard"><div style="overflow-x:auto" tabindex="0" role="region" aria-labelledby="lm-token-page-title">
   <table class="lm-table">
+    <caption class="lm-sr-only">API Token 列表</caption>
     <thead>
-      <tr><th>名称</th><th>前缀</th><th>签发时间</th><th>到期时间</th><th>最近使用</th><th>状态</th><th>操作</th></tr>
+      <tr><th scope="col">名称</th><th scope="col">前缀</th><th scope="col">签发时间</th><th scope="col">到期时间</th><th scope="col">最近使用</th><th scope="col">状态</th><th scope="col">操作</th></tr>
     </thead>
     <tbody id="lm-token-rows"><tr><td colspan="7" class="lm-muted">加载中…</td></tr></tbody>
   </table>

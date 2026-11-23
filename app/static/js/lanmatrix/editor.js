@@ -321,6 +321,10 @@
     t.className = "lm-toast " + (ok ? "lm-ok" : "lm-err");
     t.hidden = false;
     setTimeout(() => { t.hidden = true; }, 3200);
+    // Speak it through the shared live region as well (#lm-toast-live). This
+    // page also runs inside the collab process, where ui.js may not be loaded,
+    // so the call is guarded.
+    if (window.LMUI && typeof LMUI.announce === "function") LMUI.announce(msg);
   }
   window.LMToast = toast;
 
@@ -787,7 +791,8 @@
       keys.replaceChildren();
       LMRowTools.shortcutRows().forEach((r) => {
         const tr = document.createElement("tr");
-        const kt = document.createElement("td");
+        const kt = document.createElement("th");
+        kt.setAttribute("scope", "row");
         kt.className = "lm-help-keys";
         r.keys.forEach((k, i) => {
           if (i) kt.appendChild(document.createTextNode(" + "));
@@ -808,7 +813,8 @@
       gestures.replaceChildren();
       LMRowTools.GESTURES.forEach((g) => {
         const tr = document.createElement("tr");
-        const a = document.createElement("td");
+        const a = document.createElement("th");
+        a.setAttribute("scope", "row");
         a.textContent = g.what;
         const b = document.createElement("td");
         b.textContent = g.desc;
@@ -1453,7 +1459,7 @@
     if (queuePrioSel) queuePrioSel.value = "high";
     if (queueResultSel) queueResultSel.value = "";
     if (queueFilter) queueFilter.value = "";
-    if (queueError) queueError.hidden = true;
+    if (queueError) queueError.textContent = "";
     queueSelectByPriority(queuePriority);
     renderQueueList();
     if (typeof queueDialog.showModal === "function") queueDialog.showModal();
@@ -1555,12 +1561,12 @@
       const testIds = Array.from(queueChecked);
       if (!testIds.length) {
         e.preventDefault();
-        if (queueError) { queueError.textContent = "请至少选择一个 test_id。"; queueError.hidden = false; }
+        if (queueError) queueError.textContent = "请至少选择一个 test_id。";
         return;
       }
       e.preventDefault();
       queueOk.disabled = true;
-      if (queueError) queueError.hidden = true;
+      if (queueError) queueError.textContent = "";
       try {
         const model = (window.LMDefaultModel || "").trim();
         const res = await enqueueSelectedRuns(testIds, model);
@@ -1577,7 +1583,7 @@
         if (typeof queueDialog.close === "function") queueDialog.close();
         else queueDialog.removeAttribute("open");
       } catch (ex) {
-        if (queueError) { queueError.textContent = ex.message || "入队失败"; queueError.hidden = false; }
+        if (queueError) queueError.textContent = ex.message || "入队失败";
       } finally {
         queueOk.disabled = false;
       }
@@ -1616,7 +1622,7 @@
   const exportDialog = document.getElementById("lm-export-dialog");
   const exportFormatSel = document.getElementById("lm-export-format");
   function openExportDialog() {
-    document.getElementById("lm-export-error").hidden = true;
+    document.getElementById("lm-export-error").textContent = "";
     exportDialog.showModal();
   }
   document.getElementById("lm-export").addEventListener("click", openExportDialog);
@@ -1624,7 +1630,7 @@
   document.getElementById("lm-export-ok").addEventListener("click", async (e) => {
     e.preventDefault();
     const err = document.getElementById("lm-export-error");
-    err.hidden = true;
+    err.textContent = "";
     const format = exportFormatSel ? exportFormatSel.value : "generic";
     try {
       if (format === "test_matrix" || format === "libfunc" || format === "const"
@@ -1649,7 +1655,7 @@
       }
       exportDialog.close();
     } catch (ex) {
-      err.textContent = ex.message; err.hidden = false;
+      err.textContent = ex.message;
     }
   });
 
@@ -1714,7 +1720,6 @@
     pendingJob = null;
     importCommitButton.disabled = true;
     importError.textContent = notice;
-    importError.hidden = !notice;
     if (typeof document.createElement === "function") {
       const loading = document.createElement("p");
       loading.textContent = "正在生成导入预览…";
@@ -1803,7 +1808,6 @@
       pendingJob = null;
       importSummary.replaceChildren();
       importError.textContent = ex.message;
-      importError.hidden = false;
     }
   }
 
@@ -1825,7 +1829,7 @@
     applyFormatUI();
     previewRequest += 1;
     importSummary.replaceChildren();
-    importError.hidden = true;
+    importError.textContent = "";
     importCommitButton.disabled = true;
     importFileInput.value = "";
     pendingJob = null;
@@ -1841,7 +1845,7 @@
     if (importCommitActive) return;
     previewRequest += 1;
     importSummary.replaceChildren();
-    importError.hidden = true;
+    importError.textContent = "";
     importCommitButton.disabled = true;
     importFileInput.value = "";
     pendingJob = null;
@@ -1885,7 +1889,7 @@
       .filter(Boolean).map((control) => ({ control, disabled: control.disabled }));
     importCommitActive = true;
     controls.forEach(({ control }) => { control.disabled = true; });
-    importError.hidden = true;
+    importError.textContent = "";
     updateImportCommitButton();
     try {
       const format = job.parameters?.format || job.preview?.format ||
@@ -1917,7 +1921,6 @@
         return;
       }
       importError.textContent = ex.message;
-      importError.hidden = false;
     } finally {
       importCommitActive = false;
       controls.forEach(({ control, disabled }) => { control.disabled = disabled; });
@@ -1928,12 +1931,12 @@
   const extractIoBtn = document.getElementById("lm-import-extract-io");
   if (extractIoBtn) extractIoBtn.addEventListener("click", async () => {
     const err = document.getElementById("lm-import-error");
-    err.hidden = true;
+    err.textContent = "";
     const sheets = [];
     if (document.getElementById("lm-extract-src-lib").checked) sheets.push("lib");
     if (document.getElementById("lm-extract-src-test").checked) sheets.push("test");
     if (!sheets.length) {
-      err.textContent = "请至少选择一个手順来源（Lib / 测试）。"; err.hidden = false;
+      err.textContent = "请至少选择一个手順来源（Lib / 测试）。";
       return;
     }
     const mode = document.getElementById("lm-import-mode").value;

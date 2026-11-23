@@ -44,9 +44,9 @@
   <div class="toolbar">
     <div class="search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>
-      <input type="search" id="ut-q" placeholder="搜索函数 / 源文件…" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
+      <input type="search" id="ut-q" placeholder="搜索函数 / 源文件…" aria-label="搜索函数 / 源文件…" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
     </div>
-    <select id="ut-batch" class="selbox" title="按批次筛选"><option value="">全部批次</option></select>
+    <select id="ut-batch" class="selbox" title="按批次筛选" aria-label="按批次筛选"><option value="">全部批次</option></select>
     <button class="btn" id="ut-batch-stop" type="button" hidden>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
       停止批次
@@ -65,15 +65,15 @@
       <table class="dt ut-table lm-tasks-table">
         <thead>
           <tr>
-            <th class="ut-check"><input type="checkbox" id="ut-requeue-all" title="选择可重新入队的作业" aria-label="选择可重新入队的作业"></th>
-            <th>作业</th>
-            <th>函数 <span class="submuted">· 源文件 · 批次</span></th>
-            <th>状态</th>
-            <th>机器判定</th>
-            <th>模型修正</th>
-            <th title="当前版本的 Clang/LLVM 实测覆盖率（HOST_EXECUTION），不计入目标机证据">覆盖率 <span class="submuted">· 主机</span></th>
-            <th>更新时间</th>
-            <th class="lm-row-actions"></th>
+            <th scope="col" class="ut-check"><input type="checkbox" id="ut-requeue-all" title="选择可重新入队的作业" aria-label="选择可重新入队的作业"></th>
+            <th scope="col">作业</th>
+            <th scope="col">函数 <span class="submuted">· 源文件 · 批次</span></th>
+            <th scope="col">状态</th>
+            <th scope="col">机器判定</th>
+            <th scope="col">模型修正</th>
+            <th scope="col" title="当前版本的 Clang/LLVM 实测覆盖率（HOST_EXECUTION），不计入目标机证据">覆盖率 <span class="submuted">· 主机</span></th>
+            <th scope="col">更新时间</th>
+            <th scope="col" class="lm-row-actions"></th>
           </tr>
         </thead>
         <tbody id="ut-rows"><tr><td colspan="9" class="muted">加载中…</td></tr></tbody>
@@ -182,7 +182,7 @@
     <div class="panel-bar"><h4 id="lm-ut-attempts-title">版本历史 <span class="submuted">· 每个候选的来源、执行与机器判定</span></h4></div>
     <div style="overflow-x:auto" tabindex="0" role="region" aria-labelledby="lm-ut-attempts-title">
       <table class="dt ut-table ut-attempts lm-tasks-table">
-        <thead><tr><th>#</th><th>来源</th><th>机器判定</th><th>主要问题</th><th>覆盖率</th><th>说明</th><th>时间</th><th class="lm-row-actions"></th></tr></thead>
+        <thead><tr><th scope="col">#</th><th scope="col">来源</th><th scope="col">机器判定</th><th scope="col">主要问题</th><th scope="col">覆盖率</th><th scope="col">说明</th><th scope="col">时间</th><th scope="col" class="lm-row-actions"></th></tr></thead>
         <tbody id="ut-d-attempts"></tbody>
       </table>
     </div>

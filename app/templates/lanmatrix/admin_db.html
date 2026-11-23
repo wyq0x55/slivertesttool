@@ -35,7 +35,7 @@
         <div class="lm-db-tableview-head" id="lm-db-tv-head">
           <span class="lm-muted">← 请选择左侧的表</span>
         </div>
-        <div class="lm-error" id="lm-db-tv-error" hidden></div>
+        <div class="lm-error" id="lm-db-tv-error" role="alert"></div>
         <div class="lm-db-grid-wrap">
           <table class="lm-table lm-db-grid">
             <thead id="lm-db-grid-head"></thead>
@@ -60,7 +60,7 @@
         <h4 class="lm-db-subhead">数据表 <span class="lm-muted" id="lm-db-tblcount"></span></h4>
         <div class="lm-db-tables-wrap">
           <table class="lm-table lm-db-tables">
-            <thead><tr><th>模式</th><th>表名</th><th class="num">估计行数</th><th class="num">占用空间</th><th></th></tr></thead>
+            <thead><tr><th scope="col">模式</th><th scope="col">表名</th><th scope="col" class="num">估计行数</th><th scope="col" class="num">占用空间</th><th scope="col"></th></tr></thead>
             <tbody id="lm-db-tables"></tbody>
           </table>
         </div>
@@ -78,12 +78,12 @@
           <input type="checkbox" id="lm-db-readonly" checked>
           只读模式（仅允许 SELECT/WITH/SHOW/EXPLAIN，执行后回滚）
         </label>
-        <textarea id="lm-db-sql" class="lm-db-sql" spellcheck="false"
+        <textarea id="lm-db-sql" class="lm-db-sql" spellcheck="false" aria-label="SQL 语句"
                   placeholder="SELECT * FROM lm_project LIMIT 50;"></textarea>
         <div class="lm-db-write-warn" id="lm-db-write-warn" hidden>
           ⚠ 写模式已开启：语句将<strong>直接提交</strong>到数据库，请谨慎操作（建议先备份）。
         </div>
-        <div class="lm-error" id="lm-db-error" hidden></div>
+        <div class="lm-error" id="lm-db-error" role="alert"></div>
         <div class="lm-db-result-meta lm-muted" id="lm-db-meta"></div>
         <div class="lm-db-result-wrap">
           <table class="lm-table lm-db-result">
@@ -100,7 +100,7 @@
   <form method="dialog" class="lm-card">
     <h3 id="lm-db-row-title">编辑行</h3>
     <div id="lm-db-row-form" class="lm-db-row-form"></div>
-    <div class="lm-error" id="lm-db-row-error" hidden></div>
+    <div class="lm-error" id="lm-db-row-error" role="alert"></div>
     <menu>
       <button value="cancel" class="btn">取消</button>
       <button value="save" id="lm-db-row-save" class="btn btn-primary">保存</button>

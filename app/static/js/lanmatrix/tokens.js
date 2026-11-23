@@ -5,9 +5,11 @@
   var info = document.getElementById("lm-token-info");
   var form = document.getElementById("lm-token-form");
   var secretBox = document.getElementById("lm-token-secret");
-  var secretValue = document.getElementById("lm-token-value");
-  var copyBtn = document.getElementById("lm-token-copy");
-  var copyDefaultLabel = copyBtn ? copyBtn.textContent : "复制";
+  // The banner starts empty in the template and is filled only after a token
+  // is issued, so these elements do not exist yet.
+  var secretValue = null;
+  var copyBtn = null;
+  var copyDefaultLabel = "复制";
   var copyTimer = null;
 
   function textVal(v) {
@@ -76,6 +78,41 @@
     }
   }
 
+  // The banner is a mounted live region that is filled only after a token is
+  // issued. Adding text to it is what gets announced; unhiding it would not be.
+  // The secret is written with textContent so it is never parsed as markup.
+  function showSecret(token) {
+    var warningP = document.createElement("p");
+    var strong = document.createElement("b");
+    strong.textContent = "请立即复制保存，此 Token 只显示这一次。";
+    warningP.appendChild(strong);
+    warningP.appendChild(document.createTextNode("之后在命令行设置 "));
+    var envCode = document.createElement("code");
+    envCode.textContent = "SILVER_CLI_TOKEN";
+    warningP.appendChild(envCode);
+    warningP.appendChild(document.createTextNode(" 即可使用。"));
+
+    var valueP = document.createElement("p");
+    var valueCode = document.createElement("code");
+    valueCode.id = "lm-token-value";
+    valueCode.textContent = textVal(token);
+    valueP.appendChild(valueCode);
+    valueP.appendChild(document.createTextNode(" "));
+    var copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "btn";
+    copy.id = "lm-token-copy";
+    copy.textContent = "复制";
+    valueP.appendChild(copy);
+
+    secretBox.replaceChildren(warningP, valueP);
+    secretValue = document.getElementById("lm-token-value");
+    copyBtn = document.getElementById("lm-token-copy");
+    copyDefaultLabel = copyBtn ? copyBtn.textContent : "复制";
+    resetCopyFeedback();
+    if (copyBtn) copyBtn.addEventListener("click", copySecret);
+  }
+
   function resetCopyFeedback() {
     if (!copyBtn) return;
     clearTimeout(copyTimer);
@@ -135,9 +172,7 @@
     event.preventDefault();
     try {
       var data = await LMApi.createMeToken(form.name.value.trim(), Number(form.days.value));
-      secretValue.textContent = data.token;
-      resetCopyFeedback();
-      secretBox.hidden = false;
+      showSecret(data.token);
       form.reset();
       form.days.value = 90;
       load();
@@ -145,10 +180,6 @@
       LMUI.alert({ title: "签发失败", body: e.message });
     }
   });
-
-  if (copyBtn) {
-    copyBtn.addEventListener("click", copySecret);
-  }
 
   rows.addEventListener("click", async function (event) {
     var button = event.target.closest("[data-revoke]");

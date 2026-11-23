@@ -37,6 +37,42 @@ def test_preserves_reference_css_logo_statistics_and_offline_links():
         for href in re.findall(r'href="([^"]+)"', page):
             assert href.startswith("#") or href in pages
         assert 'src="http' not in page
+        assert '<html lang="zh-CN" xml:lang="zh-CN">' in page
+
+
+def test_case_detail_controls_are_native_disclosure_buttons():
+    detail = render_reports(report([case(), case("Failed")]), "Report")["Report_SYS.html"]
+    global_tag = re.search(r'<button[^>]*id="lnk_all"[^>]*>', detail).group(0)
+    assert 'type="button"' in global_tag
+    assert 'data-collapse="all"' in global_tag
+    assert 'aria-label="Hide all test case details"' in global_tag
+    # Case states can be mixed, so the global control names its next action
+    # instead of exposing one aggregate expanded state.
+    assert "aria-expanded" not in global_tag
+    assert "href=" not in global_tag
+    for anchor in ("case-1", "case-2"):
+        tag = re.search(rf'<button[^>]*id="lnk_{anchor}"[^>]*>', detail).group(0)
+        assert 'type="button"' in tag
+        assert 'data-collapse="case"' in tag
+        assert f'aria-controls="div_{anchor}"' in tag
+        assert 'aria-expanded="true"' in tag
+        assert f'aria-labelledby="{anchor}"' in tag
+        assert "href=" not in tag
+    assert not re.search(r"<a[^>]*data-collapse", detail)
+    # Real navigation affordances stay links.
+    assert '<a href="#TestDetail">back</a>' in detail
+    assert '<a href="#case-1" onclick="showTC(\'case-1\')">Case TC-1</a>' in detail
+
+
+def test_detail_script_keeps_reference_toggle_behavior():
+    detail = render_reports(report([case()]), "Report")["Report_SYS.html"]
+    script = re.search(r'<script type="text/javascript">(.*?)</script>', detail, re.S).group(1)
+    # Buttons update aria-expanded, the load handler keeps the reference
+    # collapsed default, and a #case-N fragment opens its target.
+    assert "setAttribute('aria-expanded'" in script
+    assert "setAllExpanded(false)" in script
+    assert "/^#case-[0-9]+$/" in script
+    assert "showTC(window.location.hash.substring(1))" in script
 
 
 def test_escapes_all_fields_and_generates_safe_unique_names():
@@ -200,3 +236,9 @@ def test_unsealed_attempt_cannot_inherit_a_live_pass_or_missing_final_outcome(tm
     selected.status = "passed"
     with pytest.raises(service().EvidenceError, match="no sealed outcome"):
         build_qualification_report(project)
+
+
+def test_result_table_header_cells_carry_column_scope():
+    detail = render_reports(report([case()]), "Report")["Report_SYS.html"]
+    assert re.findall(r'<th scope="col" class="TableHeadingCell"[^>]*>([^<]+)</th>', detail) == [
+        "Timestamp", "TestStep", "Description", "Result"]

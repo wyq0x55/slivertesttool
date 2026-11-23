@@ -54,7 +54,7 @@
        did not choose, and an unanswered claim keeps a case pinned in 未実施. #}
   </div>
 
-  <div id="lm-home-err" class="state err" hidden>
+  <div id="lm-home-err" class="state err" role="alert" hidden>
     <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></span>
     <h3>加载失败</h3>
     <p id="lm-home-err-msg">请稍后重试。</p>
@@ -107,18 +107,18 @@
     <div class="toolbar">
       <div class="search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>
-        <input type="search" id="lm-h-text" placeholder="搜索任务 / test id / 函数…" autocomplete="off">
+        <input type="search" id="lm-h-text" placeholder="搜索任务 / test id / 函数…" aria-label="搜索任务 / test id / 函数…" autocomplete="off">
       </div>
-      <select id="lm-h-project" class="selbox" title="按项目筛选">
+      <select id="lm-h-project" class="selbox" title="按项目筛选" aria-label="按项目筛选">
         <option value="">全部项目</option>
       </select>
       <input type="hidden" id="lm-h-status" value="">
-      <div class="segmented" id="lm-h-seg" role="tablist" aria-label="按状态筛选">
-        <button type="button" class="on" data-status="">全部</button>
-        <button type="button" data-status="running">运行中</button>
-        <button type="button" data-status="queued">排队中</button>
-        <button type="button" data-status="failed">失败</button>
-        <button type="button" data-status="passed">通过</button>
+      <div class="segmented" id="lm-h-seg" role="group" aria-label="按状态筛选">
+        <button type="button" class="on" data-status="" aria-pressed="true">全部</button>
+        <button type="button" data-status="running" aria-pressed="false">运行中</button>
+        <button type="button" data-status="queued" aria-pressed="false">排队中</button>
+        <button type="button" data-status="failed" aria-pressed="false">失败</button>
+        <button type="button" data-status="passed" aria-pressed="false">通过</button>
       </div>
       <label class="lm-check-inline">
         <input type="checkbox" id="lm-h-mine"> 只看我提交的
@@ -157,16 +157,16 @@
         <table class="dt lm-tasks-table">
           <thead>
             <tr>
-              <th class="lm-col-check" style="width:36px"><input type="checkbox" id="lm-h-check-all" title="全选/全不选 Silver 运行（当前筛选）"></th>
-              <th class="lm-sortable" data-sort="project">项目</th>
-              <th class="lm-sortable" data-sort="test_id">test id / 函数</th>
-              <th class="lm-sortable" data-sort="sil_name">模型 / 执行器</th>
-              <th class="lm-sortable" data-sort="submitter">提交者</th>
-              <th class="lm-sortable" data-sort="status">状态 / 结果</th>
-              <th class="lm-sortable" data-sort="review">审核</th>
-              <th class="lm-sortable" data-sort="progress">进度 / 修正</th>
-              <th class="lm-sortable" data-sort="finished_at">完成 / 更新时间</th>
-              <th style="width:1%"></th>
+              <th scope="col" class="lm-col-check" style="width:36px"><input type="checkbox" id="lm-h-check-all" title="全选/全不选 Silver 运行（当前筛选）" aria-label="全选/全不选 Silver 运行（当前筛选）"></th>
+              <th scope="col" class="lm-sortable" data-sort="project"><button type="button" class="lm-sort-btn" data-sort="project">项目</button></th>
+              <th scope="col" class="lm-sortable" data-sort="test_id"><button type="button" class="lm-sort-btn" data-sort="test_id">test id / 函数</button></th>
+              <th scope="col" class="lm-sortable" data-sort="sil_name"><button type="button" class="lm-sort-btn" data-sort="sil_name">模型 / 执行器</button></th>
+              <th scope="col" class="lm-sortable" data-sort="submitter"><button type="button" class="lm-sort-btn" data-sort="submitter">提交者</button></th>
+              <th scope="col" class="lm-sortable" data-sort="status"><button type="button" class="lm-sort-btn" data-sort="status">状态 / 结果</button></th>
+              <th scope="col" class="lm-sortable" data-sort="review"><button type="button" class="lm-sort-btn" data-sort="review">审核</button></th>
+              <th scope="col" class="lm-sortable" data-sort="progress"><button type="button" class="lm-sort-btn" data-sort="progress">进度 / 修正</button></th>
+              <th scope="col" class="lm-sortable" data-sort="finished_at"><button type="button" class="lm-sort-btn" data-sort="finished_at">完成 / 更新时间</button></th>
+              <th scope="col" style="width:1%"></th>
             </tr>
           </thead>
           <tbody id="lm-h-rows">
@@ -205,18 +205,21 @@
        a pending list the product had nowhere at all to see what had been
        approved or -- the case that actually matters -- rejected: the executor
        was told nothing and could find nothing. These three scopes are the same
-       queue read from the two sides of the review. #}
-    <div class="lm-rv-scopes" role="tablist" aria-label="审核范围">
-      <button class="btn small lm-rv-scope is-on" type="button" role="tab"
-              data-role="reviewer" data-status="pending" aria-selected="true">
+       queue read from the two sides of the review. They are independent toggle
+       buttons over one list, not a tab widget: each one re-queries the same
+       queue with a different filter, so they expose aria-pressed rather than
+       claiming arrow-key/tabpanel semantics they do not implement. #}
+    <div class="lm-rv-scopes" role="group" aria-label="审核范围">
+      <button class="btn small lm-rv-scope is-on" type="button"
+              data-role="reviewer" data-status="pending" aria-pressed="true">
         待我审核 <span class="lm-rv-badge" id="lm-h-rv-n-pending"></span>
       </button>
-      <button class="btn small ghost lm-rv-scope" type="button" role="tab"
-              data-role="requester" data-status="rejected" aria-selected="false">
+      <button class="btn small ghost lm-rv-scope" type="button"
+              data-role="requester" data-status="rejected" aria-pressed="false">
         我被驳回 <span class="lm-rv-badge" id="lm-h-rv-n-rejected"></span>
       </button>
-      <button class="btn small ghost lm-rv-scope" type="button" role="tab"
-              data-role="reviewer" data-status="decided" aria-selected="false">
+      <button class="btn small ghost lm-rv-scope" type="button"
+              data-role="reviewer" data-status="decided" aria-pressed="false">
         我已处理 <span class="lm-rv-badge" id="lm-h-rv-n-decided"></span>
       </button>
     </div>
@@ -239,15 +242,15 @@
         <table class="lm-rv-table">
           <thead>
             <tr>
-              <th style="width:1%"></th>
-              <th>项目</th>
-              <th>用例</th>
-              <th>判定</th>
+              <th scope="col" style="width:1%"></th>
+              <th scope="col">项目</th>
+              <th scope="col">用例</th>
+              <th scope="col">判定</th>
               {# Carries the review state in the decided scopes and the author's
                  説明 in the pending one -- see workspace_reviews.js. #}
-              <th>审核 / 理由</th>
-              <th>实施</th>
-              <th style="width:1%">操作</th>
+              <th scope="col">审核 / 理由</th>
+              <th scope="col">实施</th>
+              <th scope="col" style="width:1%">操作</th>
             </tr>
           </thead>
           <tbody id="lm-h-rv-rows"></tbody>

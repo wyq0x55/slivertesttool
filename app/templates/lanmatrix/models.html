@@ -55,8 +55,7 @@
   <!-- Version relabelling. Separate from the add forms because a release label
        is normally assigned after the model has been uploaded and smoke-tested,
        and changing it re-groups every future chart bucket. -->
-  <div class="lm-modal" id="lm-ver-modal" role="dialog" aria-modal="true" aria-labelledby="lm-ver-heading" hidden>
-    <div class="lm-modal-backdrop" data-ver-close></div>
+  <dialog class="lm-modal" id="lm-ver-modal" aria-labelledby="lm-ver-heading">
     <div class="lm-modal-panel lm-ver-panel">
       <div class="lm-modal-head">
         <h3 id="lm-ver-heading">模型版本<span id="lm-ver-title"></span></h3>
@@ -71,7 +70,7 @@
         <label class="lm-ver-lab" for="lm-ver-note">版本说明<span class="lm-ver-opt">（可选）</span></label>
         <textarea id="lm-ver-note" class="ipt" rows="3"
                   placeholder="这一版改了什么"></textarea>
-        <div class="lm-ver-err" id="lm-ver-err" hidden></div>
+        <div class="lm-ver-err" id="lm-ver-err" role="alert"></div>
       </div>
       <div class="lm-modal-foot">
         <span class="lm-grow"></span>
@@ -79,11 +78,10 @@
         <button type="button" class="btn btn-primary btn-sm" id="lm-ver-save">保存</button>
       </div>
     </div>
-  </div>
+  </dialog>
 
   <!-- SBS in-app editor (bundle models only, shown for model.manage users) -->
-  <div class="lm-modal" id="lm-sbs-modal" role="dialog" aria-modal="true" aria-labelledby="lm-sbs-heading" hidden>
-    <div class="lm-modal-backdrop" data-sbs-close></div>
+  <dialog class="lm-modal" id="lm-sbs-modal" aria-labelledby="lm-sbs-heading">
     <div class="lm-modal-panel lm-sbs-panel">
       <div class="lm-modal-head">
         <h3 id="lm-sbs-heading">编辑 SBS<span id="lm-sbs-title"></span></h3>
@@ -93,7 +91,7 @@
       <div class="lm-sbs-body">
         <div class="lm-sbs-main">
           <div class="lm-sbs-editor" id="lm-sbs-editor"></div>
-          <div class="lm-sbs-status" id="lm-sbs-status"></div>
+          <div class="lm-sbs-status" id="lm-sbs-status" role="status" aria-live="polite" aria-atomic="true" aria-label="SBS 编辑器状态"></div>
         </div>
         <div class="lm-sbs-history" id="lm-sbs-history" hidden>
           <div class="lm-sbs-history-head">历史版本（最近 50）</div>
@@ -107,7 +105,7 @@
         <button type="button" class="btn btn-primary btn-sm" id="lm-sbs-save" disabled>保存</button>
       </div>
     </div>
-  </div>
+  </dialog>
 </div>
 {% endblock %}
 {% block scripts %}

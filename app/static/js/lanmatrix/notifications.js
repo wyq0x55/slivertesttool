@@ -75,7 +75,7 @@
     document.querySelectorAll("#lm-notif-tabs .lm-notif-tab").forEach((b) => {
       const on = b.dataset.scope === scope;
       b.classList.toggle("is-active", on);
-      b.setAttribute("aria-selected", on ? "true" : "false");
+      b.setAttribute("aria-pressed", on ? "true" : "false");
     });
     const foot = $("lm-notif-foot");
     if (foot) foot.hidden = scope !== "history";

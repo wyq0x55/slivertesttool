@@ -1,27 +1,60 @@
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
-<html>
+<html lang="zh-CN" xml:lang="zh-CN">
   <head>
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
     <title id="Title1">{{ title }}03_01</title>
     {% include '_style.html' %}
+    <style type="text/css">
+      /* The disclosure triggers are buttons so they are operable with Space;
+         these rules reuse the reference link affordance and keep the layout. */
+      button.Undecorated
+      {
+        appearance: none;
+        font:       inherit;
+        color:      inherit;
+        background: none;
+        border:     0;
+        padding:    0;
+        margin:     0;
+        cursor:     pointer;
+      }
+
+      button.Undecorated:hover
+      {
+        color: red;
+      }
+    </style>
     <script type="text/javascript">
-      function switchAll(id, linkText) {
-        var expanded = linkText === '[+]';
-        var links = id ? [document.getElementById('lnk_' + id)] : document.querySelectorAll('a[data-collapse]');
-        var sections = id ? [document.getElementById('div_' + id)] : document.querySelectorAll('div[data-case-details]');
-        for (var i = 0; i < links.length; i++) {
-          if (links[i]) links[i].textContent = expanded ? '[-]' : '[+]';
-        }
-        for (var j = 0; j < sections.length; j++) {
-          if (sections[j]) sections[j].style.display = expanded ? '' : 'none';
+      function setCaseExpanded(id, expanded) {
+        var section = document.getElementById('div_' + id);
+        var button = document.getElementById('lnk_' + id);
+        if (section) section.style.display = expanded ? '' : 'none';
+        if (button) {
+          button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+          button.textContent = expanded ? '[-]' : '[+]';
         }
       }
+      function setAllExpanded(expanded) {
+        var cases = document.querySelectorAll('button[data-collapse="case"]');
+        for (var i = 0; i < cases.length; i++) {
+          setCaseExpanded(cases[i].getAttribute('data-case'), expanded);
+        }
+        var button = document.getElementById('lnk_all');
+        if (button) {
+          button.setAttribute('data-expanded', expanded ? 'true' : 'false');
+          button.setAttribute('aria-label', expanded ? 'Hide all test case details' : 'Show all test case details');
+          button.textContent = expanded ? '[-]' : '[+]';
+        }
+      }
+      function switchAll(id, expanded) {
+        if (id) setCaseExpanded(id, expanded); else setAllExpanded(expanded);
+      }
       function showTC(id) {
-        switchAll(id, '[+]');
+        setCaseExpanded(id, true);
       }
       window.addEventListener('load', function () {
         var link = document.getElementById('lnk_all');
-        if (link) switchAll('', link.textContent);
+        if (link) setAllExpanded(false);
         if (/^#case-[0-9]+$/.test(window.location.hash)) showTC(window.location.hash.substring(1));
       });
     </script>

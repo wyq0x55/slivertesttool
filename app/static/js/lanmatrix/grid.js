@@ -286,16 +286,16 @@
       const head = fields.map((f) => {
         const req = f.is_required ? '<span class="lm-req">*</span>' : "";
         const ro = f.is_readonly ? ' 🔒' : "";
-        return `<th title="${esc(f.help_text || "")}" data-key="${esc(f.field_key)}">${esc(f.display_name)}${req}${ro}</th>`;
+        return `<th scope="col" title="${esc(f.help_text || "")}" data-key="${esc(f.field_key)}">${esc(f.display_name)}${req}${ro}</th>`;
       }).join("");
 
-      const actHead = this._hasActions() ? '<th class="lm-actcol">操作</th>' : "";
-      const selHead = '<th class="lm-selcol"><input type="checkbox" class="lm-sel-all" title="全选/取消"></th>';
+      const actHead = this._hasActions() ? '<th scope="col" class="lm-actcol">操作</th>' : "";
+      const selHead = '<th scope="col" class="lm-selcol"><input type="checkbox" class="lm-sel-all" title="全选/取消"></th>';
       const span = fields.length + 2 + (this._hasActions() ? 1 : 0);
       const body = this.items.map((it) => this._rowHtml(it, fields)).join("");
       this.host.innerHTML = `
         <table class="lm-grid">
-          <thead><tr>${selHead}<th class="lm-rownum">#</th>${head}${actHead}</tr></thead>
+          <thead><tr>${selHead}<th scope="col" class="lm-rownum">#</th>${head}${actHead}</tr></thead>
           <tbody>${body || `<tr><td colspan="${span}" class="lm-muted">暂无数据，点“新增行”或导入 Excel。</td></tr>`}</tbody>
         </table>`;
       this._bind();

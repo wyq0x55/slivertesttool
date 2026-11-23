@@ -553,9 +553,11 @@
 
   function bindGenerate() {
     var panel = document.getElementById("lm-ai-gen-panel");
-    document.getElementById("lm-ai-open-gen").addEventListener("click", function () {
+    var openButton = document.getElementById("lm-ai-open-gen");
+    openButton.addEventListener("click", function () {
       if (!canEdit || generating) return;
       panel.hidden = !panel.hidden;
+      openButton.setAttribute("aria-expanded", String(!panel.hidden));
     });
     document.getElementById("lm-ai-gen-scenario").addEventListener("change", syncGenerationControls);
     document.getElementById("lm-ai-gen-submit").addEventListener("click", async function () {
@@ -591,6 +593,9 @@
       load();
       if (detailEpoch === epoch && detailId === null) {
         panel.hidden = true;
+        // Collapsing the panel here must report the same state as a manual
+        // collapse, or the toggle keeps claiming it is expanded.
+        openButton.setAttribute("aria-expanded", "false");
         openDetail(draft.id);
       }
     });
@@ -629,10 +634,10 @@
       fmtTok(stats.totals.output_tokens) + " tokens</p>" +
       '<div class="row wrap" style="gap:24px;align-items:flex-start">' +
       '<div style="min-width:260px"><table class="dt"><thead><tr>' +
-      "<th>场景</th><th>草稿数</th><th>输入</th><th>输出</th></tr></thead>" +
+      '<th scope="col">场景</th><th scope="col">草稿数</th><th scope="col">输入</th><th scope="col">输出</th></tr></thead>' +
       "<tbody>" + byScenario + "</tbody></table></div>" +
       '<div style="min-width:220px"><table class="dt"><thead><tr>' +
-      "<th>月份</th><th>草稿数</th><th>输入</th><th>输出</th></tr></thead>" +
+      '<th scope="col">月份</th><th scope="col">草稿数</th><th scope="col">输入</th><th scope="col">输出</th></tr></thead>' +
       "<tbody>" + byMonth + "</tbody></table></div></div>";
   }
 

@@ -21,6 +21,8 @@
     t.className = "lm-toast " + (ok ? "lm-ok" : "lm-err");
     t.hidden = false;
     setTimeout(() => { t.hidden = true; }, 3200);
+    // Speak it through the shared live region as well (#lm-toast-live).
+    if (window.LMUI && typeof LMUI.announce === "function") LMUI.announce(msg);
   }
 
   function fmtInt(n) {
@@ -88,7 +90,7 @@
     const body = document.getElementById("lm-db-result-body");
     const meta = document.getElementById("lm-db-meta");
     if (d.returns_rows) {
-      head.innerHTML = `<tr>${(d.columns || []).map((c) => `<th>${esc(c)}</th>`).join("")}</tr>`;
+      head.innerHTML = `<tr>${(d.columns || []).map((c) => `<th scope="col">${esc(c)}</th>`).join("")}</tr>`;
       body.innerHTML = (d.rows || []).map((r) =>
         `<tr>${r.map((v) => `<td>${v === null ? '<span class="lm-null">NULL</span>' : esc(v)}</td>`).join("")}</tr>`
       ).join("") || `<tr><td class="lm-muted">（无数据）</td></tr>`;
@@ -108,8 +110,8 @@
     if (running) return;
     const sql = document.getElementById("lm-db-sql").value.trim();
     const err = document.getElementById("lm-db-error");
-    err.hidden = true;
-    if (!sql) { err.textContent = "请输入 SQL 语句"; err.hidden = false; return; }
+    err.textContent = "";
+    if (!sql) { err.textContent = "请输入 SQL 语句"; return; }
     const readOnly = document.getElementById("lm-db-readonly").checked;
     // Raw SQL against production in write mode: no undo, no scope limit.
     if (!readOnly && !(await LMUI.confirm({
@@ -128,7 +130,6 @@
       if (!readOnly) { toast("已执行并提交", true); loadOverview(); }
     } catch (ex) {
       err.textContent = ex.message || "执行失败";
-      err.hidden = false;
       document.getElementById("lm-db-meta").textContent = "";
     } finally {
       running = false;
@@ -267,7 +268,6 @@
   function showTvError(msg) {
     const e = document.getElementById("lm-db-tv-error");
     e.textContent = msg || "";
-    e.hidden = !msg;
   }
 
   async function loadTableRows() {
@@ -283,25 +283,64 @@
     }
   }
 
-  function renderRows(d) {
-    const pk = new Set(d.primary_key || []);
-    const cols = d.columns || [];
+  // The server owns sorting and paging, and <tbody> is rebuilt from every
+  // paginated response. The sortable <thead> only depends on the table, its
+  // columns and its primary key, so keep that DOM alive across refreshes when
+  // those are unchanged. That preserves the focused header button (and its
+  // :focus-visible ring) without ever calling focus(), so a user who moved
+  // focus elsewhere is left alone.
+  let renderedHeadKey = null;
+
+  function gridHeadKey(cols, primaryKey) {
+    return JSON.stringify([currentTable, cols, primaryKey || []]);
+  }
+
+  // aria-sort belongs only on the currently sorted column; an unsorted table
+  // has none at all (never aria-sort="none").
+  function applySortState(head) {
+    head.querySelectorAll("th[data-c]").forEach((th) => {
+      if (tvOrderBy && th.dataset.c === tvOrderBy) {
+        th.setAttribute("aria-sort", tvDesc ? "descending" : "ascending");
+      } else {
+        th.removeAttribute("aria-sort");
+      }
+    });
+  }
+
+  function renderGridHead(cols, primaryKey) {
     const head = document.getElementById("lm-db-grid-head");
+    const key = gridHeadKey(cols, primaryKey);
+    if (key !== renderedHeadKey || !head.firstElementChild) {
+      const pk = new Set(primaryKey || []);
+      head.innerHTML = `<tr>${cols.map((c) => {
+        const isPk = pk.has(c);
+        // A native button fills the cell: the <th> itself is not interactive,
+        // Enter/Space work without extra handlers, and focus is visible.
+        return `<th scope="col" class="lm-db-sortable${isPk ? " lm-db-pk" : ""}" data-c="${esc(c)}">` +
+          `<button type="button" class="lm-db-sort-btn" data-c="${esc(c)}">` +
+          `<span class="lm-db-sort-label">${esc(c)}${isPk ? " 🔑" : ""}</span>` +
+          `<span class="lm-db-sort-icon" aria-hidden="true"></span>` +
+          `</button></th>`;
+      }).join("")}<th scope="col" class="lm-db-opcol">操作</th></tr>`;
+      head.querySelectorAll(".lm-db-sort-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const c = btn.dataset.c;
+          if (tvOrderBy === c) tvDesc = !tvDesc; else { tvOrderBy = c; tvDesc = false; }
+          tvPage = 1;
+          applySortState(head);  // feedback before the async rows arrive
+          loadTableRows();
+        });
+      });
+      renderedHeadKey = key;
+    }
+    applySortState(head);
+  }
+
+  function renderRows(d) {
+    const cols = d.columns || [];
     const body = document.getElementById("lm-db-grid-body");
     const hasPk = (d.primary_key || []).length > 0;
-    head.innerHTML = `<tr>${cols.map((c) => {
-      const isPk = pk.has(c);
-      const arrow = tvOrderBy === c ? (tvDesc ? " ▼" : " ▲") : "";
-      return `<th class="lm-db-sortable${isPk ? " lm-db-pk" : ""}" data-c="${esc(c)}">${esc(c)}${isPk ? " 🔑" : ""}${arrow}</th>`;
-    }).join("")}<th class="lm-db-opcol">操作</th></tr>`;
-    head.querySelectorAll(".lm-db-sortable").forEach((th) => {
-      th.addEventListener("click", () => {
-        const c = th.dataset.c;
-        if (tvOrderBy === c) tvDesc = !tvDesc; else { tvOrderBy = c; tvDesc = false; }
-        tvPage = 1;
-        loadTableRows();
-      });
-    });
+    renderGridHead(cols, d.primary_key || []);
     body.innerHTML = (d.rows || []).map((row) => {
       const cells = row.map((v) =>
         `<td>${v === null ? '<span class="lm-null">NULL</span>' : esc(truncate(v))}</td>`).join("");
@@ -367,7 +406,7 @@
     const isEdit = !!ctx;
     document.getElementById("lm-db-row-title").textContent =
       (isEdit ? "编辑行 · " : "新增行 · ") + currentTable;
-    document.getElementById("lm-db-row-error").hidden = true;
+    document.getElementById("lm-db-row-error").textContent = "";
     const form = document.getElementById("lm-db-row-form");
     const rowObj = ctx ? ctx.row : {};
     form.innerHTML = (currentSchema.columns || []).map((c) => {
@@ -406,7 +445,7 @@
   document.getElementById("lm-db-row-save").addEventListener("click", async (e) => {
     e.preventDefault();
     const errEl = document.getElementById("lm-db-row-error");
-    errEl.hidden = true;
+    errEl.textContent = "";
     const values = {};
     document.querySelectorAll("#lm-db-row-form .lm-db-field").forEach((f) => {
       if (f.disabled) return;
@@ -424,7 +463,6 @@
       await loadTableRows();
     } catch (ex) {
       errEl.textContent = ex.message || "保存失败";
-      errEl.hidden = false;
     }
   });
 

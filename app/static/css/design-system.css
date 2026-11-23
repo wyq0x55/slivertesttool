@@ -512,10 +512,15 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .jsteps{ display:flex; flex-direction:column; border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden; }
 .jstep{ border-bottom:1px solid var(--border); }
 .jstep:last-child{ border-bottom:none; }
-.jhead{ display:flex; align-items:center; gap:12px; padding:11px 14px; cursor:pointer;
+.jhead{ display:flex; align-items:center; gap:12px; padding:11px 14px;
   font-family:var(--mono); font-size:12.5px; transition:background var(--dur) var(--ease); }
 .jhead:hover{ background:var(--surface-2); }
-.jhead:focus-visible{ outline:2px solid var(--brand-ring); outline-offset:-2px; }
+/* The disclosure is a real button (the curve action is its sibling), so keep
+   the pre-existing row typography and let the native button reset handle the
+   rest. Focus uses the shared button ring, including forced-colors mode. */
+.jhead-toggle{ flex:1; min-width:0; align-self:stretch; display:flex; align-items:center; gap:12px;
+  margin:0; padding:0; border:0; background:none; color:inherit; font:inherit;
+  text-align:left; cursor:pointer; }
 .jchev{ width:15px; height:15px; color:var(--text-3); flex:0 0 15px; transition:transform var(--dur) var(--ease); }
 .jstep.open .jchev{ transform:rotate(90deg); }
 .jhead .ji{ flex:0 0 auto; color:var(--text-3); min-width:54px; }
@@ -653,9 +658,19 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .dt .row-acts{ display:flex; gap:4px; opacity:0; transition:opacity var(--dur) var(--ease); }
 .dt tbody tr:hover .row-acts{ opacity:1; }
 .dt .u-name{ display:flex; align-items:center; gap:10px; }
-.dt th.lm-sortable{ cursor:pointer; user-select:none; }
+.dt th.lm-sortable{ cursor:pointer; user-select:none; padding:0; }
 .dt th.lm-sortable:hover{ color:var(--text-2); }
 .dt th.lm-sorted{ color:var(--brand-text); }
+/* A sortable header is a real <button>, not a bare clickable cell: the cell
+   drops its padding and the button supplies it, so the whole header stays the
+   target while the sort becomes reachable and operable from the keyboard. The
+   focus ring is inset because a table cell clips an outward outline. */
+.lm-sort-btn{ display:flex; align-items:center; gap:6px; width:100%; min-height:24px;
+  margin:0; padding:11px 16px; border:0; background:none; color:inherit; font:inherit;
+  letter-spacing:inherit; text-transform:inherit; text-align:left;
+  cursor:pointer; user-select:none; }
+.lm-sort-btn:hover{ background:var(--surface); }
+.lm-sort-btn:focus-visible{ outline:2px solid var(--brand-ring); outline-offset:-2px; }
 
 .sw{ position:relative; display:inline-flex; align-items:center; cursor:pointer; }
 .sw input{ position:absolute; opacity:0; width:0; height:0; }
@@ -694,7 +709,8 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 
 /* ===== PART 9 · MEMBERS ================================================== */
 .mgrid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:16px; }
-.mcard{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+/* Positioned so `.mcard-select` can stretch over the whole card. */
+.mcard{ position:relative; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
   padding:18px; box-shadow:var(--shadow-sm);
   transition:transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), border-color var(--dur) var(--ease); }
 .mcard:hover{ transform:translateY(-2px); box-shadow:var(--shadow-md); border-color:var(--border-strong); }
@@ -746,7 +762,9 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .mcard .mpath{ margin-top:12px; font-family:var(--mono); font-size:12px; color:var(--text-2);
   background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius-sm);
   padding:8px 10px; word-break:break-all; line-height:1.5; }
-.mcard .foot .mact{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+/* Above the stretched `.mcard-select` overlay so the real buttons keep
+   receiving their own clicks. */
+.mcard .foot .mact{ position:relative; z-index:1; display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
 .tag-ok{ background:var(--ok-soft); color:var(--ok-text); border-color:transparent; }
 .tag-bad{ background:var(--danger-soft); color:var(--danger-text); border-color:transparent; }
 .tag-kind{ background:var(--n-100); color:var(--text-2); border-color:transparent; }
@@ -759,6 +777,12 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .mcard.selectable{ cursor:pointer; }
 .mcard.selectable:hover{ border-color:var(--brand); }
 .mcard.selectable:focus-visible{ outline:none; border-color:var(--brand); box-shadow:0 0 0 3px var(--brand-ring); }
+/* Stretched invisible "make current" control: one native button covering the
+   whole selectable card, so the card itself needs no role/tabindex. The ring is
+   inset because the card clips it. */
+.mcard-select{ position:absolute; inset:0; margin:0; padding:0; border:0;
+  background:transparent; color:transparent; cursor:pointer; }
+.mcard-select:focus-visible{ outline:3px solid var(--brand-ring); outline-offset:-3px; }
 [data-theme="dark"] .tag-kind{ background:var(--surface-2); }
 /* models add panel: labeled form groups inside the shared .addbar shell */
 .mforms{ display:flex; flex-direction:column; gap:16px; }
@@ -801,6 +825,11 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .lm-ver-hint{ margin:0 0 4px; font-size:12px; color:var(--text-3); line-height:1.6; }
 .lm-ver-err{ background:var(--danger-soft); color:var(--danger-text); border-radius:var(--radius-sm);
   padding:9px 12px; font-size:13px; font-weight:550; }
+/* A live region that is out of the accessibility tree when its text arrives is
+   not announced reliably, so the empty box is clipped from sight instead of
+   being display:none'd (which would remove it from the tree). */
+.lm-ver-err:empty{ position:absolute; width:1px; height:1px; margin:-1px; padding:0;
+  overflow:hidden; clip-path:inset(50%); background:transparent; }
 
 /* ===== PART 10 · FIELDS ================================================= */
 .grip{ cursor:grab; color:var(--text-3); display:inline-grid; place-items:center; width:22px; height:22px;
@@ -989,6 +1018,8 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
    NOTE: keep these grouped — splitting them re-opens the drift this fixes. */
 .lm-err,.lm-error,.login-err{ color:var(--danger-text); font-size:13px; }
 .lm-error,.login-err{ margin-top:8px; }
+.lm-error:empty{ margin-top:0; }
+.login-err:empty{ margin-top:0; padding:0; background:transparent; }
 .lm-req{ color:var(--danger-text); margin-left:2px; }
 .lm-page-head,.page-head{ display:flex; align-items:flex-end; justify-content:space-between;
   gap:24px; margin-bottom:24px; }
@@ -1270,14 +1301,22 @@ textarea.lmui-input{ resize:vertical; min-height:76px; }
 }
 
 .lm-help-table{ width:100%; border-collapse:collapse; margin:4px 0 12px; }
-.lm-help-table td{
+.lm-help-table td,
+.lm-help-table th{
   padding:6px 10px 6px 0; vertical-align:top;
   font-size:13px; color:var(--text);
   border-bottom:1px solid var(--line);
 }
-.lm-help-table tr:last-child td{ border-bottom:none; }
-.lm-help-table td.lm-help-keys{ white-space:nowrap; width:1%; }
-.lm-help-table td.lm-muted{ color:var(--text-3); white-space:nowrap; width:1%; }
+.lm-help-table tr:last-child td,
+.lm-help-table tr:last-child th{ border-bottom:none; }
+.lm-help-table td.lm-help-keys,
+.lm-help-table th.lm-help-keys{ white-space:nowrap; width:1%; }
+.lm-help-table td.lm-muted,
+.lm-help-table th.lm-muted{ color:var(--text-3); white-space:nowrap; width:1%; }
+/* Each row's first cell is a <th scope="row"> so the shortcut or gesture name
+   is announced as the label for its description. The UA's bold, centered
+   header styling would otherwise visibly change this dialog. */
+.lm-help-table th{ font-weight:inherit; text-align:start; }
 .lm-help-sub{ margin:14px 0 0; font-size:13px; color:var(--text-2); }
 
 .lm-help-table kbd{
@@ -1363,6 +1402,15 @@ textarea.lmui-input{ resize:vertical; min-height:76px; }
   padding:10px 14px; border-radius:8px; border:1px solid var(--border);
   background:var(--surface-2); color:var(--text); font-size:13.5px;
   margin:12px 0;
+}
+/* The one-time token banner is a mounted live region that is filled on
+   success; until then it must not paint an empty bordered box. It is clipped
+   rather than display:none: a live region that is out of the accessibility
+   tree when its text arrives is not announced reliably. */
+.lm-banner:empty{
+  position:absolute; width:1px; height:1px; margin:-1px; padding:0;
+  overflow:hidden; clip-path:inset(50%);
+  border-color:transparent; background:transparent;
 }
 .lm-banner-warn{
   background:var(--warn-soft); color:var(--warn-text); border-color:transparent;

@@ -151,7 +151,7 @@
   function applyUrlFilters() {
     if (!window.LMUrl) return;
     const all = LMUrl.all();
-    $("lm-h-status").value = all.status || "";
+    setStatus(all.status || "");
     $("lm-h-mine").checked = all.mine === "1";
     $("lm-h-text").value = all.q || "";
     // On first load the <option>s do not exist yet, so park the value; on a
@@ -167,9 +167,6 @@
       $("lm-h-project").value = "";
       pendingProject = null;
     }
-    document.querySelectorAll("#lm-h-seg button").forEach((b) => {
-      b.classList.toggle("on", (b.dataset.status || "") === (all.status || ""));
-    });
     syncKpiSelection();
   }
 
@@ -281,13 +278,32 @@
     return rows;
   }
 
+  // Sole writer of aria-sort. It goes on the ``th`` (a columnheader), not on
+  // the button inside it: that is where assistive technology looks for it, and
+  // an inactive column must have no attribute at all -- aria-sort="none" on
+  // every other header is noise.
+  function applySortState() {
+    document.querySelectorAll("#lm-pane-tasks thead th[data-sort]").forEach((th) => {
+      if (th.getAttribute("data-sort") === sortKey) {
+        th.setAttribute("aria-sort", sortDir === 1 ? "ascending" : "descending");
+      } else {
+        th.removeAttribute("aria-sort");
+      }
+    });
+  }
+
   function updateSortIndicators() {
     document.querySelectorAll("#lm-pane-tasks thead th[data-sort]").forEach((th) => {
       const key = th.getAttribute("data-sort");
-      const base = th.textContent.replace(/[ \u25b2\u25bc]+$/, "");
-      th.textContent = key === sortKey ? base + (sortDir === 1 ? " \u25b2" : " \u25bc") : base;
+      // The header's text lives in the button now (the th is just its scope
+      // cell), so the arrow has to move there too.
+      const label = th.querySelector(".lm-sort-btn") || th;
+      const base = label.textContent.replace(/[ \u25b2\u25bc]+$/, "");
+      label.textContent = key === sortKey
+        ? base + (sortDir === 1 ? " \u25b2" : " \u25bc") : base;
       th.classList.toggle("lm-sorted", key === sortKey);
     });
+    applySortState();
   }
 
   function setSort(key) {
@@ -769,10 +785,18 @@
     typing = setTimeout(onFilterChange, 250);
   }
 
+  // The segmented control is one group of mutually exclusive filters, so each
+  // button is a toggle: aria-pressed carries the state assistive technology
+  // reads, while .on paints it. Both are written together here so the two can
+  // never disagree -- applyUrlFilters (deep link + popstate) and setStatus's
+  // callers (seg click, KPI shortcut, mine shortcut) all land on this function.
   function setStatus(status) {
-    $("lm-h-status").value = status || "";
+    const effective = status || "";
+    $("lm-h-status").value = effective;
     document.querySelectorAll("#lm-h-seg button").forEach((b) => {
-      b.classList.toggle("on", (b.dataset.status || "") === (status || ""));
+      const on = (b.dataset.status || "") === effective;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-pressed", String(on));
     });
   }
 
@@ -812,9 +836,12 @@
       }
     });
 
-    // Sortable headers, mirroring the project task list.
-    document.querySelectorAll("#lm-pane-tasks thead th[data-sort]").forEach((th) => {
-      th.addEventListener("click", () => setSort(th.getAttribute("data-sort")));
+    // Sortable headers, mirroring the project task list. The handler sits on
+    // the button, not the th, so Enter/Space reach it and the sort is operable
+    // without a pointer. The thead is static in the template, so no focus
+    // management is needed: the button survives every row repaint.
+    document.querySelectorAll("#lm-pane-tasks thead th[data-sort] .lm-sort-btn").forEach((btn) => {
+      btn.addEventListener("click", () => setSort(btn.getAttribute("data-sort")));
     });
     updateSortIndicators();
 

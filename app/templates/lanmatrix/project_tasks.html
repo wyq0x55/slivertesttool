@@ -14,7 +14,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
         返回我的工作台
       </a>
-      <h1>任务/运行</h1>
+      <h1 id="lm-tasks-page-title">任务/运行</h1>
       <p>提交测试用例到队列，跟踪运行进度与判定结果</p>
     </div>
     <div class="head-actions" id="lm-tasks-actions" hidden>
@@ -66,7 +66,7 @@
     </div>
   </div>
 
-  <div id="lm-tasks-denied" class="state err" hidden>
+  <div id="lm-tasks-denied" class="state err" role="alert" hidden>
     <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
     <h3>无访问权限</h3>
     <p>你不是该项目的成员，无法上传、运行或下载任务。请联系项目管理员将你加入项目。</p>
@@ -78,9 +78,9 @@
     <div class="toolbar">
       <div class="search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>
-        <input type="search" id="lm-f-text" placeholder="搜索任务 / test id…" autocomplete="off">
+        <input type="search" id="lm-f-text" placeholder="搜索任务 / test id…" aria-label="搜索任务 / test id…" autocomplete="off">
       </div>
-      <select id="lm-f-submitter" class="selbox" title="按提交者筛选">
+      <select id="lm-f-submitter" class="selbox" title="按提交者筛选" aria-label="按提交者筛选">
         <option value="">全部提交者</option>
       </select>
       <input type="hidden" id="lm-f-status" value="">
@@ -117,19 +117,19 @@
     </div>
 
     <div class="tablecard">
-      <div style="overflow-x:auto">
+      <div style="overflow-x:auto" tabindex="0" role="region" aria-labelledby="lm-tasks-page-title">
         <table class="dt lm-tasks-table">
           <thead>
             <tr>
-              <th class="lm-col-check" style="width:36px"><input type="checkbox" id="lm-check-all" title="全选/全不选（当前筛选）"></th>
-              <th class="lm-sortable" data-sort="test_id">test id</th>
-              <th class="lm-sortable" data-sort="sil_name">模型</th>
-              <th class="lm-sortable" data-sort="submitter">提交者</th>
-              <th class="lm-sortable" data-sort="status">状态 / 结果</th>
-              <th class="lm-sortable" data-sort="review">审核</th>
-              <th class="lm-sortable" data-sort="progress">进度</th>
-              <th class="lm-sortable" data-sort="finished_at">完成时间</th>
-              <th style="width:1%"></th>
+              <th scope="col" class="lm-col-check" style="width:36px"><input type="checkbox" id="lm-check-all" title="全选/全不选（当前筛选）" aria-label="全选/全不选（当前筛选）"></th>
+              <th scope="col" class="lm-sortable" data-sort="test_id"><button type="button" class="lm-sort-btn" data-sort="test_id">test id</button></th>
+              <th scope="col" class="lm-sortable" data-sort="sil_name"><button type="button" class="lm-sort-btn" data-sort="sil_name">模型</button></th>
+              <th scope="col" class="lm-sortable" data-sort="submitter"><button type="button" class="lm-sort-btn" data-sort="submitter">提交者</button></th>
+              <th scope="col" class="lm-sortable" data-sort="status"><button type="button" class="lm-sort-btn" data-sort="status">状态 / 结果</button></th>
+              <th scope="col" class="lm-sortable" data-sort="review"><button type="button" class="lm-sort-btn" data-sort="review">审核</button></th>
+              <th scope="col" class="lm-sortable" data-sort="progress"><button type="button" class="lm-sort-btn" data-sort="progress">进度</button></th>
+              <th scope="col" class="lm-sortable" data-sort="finished_at"><button type="button" class="lm-sort-btn" data-sort="finished_at">完成时间</button></th>
+              <th scope="col" style="width:1%"></th>
             </tr>
           </thead>
           <tbody id="lm-task-rows">
@@ -252,7 +252,7 @@
       <p class="cv-status" id="cv-status" role="status" aria-live="polite">尚未读取 output.csv。</p>
       <div class="cv-body" id="cv-body" hidden>
         <aside class="cv-signals" aria-label="变量">
-          <input id="cv-search" type="search" placeholder="搜索变量名或显示名…" autocomplete="off">
+          <input id="cv-search" type="search" placeholder="搜索变量名或显示名…" aria-label="搜索变量名或显示名…" autocomplete="off">
           <div class="cv-filters" role="group" aria-label="变量筛选">
             <button type="button" class="cv-chip" data-filter="judged" aria-pressed="true">判定涉及</button>
             <button type="button" class="cv-chip" data-filter="changed" aria-pressed="false">有变化</button>
@@ -280,19 +280,19 @@
       </div>
       <div class="cv-lower" id="cv-lower" hidden>
         <div class="curve-tabs" role="tablist" aria-label="明细">
-          <button class="curve-tab" type="button" role="tab" data-lower="events" aria-selected="true">事件列表</button>
-          <button class="curve-tab" type="button" role="tab" data-lower="checks" aria-selected="false" tabindex="-1">判定检查点</button>
-          <button class="curve-tab" type="button" role="tab" data-lower="raw" aria-selected="false" tabindex="-1">原始数据</button>
+          <button class="curve-tab" type="button" role="tab" id="cv-lower-tab-events" data-lower="events" aria-selected="true" aria-controls="cv-lower-pane-events">事件列表</button>
+          <button class="curve-tab" type="button" role="tab" id="cv-lower-tab-checks" data-lower="checks" aria-selected="false" aria-controls="cv-lower-pane-checks" tabindex="-1">判定检查点</button>
+          <button class="curve-tab" type="button" role="tab" id="cv-lower-tab-raw" data-lower="raw" aria-selected="false" aria-controls="cv-lower-pane-raw" tabindex="-1">原始数据</button>
         </div>
-        <div data-pane="events">
+        <div data-pane="events" id="cv-lower-pane-events" role="tabpanel" aria-labelledby="cv-lower-tab-events">
           <div class="cv-pane-bar"><label class="jchk"><input type="checkbox" id="cv-events-lanes" checked><span>只看泳道中的变量</span></label><label class="jchk"><input type="checkbox" id="cv-events-range" checked><span>只看当前区间</span></label><span class="submuted" id="cv-events-info"></span></div>
           <div class="cv-table-wrap"><table class="tbl cv-table" id="cv-events"></table></div>
           <div class="cv-pager"><button class="btn small" id="cv-events-prev" type="button">上一页</button><button class="btn small" id="cv-events-next" type="button">下一页</button></div>
         </div>
-        <div data-pane="checks" hidden>
+        <div data-pane="checks" hidden id="cv-lower-pane-checks" role="tabpanel" aria-labelledby="cv-lower-tab-checks">
           <div class="cv-table-wrap"><table class="tbl cv-table" id="cv-checks"></table></div>
         </div>
-        <div data-pane="raw" hidden>
+        <div data-pane="raw" hidden id="cv-lower-pane-raw" role="tabpanel" aria-labelledby="cv-lower-tab-raw">
           <div class="cv-table-wrap"><table class="tbl cv-table" id="cv-raw"></table></div>
           <div class="cv-pager"><button class="btn small" id="cv-raw-prev" type="button">上一页</button><span class="submuted" id="cv-raw-page"></span><button class="btn small" id="cv-raw-next" type="button">下一页</button></div>
         </div>

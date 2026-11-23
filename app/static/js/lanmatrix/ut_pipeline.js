@@ -73,7 +73,12 @@
       '<tr><td colspan="7" class="muted">' + (targets.length ? "没有符合条件的函数" :
         "尚未读取索引：确认项目绑定后点击「重新读取索引」") + "</td></tr>";
     var boxes = rows.filter(selectable);
-    $("ut-all").checked = boxes.length > 0 && boxes.every(function (t) { return selected.has(t.id); });
+    var checkAll = $("ut-all");
+    var ticked = boxes.filter(function (t) { return selected.has(t.id); }).length;
+    // Write both properties every time: .checked alone never clears a previous
+    // mixed paint, so a full selection after a partial one keeps the dash.
+    checkAll.checked = boxes.length > 0 && ticked === boxes.length;
+    checkAll.indeterminate = ticked > 0 && ticked < boxes.length;
     $("ut-enqueue").disabled = !bound || submitting || selected.size === 0;
     $("ut-enqueue-label").textContent = selected.size ? "加入队列（" + selected.size + "）" : "加入队列";
   }

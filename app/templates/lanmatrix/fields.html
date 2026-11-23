@@ -21,13 +21,15 @@
   <div class="tablecard">
     <div class="tc-head">
       <h3 id="lm-fields-list-title">字段列表</h3>
-      <span class="muted" style="font-size:12.5px">拖动 <span style="letter-spacing:-2px">⠿</span> 可排序</span>
+      <span class="muted" style="font-size:12.5px">拖动 <span style="letter-spacing:-2px">⠿</span> 或用方向键调整顺序</span>
+      <span id="lm-fields-status" class="lm-fields-status" role="status" aria-live="polite" aria-atomic="true"></span>
     </div>
     <div style="overflow-x:auto" tabindex="0" role="region" aria-labelledby="lm-fields-list-title">
       <table class="dt lm-fields-table">
+        <caption class="lm-sr-only">字段列表</caption>
         <thead>
-          <tr><th style="width:1%"></th><th>Sheet</th><th>标识</th><th>显示名</th>
-            <th>类型</th><th>必填</th><th>只读</th><th>选项 / 提示</th><th style="width:1%"></th></tr>
+          <tr><th scope="col" style="width:1%"></th><th scope="col">Sheet</th><th scope="col">标识</th><th scope="col">显示名</th>
+            <th scope="col">类型</th><th scope="col">必填</th><th scope="col">只读</th><th scope="col">选项 / 提示</th><th scope="col" style="width:1%"></th></tr>
         </thead>
         <tbody id="lm-fields-rows"><tr><td colspan="9" class="muted">加载中…</td></tr></tbody>
       </table>
@@ -67,7 +69,7 @@
     <div class="field"><label for="lm-f-options">选项（逗号分隔，用于单选/多选）</label><input id="lm-f-options"></div>
     <div class="field"><label for="lm-f-help">提示文本</label><input id="lm-f-help"></div>
     <label for="lm-f-required" class="lm-inline" style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="lm-f-required"> <span>必填</span></label>
-    <div class="login-err" id="lm-f-error" hidden></div>
+    <div class="login-err" id="lm-f-error" role="alert"></div>
     <menu style="display:flex;gap:10px;justify-content:flex-end;margin:0;padding:0">
       <button value="cancel" formnovalidate class="btn">取消</button>
       <button value="ok" id="lm-f-ok" class="btn primary">创建</button>

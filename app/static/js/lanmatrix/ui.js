@@ -61,6 +61,41 @@
   }
 
   /**
+   * Pressing the backdrop cancels, matching the rest of the console.
+   *
+   * It must be ONE uninterrupted gesture that both starts and ends on the
+   * dialog itself. A press that begins inside the panel (selecting text in the
+   * prompt field, dragging out of the input) and is released over the backdrop
+   * still dispatches a click whose target is the dialog, and must not dismiss
+   * a type-to-confirm or a half-filled prompt.
+   *
+   * @param {HTMLDialogElement} dlg
+   * @param {function} onDismiss
+   */
+  function wireBackdropDismiss(dlg, onDismiss) {
+    var pressId = null;
+    // Only the primary button may dismiss. `click` was implicitly limited to
+    // button 0; pointer events fire for every button, so a right-click,
+    // middle-click or pen barrel press on the backdrop would otherwise cancel
+    // a half-filled prompt. A non-primary press must also leave an armed
+    // primary gesture alone, or a right-click mid-press would swallow it.
+    dlg.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0) return;
+      pressId = e.target === dlg ? e.pointerId : null;
+    });
+    dlg.addEventListener("pointercancel", function () {
+      pressId = null;
+    });
+    dlg.addEventListener("pointerup", function (e) {
+      if (e.button !== 0) return;
+      var dismiss =
+        pressId !== null && pressId === e.pointerId && e.target === dlg;
+      pressId = null;
+      if (dismiss) onDismiss();
+    });
+  }
+
+  /**
    * Core dialog builder shared by confirm/prompt/alert.
    *
    * @param {object} o
@@ -213,10 +248,7 @@
       dlg.addEventListener("close", function () {
         if (!settled) reject();
       });
-      // Click on the backdrop = cancel, matching the rest of the console.
-      dlg.addEventListener("click", function (e) {
-        if (e.target === dlg) reject();
-      });
+      wireBackdropDismiss(dlg, reject);
 
       if (isCritical) {
         okBtn.disabled = true;
@@ -250,6 +282,26 @@
       else if (level === "normal" || o.alert) okBtn.focus();
       else if (cancelBtn) cancelBtn.focus();
     });
+  }
+
+  /* Speak a toast through the always-mounted live region (#lm-toast-live in
+   * base_lm.html). The visible #lm-toast alone is silent to assistive tech: it
+   * is [hidden] at load, so un-hiding it in the same frame as its text change
+   * gives the screen reader no container that was already in the page. This
+   * region never leaves the accessibility tree.
+   *
+   * Assistive tech only speaks when the region MUTATES, so writing the same
+   * message twice in a row would otherwise be silent the second time. We
+   * alternate a trailing no-break space, which changes the text without
+   * changing what is spoken. The flip flag lives on the element, so the helper
+   * holds no module-level state and is safe to reuse from page scripts.
+   */
+  function announce(msg) {
+    var live = document.getElementById("lm-toast-live");
+    if (!live) return;
+    live._lmAnnounceFlip = !live._lmAnnounceFlip;
+    live.textContent =
+      String(msg == null ? "" : msg) + (live._lmAnnounceFlip ? "\u00a0" : "");
   }
 
   var LMUI = {
@@ -295,12 +347,19 @@
     toast: function (msg, ok) {
       var el = document.getElementById("lm-toast");
       if (!el) return;
-      el.textContent = String(msg == null ? "" : msg);
+      var text = String(msg == null ? "" : msg);
+      el.textContent = text;
       el.className = "lm-toast " + (ok ? "lm-ok" : "lm-err");
       el.hidden = false;
       if (el._lmTimer) clearTimeout(el._lmTimer);
       el._lmTimer = setTimeout(function () { el.hidden = true; }, 3200);
+      announce(text);
     },
+
+    /* Page-local toast() copies (admin_console, admin_db, editor) write the
+     * visible strip themselves; they call this so their messages are spoken
+     * too. */
+    announce: announce,
   };
 
   window.LMUI = LMUI;

@@ -24,14 +24,14 @@
   <div class="toolbar" style="display:flex;gap:12px;align-items:center;margin-bottom:20px;flex-wrap:wrap">
     <div class="search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-      <input id="lm-proj-search" type="search" placeholder="搜索项目编码或名称…">
+      <input id="lm-proj-search" type="search" placeholder="搜索项目编码或名称…" aria-label="搜索项目编码或名称…">
     </div>
-    <div class="segmented" id="lm-proj-seg">
-      <button data-s="all" class="on">全部</button>
-      <button data-s="active">进行中</button>
-      <button data-s="draft">草稿</button>
-      <button data-s="frozen">冻结</button>
-      <button data-s="archived">归档</button>
+    <div class="segmented" id="lm-proj-seg" role="group" aria-label="按项目状态筛选">
+      <button type="button" data-s="all" class="on" aria-pressed="true">全部</button>
+      <button type="button" data-s="active" aria-pressed="false">进行中</button>
+      <button type="button" data-s="draft" aria-pressed="false">草稿</button>
+      <button type="button" data-s="frozen" aria-pressed="false">冻结</button>
+      <button type="button" data-s="archived" aria-pressed="false">归档</button>
     </div>
   </div>
 
@@ -45,7 +45,7 @@
     <button class="btn primary" id="lm-empty-new">新建项目</button>
   </div>
 
-  <div id="lm-project-err" class="state err" hidden>
+  <div id="lm-project-err" class="state err" role="alert" hidden>
     <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></span>
     <h3>加载失败</h3>
     <p id="lm-project-err-msg">请稍后重试。</p>
@@ -65,7 +65,7 @@
     <div class="field"><label for="lm-np-code">项目编码</label><input id="lm-np-code" required placeholder="RWS"></div>
     <div class="field"><label for="lm-np-name">项目名称</label><input id="lm-np-name" placeholder="RWS MCU 资格测试"></div>
     <div class="field"><label for="lm-np-desc">描述</label><textarea id="lm-np-desc" rows="2" placeholder="可选"></textarea></div>
-    <div class="login-err" id="lm-np-error" hidden></div>
+    <div class="login-err" id="lm-np-error" role="alert"></div>
     <menu style="display:flex;gap:10px;justify-content:flex-end;margin:0;padding:0">
       <button value="cancel" formnovalidate class="btn">取消</button>
       <button value="ok" id="lm-np-ok" class="btn primary">创建</button>
@@ -87,7 +87,7 @@
         <option value="archived">归档</option>
       </select>
     </div>
-    <div class="login-err" id="lm-ep-error" hidden></div>
+    <div class="login-err" id="lm-ep-error" role="alert"></div>
     <menu style="display:flex;gap:10px;justify-content:flex-end;margin:0;padding:0">
       <button value="cancel" formnovalidate class="btn">取消</button>
       <button value="ok" id="lm-ep-ok" class="btn primary">保存</button>

@@ -329,13 +329,32 @@
       }));
   }
 
+  // Sole writer of aria-sort. It goes on the ``th`` (a columnheader), not on
+  // the button inside it: that is where assistive technology looks for it, and
+  // an inactive column must have no attribute at all -- aria-sort="none" on
+  // every other header is noise.
+  function applySortState() {
+    document.querySelectorAll(".lm-tasks-table thead th[data-sort]").forEach((th) => {
+      if (th.getAttribute("data-sort") === sortKey) {
+        th.setAttribute("aria-sort", sortDir === 1 ? "ascending" : "descending");
+      } else {
+        th.removeAttribute("aria-sort");
+      }
+    });
+  }
+
   function updateSortIndicators() {
     document.querySelectorAll(".lm-tasks-table thead th[data-sort]").forEach((th) => {
       const key = th.getAttribute("data-sort");
-      const base = th.textContent.replace(/[ \u25b2\u25bc]+$/, "");
-      th.textContent = key === sortKey ? base + (sortDir === 1 ? " \u25b2" : " \u25bc") : base;
+      // The header's text lives in the button now (the th is just its scope
+      // cell), so the arrow has to move there too.
+      const label = th.querySelector(".lm-sort-btn") || th;
+      const base = label.textContent.replace(/[ \u25b2\u25bc]+$/, "");
+      label.textContent = key === sortKey
+        ? base + (sortDir === 1 ? " \u25b2" : " \u25bc") : base;
       th.classList.toggle("lm-sorted", key === sortKey);
     });
+    applySortState();
   }
   function selectedKeys() {
     return Array.from(selected).filter((k) => allTasks.some((t) => t.task_id === k));
@@ -777,6 +796,41 @@
     const text = (s.description || []).slice(0, 3).join("　").slice(0, 120);
     return text || (s.phase ? s.phase : "步骤 " + s.step);
   }
+  // One judge step. The row head is a plain flex container: the disclosure is a
+  // native button and the curve action is a sibling button, because nesting an
+  // interactive control inside another one is invalid and breaks activation.
+  function judgeStepHtml(s, i) {
+    const r = s.result === "FAIL" ? "fail" : s.result === "PASS" ? "pass" : "";
+    const bodyId = "jbody-" + i;
+    return `<div class="jstep ${r || "none"}" data-step="${esc(s.step)}">
+       <div class="jhead">
+         <button class="jhead-toggle" type="button" aria-expanded="false" aria-controls="${bodyId}">
+           <svg class="jchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg>
+           <span class="ji">Step.${esc(s.step)}</span>
+           <span class="jt">${esc(judgeTitle(s))}</span>
+           ${s.at ? `<span class="submuted">${esc(s.at)}</span>` : ""}
+           ${stepBadge(r)}
+         </button>
+         <button class="btn small ghost jcurve" type="button" aria-label="曲线：定位 Step.${esc(s.step)}">曲线</button>
+       </div>
+       <pre class="jbody" id="${bodyId}" hidden>${bodyHtml(s.lines || [])}</pre>
+     </div>`;
+  }
+  // Native buttons handle Enter/Space themselves, so only the shared open state
+  // is wired here; the curve button stops at its own click handler.
+  function wireJudgeStep(step) {
+    const toggleBtn = step.querySelector(".jhead-toggle");
+    const body = step.querySelector(".jbody");
+    const toggle = (open) => {
+      body.hidden = open === undefined ? !body.hidden : !open;
+      step.classList.toggle("open", !body.hidden);
+      toggleBtn.setAttribute("aria-expanded", body.hidden ? "false" : "true");
+    };
+    step._toggle = toggle;
+    toggleBtn.addEventListener("click", () => toggle());
+    step.querySelector(".jcurve").addEventListener("click", () =>
+      document.dispatchEvent(new CustomEvent("lm-curves-focus-step", { detail: { step: step.dataset.step } })));
+  }
   function renderJudge() {
     const el = $("lm-d-judge");
     const failOnly = $("lm-d-failonly").checked;
@@ -795,37 +849,8 @@
       el.innerHTML = '<div class="jempty">无失败步骤。</div>';
       return;
     }
-    el.innerHTML = rows.map((s) => {
-      const r = s.result === "FAIL" ? "fail" : s.result === "PASS" ? "pass" : "";
-      return `<div class="jstep ${r || "none"}" data-step="${esc(s.step)}">
-         <div class="jhead" role="button" tabindex="0" aria-expanded="false">
-           <svg class="jchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
-           <span class="ji">Step.${esc(s.step)}</span>
-           <span class="jt">${esc(judgeTitle(s))}</span>
-           ${s.at ? `<span class="submuted">${esc(s.at)}</span>` : ""}
-           ${stepBadge(r)}
-           <button class="btn small ghost jcurve" type="button" title="在变量曲线中定位该步骤">曲线</button>
-         </div>
-         <pre class="jbody" hidden>${bodyHtml(s.lines || [])}</pre>
-       </div>`;
-    }).join("");
-    el.querySelectorAll(".jstep .jhead").forEach((h) => {
-      const step = h.parentElement;
-      const toggle = (open) => {
-        const body = step.querySelector(".jbody");
-        body.hidden = open === undefined ? !body.hidden : !open;
-        step.classList.toggle("open", !body.hidden);
-        h.setAttribute("aria-expanded", body.hidden ? "false" : "true");
-      };
-      step._toggle = toggle;
-      h.addEventListener("click", (e) => { if (!e.target.closest(".jcurve")) toggle(); });
-      h.addEventListener("keydown", (e) => {
-        if (e.target.closest(".jcurve")) return;
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
-      });
-      h.querySelector(".jcurve").addEventListener("click", () =>
-        document.dispatchEvent(new CustomEvent("lm-curves-focus-step", { detail: { step: step.dataset.step } })));
-    });
+    el.innerHTML = rows.map((s, i) => judgeStepHtml(s, i)).join("");
+    el.querySelectorAll(".jstep").forEach(wireJudgeStep);
   }
   // The curve view asks to show one step here (double-click on its step band).
   document.addEventListener("lm-judge-focus-step", (ev) => {
@@ -1251,10 +1276,13 @@
   $("lm-batch-cancel").addEventListener("click", batchCancel);
   $("lm-batch-retest").addEventListener("click", batchRetest);
   $("lm-batch-delete").addEventListener("click", batchDelete);
-  document.querySelectorAll(".lm-tasks-table thead th[data-sort]").forEach((th) => {
-    th.style.cursor = "pointer";
-    th.addEventListener("click", () => {
-      const key = th.getAttribute("data-sort");
+  // The sort button, not the th, takes the handler: a native button is
+  // focusable and fires on Enter/Space, so the sort works without a pointer.
+  // The thead is static in the template, so the button survives every row
+  // repaint and keeps focus -- no focus management is needed here.
+  document.querySelectorAll(".lm-tasks-table thead th[data-sort] .lm-sort-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const key = btn.getAttribute("data-sort");
       // Same rule as the workspace list: keys whose interesting end is the high
       // one start descending (待审核 before 已通过, latest finish first).
       if (key === sortKey) sortDir = -sortDir;
