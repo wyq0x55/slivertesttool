@@ -109,7 +109,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>
         <input type="search" id="lm-h-text" placeholder="搜索任务 / test id / 函数…" aria-label="搜索任务 / test id / 函数…" autocomplete="off">
       </div>
-      <select id="lm-h-project" class="selbox" title="按项目筛选">
+      <select id="lm-h-project" class="selbox" title="按项目筛选" aria-label="按项目筛选">
         <option value="">全部项目</option>
       </select>
       <input type="hidden" id="lm-h-status" value="">
@@ -157,7 +157,7 @@
         <table class="dt lm-tasks-table">
           <thead>
             <tr>
-              <th scope="col" class="lm-col-check" style="width:36px"><input type="checkbox" id="lm-h-check-all" title="全选/全不选 Silver 运行（当前筛选）"></th>
+              <th scope="col" class="lm-col-check" style="width:36px"><input type="checkbox" id="lm-h-check-all" title="全选/全不选 Silver 运行（当前筛选）" aria-label="全选/全不选 Silver 运行（当前筛选）"></th>
               <th scope="col" class="lm-sortable" data-sort="project"><button type="button" class="lm-sort-btn" data-sort="project">项目</button></th>
               <th scope="col" class="lm-sortable" data-sort="test_id"><button type="button" class="lm-sort-btn" data-sort="test_id">test id / 函数</button></th>
               <th scope="col" class="lm-sortable" data-sort="sil_name"><button type="button" class="lm-sort-btn" data-sort="sil_name">模型 / 执行器</button></th>

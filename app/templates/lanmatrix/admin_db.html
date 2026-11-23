@@ -78,7 +78,7 @@
           <input type="checkbox" id="lm-db-readonly" checked>
           只读模式（仅允许 SELECT/WITH/SHOW/EXPLAIN，执行后回滚）
         </label>
-        <textarea id="lm-db-sql" class="lm-db-sql" spellcheck="false"
+        <textarea id="lm-db-sql" class="lm-db-sql" spellcheck="false" aria-label="SQL 语句"
                   placeholder="SELECT * FROM lm_project LIMIT 50;"></textarea>
         <div class="lm-db-write-warn" id="lm-db-write-warn" hidden>
           ⚠ 写模式已开启：语句将<strong>直接提交</strong>到数据库，请谨慎操作（建议先备份）。
