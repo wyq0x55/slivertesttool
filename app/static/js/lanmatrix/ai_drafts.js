@@ -553,9 +553,11 @@
 
   function bindGenerate() {
     var panel = document.getElementById("lm-ai-gen-panel");
-    document.getElementById("lm-ai-open-gen").addEventListener("click", function () {
+    var openButton = document.getElementById("lm-ai-open-gen");
+    openButton.addEventListener("click", function () {
       if (!canEdit || generating) return;
       panel.hidden = !panel.hidden;
+      openButton.setAttribute("aria-expanded", String(!panel.hidden));
     });
     document.getElementById("lm-ai-gen-scenario").addEventListener("change", syncGenerationControls);
     document.getElementById("lm-ai-gen-submit").addEventListener("click", async function () {
@@ -591,6 +593,9 @@
       load();
       if (detailEpoch === epoch && detailId === null) {
         panel.hidden = true;
+        // Collapsing the panel here must report the same state as a manual
+        // collapse, or the toggle keeps claiming it is expanded.
+        openButton.setAttribute("aria-expanded", "false");
         openDetail(draft.id);
       }
     });
