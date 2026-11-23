@@ -227,6 +227,10 @@ class UtJob(db.Model):
     # Generator TestCsv; the baseline reference every revision is checked against.
     reference_csv = db.Column(db.String(1024), nullable=False, default="")
     generation = db.Column(JSONType, nullable=True)
+    # Which unsolved obligations a later witness run could take as input, plus
+    # the triage/proposal evidence silver drove from them.  Separate from
+    # ``generation`` so a platform-side record never enters the ut-agent receipt.
+    witness = db.Column(JSONType, nullable=True)
     current_attempt_id = db.Column(db.Integer, nullable=True)
     last_verdict = db.Column(db.String(16), nullable=False, default="")
     # Why the job stopped at a human gate (rounds exhausted, blocked, error...).
@@ -280,6 +284,7 @@ class UtJob(db.Model):
         }
         if attempts is not None:
             entry["generation"] = self.generation
+            entry["witness"] = self.witness
             entry["attempts"] = [attempt.to_dict() for attempt in attempts]
         return entry
 

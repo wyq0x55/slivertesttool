@@ -587,8 +587,126 @@
         openDetails[d.dataset.keep] = d.open;
       });
     }
+    // Budget-exhaustion handoff is a record of generation, not job state: it
+    // never opens review, and only an operator click may reach the model.
+    var WITNESS_LABEL = {
+      HANDOFF_READY: "可分拣",
+      NO_ADMISSIBLE_OBLIGATION: "没有可提议的义务",
+      NO_SUITE: "缺少分拣输入",
+      UNKNOWN: "分拣记录不可用"
+    };
+    var witnessTimer = null, witnessPending = null;
+    function witnessRunning(doc) {
+      var held = doc && doc.witness || {};
+      return ["triage", "proposal", "confirm"].some(function(key) {
+        return (held[key] || {}).status === "RUNNING";
+      });
+    }
+    function witnessFacts(handoff) {
+      var budget = handoff.budget || {}, counts = handoff.obligations || {};
+      var admissible = handoff.admissible || {}, mcdc = handoff.mcdc || {};
+      var rows = [];
+      function add(key, value) {
+        if (value === null || value === undefined || value === "") return;
+        rows.push("<dt>" + key + "</dt><dd>" + esc(String(value)) + "</dd>");
+      }
+      add("未解义务", counts.unresolved == null ? null
+        : counts.unresolved + " / " + (counts.total == null ? "—" : counts.total));
+      add("可提议", admissible.count == null ? null
+        : admissible.count + (admissible.unclassified ? "（未分类 " + admissible.unclassified + "）" : ""));
+      add("剩余义务", budget.remaining);
+      add("语义步数", budget.completed == null ? null
+        : budget.completed + " / " + (budget.total == null ? "—" : budget.total));
+      var causes = Object.keys(counts.by_cause || {}).map(function(cause) {
+        return cause + " × " + counts.by_cause[cause];
+      });
+      add("按原因", causes.length ? causes.join("；") : null);
+      add("MC/DC 未完成配对", mcdc.total == null ? null
+        : (mcdc.pending_pair_ids || []).length + " / " + mcdc.total);
+      return rows.join("");
+    }
+    function witnessNote(witness, handoff) {
+      var triage = witness.triage, proposal = witness.proposal, lines = [];
+      if (triage) {
+        if (triage.status === "RUNNING") lines.push("分拣进行中…");
+        else if (triage.status === "FAILED") lines.push("分拣失败：" + (triage.error || "—"));
+        else lines.push("分拣：" + (triage.status || "—") + "，可行义务 " + (triage.proposable || 0)
+          + "，排除 " + (triage.excluded || 0));
+      }
+      if (proposal) {
+        if (proposal.status === "RUNNING") lines.push("本地模型提议中…");
+        else if (proposal.status === "FAILED") lines.push("提议失败：" + (proposal.error || "—"));
+        else lines.push("提议：模型 " + (proposal.model || "—") + "，候选 "
+          + (proposal.candidates || 0) + "（仍需人工确认）");
+      }
+      if (handoff.ledger_confirmed) lines.push("台账已包含该函数的确认记录。");
+      return lines.join(" ");
+    }
+    function renderWitness() {
+      var section = $("ut-d-witness");
+      var witness = detailFresh && job && job.witness;
+      if (!witness) {
+        section.hidden = true;
+        return;
+      }
+      section.hidden = false;
+      var handoff = witness.handoff || {}, state2 = handoff.state || "UNKNOWN";
+      var label = WITNESS_LABEL[state2] || ("未知状态 " + state2);
+      var head = "状态：" + label + "（" + state2 + "）";
+      if (handoff.reason) head += "——" + handoff.reason;
+      if (handoff.error) head += "。ut-agent 报告：" + handoff.error;
+      $("ut-d-witness-state").textContent = head;
+      $("ut-d-witness-state").classList.toggle("warn", state2 === "NO_SUITE" || state2 === "UNKNOWN");
+      var facts = witnessFacts(handoff);
+      $("ut-d-witness-facts").innerHTML = facts;
+      $("ut-d-witness-facts").hidden = !facts;
+      var editable = U.can("edit") && !job.superseded_by;
+      var running = witnessRunning(job);
+      var triageButton = $("ut-d-witness-triage");
+      triageButton.hidden = state2 !== "HANDOFF_READY";
+      triageButton.disabled = running || witnessPending != null || !editable;
+      var triage = witness.triage || {}, proposal = witness.proposal || {};
+      var proposeButton = $("ut-d-witness-propose");
+      proposeButton.hidden = triage.status !== "PROPOSABLE";
+      proposeButton.disabled = running || witnessPending != null || !editable;
+      proposeButton.textContent = proposal.status ? "用本地模型重新提议" : "用本地模型提议";
+      $("ut-d-witness-note").textContent = witnessNote(witness, handoff)
+        || "分拣与提议只读生成输入；结果仍需人工确认后才可能进入新批次。";
+      clearTimeout(witnessTimer);
+      witnessTimer = running ? setTimeout(refresh, 3000) : null;
+    }
+    async function startWitness(step) {
+      if (!detailFresh || !job || witnessPending != null || !U.can("edit")) return;
+      var id = job.id;
+      if (step === "propose") {
+        var ok = await LMUI.confirm({
+          title: "调用本地模型",
+          body: "这次提议会调用已配置的本地模型，为作业 #" + id
+            + " 的未完成义务生成候选输入。模型返回的只是候选，仍需人工确认，作业状态不变。",
+          confirmText: "开始提议"
+        });
+        if (!ok) return;
+      }
+      witnessPending = step;
+      renderWitness();
+      try {
+        if (step === "propose") await LMApi.utWitnessPropose(pid, id);
+        else await LMApi.utWitnessTriage(pid, id);
+        say((step === "propose" ? "提议" : "分拣") + "已排队（作业 #" + id + "），完成后刷新即可查看");
+      } catch (e) {
+        say(e.message, true);
+      } finally {
+        witnessPending = null;
+        renderWitness();
+      }
+      // The first look lands after the worker had time to claim the task; once
+      // the record says RUNNING, renderWitness keeps the poll going.
+      clearTimeout(witnessTimer);
+      witnessTimer = setTimeout(refresh, 3000);
+    }
     function renderJob() {
       renderProgress();
+      renderWitness();
       var t = job.target || {};
       var gate = U.actionable(job);
       var shown = U.jobState(job);
@@ -1705,6 +1823,12 @@
     });
     $("ut-refresh").addEventListener("click", refresh);
     $("ut-d-refresh").addEventListener("click", refresh);
+    $("ut-d-witness-triage").addEventListener("click", function() {
+      startWitness("triage");
+    });
+    $("ut-d-witness-propose").addEventListener("click", function() {
+      startWitness("propose");
+    });
     $("ut-d-close").addEventListener("click", function() {
       closeJob();
     });

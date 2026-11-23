@@ -511,6 +511,12 @@
     utStopBatch(pid, batchId) {
       return request("POST", `/projects/${pid}/ut/batches/${batchId}/stop`, { body: {} });
     },
+    utWitnessTriage(pid, jobId) {
+      return request("POST", `/projects/${pid}/ut/jobs/${jobId}/witness/triage`, { body: {} });
+    },
+    utWitnessPropose(pid, jobId) {
+      return request("POST", `/projects/${pid}/ut/jobs/${jobId}/witness/propose`, { body: {} });
+    },
   };
 
   global.LMApi = LMApi;

@@ -74,6 +74,36 @@ versioned requirements when queued. Changing `function_step_limit` therefore
 affects only batches created afterwards; a queued, running or delivered batch
 keeps the value it froze.
 
+## Budget exhaustion and witness handoff
+
+ut-agent's generation report records, for each function, whether its unfinished
+obligations can be handed to witness work: `HANDOFF_READY`,
+`NO_ADMISSIBLE_OBLIGATION` or `NO_SUITE`, with the budget counters, obligations
+by cause, admissible obligation IDs and unfinished MC/DC pairs. Each time
+generation runs, including a retry, silver reads
+`<generation>/index-generation-report.json` once per job and freezes that record
+into the job's own `witness` metadata (`silver.ut-witness/1`). The record is an
+observation of generation, not a job state: it does not gate the batch, and it
+never feeds back into generation, expected values or the witness ledger.
+
+A function the report cannot describe - the report is missing, unfinished, lacks
+that function, or reports a state this version does not know - is frozen as
+`UNKNOWN` with the reason, never as "nothing to do". `NO_SUITE` is listed
+separately as missing triage input: the function exhausted its budget before any
+suite existed, or its process timed out, so there is nothing for witness triage
+to read. Only a `HANDOFF_READY` function offers the triage action.
+
+Triage (`POST /jobs/<id>/witness/triage`) runs `witness triage` over the
+generation inputs silver already stored and records the counts it returned. It
+calls no model. Proposal (`POST /jobs/<id>/witness/propose`) runs
+`witness propose` against the configured loopback model endpoint and is reached
+only from that operator action; nothing in the batch lifecycle schedules it. It
+requires a finished `PROPOSABLE` triage and writes candidates only - no expected
+values, no manifest or ledger write, no job state change. Each run writes a new
+`run<N>` directory under the batch's `witness/job<job_id>/`, never reusing an
+existing one, and a failed run is recorded with its message rather than left
+running.
+
 ## Job lifecycle
 
 Each attempt (`GENERATOR`, `LLM`, `HUMAN`, `HOST_DERIVED`) retains its exact CSV,
