@@ -321,6 +321,10 @@
     t.className = "lm-toast " + (ok ? "lm-ok" : "lm-err");
     t.hidden = false;
     setTimeout(() => { t.hidden = true; }, 3200);
+    // Speak it through the shared live region as well (#lm-toast-live). This
+    // page also runs inside the collab process, where ui.js may not be loaded,
+    // so the call is guarded.
+    if (window.LMUI && typeof LMUI.announce === "function") LMUI.announce(msg);
   }
   window.LMToast = toast;
 

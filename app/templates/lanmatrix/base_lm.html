@@ -218,6 +218,14 @@
   {{ self.content() }}
 {% endif %}
   <div id="lm-toast" class="lm-toast" hidden></div>
+  {# A toast must also be spoken, which #lm-toast cannot do itself: it starts
+     [hidden], and revealing it in the same frame as its text change leaves
+     assistive tech with no container that was already in the page. This second
+     region is mounted on load and never hidden, and ui.js writes the same
+     message into it. It is a named region as well as an assertive live region,
+     so screen-reader users can also navigate to it. #}
+  <div id="lm-toast-live" class="lm-visually-hidden" role="region"
+       aria-label="通知" aria-live="assertive" aria-atomic="true"></div>
   <script>
     window.LM = {
       projectId: {{ project_id if project_id is defined else 'null' }},

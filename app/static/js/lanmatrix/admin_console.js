@@ -104,6 +104,8 @@
     t.className = "lm-toast " + (ok ? "lm-ok" : "lm-err");
     t.hidden = false;
     setTimeout(() => { t.hidden = true; }, 3200);
+    // Speak it through the shared live region as well (#lm-toast-live).
+    if (window.LMUI && typeof LMUI.announce === "function") LMUI.announce(msg);
   }
 
   // --- tabs ---------------------------------------------------------------- //
