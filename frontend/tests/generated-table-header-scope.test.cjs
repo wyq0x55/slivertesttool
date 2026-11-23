@@ -63,6 +63,37 @@ function headerTexts(slice) {
   });
 }
 
+// The two steps_editor.js header sites. `_signalsTable` builds its <thead>
+// inline; `_stepsTable` assembles a `head` string that its <thead> later
+// interpolates, so that slice runs from `const head =` to the row builder.
+const STEP_SITES = [
+  { name: "signal table", start: 'class="lm-table lm-se-table"', end: "</thead>", headers: 3 },
+  { name: "steps table", start: "const head =", end: "const rows = this.doc.steps", headers: 5 },
+];
+
+function spanSlice(source, start, end) {
+  const at = source.indexOf(start);
+  assert.ok(at >= 0, `header site not found (marker ${JSON.stringify(start)})`);
+  const stop = source.indexOf(end, at);
+  assert.ok(stop > at, `header site ${JSON.stringify(start)} must close before ${JSON.stringify(end)}`);
+  return source.slice(at, stop);
+}
+
+// Split each <th> into its open tag and its inner markup, so a test can ask
+// both "does the cell declare scope?" and "does it name the column?".
+function headerCells(slice) {
+  return [...slice.matchAll(TH)].map((match) => {
+    const start = match.index + match[0].length;
+    return { open: match[0], inner: slice.slice(start, slice.indexOf("</th>", start)) };
+  });
+}
+
+// The text a screen reader would get: markup stripped (so a visually hidden
+// label counts as a name), nbsp and whitespace collapsed.
+function textOf(inner) {
+  return inner.replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+}
+
 test("steps_editor.js: every runtime <th> declares column scope", () => {
   const source = read(STEPS_EDITOR);
   const tags = headerTags(source);
@@ -72,11 +103,36 @@ test("steps_editor.js: every runtime <th> declares column scope", () => {
   assert.equal(tags.length, 8, `expected 8 header cells in steps_editor.js, found ${tags.length}`);
   assert.deepEqual(offenders, [], `steps_editor.js headers without scope="col": ${offenders.join(", ")}`);
 
-  // The trailing delete-column header is empty on purpose; it must still be a
-  // column header, not fall back to being read as a row header.
-  const emptyScoped = source.match(/<th scope="col"><\/th>/g) || [];
-  assert.ok(emptyScoped.length >= 2,
-    `expected the two empty action headers to carry scope="col", found ${emptyScoped.length}`);
+  // The trailing delete-column header holds only buttons, so it is visually
+  // blank by design — but a blank cell names nothing, and a screen reader then
+  // announces the column as unnamed. It must keep scope="col" and carry a
+  // visually hidden label (1.3.1 Info and Relationships, Level A).
+  for (const site of STEP_SITES) {
+    const cells = headerCells(spanSlice(source, site.start, site.end));
+    assert.equal(cells.length, site.headers,
+      `${site.name}: expected ${site.headers} header cells, found ${cells.length}`);
+    const action = cells[cells.length - 1];
+    assert.match(action.open, /\bscope="col"/,
+      `${site.name}: the action header must stay a column header, got ${action.open}`);
+    assert.equal(textOf(action.inner), "操作",
+      `${site.name}: the action header must name the column for screen readers`);
+    assert.match(action.inner, /class="lm-sr-only"/,
+      `${site.name}: the action header name must stay visually hidden`);
+  }
+});
+
+test("steps_editor.js: no header cell is both silent and unnamed", () => {
+  // Guard the whole header row, not just the delete column: any cell that
+  // renders no text and carries no aria/title name is announced as an unnamed
+  // column, which a table reader cannot identify.
+  const source = read(STEPS_EDITOR);
+  for (const site of STEP_SITES) {
+    for (const cell of headerCells(spanSlice(source, site.start, site.end))) {
+      const named = textOf(cell.inner) !== "" ||
+        /\baria-label(?:ledby)?=/.test(cell.open) || /\btitle=/.test(cell.open);
+      assert.ok(named, `${site.name}: header cell ${cell.open} is empty and unnamed`);
+    }
+  }
 });
 
 test("ut_tasks.ts: all four runtime header sites declare column scope", () => {

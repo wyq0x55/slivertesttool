@@ -1131,7 +1131,7 @@
       return `<div class="lm-se-block">
         <h4>${label}</h4>
         <table class="lm-table lm-se-table">
-          <thead><tr><th scope="col">#</th><th scope="col">名称(路径)</th><th scope="col"></th></tr></thead>
+          <thead><tr><th scope="col">#</th><th scope="col">名称(路径)</th><th scope="col"><span class="lm-sr-only">操作</span></th></tr></thead>
           <tbody>${rows || `<tr><td colspan="3" class="lm-muted">无</td></tr>`}</tbody>
         </table>
         <div class="lm-se-actions">
@@ -1149,7 +1149,8 @@
         layout.left.map((c) => `<th scope="col"${c[0] === "no" ? ' class="lm-st-no"' : ""}>${esc(c[1])}</th>`).join("") +
         inNames.map((n) => `<th scope="col" class="lm-st-sig-in" title="入力信号">${esc(n)}</th>`).join("") +
         exNames.map((n) => `<th scope="col" class="lm-st-sig-ex" title="期待信号">${esc(n)}</th>`).join("") +
-        layout.right.map((c) => `<th scope="col">${esc(c[1])}</th>`).join("") + (readOnly ? "" : '<th scope="col"></th>');
+        layout.right.map((c) => `<th scope="col">${esc(c[1])}</th>`).join("") +
+        (readOnly ? "" : '<th scope="col"><span class="lm-sr-only">操作</span></th>');
       const rows = this.doc.steps.map((s, i) => {
         const commentRows = layout.commentField && s[layout.commentField]
           ? String(s[layout.commentField]).split(/\r\n?|\n/).map((line, index) =>
