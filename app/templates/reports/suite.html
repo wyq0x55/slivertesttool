@@ -18,7 +18,7 @@
 <a name="TestCaseDetails" id="TestCaseDetails"></a>
     <table class="SubHeadingTable">
       <tr>
-        <td class="LinkCell"><a class="Undecorated" id="lnk_all" data-collapse="all" href="#TestCaseDetails" onclick="switchAll('', this.textContent); return false;">[-]</a></td>
+        <td class="LinkCell"><button type="button" class="Undecorated" id="lnk_all" data-collapse="all" data-expanded="true" aria-label="Hide all test case details" onclick="switchAll('', this.getAttribute('data-expanded') !== 'true')">[-]</button></td>
         <td><div class="Heading2">Test Case Details</div></td>
       </tr>
     </table>
@@ -26,7 +26,7 @@
 {% for case in suite.cases %}
 <table>
   <tr>
-    <td class="LinkCell"><a class="Undecorated" id="lnk_{{ case.anchor }}" data-collapse="case" href="#{{ case.anchor }}" onclick="switchAll('{{ case.anchor }}', this.textContent); return false;">[-]</a></td>
+    <td class="LinkCell"><button type="button" class="Undecorated" id="lnk_{{ case.anchor }}" data-collapse="case" data-case="{{ case.anchor }}" aria-controls="div_{{ case.anchor }}" aria-expanded="true" aria-labelledby="{{ case.anchor }}" onclick="switchAll('{{ case.anchor }}', this.getAttribute('aria-expanded') === 'false')">[-]</button></td>
     <td class="{{ case.heading_class }}"><big class="Heading3"><a name="{{ case.anchor }}" id="{{ case.anchor }}">Case {{ case.id }} : {{ case.status }}</a></big></td>
     <td class="DefaultCell"><a href="#TestDetail">back</a></td>
     <td class="DefaultCell">テスト区分名:{{ case.category }}</td>
