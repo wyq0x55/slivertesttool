@@ -827,7 +827,6 @@
         this.jsonEditor.onError((msg) => {
           if (!this.jsonErrEl) return;
           this.jsonErrEl.textContent = msg || "";
-          this.jsonErrEl.hidden = !msg;
         });
       }
       return this.jsonEditor;

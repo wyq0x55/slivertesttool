@@ -445,6 +445,7 @@ body.lm-refpanel-resizing { cursor: col-resize; user-select: none; }
 .lm-ce-kw    { color: #569cd6; }
 .lm-ce-punct { color: #d4d4d4; }
 #lm-steps-json-error { margin-top: 8px; }
+#lm-steps-json-error:empty { margin-top: 0; margin-bottom: 0; padding: 0; border-radius: 0; background: transparent; }
 @media (max-width: 760px) {
   .lm-refpanel { min-width: 200px; }
 }
