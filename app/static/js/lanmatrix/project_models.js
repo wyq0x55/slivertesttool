@@ -223,7 +223,6 @@
     const box = $("lm-ver-err");
     if (!box) { return; }
     box.textContent = msg || "";
-    box.hidden = !msg;
   }
 
   function closeVersion() {
