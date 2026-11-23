@@ -794,7 +794,7 @@
       const data = await api("/events", q);
       if (!data) return;
       const table = $("cv-events");
-      table.innerHTML = "<thead><tr><th>时间 (s)</th><th>记录</th><th>变量</th><th>从</th><th>到</th><th>步骤</th></tr></thead>";
+      table.innerHTML = "<thead><tr><th scope=\"col\">时间 (s)</th><th scope=\"col\">记录</th><th scope=\"col\">变量</th><th scope=\"col\">从</th><th scope=\"col\">到</th><th scope=\"col\">步骤</th></tr></thead>";
       const body = document.createElement("tbody");
       data.events.forEach(e => {
         const c = columnById(e.id), s = stepAt(e.t);
@@ -814,7 +814,7 @@
   }
   function renderChecks() {
     const table = $("cv-checks");
-    table.innerHTML = "<thead><tr><th>步骤</th><th>结果</th><th>时刻 (s)</th><th>变量</th><th>期望</th><th>实测</th><th>确认时机</th></tr></thead>";
+    table.innerHTML = "<thead><tr><th scope=\"col\">步骤</th><th scope=\"col\">结果</th><th scope=\"col\">时刻 (s)</th><th scope=\"col\">变量</th><th scope=\"col\">期望</th><th scope=\"col\">实测</th><th scope=\"col\">确认时机</th></tr></thead>";
     const body = document.createElement("tbody");
     (ctx.judge.steps || []).forEach(s => s.checks.forEach(c => {
       const tr = document.createElement("tr"); tr.tabIndex = 0;
