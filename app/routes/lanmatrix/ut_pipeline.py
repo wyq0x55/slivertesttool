@@ -16,6 +16,8 @@
     POST /jobs/<id>/revision             human revision: {csv, note} or multipart file
     POST /jobs/<id>/review               {decision: approve|reject, note} (item.review)
     POST /jobs/<id>/retry                blocked / error / stopped → resume (item.edit)
+    POST /jobs/<id>/witness/triage       sort unsolved obligations (item.edit)
+    POST /jobs/<id>/witness/propose      local model proposes candidates (item.edit)
     POST /jobs/<id>/stop                 stop an active job (item.edit)
     POST /batches/<id>/stop              stop every active job of a batch (item.edit)
 """
@@ -29,7 +31,7 @@ from flask import Blueprint, Response, g, request
 from ...jobqueue import ut_tasks
 from ...services.lanmatrix.errors import RequestParamError, ServiceError
 from ...services.ut_pipeline import export as ut_export
-from ...services.ut_pipeline import pipeline, server_paths, toolchains
+from ...services.ut_pipeline import pipeline, server_paths, toolchains, witness
 from ...services.ut_pipeline.repair import normalize_csv
 from ._base import _project_and_role, arg_int, arg_str, err, login_required, ok, register_common
 
@@ -238,6 +240,26 @@ def retry(project_id: int, job_id: int):
     _project_and_role(project_id, "item.edit")
     job = pipeline.retry(project_id, job_id, g.user.id)
     return _advance(project_id, job)
+
+
+@bp.post("/jobs/<int:job_id>/witness/triage")
+@login_required
+def witness_triage(project_id: int, job_id: int):
+    """Sort this job's unsolved obligations. Operator-triggered, no model call."""
+    _project_and_role(project_id, "item.edit")
+    witness.check(project_id, job_id, "triage")
+    ut_tasks.ut_witness_triage(job_id, g.user.id)
+    return ok({"status": "QUEUED", "step": "triage"}, status=202)
+
+
+@bp.post("/jobs/<int:job_id>/witness/propose")
+@login_required
+def witness_propose(project_id: int, job_id: int):
+    """Ask the local model for candidates. Only this endpoint may call a model."""
+    _project_and_role(project_id, "item.edit")
+    witness.check(project_id, job_id, "propose")
+    ut_tasks.ut_witness_propose(job_id, g.user.id)
+    return ok({"status": "QUEUED", "step": "propose"}, status=202)
 
 
 @bp.post("/jobs/<int:job_id>/stop")

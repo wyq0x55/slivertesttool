@@ -276,6 +276,73 @@ class UtAgentBridge:
                              on_forecast=on_forecast)
         return self._run(args, timeout=self.settings.generate_timeout)
 
+    # ut-agent's own proposal default; triage is deterministic and needs far less.
+    WITNESS_TIMEOUT = 900
+
+    def _witness(self, args: list[str], *, timeout: int) -> dict[str, Any]:
+        """Run one ``ut-agent witness`` command and return its JSON document.
+
+        Witness is a top-level command, not a bridge one: it prints its document
+        without a contract key, and reports a failed run as exit code 2 plus a
+        message on stderr.  The exit code therefore decides failure; a document
+        is only read from a run that exited zero.
+        """
+        root, python = self.settings.root, self.settings.python
+        if not root or not python:
+            raise BridgeError("ut-agent 未配置：请设置 UT_AGENT_ROOT 与 UT_AGENT_PYTHON")
+        env = os.environ.copy()
+        env["PYTHONPATH"] = os.pathsep.join(
+            part for part in (str(Path(root) / "src"), env.get("PYTHONPATH", "")) if part)
+        env["PYTHONIOENCODING"] = "utf-8"
+        command = [python, "-m", "ut_agent", "witness", *args]
+        try:
+            proc = self._wait(self._popen(command, root, env), command, timeout)
+        except subprocess.TimeoutExpired as exc:
+            raise BridgeError(f"ut-agent witness {args[0]} 超时（{timeout}s）") from exc
+        except OSError as exc:
+            raise BridgeError(f"无法启动 ut-agent：{exc}") from exc
+        lines = proc.stdout.decode("utf-8", "replace").strip().splitlines()
+        stderr = proc.stderr.decode("utf-8", "replace").strip()
+        try:
+            document = json.loads(lines[-1]) if lines else None
+        except ValueError:
+            document = None
+        if proc.returncode != 0:
+            reason = stderr.splitlines()[-1] if stderr else (lines[-1] if lines else "")
+            raise BridgeError(
+                f"ut-agent witness {args[0]} 失败（exit={proc.returncode}）：{reason}")
+        if not isinstance(document, dict):
+            raise BridgeError(
+                f"ut-agent witness {args[0]} 没有返回 JSON 文档（exit={proc.returncode}）")
+        return document
+
+    def triage(self, *, manifest: str, ir: str, suite: str, out: Path,
+               batch_size: int = 8, timeout: int | None = None) -> dict[str, Any]:
+        """Sort this function's unsolved obligations into proposable or not.
+
+        Reads the generation inputs only; writes ``out``, which must not exist.
+        """
+        return self._witness(
+            ["triage", *self._manifest(manifest), "--ir", str(ir), "--suite", str(suite),
+             "--out", str(out), "--batch-size", str(batch_size)],
+            timeout=timeout or self.WITNESS_TIMEOUT)
+
+    def propose(self, *, manifest: str, ir: str, suite: str, out: Path,
+                base_url: str, model: str, batch_size: int = 8,
+                max_tokens: int | None = None,
+                timeout: int | None = None) -> dict[str, Any]:
+        """Ask the operator's local model for candidate inputs from a triage.
+
+        Only an explicit operator action reaches this method; nothing in the
+        batch lifecycle calls it.
+        """
+        args = ["propose", *self._manifest(manifest), "--ir", str(ir), "--suite", str(suite),
+                "--out", str(out), "--base-url", base_url, "--model", model,
+                "--batch-size", str(batch_size)]
+        if max_tokens is not None:
+            args += ["--max-tokens", str(max_tokens)]
+        return self._witness(args, timeout=timeout or self.WITNESS_TIMEOUT)
+
 
     @staticmethod
     def _host_args(ir_json: Path, intents: Path, reference: Path,

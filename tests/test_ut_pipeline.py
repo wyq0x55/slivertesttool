@@ -66,6 +66,11 @@ class FakeBridge:
         self.gaps = []
         self.checked_intents = []
         self.blocked_reason = {"code": "ASSET_MISSING", "path": "AMS_Setting"}
+        # index-generation-report.json content, when a test exercises witness handoff.
+        self.report = None
+        # Witness documents the fake tool returns; a tuple raises instead.
+        self.triage_result = None
+        self.propose_result = None
 
     def index(self, manifest, index_csv, product_root):
         return [
@@ -111,7 +116,32 @@ class FakeBridge:
             else:
                 unit.update(status="UNSUPPORTED", error="loop construct")
             units.append(unit)
+        if self.report is not None:
+            (out / "index-generation-report.json").write_text(
+                json.dumps(self.report), encoding="utf-8")
         return {"ok": True, "provenance": {"test_rules_ref": "universal-test-rules@1"}, "units": units}
+
+    def triage(self, *, manifest, ir, suite, out, batch_size=8, timeout=None):
+        self.triage_arguments = {"manifest": manifest, "ir": ir, "suite": suite, "out": Path(out)}
+        if isinstance(self.triage_result, Exception):
+            raise self.triage_result
+        out = Path(out)
+        out.mkdir(parents=True, exist_ok=False)
+        result = self.triage_result or {"status": "PROPOSABLE", "proposable": 2,
+                                        "excluded": 1, "excluded_by_cause": {"STALE": 1}}
+        (out / "triage.json").write_text(json.dumps(result), encoding="utf-8")
+        return result
+
+    def propose(self, *, manifest, ir, suite, out, base_url, model, batch_size=8,
+                max_tokens=None, timeout=None):
+        self.propose_arguments = {"base_url": base_url, "model": model, "out": Path(out)}
+        if isinstance(self.propose_result, Exception):
+            raise self.propose_result
+        out = Path(out)
+        out.mkdir(parents=True, exist_ok=False)
+        result = self.propose_result or {"status": "PROPOSABLE", "proposable": 2, "batches": 1}
+        (out / "candidates.json").write_text(json.dumps({"batches": []}), encoding="utf-8")
+        return result
 
     def execute(self, *args, **kwargs):
         """Primary LLVM entry. The old positional WinAMS runner is not a workflow step."""

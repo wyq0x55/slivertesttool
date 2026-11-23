@@ -58,6 +58,7 @@ from ..lanmatrix.permissions import PermissionDenied
 from . import (
     binding,
     diagnostic,
+    handoff,
     host,
     host_candidate,
     repair,
@@ -65,6 +66,7 @@ from . import (
     server_paths,
     timing,
     toolchains,
+    witness,
 )
 from .bridge import BridgeError, BridgeSettings, UtAgentBridge
 
@@ -540,6 +542,19 @@ class GenerationBusy(RuntimeError):
     """Another batch owns shared extraction; reschedule without tying up a worker."""
 
 
+def _freeze_witness(batch_id: int, generation_dir: Path) -> None:
+    """Store, per job, what a witness run could take from this generation.
+
+    Observation only: the record never changes a job's state and never becomes
+    evidence.  It is recomputed on every generation attempt (including a retry)
+    so the stored answer always belongs to the newest report.
+    """
+    jobs = (UtJob.query.filter_by(batch_id=batch_id)
+            .populate_existing().all())
+    for job in jobs:
+        job.witness = handoff.freeze(job, generation_dir)
+
+
 def run_generation(batch_id: int, *, on_ready: Callable[[int], None] | None = None) -> list[int]:
     """Dispatch finalized functions while the single shared generation continues."""
     if not _GENERATION_GATE.acquire(blocking=False):
@@ -662,6 +677,7 @@ def _run_generation(batch_id: int, on_ready: Callable[[int], None] | None) -> li
 
     # Declared before the attempt: a constraint failure precedes the frozen read.
     limit: Optional[int] = None
+    generation_dir = _batch_dir(batch.project_id, batch.id) / "generation"
     try:
         batch.constraints = bridge.constraints(config["manifest_path"])
         db.session.commit()
@@ -678,7 +694,7 @@ def _run_generation(batch_id: int, on_ready: Callable[[int], None] | None) -> li
 
         document = bridge.generate(
             config["manifest_path"], config["index_csv"], config["product_root"],
-            _batch_dir(batch.project_id, batch.id) / "generation",
+            generation_dir,
             list(by_function),
             progress_dir=progress_dir,
             on_unit=completed,
@@ -709,8 +725,10 @@ def _run_generation(batch_id: int, on_ready: Callable[[int], None] | None) -> li
                       GateCode.ENV_BLOCKED)
             else:
                 _gate(job, UtJob.ERROR, f"生成失败：{exc}", GateCode.GENERATION_FAILED)
+        _freeze_witness(batch_id, generation_dir)
         db.session.commit()
         return ready
+    _freeze_witness(batch_id, generation_dir)
     batch = db.session.get(UtBatch, batch_id, populate_existing=True)
     batch.status = UtBatch.STATUS_RUNNING
     db.session.commit()
@@ -1439,6 +1457,9 @@ def recover_interrupted(pending_jobs: set[int], pending_batches: set[int]) -> di
     -- but parked with its candidate and evidence for a person to retry.
     """
     result: dict[str, list[int]] = {"interrupted": [], "stopped": [], "pending": []}
+    # A witness run only records RUNNING while its task holds the worker, so
+    # anything still RUNNING here was orphaned by that worker.
+    witness.clear_running()
     jobs = (UtJob.query.filter(UtJob.state.in_(UtJob.ACTIVE))
             .with_for_update(of=UtJob).populate_existing().all())
     failed_batches: set[int] = set()
