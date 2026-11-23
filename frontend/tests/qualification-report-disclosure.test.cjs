@@ -29,13 +29,21 @@ function control(id, attrs, text) {
     setAttribute(name, value) {
       this.attrs[name] = String(value);
     },
+    removeAttribute(name) {
+      delete this.attrs[name];
+    },
   };
 }
 
 function renderPage(caseCount, hash = "") {
   const global = control(
     "lnk_all",
-    { "data-collapse": "all", "data-expanded": "true", "aria-label": "Hide all test case details" },
+    {
+      "data-collapse": "all",
+      "data-expanded": "true",
+      "aria-expanded": "true",
+      "aria-label": "收起全部用例详情",
+    },
     "[-]",
   );
   const cases = [];
@@ -79,9 +87,10 @@ test("report renders native disclosure buttons with names, state and controls", 
   const globalTag = suite.match(/<button[^>]*id="lnk_all"[^>]*>/)[0];
   assert.match(globalTag, /type="button"/);
   assert.match(globalTag, /data-collapse="all"/);
-  assert.match(globalTag, /aria-label="Hide all test case details"/);
-  // Mixed case states: no single aggregate expanded state is claimed.
-  assert.doesNotMatch(globalTag, /aria-expanded/);
+  assert.match(globalTag, /aria-label="收起全部用例详情"/);
+  // Before the load handler runs every case is open, so the aggregate state
+  // is known at render time.
+  assert.match(globalTag, /aria-expanded="true"/);
   assert.doesNotMatch(globalTag, /href=/);
   const caseTag = suite.match(/<button[^>]*id="lnk_\{\{ case\.anchor \}\}"[^>]*>/)[0];
   assert.match(caseTag, /type="button"/);
@@ -113,9 +122,10 @@ test("load keeps the reference collapsed default and keeps naming the next actio
   }
   for (const section of sections) assert.equal(section.style.display, "none");
   assert.equal(global.getAttribute("data-expanded"), "false");
-  assert.equal(global.getAttribute("aria-label"), "Show all test case details");
+  assert.equal(global.getAttribute("aria-label"), "展开全部用例详情");
   assert.equal(global.textContent, "[+]");
-  assert.equal(global.getAttribute("aria-expanded"), null);
+  // All cases are collapsed after load, so the aggregate state is false.
+  assert.equal(global.getAttribute("aria-expanded"), "false");
 });
 
 test("global control expands then collapses every case with next-action naming", () => {
@@ -128,12 +138,15 @@ test("global control expands then collapses every case with next-action naming",
     assert.equal(element.textContent, "[-]");
   }
   for (const section of sections) assert.equal(section.style.display, "");
-  assert.equal(global.getAttribute("aria-label"), "Hide all test case details");
+  assert.equal(global.getAttribute("aria-label"), "收起全部用例详情");
   assert.equal(global.textContent, "[-]");
+  // A global action knows the exact resulting state.
+  assert.equal(global.getAttribute("aria-expanded"), "true");
   click();
   for (const element of cases) assert.equal(element.getAttribute("aria-expanded"), "false");
   for (const section of sections) assert.equal(section.style.display, "none");
-  assert.equal(global.getAttribute("aria-label"), "Show all test case details");
+  assert.equal(global.getAttribute("aria-label"), "展开全部用例详情");
+  assert.equal(global.getAttribute("aria-expanded"), "false");
 });
 
 test("a case control toggles only its own section and leaves the global label alone", () => {
@@ -147,7 +160,13 @@ test("a case control toggles only its own section and leaves the global label al
   assert.equal(sections[0].style.display, "");
   assert.equal(cases[1].getAttribute("aria-expanded"), "false");
   assert.equal(sections[1].style.display, "none");
-  assert.equal(global.getAttribute("aria-label"), "Show all test case details");
+  assert.equal(global.getAttribute("aria-label"), "展开全部用例详情");
+  // One open and one closed case is a mixed state: the global control
+  // claims no aggregate expanded state rather than guessing.
+  assert.equal(global.getAttribute("aria-expanded"), null);
+  click(1);
+  assert.equal(cases[1].getAttribute("aria-expanded"), "true");
+  assert.equal(global.getAttribute("aria-expanded"), "true");
   click(0);
   assert.equal(cases[0].getAttribute("aria-expanded"), "false");
   assert.equal(sections[0].style.display, "none");
@@ -161,5 +180,7 @@ test("a #case-N fragment opens that case after the initial collapse", () => {
   assert.equal(sections[1].style.display, "");
   assert.equal(cases[0].getAttribute("aria-expanded"), "false");
   assert.equal(sections[0].style.display, "none");
-  assert.equal(global.getAttribute("aria-label"), "Show all test case details");
+  assert.equal(global.getAttribute("aria-label"), "展开全部用例详情");
+  // The fragment opened one case, so the aggregate state is mixed.
+  assert.equal(global.getAttribute("aria-expanded"), null);
 });

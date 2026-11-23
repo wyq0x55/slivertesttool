@@ -71,6 +71,10 @@ def test_expand_all_control_exposes_state_with_a_chinese_name():
     script = re.search(r'<script type="text/javascript">(.*?)</script>', detail, re.S).group(1)
     assert "button.setAttribute('aria-expanded', expanded ? 'true' : 'false')" in script
     assert "'收起全部用例详情' : '展开全部用例详情'" in script
+    # An individual case toggle must not leave the aggregate state stale:
+    # when some cases are open and some are closed the button claims nothing.
+    assert "function syncAllState()" in script
+    assert "button.removeAttribute('aria-expanded')" in script
 
 
 def test_detail_script_keeps_reference_toggle_behavior():
