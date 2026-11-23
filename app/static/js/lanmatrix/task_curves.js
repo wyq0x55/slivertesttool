@@ -821,7 +821,7 @@
       tr.className = c.ok ? "" : "cv-bad";
       const inCsv = c.var && columnByName(c.var);
       tr.innerHTML = `<td>Step${esc(s.step)}${c.subroutine ? `<div class="submuted">${esc(c.subroutine)} · ${esc(c.subroutine_step)}</div>` : ""}</td>
-        <td>${c.ok ? '<span class="jbadge pass">✓</span>' : '<span class="jbadge fail">✕</span>'}</td>
+        <td>${c.ok ? '<span class="jbadge pass" aria-hidden="true">✓</span><span class="lm-sr-only">通过</span>' : '<span class="jbadge fail" aria-hidden="true">✕</span><span class="lm-sr-only">未通过</span>'}</td>
         <td class="num">${c.at === null ? "—" : esc(R.fmtValue(c.at))}</td>
         <td title="${esc(c.var || "")}">${esc(c.name || c.var || "")}${inCsv ? "" : '<div class="submuted">未记录在 output.csv</div>'}</td>
         <td>${esc(c.expected || "")}</td><td>${esc(c.observed || "")}</td><td>${esc(c.timing || "")}</td>`;
