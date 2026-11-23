@@ -172,3 +172,90 @@ def test_existing_receipts_are_rejected_before_starting_another_generator(tmp_pa
     monkeypatch.setattr(client, "_run", lambda *a, **k: pytest.fail("Stale receipt launched a generator"))
     with pytest.raises(bridge.BridgeError, match="stale"):
         client.generate("m", "i", "p", tmp_path, ["f"], progress_dir=tmp_path / "progress", on_unit=lambda _: None)
+
+
+def test_forecast_polls_ride_the_stream_tick_and_failures_never_disturb_it(tmp_path):
+    root = tmp_path / "generation"
+    record = _receipt(root)
+    directory = root / "unit-ready"
+    directory.mkdir()
+    source = tmp_path / "record.json"
+    source.write_text(json.dumps(record), encoding="utf-8")
+    script = """
+import json,os,sys,time
+from pathlib import Path
+root,source=map(Path,sys.argv[1:])
+directory=root/'unit-ready'
+pending=directory/'1.tmp'
+pending.write_bytes(source.read_bytes())
+os.replace(pending,directory/'1.json')
+time.sleep(.5)
+print(json.dumps({'contract':'ut-agent.bridge/1','ok':True,'units':[json.loads(source.read_text())['unit']]}))
+"""
+    completed, reports, polls = [], [], []
+
+    def forecast():
+        polls.append(1)
+        if len(polls) == 1:
+            raise bridge.BridgeError("ut-agent is busy")
+        return {"schema": "ut-agent.progress-forecast/1", "intervene": True,
+                "intervening": ["f"], "functions": {"f": {"intervene": True}}}
+
+    result = bridge.UtAgentBridge._stream_units(
+        [sys.executable, "-c", script, str(root), str(source)], str(tmp_path), os.environ.copy(),
+        10, directory, root, completed.append,
+        forecast=forecast, on_forecast=reports.append, interval=0.05)
+    assert result.returncode == 0
+    assert completed == [record]
+    # The first poll failed and was dropped; the next one reached the caller.
+    assert len(polls) >= 2
+    assert reports[-1]["intervening"] == ["f"]
+
+
+def test_the_first_forecast_waits_for_the_interval(tmp_path):
+    # A run that finishes quickly is never polled: the first tick only opens
+    # the window, it does not observe.
+    polls = []
+    result = bridge.UtAgentBridge._stream_units(
+        [sys.executable, "-c", "import time;time.sleep(.4);print('{}')"], str(tmp_path),
+        os.environ.copy(), 10, tmp_path / "ready", tmp_path, lambda _: None,
+        forecast=lambda: polls.append(1) or {}, on_forecast=lambda _: None, interval=10)
+    assert result.returncode == 0
+    assert polls == []
+
+
+def test_a_disabled_interval_never_builds_a_poller(tmp_path):
+    settings = bridge.BridgeSettings(str(tmp_path), sys.executable, "", 1, 1, 1, 0)
+    assert bridge.UtAgentBridge(settings)._forecast_probe(tmp_path, None) is None
+
+
+def test_the_poller_asks_for_the_running_snapshot_directory(tmp_path, monkeypatch):
+    client = bridge.UtAgentBridge(
+        bridge.BridgeSettings(str(tmp_path), sys.executable, "", 1, 1, 1))
+    calls = []
+    monkeypatch.setattr(client, "_run", lambda args, **kwargs:
+                        calls.append((args, kwargs)) or {"forecast": {"intervene": False}})
+
+    assert client.forecast(tmp_path / "progress", tmp_path / "history") == {"intervene": False}
+    args, kwargs = calls[0]
+    assert args == ["forecast", "--snapshots-dir", str(tmp_path / "progress"),
+                    "--history-dir", str(tmp_path / "history")]
+    assert kwargs["timeout"] == min(bridge.FORECAST_TIMEOUT, client.settings.timeout)
+
+
+def test_generate_hands_the_stream_both_the_hooks_and_the_history(tmp_path, monkeypatch):
+    client = bridge.UtAgentBridge(
+        bridge.BridgeSettings(str(tmp_path), sys.executable, "", 1, 1, 1))
+    captured = {}
+    monkeypatch.setattr(client, "_run", lambda args, **kwargs:
+                        captured.update(args=args, **kwargs) or {"units": []})
+
+    def observe(_report):
+        pass
+
+    client.generate("m.json", "i.csv", "P", tmp_path / "out", ["f"], progress_dir=tmp_path / "progress",
+                    on_unit=lambda _: None, on_forecast=observe,
+                    history_dir=tmp_path / "history")
+    assert captured["on_forecast"] is observe
+    assert callable(captured["forecast"])
+    assert "--unit-ready-dir" in captured["args"]

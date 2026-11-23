@@ -21,6 +21,13 @@ from app.runners.process_guard import (
 )
 
 CONTRACT = "ut-agent.bridge/1"
+# Seconds between budget-forecast observations of a running generation.  The
+# observation is read-only: it never feeds back into generation, and a failed
+# or slow poll is dropped silently.
+FORECAST_INTERVAL = 5.0
+# One forecast is a short CLI call; a hung one must not hold the generation
+# stream for the whole bridge timeout.
+FORECAST_TIMEOUT = 30
 
 
 class BridgeError(RuntimeError):
@@ -35,6 +42,10 @@ class BridgeSettings:
     timeout: int
     generate_timeout: int
     execute_timeout: int
+    # Seconds between budget-forecast observations of a running generation;
+    # 0 (or less) turns the observation off.  Observation only: the verdict is
+    # never fed back into generation.
+    forecast_interval: float = FORECAST_INTERVAL
 
     @classmethod
     def from_config(cls, config) -> "BridgeSettings":
@@ -45,6 +56,7 @@ class BridgeSettings:
             timeout=int(config.get("UT_BRIDGE_TIMEOUT", 120)),
             generate_timeout=int(config.get("UT_GENERATE_TIMEOUT", 3600)),
             execute_timeout=int(config.get("UT_EXECUTE_TIMEOUT", 300)),
+            forecast_interval=float(config.get("UT_FORECAST_INTERVAL", FORECAST_INTERVAL)),
         )
 
 
@@ -53,7 +65,9 @@ class UtAgentBridge:
         self.settings = settings
 
     def _run(self, args: list[str], *, timeout: int,
-             on_unit: Callable[[dict], None] | None = None) -> dict[str, Any]:
+             on_unit: Callable[[dict], None] | None = None,
+             forecast: Callable[[], dict] | None = None,
+             on_forecast: Callable[[dict], None] | None = None) -> dict[str, Any]:
         root, python = self.settings.root, self.settings.python
         if not root or not python:
             raise BridgeError("ut-agent 未配置：请设置 UT_AGENT_ROOT 与 UT_AGENT_PYTHON")
@@ -73,7 +87,9 @@ class UtAgentBridge:
             else:
                 directory = Path(args[args.index("--unit-ready-dir") + 1])
                 output = Path(args[args.index("--out") + 1])
-                proc = self._stream_units(command, root, env, timeout, directory, output, on_unit)
+                proc = self._stream_units(command, root, env, timeout, directory, output, on_unit,
+                                          forecast=forecast, on_forecast=on_forecast,
+                                          interval=self.settings.forecast_interval)
         except subprocess.TimeoutExpired as exc:
             raise BridgeError(f"ut-agent bridge {args[0]} 超时（{timeout}s）") from exc
         except OSError as exc:
@@ -139,11 +155,13 @@ class UtAgentBridge:
         return subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
 
     @staticmethod
-    def _stream_units(command, root, env, timeout, directory, output, on_unit):
+    def _stream_units(command, root, env, timeout, directory, output, on_unit, *,
+                      forecast=None, on_forecast=None, interval=FORECAST_INTERVAL):
         from .generated_unit import read_receipt
 
         seen = set()
         deadline = time.monotonic() + timeout
+        next_forecast = time.monotonic() + interval
 
         def consume():
             for path in sorted(directory.glob("*.json")):
@@ -156,10 +174,27 @@ class UtAgentBridge:
                 on_unit(receipt)
                 seen.add(path.name)
 
+        def observe_forecast():
+            # Budget observation rides the same poll tick as unit pickup.  It is
+            # advisory by construction: on_forecast only records the verdict, and
+            # any failure here must never disturb generation.
+            nonlocal next_forecast
+            now = time.monotonic()
+            if forecast is None or interval <= 0 or now < next_forecast:
+                return
+            next_forecast = now + interval
+            try:
+                report = forecast()
+                on_forecast(report)
+            except (BridgeError, OSError, ValueError, TypeError,
+                    subprocess.SubprocessError):
+                return
+
         child = UtAgentBridge._popen(command, root, env)
         try:
             while True:
                 consume()
+                observe_forecast()
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise subprocess.TimeoutExpired(command, timeout)
@@ -168,6 +203,7 @@ class UtAgentBridge:
                 except subprocess.TimeoutExpired:
                     continue
                 consume()
+                observe_forecast()
                 break
         except BaseException as failure:
             # Pool workers inherit the output pipes. Killing only their
@@ -198,9 +234,24 @@ class UtAgentBridge:
         return self._run(["configuration-options"],
                          timeout=self.settings.timeout)["configuration_options"]
 
+    def forecast(self, snapshots_dir: Path, history_dir: Path | None = None) -> dict[str, Any]:
+        """Read-only budget forecast of every function currently in ``snapshots_dir``."""
+        args = ["forecast", "--snapshots-dir", str(snapshots_dir)]
+        if history_dir is not None:
+            args += ["--history-dir", str(history_dir)]
+        return self._run(args, timeout=min(FORECAST_TIMEOUT, self.settings.timeout))["forecast"]
+
+    def _forecast_probe(self, snapshots_dir: Path, history_dir: Path | None):
+        """Poller for a running batch, or ``None`` when observation is off."""
+        if self.settings.forecast_interval <= 0:
+            return None
+        return lambda: self.forecast(snapshots_dir, history_dir)
+
     def generate(self, manifest: str, index_csv: str, product_root: str, out: Path,
                  functions: list[str], *, progress_dir: Path,
-                 on_unit: Callable[[dict], None] | None = None) -> dict[str, Any]:
+                 on_unit: Callable[[dict], None] | None = None,
+                 on_forecast: Callable[[dict], None] | None = None,
+                 history_dir: Path | None = None) -> dict[str, Any]:
         args = ["generate", *self._manifest(manifest), "--index-csv", index_csv,
                 "--product-root", product_root, "--out", str(out),
                 "--progress-dir", str(progress_dir)]
@@ -213,7 +264,9 @@ class UtAgentBridge:
             if directory.exists() and any(directory.iterdir()):
                 raise BridgeError("Completed-unit directory is not empty; refusing stale generation receipts")
             args += ["--unit-ready-dir", str(directory)]
-            return self._run(args, timeout=self.settings.generate_timeout, on_unit=on_unit)
+            return self._run(args, timeout=self.settings.generate_timeout, on_unit=on_unit,
+                             forecast=self._forecast_probe(progress_dir, history_dir),
+                             on_forecast=on_forecast)
         return self._run(args, timeout=self.settings.generate_timeout)
 
 

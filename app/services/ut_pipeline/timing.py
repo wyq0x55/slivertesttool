@@ -131,6 +131,11 @@ def record_generation(job, progress: dict) -> None:
                     if row.get("phase") == "extracting"],
     }
     document["function_generation"] = copy.deepcopy(progress.get("function") or {})
+    # Last advisory budget verdict of the batch, kept for post-hoc calibration
+    # of the forecast thresholds.  A record that has no fresh verdict (progress
+    # files already cleaned up) keeps the last one rather than blanking it.
+    forecast = progress.get("forecast") or document.get("generation_forecast") or {}
+    document["generation_forecast"] = copy.deepcopy(forecast)
     _save(job, document)
 
 
