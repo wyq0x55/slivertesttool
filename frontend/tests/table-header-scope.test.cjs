@@ -51,9 +51,10 @@ test("ut_tasks and dashboard tables mark their columns", () => {
   }
 });
 
-test("empty action columns still carry scope", () => {
-  // The blank header above a row's buttons is still a column header; without
-  // scope the cells below it look unlabelled to a screen reader.
+test("action columns carry both scope and a spoken name", () => {
+  // The header above a row's buttons is a column header like any other, so it
+  // keeps scope="col"; a blank cell, however, names nothing, so the column is
+  // named with a visually hidden label instead. Neither half may regress alone.
   for (const [file, expected] of [
     ["admin.html", 2],
     ["admin_db.html", 1],
@@ -65,7 +66,9 @@ test("empty action columns still carry scope", () => {
     ["ut_tasks.html", 2],
   ]) {
     const html = read(file);
+    const named = html.match(/<th scope="col"[^>]*><span class="lm-sr-only">[^<]+<\/span><\/th>/g) || [];
+    assert.equal(named.length, expected, `${file} should name ${expected} action header cells with scope="col"`);
     const empty = html.match(/<th scope="col"[^>]*>\s*<\/th>/g) || [];
-    assert.equal(empty.length, expected, `${file} should mark ${expected} empty header cells with scope="col"`);
+    assert.equal(empty.length, 0, `${file} must not leave a scope="col" header cell without a name`);
   }
 });
