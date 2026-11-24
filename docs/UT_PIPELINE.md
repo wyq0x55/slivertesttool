@@ -76,22 +76,23 @@ keeps the value it froze.
 
 `budget_stop_observations`, when declared, lets a batch stop a function early
 instead of paying to the ceiling: ut-agent asks its own deterministic forecast at
-every obligation boundary, and once that many boundaries agree the projection no
-longer fits, the function yields. Empty keeps the forecast advisory. The count is
-a declared input, so the same IR, rules, ceiling and count stop at the same
-obligation; the forecast reads measured costs but only decides *when to stop*,
-never what an expectation is. A stopped function keeps its finished cases and
-hands the unstarted obligations to review exactly like a budget stop, and the
-batch continues with its other functions.
+every obligation boundary and at semantic progress checkpoints inside an
+obligation (every one million charged steps). When that many consecutive
+observations project an overrun, the function yields. Empty keeps ut-agent's
+own default (`2`). The count is a declared input, so the same IR, rules, ceiling and
+count stop at the same point. The forecast reads measured costs but only decides
+*when to stop*, never what an expectation is. The function keeps its finished
+cases and leaves unfinished obligations for review; the batch continues with
+its other functions.
 
-Stopping an active job no longer waits for the current function to finish: the
-worker writes `<batch>/stop.request`, which `ut-agent bridge generate --stop-file`
-reads at the next obligation boundary. Generation ends there, finished cases stay
-and the rest become review work. The stop is recorded as `OPERATOR_STOP:`, never
-as `GENERATION_BUDGET_EXHAUSTED:` - no budget measurement was made, so triage
-must not read an operator's decision as evidence that the ceiling is too low. The
-file is removed when the attempt ends, on stop and on resume, so it can never
-stop the next run.
+On an operator stop, Silver writes `<batch>/stop.request`. With an ut-agent
+version that supports in-obligation checks, `bridge generate --stop-file` reads
+it at the next obligation boundary or semantic progress checkpoint, whichever
+comes first. Older generators only read it between obligations. This is a
+semantic-step interval, not a wall-clock deadline. Finished cases stay and the
+rest become review work. `OPERATOR_STOP:` is distinct from
+`GENERATION_BUDGET_EXHAUSTED:` and is not a budget-calibration sample. The file
+is cleared on stop and resume so it cannot stop a later attempt.
 
 ## Budget exhaustion and witness handoff
 

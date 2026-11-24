@@ -502,13 +502,13 @@
       if (values.function_step_limit !== null &&
           (!Number.isInteger(values.function_step_limit) || values.function_step_limit < 1 || values.function_step_limit > 1000000000))
         throw error("函数语义步数上限必须是 1 至 1000000000 之间的整数，留空则沿用 ut-agent 默认值。", $("ut-c-function_step_limit"));
-      // Empty keeps forecasts advisory; a declared count has to be an integer the
+      // Empty stays undeclared so ut-agent keeps its own default; a declared count has to be an integer the
       // server and ut-agent both accept.
       var stopObservations = values.budget_stop_observations;
       values.budget_stop_observations = stopObservations === "" ? null : Number(stopObservations);
       if (values.budget_stop_observations !== null &&
           (!Number.isInteger(values.budget_stop_observations) || values.budget_stop_observations < 1 || values.budget_stop_observations > 10))
-        throw error("预测早停次数必须是 1 至 10 之间的整数，留空则预算预估只作参考。", $("ut-c-budget_stop_observations"));
+        throw error("预测早停次数必须是 1 至 10 之间的整数，留空则沿用 ut-agent 默认值。", $("ut-c-budget_stop_observations"));
       values.max_repair_rounds = Number(values.max_repair_rounds);
       if (values.stub_mode === "llm") {
         values.stub_max_rounds = Number(values.stub_max_rounds);

@@ -33,8 +33,8 @@ UT_CONFIG_FIELDS = (
     "stub_max_rounds: integer 1-5 (llm stub mode)",
     "function_step_limit: integer 1-1000000000, the per-function semantic step "
     "ceiling; empty or null keeps the ut-agent default",
-    "budget_stop_observations: integer 1-10, how many agreeing obligation-boundary "
-    "forecasts end a function early; empty or null keeps forecasts advisory",
+    "budget_stop_observations: integer 1-10, how many agreeing over-budget "
+    "forecasts end a function early; empty or null keeps the ut-agent default",
     "stub_model, repair_model: model names, at most 128 characters",
     "host_clang, host_llvm_cov, host_llvm_profdata: host tool paths; must not be empty when given",
     "host_profile_runtime: host profile runtime path",

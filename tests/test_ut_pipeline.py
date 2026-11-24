@@ -557,6 +557,17 @@ def test_forecast_history_remembers_only_a_previous_budget_exhaustion(env, app_c
         history = pipeline._forecast_history(newer)
         assert history == {"budget_exhausted": True, "source_job": previous.id}
 
+        previous.reason = "生成器未产出 TestCsv（NEEDS_REVIEW）：ValueError: CSV projection error"
+        previous.witness = {"handoff": {"budget": {"budget_exhausted": True}}}
+        db.session.commit()
+        assert pipeline._forecast_history(newer) == {
+            "budget_exhausted": True, "source_job": previous.id
+        }
+
+        previous.witness = {"handoff": {"budget": {"budget_exhausted": True, "operator_stop": True}}}
+        db.session.commit()
+        assert pipeline._forecast_history(newer) == {}
+
 
 def test_coverage_gap_without_a_missing_case_does_not_call_the_model(env, monkeypatch):
     targets = _configure(env)

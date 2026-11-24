@@ -151,7 +151,7 @@ def frozen_step_limit(config: dict[str, Any]) -> Optional[int]:
 
 
 def frozen_budget_stop(config: dict[str, Any]) -> Optional[int]:
-    """How many agreeing forecasts end a function; ``None`` leaves them advisory."""
+    """How many agreeing forecasts end a function; ``None`` leaves ut-agent's own default."""
     value = config.get("budget_stop_observations")
     if value is None:
         return None
@@ -483,6 +483,16 @@ def _forecast_history_dir(project_id: int, batch_id: int) -> Path:
     return _batch_dir(project_id, batch_id) / "forecast-history"
 
 
+def _previous_budget_exhausted(job: UtJob) -> bool:
+    if _BUDGET_EXHAUSTED in (job.reason or ""):
+        return True
+    handoff = (job.witness or {}).get("handoff")
+    budget = handoff.get("budget") if isinstance(handoff, dict) else None
+    return (isinstance(budget, dict)
+            and budget.get("budget_exhausted") is True
+            and not budget.get("operator_stop"))
+
+
 def _forecast_history(job: UtJob) -> dict[str, Any]:
     """What the same target did last time — the only history the forecast uses.
 
@@ -495,7 +505,7 @@ def _forecast_history(job: UtJob) -> dict[str, Any]:
                         UtJob.id < job.id)
                 .order_by(UtJob.id.desc())
                 .first())
-    if previous is None or _BUDGET_EXHAUSTED not in (previous.reason or ""):
+    if previous is None or not _previous_budget_exhausted(previous):
         return {}
     return {"budget_exhausted": True, "source_job": previous.id}
 

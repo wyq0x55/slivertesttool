@@ -36,8 +36,8 @@ class UtPipelineConfig(db.Model):
     stub_max_rounds = db.Column(db.Integer, nullable=False, default=2)
     # Per-function semantic step ceiling handed to ut-agent; NULL keeps its own default.
     function_step_limit = db.Column(db.Integer, nullable=True, default=None)
-    # Consecutive obligation-boundary forecasts that must agree before the
-    # function yields to the handoff; NULL keeps forecasts advisory only.
+    # Consecutive over-budget forecasts that must agree before the function
+    # yields to the handoff; NULL keeps ut-agent's own default.
     budget_stop_observations = db.Column(db.Integer, nullable=True, default=None)
     host_clang = db.Column(db.String(1024), nullable=False, default="clang")
     host_llvm_cov = db.Column(db.String(1024), nullable=False, default="llvm-cov")
