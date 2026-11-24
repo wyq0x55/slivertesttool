@@ -1,0 +1,80 @@
+{% extends "lanmatrix/base_lm.html" %}
+{% from "lanmatrix/_crumb.html" import project_crumb %}
+{% from "lanmatrix/_settings_tabs.html" import settings_tabs with context %}
+{% block title %}执行配置{% endblock %}
+{% block crumb %}{{ project_crumb(project_id, "执行配置", "设置") }}{% endblock %}
+{% block content %}
+{# The execution defaults of a Silver project. These three controls used to sit
+   in the 矩阵编辑 toolbar, where they competed for attention with the grid but
+   were changed once a quarter at most. They are project state, not per-run
+   switches, so they belong with the other settings pages.
+
+   The heading order is h1 (page) then h2 per section: every control here is a
+   peer of the others, and a h3 would imply nesting that does not exist. #}
+<div class="content lm-exec-config" data-project-id="{{ project_id }}">
+  {{ settings_tabs(project_id, "exec") }}
+  <div class="page-head">
+    <div class="ttl">
+      <h1>执行配置</h1>
+      <p>项目级的执行与生成默认值。改动立即保存到项目，之后从<a
+        href="{{ url_for('lanmatrix_pages.editor', project_id=project_id) }}">矩阵编辑</a>入队的测试都会沿用这里的设置。</p>
+    </div>
+  </div>
+
+  <div class="lm-sec-head">
+    <h2 id="lm-exec-clean-room-title">车规洁净室</h2>
+  </div>
+  <div class="lm-card" aria-labelledby="lm-exec-clean-room-title">
+    <label class="lm-check-inline" for="lm-clean-room-toggle">
+      <input type="checkbox" id="lm-clean-room-toggle" aria-describedby="lm-clean-room-help">
+      车规洁净室
+    </label>
+    <p class="lm-muted" id="lm-clean-room-help">
+      强制冷启动全新 Silver 实例并在跑完后立即销毁，满足 ASPICE SWE.4-SWE.6 零跨用例污染要求。
+      开启后，矩阵编辑页入队的测试会在任务上带上 <code>clean_room</code>；关闭则使用常驻实例。
+    </p>
+    <p class="lm-muted" id="lm-clean-room-status" role="status" aria-live="polite"></p>
+  </div>
+
+  <div class="lm-sec-head">
+    <h2 id="lm-exec-signal-list-title">默认信号集</h2>
+  </div>
+  <div class="lm-card" aria-labelledby="lm-exec-signal-list-title">
+    <p class="lm-muted">
+      项目默认的观测信号白名单（<code>default_signal_list</code>），每次生成测试模板时作为可选信号的来源。
+      留空表示不限。
+    </p>
+    <button class="btn btn-sm" id="lm-signal-list-btn" type="button"
+      title="配置项目默认观测信号集 (default_signal_list)">默认信号集</button>
+  </div>
+
+  <div class="lm-sec-head">
+    <h2 id="lm-exec-ai-title">AI 生成手顺</h2>
+  </div>
+  <div class="lm-card" aria-labelledby="lm-exec-ai-title">
+    <p class="lm-muted">
+      指定已保存的测试行，生成手顺草稿供人工审核。矩阵编辑页没有网格选择时，在这里直接填写行 ID；
+      服务器读取真实行内容及版本，权限与草稿审核流程不变。
+    </p>
+    <div class="mforms">
+      <div class="row wrap">
+        <label class="uplbl">已保存测试行 ID
+          <input id="lm-ai-row-ids" class="inbox" placeholder="例如：12, 13" autocomplete="off"
+            title="多个行 ID 用逗号或空格分隔，最多 200 行">
+        </label>
+        <label class="uplbl">已保存模型 ID（可留空使用当前模型）
+          <input id="lm-ai-model-id" class="inbox" type="number" min="1" step="1" placeholder="模型 ID">
+        </label>
+      </div>
+      <div class="row wrap">
+        <button class="btn btn-primary" id="lm-ai-generate" type="button">AI 生成手顺</button>
+        <a class="btn" id="lm-ai-draft-link" hidden>查看草稿</a>
+      </div>
+    </div>
+    <p class="lm-muted" id="lm-ai-status" role="status" aria-live="polite"></p>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script defer src="{{ static_asset_url('js/lanmatrix/editor_qualification.js') }}"></script>
+{% endblock %}

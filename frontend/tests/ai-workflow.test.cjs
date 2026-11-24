@@ -172,65 +172,6 @@ function draftHarness(overrides = {}, role = "editor", search = "") {
   };
 }
 
-function editorHarness(options = {}) {
-  const environment = dom(read("app/templates/lanmatrix/editor.html"));
-  const calls = [];
-  const toasts = [];
-  const persisted = options.persisted || [{ id: 12, uuid: "row-12", version: 3, title: "Saved" }];
-  const api = {
-    getProject: async () => ({ project: { code: "P", name: "Project", is_editable: options.editable !== false },
-      role: options.role || "editor" }),
-    listItems: options.listItems || (async () => ({ items: persisted, total: persisted.length })),
-    createAiDraft(scenario, projectId, payload) {
-      calls.push({ scenario, projectId, payload: plain(payload) });
-      return options.create ? options.create() : Promise.resolve(draft(50, "running"));
-    },
-    patchItem: options.patch || (async () => ({ item: persisted[0] })),
-  };
-  const grid = { engine: "builtin", getSelectedIds: () => options.ids || [12],
-    isEditing: () => false, setData() {}, setFields() {}, ...options.grid };
-  const collab = options.collab ? { isActive: () => true, getItems: () => options.live || persisted } : null;
-  const window = { location: { href: "" }, addEventListener() {} };
-  let drawerOptions;
-  const stepsEditor = { open(_item, settings) { drawerOptions = settings; } };
-  window.LMStepsEditor = stepsEditor;
-  const context = vm.createContext({ document: environment.document, window, URLSearchParams,
-    LMApi: api, LM: { user: {}, urls: {} }, LMReady: options.ready || Promise.resolve({}),
-    LMPill: { apply() {}, PROJECT_ZH: {} }, LMUI: { toast: (message, ok) => toasts.push({ message, ok }) },
-    setTimeout: (callback) => setImmediate(callback), clearTimeout: clearImmediate,
-    setInterval: () => 1, clearInterval() {}, console,
-    testGrid: grid, testCollab: collab, testRows: persisted, testSheet: options.sheet || "test",
-    testConn: options.disconnected ? "disconnected" : "connected",
-    testFields: options.fields || [{ field_key: "title" }], LMStepsEditor: stepsEditor,
-  });
-  const production = read("app/static/js/lanmatrix/editor.js").replace(/\r\n/g, "\n");
-  const drawerStart = production.indexOf("      onSteps: (item) => {");
-  const drawerEnd = production.indexOf("\n      },\n    });", drawerStart);
-  assert.ok(drawerStart >= 0 && drawerEnd > drawerStart);
-  const drawerCallback = production.slice(drawerStart, drawerEnd + "\n      }".length);
-  const source = production.replace("  init();", `
-    grid = testGrid; collab = testCollab; currentSheet = testSheet;
-    sheetItems.test = testRows; sheetFields.test = testFields;
-    fields = sheetFields.test; collabConn = testConn;
-    window.testLoadProject = loadProject; window.testSaveCell = saveCell;
-    window.testSelection = updateSelectionUI;
-    window.testStepsDrawer = ({${drawerCallback}}).onSteps;
-  `);
-  vm.runInContext(source, context, { filename: path.join(root, "app/static/js/lanmatrix/editor.js") });
-  return { ...environment, api, grid, window, calls, toasts,
-    async ready() { await window.testLoadProject(); window.testSelection(grid.getSelectedIds()); },
-    saveSteps(json) {
-      window.testStepsDrawer(persisted[0]);
-      return drawerOptions.onSave(json);
-    },
-    async click() {
-      const callback = environment.get("lm-ai-generate").listeners.click;
-      assert.equal(typeof callback, "function", "matrix generation entry must be wired");
-      return callback({ preventDefault() {} });
-    },
-  };
-}
-
 test("cancel and retry API use CSRF POST envelopes and return the same draft", async () => {
   const requests = [];
   const environment = dom("");
@@ -255,108 +196,6 @@ test("cancel and retry API use CSRF POST envelopes and return the same draft", a
     assert.equal(entry.options.credentials, "same-origin");
     assert.deepEqual(JSON.parse(entry.options.body), {});
   }
-});
-
-test("matrix creates a procedure from persisted selected IDs and links its draft", async () => {
-  const harness = editorHarness();
-  await harness.ready();
-  await harness.click();
-  assert.deepEqual(harness.calls, [{ scenario: "procedure", projectId: 1, payload: { item_ids: [12] } }]);
-  assert.equal(harness.get("lm-ai-draft-link").href, "/lanmatrix/projects/1/ai?draft=50");
-  assert.equal(harness.get("lm-ai-draft-link").hidden, false);
-});
-
-test("matrix waits for a save and ignores duplicate submission clicks", async () => {
-  const saving = deferred();
-  const submitting = deferred();
-  const harness = editorHarness({ patch: () => saving.promise, create: () => submitting.promise });
-  await harness.ready();
-  const save = harness.window.testSaveCell({ id: 12, version: 3 }, { title: "New" });
-  const first = harness.click();
-  await harness.click();
-  await settle();
-  assert.equal(harness.calls.length, 0);
-  saving.resolve({ item: { id: 12, version: 4 } });
-  await save;
-  await settle();
-  await settle();
-  assert.equal(harness.calls.length, 1);
-  assert.equal(harness.get("lm-ai-generate").disabled, true);
-  submitting.resolve(draft(50));
-  await first;
-  assert.equal(harness.get("lm-ai-generate").disabled, false);
-});
-
-for (const options of [{ ids: [-1] }, { ids: [] }, { role: "reader" },
-  { editable: false }, { sheet: "lib" }, { ids: [999] }]) {
-  test(`matrix refuses unsafe selection ${JSON.stringify(options)}`, async () => {
-    const harness = editorHarness(options);
-    await harness.ready();
-    await harness.click();
-    assert.equal(harness.calls.length, 0);
-  });
-}
-
-test("matrix refuses dirty collaborative rows even when ID and version match", async () => {
-  const harness = editorHarness({ collab: true,
-    live: [{ id: 12, uuid: "row-12", version: 3, title: "CRDT unsaved" }] });
-  await harness.ready();
-  await harness.click();
-  assert.equal(harness.calls.length, 0);
-  assert.match(harness.get("lm-ai-status").textContent, /同步|保存/);
-});
-
-test("matrix allows materialized collaboration and refuses a disconnected room", async () => {
-  for (const disconnected of [false, true]) {
-    const harness = editorHarness({ collab: true, disconnected });
-    await harness.ready();
-    await harness.click();
-    assert.equal(harness.calls.length, disconnected ? 0 : 1);
-  }
-});
-
-test("matrix save failure during submission blocks generation with visible feedback", async () => {
-  const saving = deferred();
-  const harness = editorHarness({ patch: () => saving.promise });
-  await harness.ready();
-  const save = harness.window.testSaveCell({ id: 12, version: 3 }, {}).catch(() => {});
-  const submit = harness.click();
-  saving.reject(new Error("save rejected"));
-  await save;
-  await submit;
-  assert.equal(harness.calls.length, 0);
-  assert.match(harness.get("lm-ai-status").textContent, /保存/);
-});
-
-test("steps drawer PATCH remains tracked after drawer closes during generation", async () => {
-  const saving = deferred();
-  const harness = editorHarness({ patch: () => saving.promise });
-  await harness.ready();
-  const save = harness.saveSteps('{"steps":[{"no":1}]}');
-  const submit = harness.click();
-  await settle();
-  assert.equal(harness.calls.length, 0);
-  saving.resolve({ item: { id: 12, version: 4, steps: '{"steps":[{"no":1}]}' } });
-  await save;
-  await submit;
-  assert.equal(harness.calls.length, 1);
-});
-
-test("rejected steps drawer PATCH prevents generation until a successful resave", async () => {
-  let failed = true;
-  const harness = editorHarness({ patch: async () => {
-    if (failed) throw new Error("steps save rejected");
-    return { item: { id: 12, version: 4, steps: "{}" } };
-  } });
-  await harness.ready();
-  await assert.rejects(harness.saveSteps("{}"), /steps save rejected/);
-  await harness.click();
-  assert.equal(harness.calls.length, 0);
-  assert.match(harness.get("lm-ai-status").textContent, /保存/);
-  failed = false;
-  await harness.saveSteps("{}");
-  await harness.click();
-  assert.equal(harness.calls.length, 1);
 });
 
 test("procedure form sends ordinary item IDs with optional saved model", async () => {
@@ -546,33 +385,6 @@ test("readers can inspect drafts but cannot generate, edit, cancel or retry", as
   assert.equal(harness.calls.length, 0);
 });
 
-test("a successful save on another row cannot hide a selected row save failure", async () => {
-  const harness = editorHarness({ patch: async (_pid, id) => {
-    if (id === 12) throw new Error("selected row failed");
-    return { item: { id, version: 4 } };
-  } });
-  await harness.ready();
-  await harness.window.testSaveCell({ id: 12, version: 3 }, {}).catch(() => {});
-  await harness.window.testSaveCell({ id: 13, version: 3 }, {});
-  await harness.click();
-  assert.equal(harness.calls.length, 0);
-  assert.match(harness.get("lm-ai-status").textContent, /保存/);
-});
-
-test("collaborative changes arriving during CSRF readiness cannot bypass sync verification", async () => {
-  const readiness = deferred();
-  const live = [{ id: 12, uuid: "row-12", version: 3, title: "Saved" }];
-  const harness = editorHarness({ collab: true, live, ready: readiness.promise });
-  await harness.ready();
-  const submitting = harness.click();
-  await settle();
-  await settle();
-  live[0].title = "New unsynced content";
-  readiness.resolve({});
-  await submitting;
-  assert.equal(harness.calls.length, 0);
-});
-
 test("switching from source generation to document extraction ignores hidden source excerpts", async () => {
   const harness = draftHarness();
   await settle();
@@ -595,37 +407,6 @@ test("template controls and scenario visibility follow the executable form", asy
   harness.get("lm-ai-gen-scenario").listeners.change();
   const groups = harness.document.querySelectorAll("[data-ai-scenarios]");
   for (const group of groups) assert.equal(group.hidden, !group.dataset.aiScenarios.split(" ").includes("lib"));
-});
-
-test("matrix verifies optional saved model and surfaces server errors", async () => {
-  const harness = editorHarness({ create: async () => { throw new Error("model unavailable"); } });
-  await harness.ready();
-  harness.get("lm-ai-model-id").value = "4";
-  await harness.click();
-  assert.deepEqual(harness.calls[0].payload, { item_ids: [12], model_id: 4 });
-  assert.match(harness.get("lm-ai-status").textContent, /model unavailable/);
-  assert.equal(harness.get("lm-ai-generate").disabled, false);
-});
-
-test("matrix refuses an unfinished grid edit and a failed persisted-row read", async () => {
-  for (const options of [{ grid: { isEditing: () => true } },
-    { listItems: async () => { throw new Error("database read unavailable"); } }]) {
-    const harness = editorHarness(options);
-    await harness.ready();
-    await harness.click();
-    assert.equal(harness.calls.length, 0);
-    assert.ok(harness.get("lm-ai-status").textContent);
-  }
-});
-
-test("matrix rejects CRDT identity mismatches and unmaterialized versions", async () => {
-  for (const change of [{ uuid: "other-row" }, { version: 0 }]) {
-    const harness = editorHarness({ collab: true,
-      live: [{ id: 12, uuid: "row-12", version: 3, title: "Saved", ...change }] });
-    await harness.ready();
-    await harness.click();
-    assert.equal(harness.calls.length, 0);
-  }
 });
 
 test("SBS, library and archived-failure forms enforce required source controls", async () => {
@@ -771,37 +552,6 @@ test("permission loading fails closed and readers have no recovery actions", asy
   }
 });
 
-test("materialized test_name aliases do not conflict with legacy CRDT title mirrors", async () => {
-  const persisted = [{ id: 12, uuid: "row-12", version: 4, test_name: "New title", title: "New title" }];
-  const live = [{ ...persisted[0], title: "Legacy title" }];
-  const harness = editorHarness({ persisted, live, collab: true, fields: [{ field_key: "test_name" }] });
-  await harness.ready();
-  await harness.click();
-  assert.equal(harness.calls.length, 1);
-});
-
-test("nested step JSON ignores key order while detecting unsaved signal values", async () => {
-  const persisted = [{ id: 12, uuid: "row-12", version: 3,
-    steps: '{"input_signals":[{"name":"speed","value":2}],"expected_signals":[]}' }];
-  const live = [{ ...persisted[0], steps: '{"expected_signals":[],"input_signals":[{"value":2,"name":"speed"}]}' }];
-  const harness = editorHarness({ persisted, live, collab: true, fields: [{ field_key: "steps" }] });
-  await harness.ready();
-  await harness.click();
-  assert.equal(harness.calls.length, 1);
-  live[0].steps = '{"expected_signals":[],"input_signals":[{"value":3,"name":"speed"}]}';
-  await harness.click();
-  assert.equal(harness.calls.length, 1);
-});
-
-test("normalizing a prototype-like step property cannot ignore a dirty value", async () => {
-  const persisted = [{ id: 12, uuid: "row-12", version: 3, steps: '{"__proto__":{"value":1}}' }];
-  const live = [{ ...persisted[0], steps: '{"__proto__":{"value":2}}' }];
-  const harness = editorHarness({ persisted, live, collab: true, fields: [{ field_key: "steps" }] });
-  await harness.ready();
-  await harness.click();
-  assert.equal(harness.calls.length, 0);
-});
-
 test("draft status buttons keep one pressed filter and preserve list queries", async () => {
   const queries = [];
   const harness = draftHarness({ listAiDrafts: async (query) => { queries.push(plain(query)); return []; } });
@@ -931,17 +681,4 @@ test("draft form enforces source sizes and model integer identity", async () => 
   harness.get("lm-ai-gen-model-id").value = "1.5";
   await harness.click("lm-ai-gen-submit");
   assert.equal(harness.calls.length, 0);
-});
-
-test("matrix failed creation links a durable draft that can be recovered", async () => {
-  const harness = editorHarness({ create: async () => {
-    const error = new Error("queue unavailable");
-    error.details = { draft_id: 51 };
-    throw error;
-  } });
-  await harness.ready();
-  await harness.click();
-  assert.equal(harness.get("lm-ai-draft-link").href, "/lanmatrix/projects/1/ai?draft=51");
-  assert.equal(harness.get("lm-ai-draft-link").hidden, false);
-  assert.match(harness.get("lm-ai-status").textContent, /queue unavailable/);
 });

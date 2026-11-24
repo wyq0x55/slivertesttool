@@ -358,14 +358,15 @@ def test_project_navigation_and_settings_keep_their_type(env, app_ctx):
         if suffix not in ("/tasks",):
             assert ">项目绑定</a>" in html
             assert ">模型管理</a>" not in html
+            assert ">执行配置</a>" not in html
             assert ">回收站</a>" not in html
 
-    for suffix in ("/settings", "/fields", "/models", "/trash"):
+    for suffix in ("/settings", "/fields", "/models", "/exec", "/trash"):
         response = env.client.get(ut + suffix)
         assert response.status_code == 302
         assert response.headers["Location"] == ut + "/settings/binding"
 
-    for suffix in ("/members", "/fields", "/models", "/tasks", "/dashboard"):
+    for suffix in ("/members", "/fields", "/models", "/exec", "/tasks", "/dashboard"):
         response = env.client.get(silver + suffix)
         assert response.status_code == 200
         html = response.get_data(as_text=True)

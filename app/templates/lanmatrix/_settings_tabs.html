@@ -4,7 +4,7 @@
    The sidebar used to list all six project pages as siblings, which gave
    字段配置 (touched once a quarter) the same weight as 测试矩阵 (touched every
    day). The rail now carries three first-class destinations — 测试矩阵 /
-   任务与运行 / 设置 — and the five administrative pages live behind this tab
+   任务与运行 / 设置 — and the six administrative pages live behind this tab
    strip instead.
 
    These are real links, not JS panes: each page is a separate route with its
@@ -13,10 +13,10 @@
 --------------------------------------------------------------------------- #}
 {% macro settings_tabs(project_id, active) -%}
 {# Import with context: the strip reads `project` to pick the tab set. Both
-   project types share 成员 / 审计; the first slot is what differs — a Silver
-   project configures matrix fields and .sil models, a unit-test project its
-   ut-agent / Clang/LLVM binding. 回收站 holds deleted cases, fields and runs, none
-   of which a unit-test project has. #}
+   project types share 成员 / 审计; the first slots are what differ — a Silver
+   project configures matrix fields, .sil models and the run defaults
+   (执行配置), a unit-test project its ut-agent / Clang/LLVM binding. 回收站 holds
+   deleted cases, fields and runs, none of which a unit-test project has. #}
 {% set is_ut = project is defined and project and project.project_type == 'unit_test' %}
 {% if is_ut %}
 {% set head = [
@@ -25,7 +25,8 @@
 {% else %}
 {% set head = [
   ("fields",  "字段配置", "/lanmatrix/projects/%d/fields"  % project_id),
-  ("models",  "模型管理", "/lanmatrix/projects/%d/models"  % project_id)
+  ("models",  "模型管理", "/lanmatrix/projects/%d/models"  % project_id),
+  ("exec",    "执行配置", "/lanmatrix/projects/%d/exec"    % project_id)
 ] %}
 {% endif %}
 {% set items = head + [

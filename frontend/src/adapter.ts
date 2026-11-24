@@ -149,6 +149,7 @@ export interface MountOpts {
   onMoveRows?: ((ids: number[], targetId: number, place: "before" | "after") => any) | null;
   onImport?: (() => void) | null;
   onExport?: (() => void) | null;
+  onQueue?: (() => void) | null;
   onHelp?: (() => void) | null;
   onDispose?: (() => void) | null;
   // Fired when the user switches the active native worksheet tab.
@@ -227,6 +228,14 @@ interface SheetCtx {
 
 const HEADER_ROWS = 1; // row 0 is the header; data starts at row 1
 
+// Univer's core preset ships its own "快捷键" ribbon button
+// (ShortcutPanelMenuItemFactory, id base-ui.operation.toggle-shortcut-panel)
+// right after ours, and both open a shortcut panel. Our 帮助 dialog also carries
+// 其他操作方式, so the built-in one is redundant. Hiding it goes through the
+// preset's `menu` config: the facade menu object returned by createMenu only has
+// appendTo(), with no hide/unregister API.
+const HIDDEN_SHORTCUT_MENU_ID = "base-ui.operation.toggle-shortcut-panel";
+
 export class UniverGridAdapter {
   engine = "univer";
 
@@ -301,7 +310,10 @@ export class UniverGridAdapter {
     if (!this.host.style.height) this.host.style.height = "70vh";
     this.host.classList.add("lm-univer-host");
 
-    const presets: any[] = [UniverSheetsCorePreset({ container: this.host })];
+    const presets: any[] = [UniverSheetsCorePreset({
+      container: this.host,
+      menu: { [HIDDEN_SHORTCUT_MENU_ID]: { hidden: true } },
+    })];
     const locales: any[] = [UniverPresetSheetsCoreZhCN];
     if (typeof UniverSheetsDataValidationPreset === "function") {
       presets.push(UniverSheetsDataValidationPreset());
@@ -651,6 +663,21 @@ export class UniverGridAdapter {
           action: () => {
             if (this.suspended) return;
             this.opts?.onExport?.();
+          },
+        },
+        ["ribbon.start.others", "ribbon.data.others"]
+      );
+    }
+
+    if (opts.onQueue !== null) {
+      appendMenu(
+        {
+          id: "lm.menu.queue",
+          title: "队列测试",
+          tooltip: "把所选测试行加入测试队列（仅测试表）",
+          action: () => {
+            if (this.suspended) return;
+            this.opts?.onQueue?.();
           },
         },
         ["ribbon.start.others", "ribbon.data.others"]

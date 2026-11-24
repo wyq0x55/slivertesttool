@@ -180,6 +180,16 @@ class Project(db.Model):
     # preventing full-variable 1ms CSV disk blowups on large MCU models.
     default_signal_list = db.Column(db.Text, nullable=False, default="")
 
+    # Project-level 车规洁净室 switch: a queued run then forces a cold start of a
+    # brand-new Silver instance and destroys it afterwards, so no state leaks
+    # between cases (ASPICE SWE.4-SWE.6, zero cross-case pollution). It is stored
+    # per project rather than read off a checkbox because the switch lives on the
+    # 执行配置 settings page: a checkbox would forget the operator's choice between
+    # page visits and silently queue every later run with ``clean_room=false``.
+    default_clean_room = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=db.text("false"),
+    )
+
     # The single person reviews are routed to when no 区分 rule matched and the
     # row has no reviewer of its own. Deliberately ONE reviewer rather than a
     # pool: with a pool, every request is addressed to everybody and therefore
@@ -249,6 +259,7 @@ class Project(db.Model):
             "default_reviewer_id": self.default_reviewer_id,
             "review_routes": self.review_route_rules(),
             "default_signal_list": self.default_signal_list or "",
+            "default_clean_room": bool(self.default_clean_room),
             "member_count": member_count if member_count is not None else len(self.members),
             "created_at": _iso(self.created_at),
             "updated_at": _iso(self.updated_at),

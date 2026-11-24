@@ -102,32 +102,34 @@ async function loadApi() {
   return { LMApi: window.LMApi, calls };
 }
 
-test("editor.html renders topbar_actions and task templates prefer ESM lazy-load", () => {
+test("editor.html keeps the run controls in the toolbar and task templates prefer ESM lazy-load", () => {
   const editorHtml = readRepoFile("app/templates/lanmatrix/editor.html");
-  const blockStart = editorHtml.indexOf("{% block topbar_actions %}");
-  const blockEnd = editorHtml.indexOf("{% endblock %}", blockStart);
-  assert.ok(blockStart >= 0 && blockEnd > blockStart, "editor.html must define topbar_actions block");
-  const topbarBlock = editorHtml.slice(blockStart, blockEnd);
+  assert.doesNotMatch(editorHtml, /\{%\s*block\s+topbar_actions\s*%\}/,
+    "the editor page header is gone; execution settings live on 执行配置");
 
-  for (const id of [
-    "lm-topbar-actions",
-    "lm-topbar-ai",
-    "lm-ai-model-pop",
-    "lm-ai-generate",
-    "lm-ai-model-id",
-    "lm-ai-draft-link",
-    "lm-topbar-exec",
-    "lm-run-selected",
-  ]) {
-    assert.match(topbarBlock, new RegExp(`id="${id}"`), `topbar_actions must include #${id}`);
+  // Ribbon/fallback order: row tools, 导入, 导出, 队列测试, 帮助.
+  const toolbarStart = editorHtml.indexOf('id="lm-toolbar-right"');
+  assert.ok(toolbarStart >= 0, "editor.html must keep #lm-toolbar-right");
+  const toolbarEnd = editorHtml.indexOf('id="lm-sheet-tabs"', toolbarStart);
+  assert.ok(toolbarEnd > toolbarStart, "#lm-sheet-tabs follows the toolbar");
+  const toolbar = editorHtml.slice(toolbarStart, toolbarEnd);
+  const order = ["lm-rowtools", "lm-import", "lm-export", "lm-run-selected", "lm-help"]
+    .map((id) => ({ id, at: toolbar.indexOf(`id="${id}"`) }));
+  for (const entry of order) assert.ok(entry.at >= 0, `#lm-toolbar-right must include #${entry.id}`);
+  assert.deepEqual([...order].sort((a, b) => a.at - b.at).map((entry) => entry.id),
+    ["lm-rowtools", "lm-import", "lm-export", "lm-run-selected", "lm-help"],
+    "队列测试 must sit between 导出 and 帮助");
+
+  for (const movedId of ["lm-ai-generate", "lm-ai-model-id", "lm-ai-draft-link", "lm-topbar-ai", "lm-topbar-exec"]) {
+    assert.doesNotMatch(editorHtml, new RegExp(`id="${movedId}"`), `#${movedId} moved to the 执行配置 page`);
+  }
+  const execHtml = readRepoFile("app/templates/lanmatrix/exec_config.html");
+  for (const id of ["lm-ai-generate", "lm-ai-model-id", "lm-ai-row-ids", "lm-ai-draft-link", "lm-signal-list-btn", "lm-clean-room-toggle"]) {
+    assert.match(execHtml, new RegExp(`id="${id}"`), `执行配置 must include #${id}`);
   }
 
-  const contentSlice = editorHtml.slice(blockEnd);
-  for (const movedId of ["lm-ai-generate", "lm-ai-model-id", "lm-ai-draft-link", "lm-run-selected"]) {
-    assert.doesNotMatch(contentSlice, new RegExp(`id="${movedId}"`), `#${movedId} must remain unique in topbar_actions`);
-  }
-  assert.match(contentSlice, /class="[^"]*\blm-fallback-only\b[^"]*"[^>]*id="lm-proj-title"|id="lm-proj-title"[^>]*class="[^"]*\blm-fallback-only\b[^"]*"/);
-  assert.match(contentSlice, /class="[^"]*\blm-fallback-only\b[^"]*"[^>]*id="lm-grid-engine"|id="lm-grid-engine"[^>]*class="[^"]*\blm-fallback-only\b[^"]*"/);
+  assert.match(editorHtml, /class="[^"]*lm-fallback-only[^"]*"[^>]*id="lm-proj-title"|id="lm-proj-title"[^>]*class="[^"]*lm-fallback-only[^"]*"/);
+  assert.match(editorHtml, /class="[^"]*lm-fallback-only[^"]*"[^>]*id="lm-grid-engine"|id="lm-grid-engine"[^>]*class="[^"]*lm-fallback-only[^"]*"/);
 
   for (const tpl of [
     "app/templates/lanmatrix/home.html",
