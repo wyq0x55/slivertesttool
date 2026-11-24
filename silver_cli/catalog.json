@@ -2775,6 +2775,24 @@
    "form_fields": [],
    "method": "GET",
    "mutating": false,
+   "name": "ut_pipeline.budget_suggestion",
+   "path": "/api/v1/projects/<int:project_id>/ut/budget/suggestion",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [
+    "safety_factor",
+    "target_obligations"
+   ],
+   "response_kind": "json",
+   "summary": "Advice for the next batch's ceiling, read-only.\n\nNothing here is applied: an operator copies the number into the binding\nform, and the ordinary save path is what makes it reach a new batch."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
    "name": "ut_pipeline.compare_batches",
    "path": "/api/v1/projects/<int:project_id>/ut/batches/<int:batch_id>/compare",
    "path_params": {
