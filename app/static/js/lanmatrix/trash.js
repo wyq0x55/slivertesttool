@@ -201,6 +201,7 @@
     var info = root.querySelector("#lm-trash-info");
     var notice = root.querySelector("#lm-trash-notice");
     var retentionNote = root.querySelector("#lm-trash-retention");
+    var bulkBtn = root.querySelector("#lm-trash-purge-filtered");
     var last = { entries: [], total: 0 };
 
     function setInfo(text, cls) {
@@ -241,6 +242,12 @@
       }
       setInfo(summaryText(data));
       setNotice(entries);
+      if (bulkBtn) {
+        bulkBtn.disabled = !(last.total > 0);
+        bulkBtn.title = last.total
+          ? "将永久删除当前筛选下的 " + last.total + " 项"
+          : "";
+      }
       if (retentionNote && data && data.retention_days) {
         retentionNote.textContent =
           "删除的内容会保留 " + data.retention_days + " 天，之后自动彻底删除。";
@@ -321,6 +328,53 @@
       });
     }
 
+    /**
+     * Delete every entry the current kind filter matches.
+     *
+     * The listed page is only the newest slice of the bin, so a per-row action
+     * cannot clear a filter with thousands of entries. The confirmation names
+     * the real total (from the server's own count, not the visible rows) and,
+     * only when that page is truncated, says that unlisted entries go too.
+     */
+    function doBulkPurge() {
+      var kind = currentKind();
+      var total = last.total || 0;
+      if (!total) return null;
+      var label = kind ? KIND_LABEL[kind] : "全部类型";
+      var body = "此操作不可撤销，将立即永久删除当前筛选下的 " + total +
+        " 项（" + label + "）。";
+      if (last.truncated) {
+        body += "列表中未显示的其他条目也会一并删除。";
+      }
+      if (!kind || kind === "field") {
+        body += "被删除字段在所有测试用例中已填写的值也会一并删除。";
+      }
+      if (!kind || kind === "task") {
+        body += "被删除任务的日志与报告文件也会一并删除。";
+      }
+      return Promise.resolve(ui.confirm({
+        title: "彻底删除当前筛选的 " + total + " 项？",
+        body: body,
+        level: "critical",
+        requireText: String(total),
+        confirmText: "永久删除 " + total + " 项"
+      })).then(function (okd) {
+        if (!okd) return null;
+        if (bulkBtn) bulkBtn.disabled = true;
+        return api.purgeTrashFiltered(pid, kind).then(function (data) {
+          var n = (data && data.purged && data.purged.total) || 0;
+          // Reload first, then report: load() ends by rewriting the info line
+          // with the scope summary, which would swallow the outcome otherwise.
+          return load().then(function () {
+            setInfo(n ? "已彻底删除 " + n + " 项" : "当前筛选下已无条目");
+          });
+        }).catch(function (ex) {
+          setInfo("删除失败：" + (ex && ex.message), "lm-err");
+          if (bulkBtn) bulkBtn.disabled = !(last.total > 0);
+        });
+      });
+    }
+
     if (rows) {
       rows.addEventListener("click", function (ev) {
         var btn = ev.target.closest ? ev.target.closest("button[data-act]") : null;
@@ -334,6 +388,8 @@
         else doPurge(kind, id);
       });
     }
+
+    if (bulkBtn) bulkBtn.addEventListener("click", doBulkPurge);
 
     if (form) {
       form.addEventListener("submit", function (e) {
@@ -354,7 +410,8 @@
     }
 
     load();
-    return { load: load, apply: apply, restore: doRestore, purge: doPurge };
+    return { load: load, apply: apply, restore: doRestore, purge: doPurge,
+             purgeFiltered: doBulkPurge };
   }
 
   window.LMTrash = {

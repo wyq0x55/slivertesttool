@@ -300,6 +300,7 @@
     listTrash(id, params) { return request("GET", `/projects/${id}/trash`, { query: params }); },
     restoreFromTrash(id, kind, objId) { return request("POST", `/projects/${id}/trash/restore`, { body: { kind, id: objId } }); },
     purgeFromTrash(id, kind, objId) { return request("POST", `/projects/${id}/trash/purge`, { body: { kind, id: objId } }); },
+    purgeTrashFiltered(id, kind) { return request("POST", `/projects/${id}/trash/purge-filtered`, { body: { kind: kind || null } }); },
 
     health() { return request("GET", "/health"); },
 

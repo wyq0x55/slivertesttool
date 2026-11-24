@@ -32,6 +32,13 @@
         <option value="task">任务</option>
       </select>
     </div>
+    {% if can_purge %}
+    <div class="lm-filter lm-filter-actions">
+      <!-- Deletes the whole current filter, not just the listed page: the bin
+           shows 100 newest entries out of however many the project threw away. -->
+      <button type="button" class="btn btn-danger" id="lm-trash-purge-filtered" disabled>彻底删除筛选结果</button>
+    </div>
+    {% endif %}
   </form>
 
   <p id="lm-trash-info" class="lm-muted" role="status" aria-live="polite">加载中…</p>

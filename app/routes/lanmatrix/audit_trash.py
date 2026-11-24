@@ -176,3 +176,15 @@ def purge_from_trash(project_id):
                "remaining": trash_service.count_trash(project_id)})
 
 
+@bp.post("/projects/<int:project_id>/trash/purge-filtered")
+@login_required
+def purge_trash_filtered(project_id):
+    """Delete everything the bin's current kind filter matches."""
+    project, _role = _project_and_role(project_id, "trash.purge")
+    body = request.get_json(silent=True) or request.form or {}
+    kind = str(body.get("kind") or "").strip() or None
+    counts = trash_service.purge_filtered(current_user(), project, kind)
+    return ok({"purged": counts,
+               "remaining": trash_service.count_trash(project_id)})
+
+

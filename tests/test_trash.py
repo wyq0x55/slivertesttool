@@ -115,6 +115,9 @@ class FakeQuery:
     def _matching(self):
         return [r for r in self._rows if all(p(r) for p in self._preds)]
 
+    def with_for_update(self, *a, **k):
+        return self
+
     def all(self):
         return self._matching()
 
@@ -185,6 +188,7 @@ class TrashBase(unittest.TestCase):
         FakeDb.session = self.session
 
         self.purged_fields, self.purged_tasks = [], []
+        self.removed_artifacts = []
         self.restored = []
 
         class FakeFields:
@@ -225,6 +229,13 @@ class TrashBase(unittest.TestCase):
                 task.deleted_at = None
                 self.restored.append(("task", task))
                 return task
+
+            @staticmethod
+            def remove_task_artifacts(task):
+                # Record how many commits had landed: files must not move
+                # until the row delete is durable.
+                self.removed_artifacts.append(
+                    (getattr(task, "task_key", None), self.session.commits))
 
         ts.audit = FakeAudit
         ts.db = FakeDb
@@ -746,6 +757,188 @@ class TestPurge(TrashBase):
         with self.assertRaises(ServiceError) as cm:
             ts.purge(User(), Project(), "wombat", 1)
         self.assertEqual(cm.exception.code, "VALIDATION_ERROR")
+
+
+class TestPurgeFiltered(TrashBase):
+    """Clearing the whole filter in one action, not one row at a time."""
+
+    def test_without_a_kind_every_kind_is_purged(self):
+        self.items[:] = [item(1, deleted_at=aware(2025, 1, 1)),
+                         item(2, deleted_at=aware(2025, 1, 2))]
+        self.fields[:] = [field(3, deleted_at=aware(2025, 1, 1))]
+        self.tasks[:] = [task("T001", deleted_at=aware(2025, 1, 1))]
+        self.install()
+
+        counts = ts.purge_filtered(User(), Project())
+
+        self.assertEqual(counts, {"items": 2, "fields": 1, "tasks": 1,
+                                  "total": 4})
+        self.assertEqual(
+            [r.id for r in self.session.deleted if getattr(r, "case_id", None)],
+            [1, 2])
+        self.assertEqual([x[0].field_key for x in self.purged_fields], ["f3"])
+        self.assertEqual(self.purged_tasks, [])
+        self.assertEqual([key for key, _ in self.removed_artifacts], ["T001"])
+
+    def test_a_kind_purges_only_that_kind(self):
+        self.items[:] = [item(1, deleted_at=aware(2025, 1, 1))]
+        self.fields[:] = [field(3, deleted_at=aware(2025, 1, 1))]
+        self.tasks[:] = [task("T001", deleted_at=aware(2025, 1, 1))]
+        self.install()
+
+        counts = ts.purge_filtered(User(), Project(), "item")
+
+        self.assertEqual(counts, {"items": 1, "fields": 0, "tasks": 0,
+                                  "total": 1})
+        self.assertEqual(self.purged_fields, [])
+        self.assertEqual(self.purged_tasks, [])
+
+    def test_live_entries_are_left_alone(self):
+        """The bin filter must never reach something that is not in the bin."""
+        self.items[:] = [item(1), item(2, deleted_at=aware(2025, 1, 1))]
+        self.tasks[:] = [task("T001")]
+        self.install()
+
+        counts = ts.purge_filtered(User(), Project())
+
+        self.assertEqual(counts["items"], 1)
+        self.assertEqual(counts["tasks"], 0)
+        self.assertEqual([r.id for r in self.session.deleted], [2])
+        self.assertEqual(self.purged_tasks, [])
+
+    def test_other_projects_are_untouched(self):
+        self.items[:] = [item(1, deleted_at=aware(2025, 1, 1)),
+                         item(2, project_id=2, deleted_at=aware(2025, 1, 1))]
+        self.install()
+
+        counts = ts.purge_filtered(User(), Project(1))
+
+        self.assertEqual(counts["items"], 1)
+        self.assertEqual([r.id for r in self.session.deleted], [1])
+
+    def test_the_batch_is_one_transaction(self):
+        """One commit, and the per-kind services do not commit on their own."""
+        self.fields[:] = [field(3, deleted_at=aware(2025, 1, 1))]
+        self.tasks[:] = [task("T001", deleted_at=aware(2025, 1, 1))]
+        self.install()
+
+        ts.purge_filtered(User(), Project())
+
+        self.assertEqual(self.session.commits, 1)
+        self.assertEqual([c for _, c in self.purged_fields], [False])
+        # The row delete is this session's job; files move only once it has
+        # committed, so a rollback cannot strand a restorable task.
+        self.assertEqual(self.purged_tasks, [])
+        self.assertEqual(self.removed_artifacts, [("T001", 1)])
+
+    def test_each_entry_keeps_its_audit_record(self):
+        self.items[:] = [item(1, deleted_at=aware(2025, 1, 1))]
+        self.tasks[:] = [task("T001", deleted_at=aware(2025, 1, 1))]
+        self.install()
+
+        ts.purge_filtered(User(), Project())
+
+        item_records = [kw for a, kw in self.audit_calls if a == "item.purge"]
+        self.assertEqual([r["old_value"]["case_id"] for r in item_records],
+                         ["TC-001"])
+        task_records = [kw for a, kw in self.audit_calls if a == "task.purge"]
+        self.assertEqual([r["object_id"] for r in task_records], ["T001"])
+        summary = [kw for a, kw in self.audit_calls
+                   if a == "trash.purge_filtered"]
+        self.assertEqual(len(summary), 1)
+        self.assertEqual(summary[0]["new_value"]["total"], 2)
+        self.assertIsNone(summary[0]["new_value"]["kind"])
+
+    def test_an_empty_filter_writes_no_audit_record(self):
+        self.items[:] = [item(1)]
+        self.install()
+
+        counts = ts.purge_filtered(User(), Project())
+
+        self.assertEqual(counts["total"], 0)
+        self.assertEqual(self.session.deleted, [])
+        self.assertEqual(self.audit_calls, [])
+
+    def test_rejects_unknown_kind(self):
+        with self.assertRaises(ServiceError) as cm:
+            ts.purge_filtered(User(), Project(), "wombat")
+        self.assertEqual(cm.exception.code, "VALIDATION_ERROR")
+        self.assertEqual(self.session.deleted, [])
+
+    def test_covers_entries_beyond_the_listed_page(self):
+        """The service works on the filter, not on what the page rendered."""
+        self.items[:] = [item(i, deleted_at=aware(2025, 1, 1))
+                         for i in range(1, ts.DEFAULT_LIMIT + 51)]
+        self.install()
+
+        counts = ts.purge_filtered(User(), Project(), "item")
+
+        self.assertEqual(counts["items"], ts.DEFAULT_LIMIT + 50)
+
+    def test_a_failure_before_commit_does_not_touch_task_files(self):
+        self.tasks[:] = [task("T001", deleted_at=aware(2025, 1, 1))]
+        self.fields[:] = [field(3, deleted_at=aware(2025, 1, 1))]
+        self.install()
+
+        def boom(user, project_id, fdef, commit=True):
+            raise ServiceError("字段还被引用", code="CONFLICT")
+
+        ts.fields_service.purge_field = staticmethod(boom)
+
+        with self.assertRaises(ServiceError):
+            ts.purge_filtered(User(), Project())
+
+        self.assertEqual(self.session.commits, 0)
+        self.assertEqual(self.removed_artifacts, [])
+
+    def test_a_file_error_after_commit_still_reports_the_purge(self):
+        """Orphan files are logged; the rows are already gone, so this is not
+        a failed delete the UI should offer to retry as if nothing happened."""
+        self.tasks[:] = [task("T001", deleted_at=aware(2025, 1, 1)),
+                         task("T002", deleted_at=aware(2025, 1, 1))]
+        self.install()
+
+        def boom(task):
+            self.removed_artifacts.append(
+                (task.task_key, self.session.commits))
+            if task.task_key == "T002":
+                raise OSError("file in use")
+
+        ts.task_service.remove_task_artifacts = staticmethod(boom)
+
+        counts = ts.purge_filtered(User(), Project(), "task")
+
+        self.assertEqual(counts["tasks"], 2)
+        self.assertEqual(self.session.commits, 1)
+        self.assertEqual([key for key, n in self.removed_artifacts],
+                         ["T001", "T002"])
+        self.assertTrue(all(n == 1 for _, n in self.removed_artifacts))
+
+    def test_a_row_cleared_after_the_query_is_not_deleted(self):
+        row = item(1, deleted_at=aware(2025, 1, 1))
+        self.items[:] = [row]
+        self.install()
+        # with_for_update().all() is what purge_filtered calls. Simulate a
+        # restore that beat the lock: the row comes back with deleted_at
+        # cleared, and the delete (which matches on the primary key) must not
+        # take it anyway.
+        original = ts.TestItemRow.query.__class__.all
+
+        def wrapped(query_self):
+            found = original(query_self)
+            for r in found:
+                r.deleted_at = None
+            return found
+
+        ts.TestItemRow.query.__class__.all = wrapped
+        try:
+            counts = ts.purge_filtered(User(), Project(), "item")
+        finally:
+            ts.TestItemRow.query.__class__.all = original
+
+        self.assertEqual(counts["items"], 0)
+        self.assertEqual(self.session.deleted, [])
+        self.assertEqual(self.audit_calls, [])
 
 
 # --------------------------------------------------------------------------- #
