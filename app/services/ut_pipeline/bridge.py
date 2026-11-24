@@ -281,6 +281,9 @@ class UtAgentBridge:
 
     # ut-agent's own proposal default; triage is deterministic and needs far less.
     WITNESS_TIMEOUT = 900
+    # One confirmation compiles and runs a single-case harness per candidate, so
+    # it gets more than a plain bridge call and less than a generation.
+    WITNESS_CONFIRM_TIMEOUT = 120
 
     def _witness(self, args: list[str], *, timeout: int,
                  api_key: str | None = None) -> dict[str, Any]:
@@ -352,6 +355,25 @@ class UtAgentBridge:
         if max_tokens is not None:
             args += ["--max-tokens", str(max_tokens)]
         return self._witness(args, timeout=timeout or self.WITNESS_TIMEOUT, api_key=api_key)
+
+    def confirm(self, *, manifest: str, ir: str, candidates: str, out: Path,
+                clang: str, llvm_cov: str, llvm_profdata: str,
+                profile_runtime: str = "", write: bool = False,
+                timeout: float | None = None) -> dict[str, Any]:
+        """Replay candidates through the FunctionIR matcher and a host harness.
+
+        The caller decides whether ``--write`` is allowed; with it, ut-agent
+        merges only the confirmed entries into the ledger the manifest declares.
+        """
+        args = ["confirm", *self._manifest(manifest), "--ir", str(ir),
+                "--candidates", str(candidates), "--out", str(out),
+                "--clang", clang, "--llvm-cov", llvm_cov, "--llvm-profdata", llvm_profdata,
+                "--timeout", str(timeout or self.WITNESS_CONFIRM_TIMEOUT)]
+        if profile_runtime:
+            args += ["--profile-runtime", str(profile_runtime)]
+        if write:
+            args += ["--write"]
+        return self._witness(args, timeout=int(timeout or self.WITNESS_CONFIRM_TIMEOUT))
 
     @staticmethod
     def _host_args(ir_json: Path, intents: Path, reference: Path,

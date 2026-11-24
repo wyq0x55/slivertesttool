@@ -1,32 +1,46 @@
-"""Run ut-agent's witness triage and proposal for a job, on operator request.
+"""Run ut-agent's witness triage, proposal and confirmation for a job.
 
-Both steps read the generation inputs silver already stores and write only to a
-new directory under the batch.  They do not change the job's state, do not
-write the manifest or the witness ledger, and never produce expected values:
-the output is a candidate list a person still has to confirm.
+Every step is reached only from an explicit operator action.  Triage and
+proposal read the generation inputs silver already stores and write only to a
+new directory under the batch; they do not change the job's state, do not write
+the manifest, and never produce expected values.  Confirmation replays the
+candidates through the host toolchain the batch froze; it may write the project
+ledger only when the operator asks for it and the manifest declares one, and it
+never changes this batch's verdict — the ledger binds the *next* batch.
 
-The model is called only from :func:`propose`, which is reachable only from an
-explicit operator action; nothing in the batch lifecycle calls it.
+The model is called only from :func:`propose`; nothing in the batch lifecycle
+calls it.
 """
 
 from __future__ import annotations
 
 import copy
 import hashlib
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
+
+from flask import current_app
 
 from ...extensions import db
 from ...models import UtBatch, UtJob
 from ..ai import config as ai_config
 from ..lanmatrix import audit
 from ..lanmatrix.errors import ServiceError
-from . import handoff
+from . import handoff, toolchains
 from .bridge import BridgeError, UtAgentBridge
 
 _LOOPBACK = {"localhost", "127.0.0.1", "::1"}
 RUNNING = "RUNNING"
+# A proposal produces candidates; anything else has nothing to confirm.
+CANDIDATES = "UNCONFIRMED_CANDIDATES"
+# Confirmation runs on the host and only observes a single-case harness, so it
+# never becomes target evidence.  These keys reuse the vocabulary host.py sets
+# on every host execution.
+HOST_EVIDENCE = {"evidence_source": "HOST_EXECUTION",
+                 "counts_as_target_evidence": False,
+                 "delivery_validated": False}
 
 
 def _iso_now() -> str:
@@ -257,12 +271,92 @@ def _model() -> tuple[str, str, str]:
     return base_url, model, api_key
 
 
-def check(project_id: int, job_id: int, step: str) -> None:
+def _require_proposal(job: UtJob) -> dict:
+    """The finished proposal whose candidates a confirmation replays."""
+    section = handoff.document(job).get("proposal") or {}
+    if section.get("status") != CANDIDATES:
+        raise ServiceError("该作业还没有可确认的候选（需要先完成提议并得到候选）",
+                           code="VALIDATION_ERROR")
+    if not Path(str(section.get("candidates") or "")).is_file():
+        raise ServiceError("提议产出的候选文件已不存在，请重新提议后再确认",
+                           code="VALIDATION_ERROR")
+    return section
+
+
+def _toolchain(job: UtJob) -> dict:
+    """The host toolchain this batch froze, checked before anything runs."""
+    batch = UtBatch.query.filter_by(id=job.batch_id).one_or_none()
+    config = dict((batch.config_snapshot or {}) if batch is not None else {})
+    try:
+        toolchains.verify_execution_toolchain(
+            config, project_id=job.project_id, config=current_app.config)
+    except ServiceError as exc:
+        raise ServiceError(f"批次冻结的宿主工具链不可用：{exc}", code="VALIDATION_ERROR") from exc
+    return {"clang": str(config.get("host_clang") or "clang"),
+            "llvm_cov": str(config.get("host_llvm_cov") or "llvm-cov"),
+            "llvm_profdata": str(config.get("host_llvm_profdata") or "llvm-profdata"),
+            "profile_runtime": str(config.get("host_profile_runtime") or "")}
+
+
+def _ledger_target(manifest: str) -> Path | None:
+    """The ledger ``--write`` would touch, when silver can name it without guessing.
+
+    ut-agent owns the authoritative check and refuses an undeclared ledger
+    before it compiles anything.  Silver only reads an absolute manifest path so
+    the operator sees the reason on the page; a relative path is resolved by the
+    tool against its own working directory, which silver does not presume.
+    """
+    path = Path(manifest)
+    if not path.is_absolute():
+        return None
+    try:
+        document = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as exc:
+        raise ServiceError(f"无法读取项目清单，不能确认写入：{exc}",
+                           code="VALIDATION_ERROR") from exc
+    if not isinstance(document, dict):
+        raise ServiceError("项目清单必须是 JSON 对象，不能确认写入", code="VALIDATION_ERROR")
+    if document.get("delivered") is True:
+        raise ServiceError("项目清单已声明交付（delivered），台账已锁定；请先建立新的工作批次",
+                           code="VALIDATION_ERROR")
+    declared = document.get("witness_ledger")
+    relative = declared.get("path") if isinstance(declared, dict) else None
+    if not isinstance(relative, str) or not relative.strip():
+        raise ServiceError("确认写入需要项目清单声明 witness_ledger.path；"
+                           "请先在清单中声明台账文件，或取消写入后再确认",
+                           code="VALIDATION_ERROR")
+    if Path(relative.strip()).is_absolute():
+        raise ServiceError("witness_ledger.path 必须相对项目清单所在目录", code="VALIDATION_ERROR")
+    return path.parent / relative.strip()
+
+
+def _reject_concurrent_writer(job: UtJob) -> None:
+    """Refuse a second ledger write of the same project while one is running."""
+    others = UtJob.query.filter(UtJob.project_id == job.project_id,
+                                UtJob.id != job.id,
+                                UtJob.witness.isnot(None)).all()
+    for other in others:
+        section = (handoff.document(other) or {}).get("confirm") or {}
+        if section.get("status") == RUNNING and section.get("write"):
+            raise ServiceError(f"作业 {other.id} 的确认正在写入项目台账，请等待其完成",
+                               code="CONFLICT")
+
+
+def check(project_id: int, job_id: int, step: str, *, write: bool = False) -> None:
     """Reject a request the worker would only fail, before it is queued."""
     job = _job(project_id, job_id)
     if step == "triage":
         _reject_running(job, "triage", "分拣")
         _inputs(job)
+        return
+    if step == "confirm":
+        _reject_running(job, "confirm", "确认")
+        _require_proposal(job)
+        manifest, _ir, _suite = _inputs(job)
+        _toolchain(job)
+        if write:
+            _ledger_target(manifest)
+            _reject_concurrent_writer(job)
         return
     _reject_running(job, "proposal", "提议")
     _require_triage(job)
@@ -315,5 +409,74 @@ def propose(project_id: int, job_id: int, *, actor_id: int | None = None,
     audit.record("ut.witness.propose", actor_id=actor_id, object_type="ut_job",
                  object_id=job.id, project_id=job.project_id,
                  new_value={"run": run, "status": document["status"], "model": model})
+    db.session.commit()
+    return document
+
+
+def _ledger_sha(path: Path | None) -> str | None:
+    return _sha256(path) if path is not None else None
+
+
+def confirm(project_id: int, job_id: int, *, actor_id: int | None = None,
+            write: bool = False, bridge: UtAgentBridge | None = None) -> dict:
+    """Replay the proposed candidates on the host toolchain this batch froze.
+
+    The record states what happened; it does not touch the job's verdict, the
+    batch status or the candidates, so the current batch keeps its conclusion.
+    """
+    job = _job(project_id, job_id)
+    _reject_running(job, "confirm", "确认")
+    proposal = _require_proposal(job)
+    manifest, ir, _suite = _inputs(job)
+    candidates = Path(str(proposal.get("candidates") or ""))
+    toolchain = _toolchain(job)
+    ledger = None
+    if write:
+        ledger = _ledger_target(manifest)
+        _reject_concurrent_writer(job)
+    run = int(proposal.get("run") or 0)
+    out = _next_subrun(_witness_root(job) / f"run{run}", "confirm")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    previous = _ledger_sha(ledger)
+    record = {
+        "status": RUNNING, "out": str(out), "run": run, "write": bool(write),
+        "ledger": str(ledger) if ledger is not None else None,
+        "previous_sha256": previous, "toolchain": toolchain, **HOST_EVIDENCE,
+        "started_at": _iso_now(), "actor_id": actor_id,
+    }
+    _store(job, "confirm", record)
+    db.session.commit()
+    result = _call("确认", lambda: _bridge(bridge).confirm(
+        manifest=manifest, ir=ir, candidates=str(candidates), out=out,
+        clang=toolchain["clang"], llvm_cov=toolchain["llvm_cov"],
+        llvm_profdata=toolchain["llvm_profdata"],
+        profile_runtime=toolchain["profile_runtime"], write=write),
+        on_failure=lambda failure: _store(job, "confirm", {
+            **record, "status": "FAILED", "error": str(failure),
+            "finished_at": _iso_now()}))
+    if result is None:
+        db.session.commit()
+        return handoff.document(job)["confirm"]
+    confirmed = int(result.get("confirmed") or 0)
+    report = Path(str(result.get("confirm_report") or out / "confirm-report.json"))
+    # ``ledger`` in ut-agent's summary means the file was actually written; an
+    # empty entry set leaves it out even though --write was passed.
+    written = Path(str(result["ledger"])) if result.get("ledger") else None
+    document = {
+        **record,
+        "status": "CONFIRMED" if confirmed else "NO_ENTRIES",
+        "confirmed": confirmed,
+        "confirm_report": str(report),
+        "report_sha256": _sha256(report),
+        "write": written is not None,
+        "ledger": str(written) if written is not None else record["ledger"],
+        "ledger_sha256": _ledger_sha(written),
+        "finished_at": _iso_now(),
+    }
+    _store(job, "confirm", document)
+    audit.record("ut.witness.confirm", actor_id=actor_id, object_type="ut_job",
+                 object_id=job.id, project_id=job.project_id,
+                 new_value={"run": run, "status": document["status"],
+                            "confirmed": confirmed, "write": document["write"]})
     db.session.commit()
     return document

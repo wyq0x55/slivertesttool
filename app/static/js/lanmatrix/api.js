@@ -517,6 +517,11 @@
     utWitnessPropose(pid, jobId) {
       return request("POST", `/projects/${pid}/ut/jobs/${jobId}/witness/propose`, { body: {} });
     },
+    utWitnessConfirm(pid, jobId, write) {
+      return request("POST", `/projects/${pid}/ut/jobs/${jobId}/witness/confirm`, {
+        body: { write: Boolean(write) },
+      });
+    },
   };
 
   global.LMApi = LMApi;

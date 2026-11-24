@@ -93,6 +93,36 @@ def test_propose_omits_the_token_limit_when_undeclared(tmp_path, monkeypatch):
     assert "--max-tokens" not in seen["command"]
 
 
+def test_confirm_argv_names_the_toolchain_and_the_write_choice(tmp_path, monkeypatch):
+    seen = _completion(_bridge(tmp_path), monkeypatch, stdout=b'{"confirmed": 1}')
+
+    _bridge(tmp_path).confirm(
+        manifest="m.json", ir="i.json", candidates="c.json", out=tmp_path / "o",
+        clang="C:/clang.exe", llvm_cov="C:/llvm-cov.exe", llvm_profdata="C:/profdata.exe",
+        profile_runtime="C:/runtime.exe", write=True)
+
+    command = seen["command"]
+    assert command[:5] == ["py", "-m", "ut_agent", "witness", "confirm"]
+    assert command[command.index("--clang") + 1] == "C:/clang.exe"
+    assert command[command.index("--llvm-cov") + 1] == "C:/llvm-cov.exe"
+    assert command[command.index("--llvm-profdata") + 1] == "C:/profdata.exe"
+    assert command[command.index("--profile-runtime") + 1] == "C:/runtime.exe"
+    assert "--write" in command and "--config-root" not in command
+    assert seen["timeout"] == UtAgentBridge.WITNESS_CONFIRM_TIMEOUT
+
+
+def test_confirm_reads_alone_by_default(tmp_path, monkeypatch):
+    seen = _completion(_bridge(tmp_path), monkeypatch, stdout=b'{"confirmed": 0}')
+
+    _bridge(tmp_path).confirm(
+        manifest="m", ir="i", candidates="c", out="o",
+        clang="clang", llvm_cov="llvm-cov", llvm_profdata="llvm-profdata")
+
+    # Reading alone never writes the ledger, and no profile runtime is invented.
+    assert "--write" not in seen["command"]
+    assert "--profile-runtime" not in seen["command"]
+
+
 def test_a_proposal_carries_the_key_in_the_environment_not_argv(tmp_path, monkeypatch):
     monkeypatch.setenv(WITNESS_API_KEY_ENV, "not-the-key")
     seen = _completion(_bridge(tmp_path), monkeypatch, stdout=b'{"status": "PROPOSABLE"}')

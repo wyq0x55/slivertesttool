@@ -106,6 +106,27 @@ proposal keeps the earlier candidates - and a failed run is recorded with its
 message rather than left running. The model key reaches the child in ut-agent's
 own environment variable, never on a command line.
 
+Confirmation (`POST /jobs/<id>/witness/confirm`, body `{"write": false}`) replays
+the proposal's candidates with `witness confirm`, which compiles each candidate
+and runs its single-case harness through the host toolchain **this batch froze**
+(`host_clang`, `host_llvm_cov`, `host_llvm_profdata`, `host_profile_runtime`).
+It adds no toolchain and no second execution environment. It needs a finished
+proposal with `UNCONFIRMED_CANDIDATES` and reuses that proposal's `run<N>`, so
+its evidence lands beside the candidates in `run<N>/confirm`. With
+`--write` it also merges the confirmed entries into the project ledger, but only
+when the ProjectManifest itself declares `witness_ledger.path`, has not declared
+`delivered`, and no other job of the project is writing the ledger at the same
+time; silver refuses those cases before anything compiles when the declared
+manifest path is absolute, and a relative one is left to ut-agent, which refuses
+the same cases itself. The platform exposes no `witness synthesize` entry, so a
+candidate can only come from an operator's proposal.
+Whatever happens, the record keeps `evidence_source=HOST_EXECUTION`,
+`counts_as_target_evidence=false` and `delivery_validated=false`: host execution
+observes a harness, it is not target or delivery evidence. Confirmation does not
+change the job's verdict, the batch status or the candidates, and a ledger it
+writes binds only the *next* batch whose generation reads it - the current batch
+keeps the conclusion it already reached.
+
 ## Job lifecycle
 
 Each attempt (`GENERATOR`, `LLM`, `HUMAN`, `HOST_DERIVED`) retains its exact CSV,

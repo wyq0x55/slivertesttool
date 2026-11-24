@@ -287,7 +287,7 @@ def test_propose_records_candidates_and_the_operator(workflow_env):
 
     witness = _frozen(env, job_id)
     proposal = witness["proposal"]
-    assert proposal["status"] == "PROPOSABLE" and proposal["source"] == "PROPOSE"
+    assert proposal["status"] == "UNCONFIRMED_CANDIDATES" and proposal["source"] == "PROPOSE"
     assert proposal["proposable"] == 2 and proposal["model"] == "qwen3.8-27b-gsq"
     assert proposal["run"] == 1 and proposal["actor_id"] == 1
     assert Path(proposal["candidates"]).name == "candidates.json"
