@@ -440,6 +440,9 @@
 
     // --- Unit-test pipeline (ut-agent → LLVM execute → check → LLM → review) --- //
     utGetConfig(pid, query) { return request("GET", `/projects/${pid}/ut/config`, { query }); },
+    utBudgetSuggestion(pid, query) {
+      return request("GET", `/projects/${pid}/ut/budget/suggestion`, { query });
+    },
     utManifestOptions(pid) { return request("GET", `/projects/${pid}/ut/manifest/options`); },
     utServerPaths(pid, kind, path) {
       return request("GET", `/projects/${pid}/ut/server-paths`, { query: { kind: kind, path: path || "" } });
