@@ -88,77 +88,7 @@
    :has so only the editor page is locked; other pages scroll normally. */
 html:has(.lm-editor), body:has(.lm-editor) { height: 100%; overflow: hidden; }
 
-/* ── Editor actions in global topbar (base_lm.html {% block topbar_actions %}) ── */
-.lm-topbar-actions { display: inline-flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
-.lm-topbar-ai,
-.lm-topbar-exec { display: inline-flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
-.lm-topbar-actions[hidden],
-.lm-topbar-ai[hidden],
-.lm-topbar-exec[hidden],
-.lm-topbar-actions [hidden] { display: none !important; }
-
-.lm-ai-combo { display: inline-flex; align-items: center; }
-.lm-ai-combo > #lm-ai-generate {
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-}
-.lm-ai-model-pop { position: relative; display: inline-flex; align-items: center; }
-.lm-ai-model-pop > summary { list-style: none; cursor: pointer; user-select: none; }
-.lm-ai-model-pop > summary::-webkit-details-marker { display: none; }
-.lm-ai-model-pop > summary.lm-ai-model-trigger {
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
-  margin-left: -1px;
-  border: 1px solid var(--border);
-  padding-inline: 8px;
-  white-space: nowrap;
-}
-.lm-ai-model-pop[open] > summary.lm-ai-model-trigger,
-.lm-ai-model-pop > summary.lm-ai-model-trigger.is-active {
-  background: var(--brand-soft);
-  color: var(--brand-text);
-  border-color: var(--brand);
-}
-.lm-ai-model-card {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 60;
-  min-width: 210px;
-  padding: 10px 12px;
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(16, 25, 43, .18);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-[data-theme="dark"] .lm-ai-model-card {
-  box-shadow: 0 8px 24px rgba(0, 0, 0, .48);
-}
-.lm-ai-model-card label {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.4;
-  white-space: nowrap;
-}
-.lm-ai-model-card input[type=number] {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 5px 8px;
-  font-size: 13px;
-  color: var(--text);
-  background: var(--surface-2, var(--surface));
-  border: 1px solid var(--border-strong, var(--border));
-  border-radius: 6px;
-}
-.lm-ai-model-card input[type=number]:focus {
-  outline: 2px solid var(--brand);
-  outline-offset: -1px;
-}
+/* Status line of the AI procedure generator on the 执行配置 settings page. */
 #lm-ai-status { margin: 0; padding: 4px 12px; font-size: 12px; }
 #lm-ai-status:empty { display: none; }
 

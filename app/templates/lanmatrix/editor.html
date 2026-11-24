@@ -2,27 +2,6 @@
 {% from "lanmatrix/_crumb.html" import project_crumb %}
 {% block title %}矩阵编辑{% endblock %}
 {% block crumb %}{{ project_crumb(project_id, "矩阵编辑") }}{% endblock %}
-{% block topbar_actions %}
-<div class="lm-topbar-actions" id="lm-topbar-actions">
-  <div class="lm-topbar-ai" id="lm-topbar-ai" hidden>
-    <div class="lm-ai-combo">
-      <button class="btn btn-sm" id="lm-ai-generate" type="button" disabled
-        title="选择已保存测试行，生成手顺草稿供人工审核">AI 生成手顺</button>
-      <details class="lm-ai-model-pop" id="lm-ai-model-pop">
-        <summary class="btn btn-sm ghost lm-ai-model-trigger" title="可选：指定已保存模型 ID（默认使用项目当前模型）" aria-label="AI 模型配置">模型</summary>
-        <div class="lm-ai-model-card">
-          <label class="lm-muted" for="lm-ai-model-id">指定模型 ID（可选）</label>
-          <input id="lm-ai-model-id" type="number" min="1" step="1" placeholder="当前默认" aria-label="AI 使用的已保存模型 ID（可选）">
-        </div>
-      </details>
-    </div>
-    <a class="btn btn-sm" id="lm-ai-draft-link" hidden>查看草稿</a>
-  </div>
-  <div class="lm-topbar-exec" id="lm-topbar-exec" hidden>
-    <button class="btn btn-sm btn-primary" id="lm-run-selected" type="button" hidden>队列测试</button>
-  </div>
-</div>
-{% endblock %}
 {% block content %}
 {# The editor is a full-bleed grid, so the page's top-level heading is visually
    hidden: it exists for heading navigation (WCAG 1.3.1 / 2.4.6), not the eye.
@@ -49,10 +28,11 @@
       <!-- Fallback row-structure + file controls for FallbackGrid (Univer exposes
            these natively via row-header menus, drag-reorder, and Ribbon buttons). -->
       <span class="lm-rowtools" id="lm-rowtools" role="group" aria-label="行操作"></span>
-      <button class="btn btn-sm" id="lm-help" type="button" title="快捷键与操作帮助（快捷键 ?）"
-              aria-label="快捷键与操作帮助">?</button>
       <button class="btn" id="lm-import" type="button">导入</button>
       <button class="btn" id="lm-export" type="button">导出</button>
+      <button class="btn" id="lm-run-selected" type="button">队列测试</button>
+      <button class="btn btn-sm" id="lm-help" type="button" title="快捷键与操作帮助（快捷键 ?）"
+              aria-label="快捷键与操作帮助">?</button>
     </div>
   </div>
 
@@ -60,8 +40,6 @@
        lacks native worksheet tabs (stale/builtin engine), so test/const/lib stay
        reachable. Hidden when native Univer tabs are available. -->
   <div id="lm-sheet-tabs" class="lm-sheet-tabs" hidden></div>
-
-  <p id="lm-ai-status" class="lm-muted" role="status" aria-live="polite"></p>
 
   <div id="lm-grid-host" class="lm-grid-host"></div>
 

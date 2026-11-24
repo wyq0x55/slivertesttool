@@ -248,6 +248,7 @@ function createAdapterHarness(optsOverrides = {}, itemsInput = null) {
     moveRows: [],
     imports: 0,
     exports: 0,
+    queues: 0,
     helps: 0,
     disposes: 0,
   };
@@ -268,6 +269,7 @@ function createAdapterHarness(optsOverrides = {}, itemsInput = null) {
       onMoveRows: (ids, targetId, place) => records.moveRows.push({ ids: Array.from(ids), targetId, place }),
       onImport: () => { records.imports++; },
       onExport: () => { records.exports++; },
+      onQueue: () => { records.queues++; },
       onHelp: () => { records.helps++; },
       onDispose: () => { records.disposes++; },
     },
@@ -582,6 +584,11 @@ test("createMenu registers Ribbon/ContextMenu entries, _runAtRendered handles al
   const menuById = Object.fromEntries(h.createdMenus.map((m) => [m.spec.id, m]));
   assert.deepEqual(toHostRealm(menuById["lm.menu.import"].targets), ["ribbon.start.others", "ribbon.data.others"]);
   assert.deepEqual(toHostRealm(menuById["lm.menu.export"].targets), ["ribbon.start.others", "ribbon.data.others"]);
+  assert.deepEqual(toHostRealm(menuById["lm.menu.queue"].targets), ["ribbon.start.others", "ribbon.data.others"]);
+  // 队列测试 sits between 导出 and 帮助 in the Ribbon group it is appended to.
+  const mountedIds = h.createdMenus.map((menu) => menu.spec.id);
+  assert.ok(mountedIds.indexOf("lm.menu.queue") > mountedIds.indexOf("lm.menu.export"));
+  assert.ok(mountedIds.indexOf("lm.menu.queue") < mountedIds.indexOf("lm.menu.help"));
   assert.deepEqual(toHostRealm(menuById["lm.menu.help"].targets), ["ribbon.start.others"]);
   assert.deepEqual(toHostRealm(menuById["lm.ctx.duplicate-row"].targets), [
     ["contextMenu.rowHeader", "contextMenu.others"],
@@ -598,14 +605,16 @@ test("createMenu registers Ribbon/ContextMenu entries, _runAtRendered handles al
 
   // Firing LifeCycleChanged Steady afterwards does not duplicate menus
   (h.handlers.LifeCycleChanged || []).forEach((fn) => fn({ stage: 3 }));
-  assert.equal(h.createdMenus.length, 6);
+  assert.equal(h.createdMenus.length, 7);
 
   // Invoke Ribbon & ContextMenu actions
   menuById["lm.menu.import"].spec.action();
   menuById["lm.menu.export"].spec.action();
+  menuById["lm.menu.queue"].spec.action();
   menuById["lm.menu.help"].spec.action();
   assert.equal(h.records.imports, 1);
   assert.equal(h.records.exports, 1);
+  assert.equal(h.records.queues, 1);
   assert.equal(h.records.helps, 1);
 
   h.adapter._setRowSelected(102, true);
@@ -780,14 +789,16 @@ test("univer-esm-entry schedules secondary load for steps views and prunes dispo
   s2.dispose();
 });
 
-test("editor_qualification supports #lm-topbar-exec, preserves #lm-toolbar-right compatibility, and syncs visibility", () => {
-  function makeDom(containerId) {
+test("editor_qualification leaves the editor toolbar untouched and queues the project's Clean-Room value", async () => {
+  function makeDom() {
     const elements = new Map();
     const makeEl = (tag, id = "") => {
       const el = {
         tagName: String(tag).toUpperCase(),
         id,
         hidden: false,
+        checked: false,
+        value: "",
         style: {},
         children: [],
         parentNode: null,
@@ -803,11 +814,9 @@ test("editor_qualification supports #lm-topbar-exec, preserves #lm-toolbar-right
           }
           return child;
         },
-        insertBefore(node, refNode) {
+        insertBefore(node) {
           node.parentNode = this;
-          const idx = this.children.indexOf(refNode);
-          if (idx === -1) this.children.push(node);
-          else this.children.splice(idx, 0, node);
+          this.children.push(node);
           if (node.id) elements.set(node.id, node);
           return node;
         },
@@ -815,53 +824,111 @@ test("editor_qualification supports #lm-topbar-exec, preserves #lm-toolbar-right
       if (id) elements.set(id, el);
       return el;
     };
-    const container = makeEl("div", containerId);
+    const toolbarRight = makeEl("div", "lm-toolbar-right");
     const runBtn = makeEl("button", "lm-run-selected");
-    container.appendChild(runBtn);
+    toolbarRight.appendChild(runBtn);
     const body = makeEl("body", "body");
-    body.appendChild(container);
+    body.appendChild(toolbarRight);
     const doc = {
       readyState: "complete",
       body,
       getElementById: (id) => elements.get(id) || null,
       createElement: (tag) => makeEl(tag),
       createTextNode: (txt) => ({ textContent: txt }),
-      querySelector: () => ({ dataset: { projectId: "7" } }),
+      // No .lm-exec-config / .lm-editor root: this is the editor page.
+      querySelector: () => null,
     };
-    return { doc, container, runBtn, elements };
+    return { doc, toolbarRight, elements };
   }
 
-  // Case 1: New #lm-topbar-exec global topbar container + syncVisibility()
-  const topbarDom = makeDom("lm-topbar-exec");
-  const win1 = { document: topbarDom.doc };
-  loadTsModule("../src/lanmatrix/editor_qualification.ts", {}, { window: win1, document: topbarDom.doc });
-  const ctrl1 = win1.LMEditorQualification;
-  assert.ok(ctrl1);
-  assert.deepEqual(
-    topbarDom.container.children.map((c) => c.id),
-    ["lm-signal-list-btn", "lm-clean-room-wrap", "lm-run-selected"]
+  const { doc, toolbarRight } = makeDom();
+  const runCalls = [];
+  let getProjectCalls = 0;
+  const LMApi = {
+    async runSelectedTasks(pid, payload) {
+      runCalls.push({ pid, payload: toHostRealm(payload) });
+      return { created: [] };
+    },
+    async rerunSelectedTasks() {
+      return { created: [] };
+    },
+    async getProject() {
+      getProjectCalls += 1;
+      return { project: { id: 7, default_signal_list: "", default_clean_room: true } };
+    },
+    async patchProject() {
+      throw new Error("the editor must not write execution settings");
+    },
+  };
+  const window = { LM: { projectId: 7 }, LMApi };
+  const { exports } = loadTsModule("../src/lanmatrix/editor_qualification.ts", {}, {
+    window,
+    document: doc,
+  });
+  const ctrl = exports.controller || exports.default || window.LMEditorQualification;
+  assert.ok(ctrl, "the module exports a controller");
+
+  const toolbarBefore = toolbarRight.children.map((child) => child.id);
+  assert.deepEqual(toolbarBefore, ["lm-run-selected"], "no control is injected into the editor toolbar");
+
+  // The page no longer hosts a checkbox, so the queued value is read from the project.
+  ctrl.init();
+  assert.equal(ctrl.isCleanRoomEnabled(), false, "callers see false until the setting is read");
+  await LMApi.runSelectedTasks(7, { test_ids: ["TC_7"] });
+  assert.equal(runCalls.length, 1);
+  assert.equal(runCalls[0].payload.clean_room, true, "clean_room rides on the existing task body");
+  assert.equal(getProjectCalls, 1);
+  await LMApi.rerunSelectedTasks(7, ["TC_7"]);
+  assert.equal(getProjectCalls, 1, "the saved switch is read once per page");
+  assert.deepEqual(toolbarRight.children.map((child) => child.id), ["lm-run-selected"]);
+  assert.equal(typeof ctrl.syncVisibility, "undefined", "the toolbar visibility hook is gone");
+});
+
+test("editor_qualification refuses to queue when the Clean-Room setting cannot be read", async () => {
+  const elements = new Map();
+  const doc = {
+    readyState: "complete",
+    body: { appendChild() {} },
+    getElementById: (id) => elements.get(id) || null,
+    createElement: () => ({ id: "", children: [], appendChild() {}, setAttribute() {} }),
+    createTextNode: (txt) => ({ textContent: txt }),
+    querySelector: () => null,
+  };
+
+  async function load(getProject) {
+    const runCalls = [];
+    const LMApi = {
+      async runSelectedTasks(pid, payload) {
+        runCalls.push({ pid, payload });
+        return { created: [] };
+      },
+      async rerunSelectedTasks(pid, keys) {
+        runCalls.push({ pid, keys, rerun: true });
+        return { created: [] };
+      },
+      getProject,
+    };
+    const window = { LM: { projectId: 7 }, LMApi };
+    const { exports } = loadTsModule("../src/lanmatrix/editor_qualification.ts", {}, {
+      window,
+      document: doc,
+    });
+    const ctrl = exports.controller || exports.default || window.LMEditorQualification;
+    ctrl.init();
+    return { LMApi, runCalls };
+  }
+
+  const failed = await load(async () => { throw new Error("offline"); });
+  await assert.rejects(
+    () => failed.LMApi.runSelectedTasks(7, { test_ids: ["TC_7"], clean_room: true }),
+    /已取消入队/,
   );
-  assert.equal(topbarDom.elements.get("lm-signal-list-btn").hidden, false);
-  assert.equal(topbarDom.elements.get("lm-clean-room-wrap").hidden, false);
+  assert.equal(failed.runCalls.length, 0, "a failed read must not enqueue, even if the caller set clean_room");
 
-  // Switch to non-test sheet -> runBtn.hidden = true -> syncVisibility hides both qualification controls
-  topbarDom.runBtn.hidden = true;
-  ctrl1.syncVisibility();
-  assert.equal(topbarDom.elements.get("lm-signal-list-btn").hidden, true);
-  assert.equal(topbarDom.elements.get("lm-clean-room-wrap").hidden, true);
-
-  // Switch back to test sheet -> runBtn.hidden = false -> syncVisibility restores both controls
-  topbarDom.runBtn.hidden = false;
-  ctrl1.syncVisibility();
-  assert.equal(topbarDom.elements.get("lm-signal-list-btn").hidden, false);
-  assert.equal(topbarDom.elements.get("lm-clean-room-wrap").hidden, false);
-
-  // Case 2: Legacy #lm-toolbar-right container compatibility
-  const legacyDom = makeDom("lm-toolbar-right");
-  const win2 = { document: legacyDom.doc };
-  loadTsModule("../src/lanmatrix/editor_qualification.ts", {}, { window: win2, document: legacyDom.doc });
-  assert.deepEqual(
-    legacyDom.container.children.map((c) => c.id),
-    ["lm-signal-list-btn", "lm-clean-room-wrap", "lm-run-selected"]
+  const empty = await load(async () => ({ project: { id: 7 } }));
+  await assert.rejects(
+    () => empty.LMApi.rerunSelectedTasks(7, ["TC_7"]),
+    /已取消入队/,
   );
+  assert.equal(empty.runCalls.length, 0, "a project payload without a boolean must not enqueue as off");
 });

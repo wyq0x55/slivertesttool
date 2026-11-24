@@ -144,6 +144,18 @@ def _normalise_default_signal_list(value: Any) -> str:
     return normalised
 
 
+def _normalise_default_clean_room(value: Any) -> bool:
+    """Coerce the 车规洁净室 switch, refusing anything ambiguous.
+
+    JSON already carries a real boolean, so a string such as ``"false"`` means
+    the client is out of step with the API — treating it as truthy would queue
+    cold-start runs the operator never asked for.
+    """
+    if isinstance(value, bool):
+        return value
+    raise ServiceError("洁净室开关必须是布尔值", code="VALIDATION_ERROR")
+
+
 def update_project(user: LMUser, project: Project, changes: dict[str, Any]) -> Project:
     old = project.to_dict()
     for key in ("name", "description", "status", "owner_id"):
@@ -152,6 +164,10 @@ def update_project(user: LMUser, project: Project, changes: dict[str, Any]) -> P
     if "default_signal_list" in changes:
         project.default_signal_list = _normalise_default_signal_list(
             changes["default_signal_list"]
+        )
+    if "default_clean_room" in changes:
+        project.default_clean_room = _normalise_default_clean_room(
+            changes["default_clean_room"]
         )
     audit.record("project.update", actor_id=user.id, object_type="project",
                  object_id=project.id, project_id=project.id,

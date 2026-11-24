@@ -99,7 +99,7 @@ test("TypeScript sources pass tsc --noEmit and emit ut_tasks.js + editor_qualifi
   });
 });
 
-test("editor_qualification.js injects Clean-Room toggle and attaches clean_room only when enabled", async () => {
+test("editor_qualification queues the saved Clean-Room value and injects no toolbar DOM", async () => {
   const nodes = new Map();
   function makeNode(tag, id = "") {
     const node = {
@@ -151,6 +151,7 @@ test("editor_qualification.js injects Clean-Room toggle and attaches clean_room 
   const runCalls = [];
   const rerunCalls = [];
   const patchProjectCalls = [];
+  let getProjectCalls = 0;
   const LMApi = {
     async runSelectedTasks(pid, payload) {
       runCalls.push({ pid, payload: JSON.parse(JSON.stringify(payload)) });
@@ -161,7 +162,8 @@ test("editor_qualification.js injects Clean-Room toggle and attaches clean_room 
       return { created: [] };
     },
     async getProject() {
-      return { project: { id: 9, default_signal_list: "sig_init" } };
+      getProjectCalls++;
+      return { project: { id: 9, default_signal_list: "sig_init", default_clean_room: true } };
     },
     async patchProject(pid, changes) {
       patchProjectCalls.push({ pid, changes: JSON.parse(JSON.stringify(changes)) });
@@ -173,7 +175,7 @@ test("editor_qualification.js injects Clean-Room toggle and attaches clean_room 
     readyState: "complete",
     body,
     querySelector(sel) {
-      return sel === ".lm-editor" ? editorRoot : null;
+      return sel === ".lm-exec-config, .lm-editor" ? editorRoot : null;
     },
     getElementById(id) {
       return nodes.get(id) || null;
@@ -197,45 +199,159 @@ test("editor_qualification.js injects Clean-Room toggle and attaches clean_room 
   const context = vm.createContext({ window, document, LMApi });
   vm.runInContext(fs.readFileSync(path.join(lanmatrixJsDir, "editor_qualification.js"), "utf8"), context);
 
-  const toggle = nodes.get("lm-clean-room-toggle");
-  assert.ok(toggle, "#lm-clean-room-toggle must be injected into the toolbar");
-  assert.match(toggle.title, /ASPICE SWE\.4-SWE\.6/);
-  assert.equal(window.LMEditorQualification.isCleanRoomEnabled(), false);
+  // The editor no longer hosts the toggle: the value is project state, edited on
+  // the 执行配置 page only.
+  assert.equal(nodes.has("lm-clean-room-toggle"), false, "must not inject #lm-clean-room-toggle");
+  assert.equal(nodes.has("lm-signal-list-btn"), false, "must not inject #lm-signal-list-btn");
 
-  // 1) Unchecked -> clean_room omitted
+  // 1) No checkbox on the page -> the queued payload carries the SAVED value.
   await LMApi.runSelectedTasks(9, { test_ids: ["TC_01"] });
   assert.equal(runCalls.length, 1);
-  assert.equal("clean_room" in runCalls[0].payload, false);
+  assert.equal(runCalls[0].payload.clean_room, true);
 
-  // 2) Checked -> clean_room: true injected
-  toggle.checked = true;
-  toggle.listeners.change();
-  assert.equal(window.LMEditorQualification.isCleanRoomEnabled(), true);
+  // 2) The read is cached: a second queue does not re-fetch the project.
+  await LMApi.runSelectedTasks(9, { test_ids: ["TC_02"] });
+  assert.equal(getProjectCalls, 1, "the project switch is read once per page load");
 
-  await LMApi.runSelectedTasks(9, { test_ids: ["TC_01", "TC_02"], model: "m1" });
-  assert.equal(runCalls.length, 2);
-  assert.deepEqual(runCalls[1], {
-    pid: 9,
-    payload: { test_ids: ["TC_01", "TC_02"], model: "m1", clean_room: true },
-  });
-
-  await LMApi.rerunSelectedTasks(9, ["k1"]);
-  assert.equal(rerunCalls.length, 1);
-  assert.deepEqual(rerunCalls[0], { pid: 9, keys: ["k1"], opts: { clean_room: true } });
-
-  // 3) Unchecked again -> clean_room stripped
+  // 3) Turning it off for this page strips clean_room from later runs, and the
+  //    editor never writes the setting back.
+  await LMApi.rerunSelectedTasks(9, ["TC_03"]);
   window.LMEditorQualification.setCleanRoomEnabled(false);
-  assert.equal(toggle.checked, false);
-  await LMApi.runSelectedTasks(9, { test_ids: ["TC_03"], clean_room: true });
+  await LMApi.runSelectedTasks(9, { test_ids: ["TC_04"] });
   assert.equal(runCalls.length, 3);
   assert.equal("clean_room" in runCalls[2].payload, false);
+  assert.equal(patchProjectCalls.length, 0, "toggling on the editor writes nothing");
 
-  // 4) Default signal list persistence
+  // 4) 默认信号集 keeps its dialog and normalises before persisting.
+  await window.LMEditorQualification.openSignalListModal();
+  assert.ok(nodes.get("lm-signal-list-dialog"), "the signal-list dialog is still built on demand");
   await window.LMEditorQualification.saveDefaultSignalList("  v_spd \r\n u1_lamp \n");
-  assert.deepEqual(patchProjectCalls, [
-    { pid: 9, changes: { default_signal_list: "v_spd\nu1_lamp" } },
-  ]);
+  assert.deepEqual(patchProjectCalls.at(-1),
+    { pid: 9, changes: { default_signal_list: "v_spd\nu1_lamp" } });
 });
+
+test("editor_qualification drives the 执行配置 page: clean-room persistence and AI procedure submit", async () => {
+  const nodes = new Map();
+  function makeNode(tag, id = "") {
+    const node = {
+      tagName: String(tag || "div").toUpperCase(),
+      id,
+      type: "",
+      value: "",
+      textContent: "",
+      href: "",
+      checked: false,
+      hidden: false,
+      disabled: false,
+      dataset: {},
+      parentNode: null,
+      children: [],
+      listeners: {},
+      addEventListener(evt, fn) {
+        this.listeners[evt] = fn;
+      },
+      appendChild(child) {
+        child.parentNode = this;
+        this.children.push(child);
+        if (child.id) nodes.set(child.id, child);
+        return child;
+      },
+    };
+    if (id) nodes.set(id, node);
+    return node;
+  }
+
+  const pageRoot = makeNode("div", "lm-exec-config-root");
+  pageRoot.dataset.projectId = "5";
+  makeNode("input", "lm-clean-room-toggle").type = "checkbox";
+  makeNode("p", "lm-clean-room-status");
+  makeNode("button", "lm-signal-list-btn");
+  makeNode("input", "lm-ai-row-ids");
+  makeNode("input", "lm-ai-model-id");
+  makeNode("button", "lm-ai-generate");
+  makeNode("a", "lm-ai-draft-link").hidden = true;
+  makeNode("p", "lm-ai-status");
+  const body = makeNode("body");
+
+  const patchProjectCalls = [];
+  const draftCalls = [];
+  const LMApi = {
+    async getProject() {
+      return { project: { id: 5, default_clean_room: true, default_signal_list: "sig_a" } };
+    },
+    async patchProject(pid, changes) {
+      patchProjectCalls.push({ pid, changes: JSON.parse(JSON.stringify(changes)) });
+      return { project: { id: pid, ...changes } };
+    },
+    async createAiDraft(scenario, pid, payload) {
+      draftCalls.push({ scenario, pid, payload: JSON.parse(JSON.stringify(payload)) });
+      return { id: 77 };
+    },
+    async runSelectedTasks(pid, payload) {
+      return { created: [] };
+    },
+  };
+
+  const document = {
+    readyState: "complete",
+    body,
+    querySelector(sel) {
+      if (sel === ".lm-exec-config" || sel === ".lm-exec-config, .lm-editor") return pageRoot;
+      return null;
+    },
+    getElementById(id) {
+      return nodes.get(id) || null;
+    },
+    createElement(tag) {
+      const el = makeNode(tag);
+      Object.defineProperty(el, "id", {
+        get() { return this._id || ""; },
+        set(v) {
+          this._id = v;
+          if (v) nodes.set(v, this);
+        },
+      });
+      return el;
+    },
+    createTextNode(text) {
+      return { textContent: text };
+    },
+  };
+  const window = { LM: { projectId: 5 }, LMApi };
+  const context = vm.createContext({ window, document, LMApi });
+  vm.runInContext(fs.readFileSync(path.join(lanmatrixJsDir, "editor_qualification.js"), "utf8"), context);
+  await settle();
+
+  const toggle = nodes.get("lm-clean-room-toggle");
+  assert.equal(toggle.checked, true, "the checkbox reflects the saved project value");
+
+  toggle.checked = false;
+  await toggle.listeners.change();
+  await settle();
+  assert.deepEqual(patchProjectCalls.at(-1), { pid: 5, changes: { default_clean_room: false } });
+  assert.match(nodes.get("lm-clean-room-status").textContent, /已关闭车规洁净室/);
+
+  // AI 生成手顺: explicit saved-row ids, no grid selection involved.
+  const rowInput = nodes.get("lm-ai-row-ids");
+  const modelInput = nodes.get("lm-ai-model-id");
+  rowInput.value = "12, 13 12";
+  modelInput.value = "7";
+  await nodes.get("lm-ai-generate").listeners.click();
+  await settle();
+  assert.equal(draftCalls.length, 1);
+  assert.equal(draftCalls[0].scenario, "procedure");
+  assert.equal(draftCalls[0].pid, 5);
+  assert.deepEqual(draftCalls[0].payload, { item_ids: [12, 13], model_id: 7 });
+  const link = nodes.get("lm-ai-draft-link");
+  assert.equal(link.hidden, false);
+  assert.equal(link.href, "/lanmatrix/projects/5/ai?draft=77");
+
+  rowInput.value = "";
+  await nodes.get("lm-ai-generate").listeners.click();
+  assert.equal(draftCalls.length, 1, "no row ids -> nothing is submitted");
+  assert.match(nodes.get("lm-ai-status").textContent, /请输入已保存的测试行 ID/);
+});
+
 
 test("ut_tasks.js populates #ut-cfg-toolchain-profile from available_toolchains and submits toolchain_profile on save", async () => {
   const utHtml = fs.readFileSync(path.join(repoRoot, "app/templates/lanmatrix/ut_tasks.html"), "utf8");

@@ -14,24 +14,28 @@ export interface QualificationProjectInfo {
   code?: string;
   name?: string;
   default_signal_list?: string;
+  default_clean_room?: boolean;
   is_editable?: boolean;
 }
 
 export interface EditorQualificationController {
   init(): void;
-  syncVisibility(): void;
   isCleanRoomEnabled(): boolean;
   setCleanRoomEnabled(enabled: boolean): void;
+  loadCleanRoomSetting(): Promise<boolean>;
   wrapApi(targetApi?: any): void;
   openSignalListModal(): Promise<void>;
   saveDefaultSignalList(signalListText: string): Promise<any>;
 }
 
-const CLEAN_ROOM_TITLE =
-  "强制冷启动全新 Silver 实例并在跑完后立即销毁，满足 ASPICE SWE.4-SWE.6 零跨用例污染要求";
+const MAX_PROCEDURE_ROWS = 200;
 
 (function initQualificationModule(win: any, doc: any) {
+  // Mirrors the saved project switch. On the 执行配置 page it follows the
+  // checkbox there; on the matrix editor, where no checkbox exists any more, it
+  // is hydrated from the project when a run is queued.
   let cleanRoomState = false;
+  let cleanRoomLoaded = false;
   let cachedSignalList = "";
 
   function resolveApi(explicit?: any): any {
@@ -49,9 +53,9 @@ const CLEAN_ROOM_TITLE =
 
   function resolveProjectId(): number {
     if (doc && typeof doc.querySelector === "function") {
-      const editorEl = doc.querySelector(".lm-editor");
-      if (editorEl && editorEl.dataset && editorEl.dataset.projectId) {
-        const parsed = Number(editorEl.dataset.projectId);
+      const scoped = doc.querySelector(".lm-exec-config, .lm-editor");
+      if (scoped && scoped.dataset && scoped.dataset.projectId) {
+        const parsed = Number(scoped.dataset.projectId);
         if (parsed > 0) return parsed;
       }
     }
@@ -62,9 +66,13 @@ const CLEAN_ROOM_TITLE =
     return 0;
   }
 
-  function getToggleInput(): HTMLInputElement | null {
+  function byId(id: string): any {
     if (!doc || typeof doc.getElementById !== "function") return null;
-    return doc.getElementById("lm-clean-room-toggle") as HTMLInputElement | null;
+    return doc.getElementById(id);
+  }
+
+  function getToggleInput(): HTMLInputElement | null {
+    return byId("lm-clean-room-toggle") as HTMLInputElement | null;
   }
 
   function isCleanRoomEnabled(): boolean {
@@ -84,196 +92,114 @@ const CLEAN_ROOM_TITLE =
     }
   }
 
-  function insertBeforeOrAppend(parent: any, node: any, refNode: any): void {
-    if (!parent || !node) return;
-    if (refNode && refNode.parentNode === parent && typeof parent.insertBefore === "function") {
-      parent.insertBefore(node, refNode);
-    } else if (typeof parent.appendChild === "function") {
-      parent.appendChild(node);
+  const CLEAN_ROOM_UNREAD = "无法读取车规洁净室设置，已取消入队";
+
+  /**
+   * Read the saved switch. The settings page has the checkbox, so that value
+   * wins. The editor has no checkbox: a missing, empty, or failed project read
+   * must reject the queue. Returning the default ``false`` would omit
+   * ``clean_room`` and the server stores that as off.
+   */
+  async function loadCleanRoomSetting(): Promise<boolean> {
+    const toggle = getToggleInput();
+    if (toggle) {
+      cleanRoomLoaded = true;
+      return isCleanRoomEnabled();
     }
+    if (cleanRoomLoaded) return cleanRoomState;
+    const api = resolveApi();
+    const pid = resolveProjectId();
+    if (!api || typeof api.getProject !== "function" || !(pid > 0)) {
+      throw new Error(CLEAN_ROOM_UNREAD);
+    }
+    let data: any;
+    try {
+      data = await api.getProject(pid);
+    } catch (_e) {
+      throw new Error(CLEAN_ROOM_UNREAD);
+    }
+    const proj: QualificationProjectInfo = (data && data.project) || data || {};
+    if (typeof proj.default_clean_room !== "boolean") {
+      throw new Error(CLEAN_ROOM_UNREAD);
+    }
+    cleanRoomState = proj.default_clean_room;
+    cleanRoomLoaded = true;
+    return cleanRoomState;
   }
 
-  function syncVisibility(): void {
-    if (!doc || typeof doc.getElementById !== "function") return;
-    const runBtn = doc.getElementById("lm-run-selected");
-    const sigBtn = doc.getElementById("lm-signal-list-btn");
-    const wrap = doc.getElementById("lm-clean-room-wrap");
-    const shouldHide = Boolean(runBtn && runBtn.hidden);
-    if (sigBtn) sigBtn.hidden = shouldHide;
-    if (wrap) wrap.hidden = shouldHide;
+  function setStatus(id: string, message: string): void {
+    const el = byId(id);
+    if (el) el.textContent = message;
   }
 
-  function ensureToolbarControls(): void {
-    if (!doc || typeof doc.getElementById !== "function" || typeof doc.createElement !== "function") {
+  function toast(message: string, ok: boolean): void {
+    const ui = resolveUi();
+    if (ui && typeof ui.toast === "function") ui.toast(message, ok);
+  }
+
+  async function persistCleanRoom(enabled: boolean): Promise<void> {
+    const previous = cleanRoomState;
+    const api = resolveApi();
+    const pid = resolveProjectId();
+    setCleanRoomEnabled(enabled);
+    const fail = (message: string): void => {
+      setCleanRoomEnabled(previous);
+      setStatus("lm-clean-room-status", message);
+      toast(message, false);
+    };
+    if (!api || typeof api.patchProject !== "function" || pid <= 0) {
+      fail("保存失败");
       return;
     }
-    const toolbarRight = doc.getElementById("lm-toolbar-right");
-    const runBtn = doc.getElementById("lm-run-selected");
-    const host = (runBtn && runBtn.parentNode) || doc.getElementById("lm-topbar-exec") || toolbarRight || null;
-
-    if (!doc.getElementById("lm-signal-list-btn") && host) {
-      const sigBtn = doc.createElement("button");
-      sigBtn.type = "button";
-      sigBtn.id = "lm-signal-list-btn";
-      sigBtn.className = "btn btn-sm";
-      sigBtn.title = "配置项目默认观测信号集 (default_signal_list)";
-      sigBtn.textContent = "默认信号集";
-      if (typeof sigBtn.addEventListener === "function") {
-        sigBtn.addEventListener("click", () => {
-          void openSignalListModal();
-        });
-      }
-      insertBeforeOrAppend(host, sigBtn, runBtn);
+    try {
+      await api.patchProject(pid, { default_clean_room: cleanRoomState });
+      cleanRoomLoaded = true;
+      setStatus("lm-clean-room-status", cleanRoomState ? "已开启车规洁净室" : "已关闭车规洁净室");
+      toast("执行配置已保存", true);
+    } catch (err: any) {
+      fail((err && err.message) || "保存失败");
     }
-
-    let toggle = doc.getElementById("lm-clean-room-toggle");
-    if (!toggle && host) {
-      const wrap = doc.createElement("label");
-      wrap.id = "lm-clean-room-wrap";
-      wrap.className = "lm-inline lm-muted";
-      wrap.title = CLEAN_ROOM_TITLE;
-      if (wrap.style) {
-        wrap.style.display = "inline-flex";
-        wrap.style.alignItems = "center";
-        wrap.style.gap = "4px";
-        wrap.style.cursor = "pointer";
-      }
-      if (runBtn && runBtn.hidden) {
-        wrap.hidden = true;
-      }
-
-      toggle = doc.createElement("input");
-      toggle.type = "checkbox";
-      toggle.id = "lm-clean-room-toggle";
-      toggle.title = CLEAN_ROOM_TITLE;
-      toggle.checked = cleanRoomState;
-      if (typeof toggle.addEventListener === "function") {
-        toggle.addEventListener("change", () => {
-          cleanRoomState = Boolean(toggle.checked);
-        });
-      }
-      if (typeof wrap.appendChild === "function") {
-        wrap.appendChild(toggle);
-        if (typeof doc.createTextNode === "function") {
-          wrap.appendChild(doc.createTextNode(" 车规洁净室"));
-        } else {
-          wrap.textContent = "车规洁净室";
-        }
-      }
-      insertBeforeOrAppend(host, wrap, runBtn);
-    } else if (toggle && typeof toggle.addEventListener === "function" && !(toggle as any).__lmQualBound) {
-      (toggle as any).__lmQualBound = true;
-      toggle.title = toggle.title || CLEAN_ROOM_TITLE;
-      toggle.addEventListener("change", () => {
-        cleanRoomState = Boolean(toggle.checked);
-      });
-    }
-
-    const ObserverCtor = win && win.MutationObserver;
-    if (runBtn && typeof ObserverCtor === "function" && !(runBtn as any).__lmQualVisObserved) {
-      try {
-        const observer = new ObserverCtor(() => {
-          syncVisibility();
-        });
-        observer.observe(runBtn, { attributes: true, attributeFilter: ["hidden"] });
-        (runBtn as any).__lmQualVisObserved = true;
-      } catch (_e) { /* ignore mock DOM limitations */ }
-    }
-
-    syncVisibility();
   }
 
   function ensureSignalListDialog(): any {
-    if (!doc || typeof doc.getElementById !== "function" || typeof doc.createElement !== "function") {
-      return null;
-    }
-    let dialog = doc.getElementById("lm-signal-list-dialog");
-    if (dialog) return dialog;
-    if (!doc.body || typeof doc.body.appendChild !== "function") return null;
-
-    dialog = doc.createElement("dialog");
+    const existing = byId("lm-signal-list-dialog");
+    if (existing || !doc || typeof doc.createElement !== "function") return existing;
+    const dialog = doc.createElement("dialog");
     dialog.id = "lm-signal-list-dialog";
     dialog.className = "lm-dialog";
-
-    const form = doc.createElement("form");
-    form.method = "dialog";
-    form.className = "lm-card";
-
-    const heading = doc.createElement("h3");
-    heading.id = "lm-signal-list-title";
-    heading.textContent = "默认信号集配置 (default_signal_list)";
-    dialog.setAttribute("aria-labelledby", heading.id);
-
-    const desc = doc.createElement("p");
-    desc.id = "lm-signal-list-help";
-    desc.className = "lm-muted";
-    desc.textContent =
-      "每行填写一个观测信号名。当测试用例与模型目录均未提供 output.txt 时自动落盘，避免全量信号采样导致磁盘膨胀。";
-
-    const textarea = doc.createElement("textarea");
-    textarea.id = "lm-default-signal-list";
-    textarea.setAttribute("aria-describedby", desc.id);
-    textarea.rows = 8;
-    if (textarea.style) {
-      textarea.style.width = "100%";
-      textarea.style.fontFamily = "monospace";
+    if (typeof dialog.setAttribute === "function") {
+      dialog.setAttribute("aria-labelledby", "lm-signal-list-title");
     }
-    textarea.placeholder = "例如：\nv_speed\nu1_brake_lamp";
-
-    const label = doc.createElement("label");
-    label.htmlFor = textarea.id;
-    label.textContent = "观测信号列表";
-
-    const status = doc.createElement("p");
-    status.id = "lm-signal-list-status";
-    status.className = "lm-muted";
-    if (typeof status.setAttribute === "function") {
-      status.setAttribute("role", "status");
-      status.setAttribute("aria-live", "polite");
-    }
-
-    const menu = doc.createElement("menu");
-
-    const cancelBtnEl = doc.createElement("button");
-    cancelBtnEl.type = "button";
-    cancelBtnEl.value = "cancel";
-    cancelBtnEl.id = "lm-signal-list-cancel";
-    cancelBtnEl.className = "btn";
-    cancelBtnEl.textContent = "取消";
-
-    const saveBtnEl = doc.createElement("button");
-    saveBtnEl.type = "button";
-    saveBtnEl.id = "lm-signal-list-save";
-    saveBtnEl.className = "btn btn-primary";
-    saveBtnEl.textContent = "保存默认信号集";
-
-    menu.appendChild(cancelBtnEl);
-    menu.appendChild(saveBtnEl);
-    form.appendChild(heading);
-    form.appendChild(desc);
-    form.appendChild(label);
-    form.appendChild(textarea);
-    form.appendChild(status);
-    form.appendChild(menu);
-
-    if (typeof dialog.replaceChildren === "function") {
-      dialog.replaceChildren(form);
-    } else if (typeof dialog.appendChild === "function") {
-      dialog.appendChild(form);
-    }
+    dialog.innerHTML = `
+      <form method="dialog" class="lm-card">
+        <h3 id="lm-signal-list-title">默认信号集配置 (default_signal_list)</h3>
+        <p class="lm-muted" id="lm-signal-list-help">
+          当测试用例与模型目录都没有 output.txt 时，用这里的观测信号列表兜底，
+          避免整变量 1ms CSV 写入把磁盘写爆。每行填写一个观测信号名。
+        </p>
+        <label class="lm-muted" for="lm-default-signal-list">观测信号列表</label>
+        <textarea id="lm-default-signal-list" rows="8" spellcheck="false"
+          aria-describedby="lm-signal-list-help"
+          placeholder="例如：&#10;v_speed&#10;u1_brake_lamp"></textarea>
+        <p class="lm-muted" id="lm-signal-list-status" role="status" aria-live="polite"></p>
+        <menu class="lm-dialog-actions">
+          <button class="btn" id="lm-signal-list-cancel" type="button">取消</button>
+          <button class="btn btn-primary" id="lm-signal-list-save" type="button">保存默认信号集</button>
+        </menu>
+      </form>`;
     doc.body.appendChild(dialog);
 
-    const cancelBtn = doc.getElementById("lm-signal-list-cancel");
+    const cancelBtn = byId("lm-signal-list-cancel");
     if (cancelBtn && typeof cancelBtn.addEventListener === "function") {
       cancelBtn.addEventListener("click", () => {
         if (typeof dialog.close === "function") dialog.close();
         else dialog.hidden = true;
       });
     }
-    const saveBtn = doc.getElementById("lm-signal-list-save");
+    const saveBtn = byId("lm-signal-list-save");
     if (saveBtn && typeof saveBtn.addEventListener === "function") {
       saveBtn.addEventListener("click", async () => {
-        const input = doc.getElementById("lm-default-signal-list") as HTMLTextAreaElement | null;
+        const input = byId("lm-default-signal-list") as HTMLTextAreaElement | null;
         const text = input ? String(input.value || "") : "";
         await saveDefaultSignalList(text);
       });
@@ -285,11 +211,8 @@ const CLEAN_ROOM_TITLE =
     const dialog = ensureSignalListDialog();
     const api = resolveApi();
     const pid = resolveProjectId();
-    const textarea = doc && doc.getElementById
-      ? (doc.getElementById("lm-default-signal-list") as HTMLTextAreaElement | null)
-      : null;
-    const statusEl = doc && doc.getElementById ? doc.getElementById("lm-signal-list-status") : null;
-    if (statusEl) statusEl.textContent = "";
+    const textarea = byId("lm-default-signal-list") as HTMLTextAreaElement | null;
+    setStatus("lm-signal-list-status", "");
 
     if (api && typeof api.getProject === "function" && pid > 0) {
       try {
@@ -307,7 +230,6 @@ const CLEAN_ROOM_TITLE =
 
   async function saveDefaultSignalList(signalListText: string): Promise<any> {
     const api = resolveApi();
-    const ui = resolveUi();
     const pid = resolveProjectId();
     if (!api || typeof api.patchProject !== "function" || pid <= 0) return null;
 
@@ -319,13 +241,12 @@ const CLEAN_ROOM_TITLE =
       .filter(Boolean)
       .join("\n");
 
-    const statusEl = doc && doc.getElementById ? doc.getElementById("lm-signal-list-status") : null;
     try {
       const res = await api.patchProject(pid, { default_signal_list: normalized });
       cachedSignalList = normalized;
-      if (statusEl) statusEl.textContent = "已保存默认信号集";
-      if (ui && typeof ui.toast === "function") ui.toast("默认信号集已保存", true);
-      const dialog = doc && doc.getElementById ? doc.getElementById("lm-signal-list-dialog") : null;
+      setStatus("lm-signal-list-status", "已保存默认信号集");
+      toast("默认信号集已保存", true);
+      const dialog = byId("lm-signal-list-dialog");
       if (dialog) {
         if (typeof dialog.close === "function") dialog.close();
         else dialog.hidden = true;
@@ -333,9 +254,114 @@ const CLEAN_ROOM_TITLE =
       return res;
     } catch (err: any) {
       const msg = (err && err.message) || "保存失败";
-      if (statusEl) statusEl.textContent = msg;
-      if (ui && typeof ui.toast === "function") ui.toast(msg, false);
+      setStatus("lm-signal-list-status", msg);
+      toast(msg, false);
       throw err;
+    }
+  }
+
+  /** Saved matrix row ids, separated by commas, spaces or newlines. */
+  function parseRowIds(raw: string): number[] {
+    const seen: number[] = [];
+    String(raw || "")
+      .split(/[^0-9]+/)
+      .forEach((part) => {
+        if (!part) return;
+        const id = Number(part);
+        if (!Number.isInteger(id) || id <= 0) return;
+        if (seen.indexOf(id) >= 0) return;
+        seen.push(id);
+      });
+    return seen;
+  }
+
+  async function generateProcedureDraft(): Promise<void> {
+    const api = resolveApi();
+    const pid = resolveProjectId();
+    const rowInput = byId("lm-ai-row-ids") as HTMLInputElement | null;
+    const modelInput = byId("lm-ai-model-id") as HTMLInputElement | null;
+    const button = byId("lm-ai-generate") as HTMLButtonElement | null;
+    const link = byId("lm-ai-draft-link");
+
+    const ids = parseRowIds(rowInput ? rowInput.value : "");
+    if (!ids.length) {
+      setStatus("lm-ai-status", "请输入已保存的测试行 ID（可用逗号或换行分隔）。");
+      return;
+    }
+    if (ids.length > MAX_PROCEDURE_ROWS) {
+      setStatus("lm-ai-status", `一次最多生成 ${MAX_PROCEDURE_ROWS} 条测试行的手顺草稿。`);
+      return;
+    }
+    const modelRaw = modelInput ? String(modelInput.value || "").trim() : "";
+    let modelId = 0;
+    if (modelRaw) {
+      modelId = Number(modelRaw);
+      if (!Number.isInteger(modelId) || modelId <= 0) {
+        setStatus("lm-ai-status", "已保存模型 ID 必须为正整数。");
+        return;
+      }
+    }
+    if (!api || typeof api.createAiDraft !== "function" || pid <= 0) {
+      setStatus("lm-ai-status", "缺少项目上下文，无法生成草稿。");
+      return;
+    }
+
+    if (button) button.disabled = true;
+    setStatus("lm-ai-status", "正在生成手顺草稿…");
+    try {
+      const payload: any = { item_ids: ids };
+      if (modelId) payload.model_id = modelId;
+      const draft = await api.createAiDraft("procedure", pid, payload);
+      if (draft && draft.error) {
+        setStatus("lm-ai-status", String(draft.error));
+        return;
+      }
+      const status = draft && draft.status ? `（草稿状态：${draft.status}）` : "";
+      setStatus("lm-ai-status", `已创建手顺草稿；请人工审核后落库。${status}`);
+      if (link && draft && draft.id != null) {
+        link.href = `/lanmatrix/projects/${pid}/ai?draft=${encodeURIComponent(draft.id)}`;
+        link.textContent = `查看草稿 #${draft.id}`;
+        link.hidden = false;
+      }
+    } catch (err: any) {
+      setStatus("lm-ai-status", (err && err.message) || "生成失败");
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
+  /** True when the page is the 执行配置 settings page rather than the editor. */
+  function isSettingsPage(): boolean {
+    if (!doc || typeof doc.querySelector !== "function") return false;
+    return Boolean(doc.querySelector(".lm-exec-config"));
+  }
+
+  async function initSettingsPage(): Promise<void> {
+    const api = resolveApi();
+    const pid = resolveProjectId();
+    const toggle = getToggleInput();
+    if (toggle && typeof toggle.addEventListener === "function") {
+      toggle.addEventListener("change", () => { void persistCleanRoom(Boolean(toggle.checked)); });
+    }
+    if (toggle && api && typeof api.getProject === "function" && pid > 0) {
+      try {
+        const data = await api.getProject(pid);
+        const proj: QualificationProjectInfo = (data && data.project) || data || {};
+        cleanRoomLoaded = true;
+        setCleanRoomEnabled(proj.default_clean_room === true);
+        setStatus("lm-clean-room-status",
+          cleanRoomState ? "当前已开启：每次入队都会冷启动全新的 Silver 实例" : "当前已关闭");
+      } catch (err: any) {
+        setStatus("lm-clean-room-status", (err && err.message) || "读取执行配置失败");
+      }
+    }
+    const sigBtn = byId("lm-signal-list-btn");
+    if (sigBtn && typeof sigBtn.addEventListener === "function") {
+      sigBtn.addEventListener("click", () => { void openSignalListModal(); });
+    }
+    const aiBtn = byId("lm-ai-generate");
+    if (aiBtn && typeof aiBtn.addEventListener === "function") {
+      aiBtn.addEventListener("click", () => { void generateProcedureDraft(); });
     }
   }
 
@@ -345,8 +371,8 @@ const CLEAN_ROOM_TITLE =
 
     if (typeof api.runSelectedTasks === "function" && !(api.runSelectedTasks as any).__lmQualWrapped) {
       const origRun = api.runSelectedTasks;
-      const wrappedRun = function (this: any, id: number, payload?: RunSelectedPayload) {
-        const cleanRoom = isCleanRoomEnabled();
+      const wrappedRun = async function (this: any, id: number, payload?: RunSelectedPayload) {
+        const cleanRoom = await loadCleanRoomSetting();
         const nextPayload: RunSelectedPayload = Object.assign({}, payload || {});
         if (cleanRoom) {
           nextPayload.clean_room = true;
@@ -361,8 +387,8 @@ const CLEAN_ROOM_TITLE =
 
     if (typeof api.rerunSelectedTasks === "function" && !(api.rerunSelectedTasks as any).__lmQualWrapped) {
       const origRerun = api.rerunSelectedTasks;
-      const wrappedRerun = function (this: any, id: number, keysOrPayload: any, opts?: any) {
-        const cleanRoom = isCleanRoomEnabled();
+      const wrappedRerun = async function (this: any, id: number, keysOrPayload: any, opts?: any) {
+        const cleanRoom = await loadCleanRoomSetting();
         if (keysOrPayload && typeof keysOrPayload === "object" && !Array.isArray(keysOrPayload)) {
           const nextObj = Object.assign({}, keysOrPayload);
           if (cleanRoom) {
@@ -389,15 +415,15 @@ const CLEAN_ROOM_TITLE =
   }
 
   function init(): void {
-    ensureToolbarControls();
+    if (isSettingsPage()) void initSettingsPage();
     wrapApi();
   }
 
   const controller: EditorQualificationController = {
     init,
-    syncVisibility,
     isCleanRoomEnabled,
     setCleanRoomEnabled,
+    loadCleanRoomSetting,
     wrapApi,
     openSignalListModal,
     saveDefaultSignalList,
@@ -410,7 +436,6 @@ const CLEAN_ROOM_TITLE =
 
   if (doc && doc.readyState === "loading" && typeof doc.addEventListener === "function") {
     doc.addEventListener("DOMContentLoaded", init);
-    wrapApi();
   } else {
     init();
   }

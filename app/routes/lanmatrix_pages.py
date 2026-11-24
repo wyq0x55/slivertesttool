@@ -402,6 +402,21 @@ def models_page(project_id: int):
         "lanmatrix/models.html", user=user.to_dict(), project_id=project_id)
 
 
+@pages_bp.get("/projects/<int:project_id>/exec")
+def exec_config_page(project_id: int):
+    """执行配置 tab of a Silver project: the run defaults that used to live in
+    the matrix editor's toolbar (车规洁净室 / 默认信号集) plus the AI procedure
+    generator, which needs a saved-row selection the settings page lacks a grid
+    for and therefore takes explicit row ids."""
+    user = _current_user()
+    if user is None:
+        return redirect(url_for("lanmatrix_pages.login"))
+    if _is_ut(_project(project_id)):
+        return redirect(url_for("lanmatrix_pages.ut_binding", project_id=project_id))
+    return render_template(
+        "lanmatrix/exec_config.html", user=user.to_dict(), project_id=project_id)
+
+
 @pages_bp.get("/projects/<int:project_id>/audit")
 def audit_page(project_id: int):
     user = _current_user()
