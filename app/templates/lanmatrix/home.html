@@ -56,14 +56,14 @@
 
   <div id="lm-home-err" class="state err" role="alert" hidden>
     <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></span>
-    <h3>加载失败</h3>
+    <h2>加载失败</h2>
     <p id="lm-home-err-msg">请稍后重试。</p>
     <button class="btn" id="lm-home-retry" type="button">重试</button>
   </div>
 
   <div id="lm-home-empty" class="state" hidden>
     <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span>
-    <h3>你还没有加入任何项目</h3>
+    <h2>你还没有加入任何项目</h2>
     <p>创建一个项目，或联系项目管理员把你加入成员。</p>
     <a class="btn primary" href="{{ url_for('lanmatrix_pages.projects') }}">前往项目列表</a>
   </div>

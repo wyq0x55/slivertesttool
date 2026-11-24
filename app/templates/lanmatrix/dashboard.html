@@ -61,7 +61,7 @@
   {% if not charts_available %}
   {# Says what is missing and how to fix it, rather than leaving blank boxes. #}
   <div class="state" id="lm-dash-nochart" style="margin-top:16px">
-    <h3>未安装图表组件</h3>
+    <h2>未安装图表组件</h2>
     <p>上方统计数据仍然有效。要显示图表，请将 ECharts 放到
       <code>app/static/vendor/charts/echarts.min.js</code> 后刷新本页。</p>
   </div>
@@ -70,7 +70,7 @@
   <div class="lm-dash-grid" id="lm-dash-charts" {% if not charts_available %}hidden{% endif %}>
     <div class="lm-chart-card">
       <div class="lm-chart-head">
-        <h3>{{ "作业进度" if is_ut else "实施进度" }}</h3>
+        <h2>{{ "作业进度" if is_ut else "实施进度" }}</h2>
         <span class="muted">{{ "按当前函数的最新作业统计" if is_ut else "按要实施用例统计" }}</span>
       </div>
       <div class="lm-chart-box" id="lm-chart-progress"></div>
@@ -78,7 +78,7 @@
 
     <div class="lm-chart-card">
       <div class="lm-chart-head">
-        <h3>审核漏斗</h3>
+        <h2>审核漏斗</h2>
         <span class="muted">{{ "等人处理（审核 / 修订 / 环境）→ 已决定" if is_ut else "需审核 → 已决定" }}</span>
       </div>
       <div class="lm-chart-box" id="lm-chart-review"></div>
@@ -89,7 +89,7 @@
        Clang/LLVM is useful; one that proposes nothing only costs the wait. #}
     <div class="lm-chart-card wide" id="ut-repair-card">
       <div class="lm-chart-head">
-        <h3 id="lm-ut-repair-title">模型修订效果</h3>
+        <h2 id="lm-ut-repair-title">模型修订效果</h2>
         <span class="muted">每轮调用模型的结果；"有效"指产出了进入 Clang/LLVM 执行的候选</span>
       </div>
       <div class="ut-repair-sum" id="ut-repair-sum"></div>
@@ -106,7 +106,7 @@
     {% if not is_ut %}
     <div class="lm-chart-card wide">
       <div class="lm-chart-head">
-        <h3>累计实施趋势</h3>
+        <h2>累计实施趋势</h2>
         {# Says what is counted, because "cumulative" invites the assumption
            that re-runs add to the total. #}
         <span class="muted">按实施日统计去重用例数（同一用例只计首次实施）</span>
@@ -116,7 +116,7 @@
 
     <div class="lm-chart-card wide">
       <div class="lm-chart-head">
-        <h3>按版本对比</h3>
+        <h2>按版本对比</h2>
         <span class="muted">每个版本取各用例的最后一次结果</span>
       </div>
       <div class="lm-chart-box tall" id="lm-chart-version"></div>
@@ -128,7 +128,7 @@
     {# Read-only left-to-right compare. The link uses row_uuid. #}
   <section class="lm-chart-card" id="lm-version-compare" style="margin-top:16px">
     <div class="lm-chart-head">
-      <h3 id="lm-vc-title">版本结果对比</h3>
+      <h2 id="lm-vc-title">版本结果对比</h2>
       <span class="muted">按模型名称和版本比较。没有版本的模型填裸名称。取消的运行不计入。</span>
     </div>
     <form id="lm-vc-form" class="lm-filters" style="margin:12px 16px">
@@ -160,7 +160,7 @@
       <button type="button" class="btn" id="lm-vc-next" hidden>下一页</button>
     </div>
     <section id="lm-vc-history" hidden aria-live="polite" style="margin:16px">
-      <h4 id="lm-vc-history-title">用例运行历史</h4>
+      <h3 id="lm-vc-history-title">用例运行历史</h3>
       <p class="lm-muted">只显示写回矩阵的运行摘要；历史报告文件不按次存档。</p>
       <p id="lm-vc-history-status" class="lm-muted" role="status"></p>
       <div class="state err" id="lm-vc-history-error" role="alert" hidden></div>
@@ -182,7 +182,7 @@
   {% endif %}
 
   <div class="state" id="lm-dash-empty" hidden style="margin-top:16px">
-    <h3>还没有数据</h3>
+    <h2>还没有数据</h2>
     <p>{% if is_ut %}配置项目绑定并读取函数索引后，这里会显示项目进度。{% else %}导入测试用例并完成一次运行后，这里会显示项目进度。{% endif %}</p>
   </div>
 </div>
