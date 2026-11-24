@@ -424,8 +424,12 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .tablecard{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
   box-shadow:var(--shadow-sm); overflow:hidden; }
 .tablecard .tc-head{ display:flex; align-items:center; gap:12px; padding:14px 16px; border-bottom:1px solid var(--border); }
+.tablecard .tc-head h2,
 .tablecard .tc-head h3{ font-size:14px; font-weight:600; }
 .tablecard .tc-head .spacer{ flex:1; }
+/* The license card's head titles a page section (an h2), not a subsection;
+   keep the compact caption size the old h3 had. */
+.ctrl-card .tc-head h2{ font-size:1.17em; }
 
 .tasklist{ display:flex; flex-direction:column; }
 .trow{ display:grid; grid-template-columns:26px 1fr 150px 130px 120px 44px; align-items:center;
@@ -844,6 +848,7 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .state .glyph{ width:52px; height:52px; border-radius:14px; display:inline-grid; place-items:center;
   background:var(--brand-soft); color:var(--brand-text); margin-bottom:14px; }
 .state .glyph svg{ width:26px; height:26px; }
+.state h2,
 .state h3{ font-size:16px; font-weight:600; color:var(--text); }
 .state p{ margin:6px 0 18px; color:var(--text-3); font-size:13.5px; }
 .state.err .glyph{ background:var(--danger-soft); color:var(--danger-text); }
@@ -1077,7 +1082,7 @@ dialog::backdrop, .lm-dialog::backdrop{ background:rgba(10,12,16,.5); backdrop-f
 .lm-db-overview, .lm-db-console{ background:var(--surface); border:1px solid var(--border);
   border-radius:var(--radius); padding:0; }
 .lm-db-section{ padding:14px 16px; }
-.lm-db-subhead{ margin:16px 0 8px; font-size:13px; font-weight:600; color:var(--text-2); }
+.lm-db-body .lm-db-subhead{ margin:16px 0 8px; font-size:13px; font-weight:600; color:var(--text-2); }
 .lm-db-info{ color:var(--text); }
 .lm-db-kv > span{ color:var(--text-3); }
 .lm-db-tables .lm-db-tname{ font-family:var(--mono); color:var(--text); }

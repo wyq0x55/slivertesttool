@@ -483,6 +483,7 @@ tr.lm-dragging { opacity: 0.5; background: var(--brand-soft); }
 /* .lm-badge-admin lives in design-system.css (it is a token pill variant). */
 .lm-db-body { flex: 1; overflow: auto; padding: 16px; display: grid;
   grid-template-columns: minmax(320px, 420px) 1fr; gap: 18px; align-items: start; }
+.lm-db-body h2,
 .lm-db-body h3 { margin: 4px 0 8px; font-size: 15px; }
 .lm-db-overview, .lm-db-console { background: var(--surface); border: 1px solid var(--border);
   border-radius: 10px; padding: 14px 16px; }
