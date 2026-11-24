@@ -6,6 +6,8 @@
     POST /targets/import                 re-read the project index (item.edit)
     GET  /targets                        実施一覧 with each target's latest job
     POST /batches                        {target_ids, label} → queue (item.edit)
+    POST /batches/<id>/derive            {targets?, function_step_limit?, label?} → queue (item.edit)
+    GET  /batches/<id>/compare           ?against=<id>; read-only per-function comparison
     GET  /batches                        batches with per-state counts
     GET  /jobs                           ?state&batch_id; host C0/C1/MC/DC digest per job
     GET  /repair-stats                   model-round outcomes per model
@@ -145,6 +147,28 @@ def create_batch(project_id: int):
     except Exception as exc:  # noqa: BLE001 - any queue failure leaves the batch without a worker
         return _dispatch_failed(project_id, exc, batch_id=batch.id)
     return ok(batch.to_dict(), status=202)
+
+
+@bp.post("/batches/<int:batch_id>/derive")
+@login_required
+def derive_batch(project_id: int, batch_id: int):
+    _project_and_role(project_id, "item.edit")
+    batch = pipeline.derive_batch(project_id, batch_id, g.user.id, _body())
+    try:
+        ut_tasks.ut_generate_batch(batch.id)
+    except Exception as exc:  # noqa: BLE001 - any queue failure leaves the batch without a worker
+        return _dispatch_failed(project_id, exc, batch_id=batch.id)
+    return ok(batch.to_dict(), status=202)
+
+
+@bp.get("/batches/<int:batch_id>/compare")
+@login_required
+def compare_batches(project_id: int, batch_id: int):
+    _project_and_role(project_id, "project.view")
+    against = arg_int("against", None)
+    if against is None:
+        return err("VALIDATION_ERROR", "against 必须是对照批次的 id", status=400)
+    return ok(ut_export.compare_batches(project_id, against, batch_id))
 
 
 @bp.get("/batches")

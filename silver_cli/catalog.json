@@ -2770,6 +2770,24 @@
    "summary": "browse server paths"
   },
   {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "ut_pipeline.compare_batches",
+   "path": "/api/v1/projects/<int:project_id>/ut/batches/<int:batch_id>/compare",
+   "path_params": {
+    "batch_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [
+    "against"
+   ],
+   "response_kind": "json",
+   "summary": "compare batches"
+  },
+  {
    "body_fields": [
     "label",
     "target_ids"
@@ -2786,6 +2804,22 @@
    "query_params": [],
    "response_kind": "json",
    "summary": "create batch"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "ut_pipeline.derive_batch",
+   "path": "/api/v1/projects/<int:project_id>/ut/batches/<int:batch_id>/derive",
+   "path_params": {
+    "batch_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "derive batch"
   },
   {
    "body_fields": [],

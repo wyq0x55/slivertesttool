@@ -327,7 +327,8 @@ def list_targets(project_id: int) -> list[dict[str, Any]]:
 # --------------------------------------------------------------------------- #
 # Batches
 # --------------------------------------------------------------------------- #
-def create_batch(project_id: int, target_ids: Any, user_id: int, label: str = "") -> UtBatch:
+def create_batch(project_id: int, target_ids: Any, user_id: int, label: str = "",
+                 *, derived_from: Optional[int] = None) -> UtBatch:
     config = require_config(project_id)
     if (not isinstance(target_ids, list) or not target_ids
             or any(type(item) is not int for item in target_ids)):
@@ -346,7 +347,8 @@ def create_batch(project_id: int, target_ids: Any, user_id: int, label: str = ""
             "以下函数已在队列中：" + ", ".join(sorted({job.target.function for job in busy})),
             code="DUPLICATE")
     batch = UtBatch(project_id=project_id, label=(label or "")[:128], created_by=user_id,
-                    status=UtBatch.STATUS_GENERATING, config_snapshot=config.to_dict())
+                    status=UtBatch.STATUS_GENERATING, config_snapshot=config.to_dict(),
+                    derived_from_batch_id=derived_from)
     db.session.add(batch)
     db.session.flush()
     for target in sorted(targets, key=lambda item: item.row_no):
@@ -365,6 +367,61 @@ def create_batch(project_id: int, target_ids: Any, user_id: int, label: str = ""
                  new_value={"functions": [t.function for t in targets], "label": batch.label})
     db.session.commit()
     return batch
+
+
+def derive_batch(project_id: int, batch_id: int, user_id: int, body: dict[str, Any]) -> UtBatch:
+    """Queue a new batch for the functions a confirmed witness run changed.
+
+    The source batch is read and never written: its frozen config, provenance and
+    status stay exactly as they were delivered. The new batch freezes the config
+    current at the moment of derivation, so a different step ceiling applies only
+    to it.
+    """
+    source = UtBatch.query.filter_by(id=batch_id, project_id=project_id).one_or_none()
+    if source is None:
+        raise ServiceError("批次不存在", code="NOT_FOUND")
+    requested = body.get("targets")
+    if requested is None:
+        requested = _confirmed_targets(source)
+    elif not isinstance(requested, list) or any(type(item) is not int for item in requested):
+        raise ServiceError("targets 必须是目标 id 数组", code="VALIDATION_ERROR")
+    if not requested:
+        raise ServiceError("没有可重生成的目标：需要已确认的接手记录", code="VALIDATION_ERROR")
+    limit = body.get("function_step_limit", _UNCHANGED)
+    if limit is not _UNCHANGED:
+        _apply_step_limit(project_id, limit, user_id)
+    label = body.get("label")
+    if label is not None and not isinstance(label, str):
+        raise ServiceError("label 必须是字符串", code="VALIDATION_ERROR")
+    return create_batch(project_id, requested, user_id, label or "", derived_from=source.id)
+
+
+_UNCHANGED = object()
+
+
+def _confirmed_targets(batch: UtBatch) -> list[int]:
+    """Targets whose witness run confirmed entries, one per function."""
+    jobs = UtJob.query.filter_by(batch_id=batch.id).all()
+    chosen: dict[str, int] = {}
+    for job in jobs:
+        witness = job.witness if isinstance(job.witness, dict) else {}
+        record = witness.get("handoff") if isinstance(witness.get("handoff"), dict) else {}
+        confirm = witness.get("confirm") if isinstance(witness.get("confirm"), dict) else {}
+        if record.get("state") not in ("HANDOFF_READY", "NO_ADMISSIBLE_OBLIGATION"):
+            continue
+        if confirm.get("status") != "CONFIRMED":
+            continue
+        chosen.setdefault(job.target.function, job.target_id)
+    return list(chosen.values())
+
+
+def _apply_step_limit(project_id: int, value: Any, user_id: int) -> None:
+    """Save a step ceiling for batches created after this one.
+
+    Only the project config changes, so every batch already frozen keeps the
+    ceiling it was created with.
+    """
+    save_config(project_id, {"function_step_limit": value}, user_id)
 
 
 def list_batches(project_id: int) -> list[dict[str, Any]]:

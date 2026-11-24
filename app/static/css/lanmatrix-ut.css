@@ -163,6 +163,12 @@
   font-size:12.5px; color:var(--text-2); }
 .ut-batch-states{ display:inline-flex; flex-wrap:wrap; gap:4px 8px; align-items:center; }
 .ut-batch-err{ color:var(--danger-text); }
+.ut-compare{ margin:-4px 0 14px; overflow-x:auto; }
+.ut-compare table{ width:100%; border-collapse:collapse; font-size:12.5px; }
+.ut-compare caption{ caption-side:top; text-align:left; padding:0 0 6px; color:var(--text-3); }
+.ut-compare th, .ut-compare td{ text-align:left; padding:5px 10px; border-bottom:1px solid var(--border);
+  vertical-align:top; }
+.ut-compare th[scope="row"]{ font-weight:600; white-space:nowrap; }
 .ut-old-toggle{ display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:var(--text-2); white-space:nowrap; cursor:pointer; }
 .ut-superseded{ margin:0 0 14px; padding:10px 14px; border:1px solid var(--border); border-left:3px solid var(--text-3);
   border-radius:var(--radius-sm); background:var(--surface-2); color:var(--text-2); font-size:13px; }

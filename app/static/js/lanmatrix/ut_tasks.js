@@ -200,7 +200,58 @@
       sel.replaceChildren.apply(sel, [allOption].concat(batchOptions));
       sel.value = batchId;
       $("ut-batch-stop").hidden = !U.can("edit") || !selectedBatchActive();
+      renderDerive();
       renderBatchInfo();
+    }
+    function confirmedHere() {
+      // The job list omits the witness record; the open job's detail carries it,
+      // which is the job whose confirmation an operator would act on.
+      if (!job || String(job.batch_id) !== String(batchId)) return false;
+      var witness = job.witness || {};
+      var record = witness.handoff || {};
+      var confirmation = witness.confirm || {};
+      return (record.state === "HANDOFF_READY" || record.state === "NO_ADMISSIBLE_OBLIGATION")
+        && confirmation.status === "CONFIRMED";
+    }
+    function renderDerive() {
+      var button = $("ut-batch-derive");
+      if (!button) return;
+      button.hidden = !(U.can("edit") && batchId && confirmedHere());
+      button.disabled = false;
+    }
+    function lineageLine(b) {
+      if (!b.derived_from_batch_id) return "";
+      return ' · <a href="#" data-batch="' + b.derived_from_batch_id + '">派生自批次 #' +
+        b.derived_from_batch_id + "</a>";
+    }
+    function renderComparison(b) {
+      var panel = $("ut-compare");
+      if (!panel) return;
+      if (!b || !b.derived_from_batch_id) { panel.hidden = true; return; }
+      var shown = b.id;
+      LMApi.utCompareBatches(pid, shown, b.derived_from_batch_id).then(function(res) {
+        if (String(batchId) !== String(shown)) return;
+        var rows = (res.data.functions || []).map(function(row) {
+          return '<tr><th scope="row">' + esc(row.function) + "</th><td>" +
+            sideText(row.base) + "</td><td>" + sideText(row.derived) + "</td></tr>";
+        });
+        $("ut-compare-body").innerHTML = rows.join("") ||
+          '<tr><td colspan="3">源批次没有可对照的函数</td></tr>';
+        panel.hidden = false;
+      }).catch(function(e) { LMUI.toast(e.message, "error"); });
+    }
+    function sideText(side) {
+      if (!side) return "本批次未重生成";
+      var parts = [];
+      if (side.step_limit != null) parts.push("上限 " + side.step_limit);
+      if (side.obligations_total != null) parts.push("义务 " + side.obligations_total);
+      if (side.resolved != null) parts.push("断言 " + side.resolved);
+      if (side.handoff_state) parts.push(side.handoff_state);
+      if (side.stopped_at) parts.push("停下：" + side.stopped_at);
+      var replay = side.replay || {};
+      if (replay.verdict) parts.push("回放 " + replay.verdict);
+      if (replay.confirm_status) parts.push("确认 " + replay.confirm_status);
+      return esc(parts.join(" · ") || "—");
     }
     function renderBatchInfo() {
       var box = $("ut-batch-info");
@@ -227,7 +278,10 @@
         "创建 " + U.time(b.created_at),
         b.finished_at ? "结束 " + U.time(b.finished_at) : ""
       ].filter(Boolean).map(esc).join(" · ");
-      box.innerHTML = '<span class="ut-batch-facts">' + facts + '</span><span class="ut-batch-states">' + states + "</span>" + (b.error ? '<span class="ut-batch-err">' + esc(b.error) + "</span>" : "");
+      box.innerHTML = '<span class="ut-batch-facts">' + facts + lineageLine(b) +
+        '</span><span class="ut-batch-states">' + states + "</span>" +
+        (b.error ? '<span class="ut-batch-err">' + esc(b.error) + "</span>" : "");
+      renderComparison(b);
     }
     async function loadJobs() {
       var epoch = ++listEpoch;
@@ -741,6 +795,7 @@
     function renderJob() {
       renderProgress();
       renderWitness();
+      renderDerive();
       var t = job.target || {};
       var gate = U.actionable(job);
       var shown = U.jobState(job);
@@ -1981,6 +2036,35 @@
     $("ut-show-old").addEventListener("change", function() {
       showOld = this.checked;
       renderRows();
+    });
+    $("ut-batch-info").addEventListener("click", function(e) {
+      var link = e.target.closest("[data-batch]");
+      if (!link) return;
+      if (e.preventDefault) e.preventDefault();
+      $("ut-batch").value = link.dataset.batch;
+      $("ut-batch").dispatchEvent(new Event("change"));
+    });
+    $("ut-batch-derive").addEventListener("click", async function() {
+      var id = batchId;
+      if (!id || !U.can("edit")) return;
+      var ok = await LMUI.confirm({
+        title: "重生成已确认的函数",
+        body: "只为批次 #" + id + " 中确认已写入台账的函数新建一个批次。新批次使用当前配置的函数语义步数上限，源批次的结论与上限保持不变。",
+        confirmText: "新建批次"
+      });
+      if (!ok) return;
+      var button = $("ut-batch-derive");
+      button.disabled = true;
+      try {
+        var r = await LMApi.utDeriveBatch(pid, Number(id), {});
+        say("已新建批次 #" + r.data.id + "，正在重生成已确认的函数");
+        $("ut-batch").value = String(r.data.id);
+        $("ut-batch").dispatchEvent(new Event("change"));
+      } catch (e) {
+        say(e.message, true);
+      }
+      button.disabled = false;
+      refresh();
     });
     $("ut-batch-stop").addEventListener("click", async function() {
       var id = batchId, active = selectedBatchActive();

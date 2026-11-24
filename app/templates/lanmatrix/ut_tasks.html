@@ -47,6 +47,10 @@
       <input type="search" id="ut-q" placeholder="搜索函数 / 源文件…" aria-label="搜索函数 / 源文件…" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
     </div>
     <select id="ut-batch" class="selbox" title="按批次筛选" aria-label="按批次筛选"><option value="">全部批次</option></select>
+    <button class="btn" id="ut-batch-derive" type="button" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h12"/><path d="m12 6 6 6-6 6"/></svg>
+      重生成已确认的函数
+    </button>
     <button class="btn" id="ut-batch-stop" type="button" hidden>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
       停止批次
@@ -59,6 +63,15 @@
     </label>
   </div>
   <div class="ut-batch-info" id="ut-batch-info" hidden></div>
+  <div class="ut-compare" id="ut-compare" hidden>
+    <table>
+      <caption>与源批次的对照（只读，不改变任何批次）</caption>
+      <thead><tr>
+        <th scope="col">函数</th><th scope="col">源批次</th><th scope="col">本批次</th>
+      </tr></thead>
+      <tbody id="ut-compare-body"></tbody>
+    </table>
+  </div>
 
   <div class="tablecard">
     <div style="overflow-x:auto" tabindex="0" role="region" aria-labelledby="lm-ut-tasks-title">

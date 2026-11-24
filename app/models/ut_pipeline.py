@@ -127,6 +127,10 @@ class UtBatch(db.Model):
     provenance = db.Column(JSONType, nullable=True)
     constraints = db.Column(JSONType, nullable=True)
     error = db.Column(db.Text, nullable=False, default="")
+    # The batch whose confirmed witness entries this batch regenerates; NULL for a
+    # batch created directly. Deleting the source clears the pointer.
+    derived_from_batch_id = db.Column(
+        db.Integer, db.ForeignKey("ut_batches.id", ondelete="SET NULL"), nullable=True, index=True)
     created_by = db.Column(db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
     finished_at = db.Column(db.DateTime, nullable=True)
@@ -143,6 +147,7 @@ class UtBatch(db.Model):
             "provenance": self.provenance,
             "constraints": {key: value for key, value in snapshot.items() if key in keys},
             "error": self.error or None,
+            "derived_from_batch_id": self.derived_from_batch_id,
             "created_by": self.created_by,
             "created_at": _iso(self.created_at),
             "finished_at": _iso(self.finished_at),
