@@ -154,14 +154,14 @@ def test_reconcile_schema_sets_alembic_version_and_is_idempotent(monkeypatch, tm
             rev_first = conn.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalars().all()
-        assert rev_first == ["0005_batch_lineage"]
+        assert rev_first == ["0006_project_clean_room"]
 
         reconcile_schema()
         with db.engine.connect() as conn:
             rev_second = conn.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalars().all()
-        assert rev_second == ["0005_batch_lineage"]
+        assert rev_second == ["0006_project_clean_room"]
 
         existing_tables = set(inspect(db.engine).get_table_names())
         assert {
@@ -201,6 +201,9 @@ def test_legacy_db_upgrade_adds_governance_columns_and_backfills_rollups(
             conn.execute(text("ALTER TABLE tasks DROP COLUMN clean_room"))
             conn.execute(
                 text("ALTER TABLE lm_projects DROP COLUMN default_signal_list")
+            )
+            conn.execute(
+                text("ALTER TABLE lm_projects DROP COLUMN default_clean_room")
             )
             conn.execute(text("DROP TABLE IF EXISTS lm_dashboard_case_first_runs"))
             conn.execute(text("DROP TABLE IF EXISTS lm_dashboard_daily_rollups"))
@@ -281,10 +284,11 @@ def test_legacy_db_upgrade_adds_governance_columns_and_backfills_rollups(
         assert "function_step_limit" in ut_cols
         assert "clean_room" in task_cols
         assert "default_signal_list" in proj_cols
+        assert "default_clean_room" in proj_cols
 
         with db.engine.connect() as conn:
             rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        assert rev == "0005_batch_lineage"
+        assert rev == "0006_project_clean_room"
 
         assert DashboardCaseFirstRun.query.filter_by(project_id=project_id).count() == 2
         assert DashboardDailyRollup.query.filter_by(project_id=project_id).count() == 2
@@ -310,6 +314,7 @@ def test_legacy_db_upgrade_adds_governance_columns_and_backfills_rollups(
         project = db.session.get(Project, project_id)
         assert project is not None
         assert project.default_signal_list == ""
+        assert project.default_clean_room is False
         db.engine.dispose()
 
 
@@ -695,7 +700,7 @@ def test_postgresql_disposable_schema_alembic_and_rollups(monkeypatch, tmp_path)
                         .scalars()
                         .all()
                     )
-                assert revisions == ["0005_batch_lineage"]
+                assert revisions == ["0006_project_clean_room"]
 
                 with db.engine.begin() as conn:
                     conn.execute(
@@ -707,6 +712,9 @@ def test_postgresql_disposable_schema_alembic_and_rollups(monkeypatch, tmp_path)
                     conn.execute(text("ALTER TABLE tasks DROP COLUMN clean_room"))
                     conn.execute(
                         text("ALTER TABLE lm_projects DROP COLUMN default_signal_list")
+                    )
+                    conn.execute(
+                        text("ALTER TABLE lm_projects DROP COLUMN default_clean_room")
                     )
                     conn.execute(
                         text(
@@ -821,6 +829,10 @@ def test_postgresql_disposable_schema_alembic_and_rollups(monkeypatch, tmp_path)
                     col_info["name"] for col_info in pg_inspector.get_columns("tasks")
                 }
                 assert "default_signal_list" in {
+                    col_info["name"]
+                    for col_info in pg_inspector.get_columns("lm_projects")
+                }
+                assert "default_clean_room" in {
                     col_info["name"]
                     for col_info in pg_inspector.get_columns("lm_projects")
                 }
