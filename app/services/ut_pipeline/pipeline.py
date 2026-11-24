@@ -1072,12 +1072,15 @@ def _host_case_context(attempt: UtAttempt, gaps: dict[str, Any]) -> bool:
     check = attempt.check or {}
     witnesses = check.get("candidate_witnesses") or {}
     readiness = witnesses.get("input_repair_readiness") or {}
+    seed = (attempt.origin == UtAttempt.ORIGIN_GENERATOR and attempt.execution is None
+            and check.get("input_repair_seed") is True and check.get("rows") == 0
+            and set(_error_codes(check)) == {"FORMAT_NO_DATA_ROWS"})
     if (not gaps["open"] or not gaps["report_complete"]
             or check.get("verdict") not in {"PASS", "FAIL"}
-            or (attempt.execution or {}).get("status") != "HOST_PASS"
-            or set(_error_codes(check)) - {"HOST_COVERAGE_REQUIRED_NOT_COVERED",
-                                           "INPUT_OBLIGATION_UNRESOLVED",
-                                           "INPUT_OBLIGATION_PROOF_GAP"}
+            or (not seed and ((attempt.execution or {}).get("status") != "HOST_PASS"
+                              or set(_error_codes(check)) - {"HOST_COVERAGE_REQUIRED_NOT_COVERED",
+                                                             "INPUT_OBLIGATION_UNRESOLVED",
+                                                             "INPUT_OBLIGATION_PROOF_GAP"}))
             or any(issue.get("code") == "INPUT_OBLIGATION_UNRESOLVED"
                    and issue.get("severity") == "error" and issue.get("repairable") is not True
                    for issue in check.get("issues") or [])
@@ -1094,7 +1097,8 @@ def _host_case_context(attempt: UtAttempt, gaps: dict[str, Any]) -> bool:
         table = repair.increment.parse(_read_attempt_csv(attempt).decode("cp932"))
         domains = (check.get("input_ranges") or {}).get("contract") or {}
         columns = domains.get("columns") or []
-        return (domains.get("contract") == "ut-agent.input-domains/1"
+        return ((not seed or not table.rows)
+                and domains.get("contract") == "ut-agent.input-domains/1"
                 and len(columns) == len(table.inputs)
                 and all(column.get("index") == index and column.get("column") == name
                         for index, (column, name) in enumerate(zip(columns, table.inputs), 1)))
@@ -1151,7 +1155,7 @@ def _execute_host_step(job: UtJob, attempt: UtAttempt, config: dict) -> None:
         db.session.commit()
         return
     try:
-        _read_attempt_csv(attempt)
+        data = _read_attempt_csv(attempt)
     except ServiceError as exc:
         _integrity_gate(job, attempt, "候选 CSV 完整性检查失败：" + str(exc))
         db.session.commit()
@@ -1164,6 +1168,30 @@ def _execute_host_step(job: UtJob, attempt: UtAttempt, config: dict) -> None:
     def continuing():
         db.session.refresh(job, attribute_names=["stop_requested_at", "stop_requested_by"])
         return job.stop_requested_at is None
+
+    if generation.get("budget_exhausted") is True and attempt.origin == UtAttempt.ORIGIN_GENERATOR:
+        try:
+            empty = not repair.increment.parse(data.decode("cp932")).rows
+        except (UnicodeDecodeError, repair.increment.TableError):
+            empty = False
+        if empty:
+            try:
+                with timing.stage(job, "candidate_check", attempt=attempt):
+                    check = get_bridge().check(
+                        Path(attempt.csv_path), manifest=config["manifest_path"], reference=Path(job.reference_csv),
+                        intents=Path(generation["intent_manifest"]), ir_json=Path(generation["ir_json"]))
+            except BridgeError as exc:
+                _gate(job, UtJob.ERROR, f"ut-agent 调用失败：{exc}", GateCode.TOOL_ERROR)
+            else:
+                if _result_integrity(job, attempt, check, None):
+                    attempt.check, attempt.verdict = check, check["verdict"]
+                    job.last_verdict = check["verdict"]
+                    _gate(job, *(_report_gate(check, attempt.csv_sha256)
+                                 or _host_next_state(job, attempt, _host_gaps(job, attempt))))
+            if not continuing():
+                _halt(job)
+            db.session.commit()
+            return
 
     execution_root = _fresh_exec_dir(job, attempt)
     try:
@@ -1425,6 +1453,7 @@ def _repair_step(job: UtJob) -> None:
             prefix_snapshot=prefix,
             diagnostic_dir=_fresh_model_dir(job, attempt),
             source=source,
+            local_only=generation.get("budget_exhausted") is True,
             observe=lambda step, **options: timing.stage(job, step, attempt=attempt,
                                                        round_number=job.repair_rounds + 1, **options),
         )
@@ -1439,6 +1468,11 @@ def _repair_step(job: UtJob) -> None:
         return
     if revision.meta.get("code") == "INTEGRITY_ERROR":
         _integrity_gate(job, attempt, revision.meta["error"])
+        db.session.commit()
+        return
+    db.session.refresh(job, attribute_names=["stop_requested_at", "stop_requested_by"])
+    if job.stop_requested_at is not None:
+        _halt(job)
         db.session.commit()
         return
     if revision.meta.get("code") in {"PROMPT_PREFIX_CHANGED", "PROMPT_BUDGET_EXCEEDED",
@@ -1530,7 +1564,8 @@ def _stalled(meta: dict[str, Any]) -> bool:
     Rejected rows come back as checker feedback the next round can act on,
     and an unparsable reply may be transient; neither is a stall.
     """
-    return "rationale" in meta and not meta.get("rows") and not meta.get("rejected")
+    return ("rationale" in meta and not meta.get("rows") and not meta.get("rejected")
+            and not (meta.get("declined") and meta.get("deferred_obligations")))
 
 
 def advance_job(job_id: int) -> None:

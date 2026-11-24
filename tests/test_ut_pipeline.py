@@ -602,6 +602,47 @@ def test_missing_cases_on_a_pass_go_to_the_model_until_claimed_or_declined(env, 
     assert "EXPECTED_VALUE_PENDING" in job["reason"] or "blank expected" in job["reason"]
 
 
+def test_budget_exhaustion_with_no_reference_rows_calls_local_model_before_host(env, monkeypatch):
+    targets = _configure(env)
+    env.bridge.generated = b"".join(GOOD.splitlines(keepends=True)[:2])
+    env.bridge.gaps = [dict(GAP, budget_handoff=True)]
+    generate = env.bridge.generate
+    check = env.bridge.check
+
+    def generate_budget_exhausted(*args, **kwargs):
+        result = generate(*args, **kwargs)
+        result["units"][0].update(status="NEEDS_REVIEW", budget_exhausted=True)
+        return result
+
+    def check_seed(candidate, **kwargs):
+        result = check(candidate, **kwargs)
+        if Path(candidate).read_bytes() == env.bridge.generated:
+            result.update(verdict="FAIL", rows=0, input_repair_seed=True,
+                          issues=[{"code": "FORMAT_NO_DATA_ROWS", "severity": "error", "repairable": True}],
+                          input_ranges={"contract": {"contract": "ut-agent.input-domains/1", "columns": [
+                              {"index": 1, "column": "x", "status": "PROVEN", "min": 0, "max": 255}]}})
+        return result
+
+    reply = _llm_reply(dict(_row("b1:T"), base_row=0))
+    calls = []
+
+    def fake_chat(messages, **kwargs):
+        assert kwargs["local_only"] and env.bridge.executions == 0
+        assert "base_row 0" in messages[1]["content"]
+        calls.append(messages)
+        return f"```json\n{reply}\n```" if len(calls) == 1 else reply
+
+    monkeypatch.setattr(env.bridge, "generate", generate_budget_exhausted)
+    monkeypatch.setattr(env.bridge, "check", check_seed)
+    monkeypatch.setattr(provider, "chat", fake_chat)
+    [job_id] = _enqueue(env, targets["f"])
+    job = _job(env, job_id)
+    assert len(calls) == 2 and env.bridge.executions == 1
+    assert job["repair_rounds"] == 2
+    assert [(a["origin"], a["verdict"]) for a in job["attempts"]] == [
+        ("GENERATOR", "FAIL"), ("LLM", "INVALID"), ("LLM", "FAIL")]
+
+
 def test_rejected_witness_stays_out_of_current_candidate_and_winams(env, monkeypatch):
     targets = _configure(env)
     env.bridge.gaps = [GAP]

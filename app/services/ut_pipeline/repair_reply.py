@@ -2,7 +2,21 @@
 
 from __future__ import annotations
 
+import json
+import re
 from typing import Any
+
+
+def parse(reply: str) -> Any:
+    def unique_fields(pairs):
+        record = {}
+        for key, value in pairs:
+            if key in record:
+                raise ValueError(f"Duplicate JSON key: {key}")
+            record[key] = value
+        return record
+
+    return json.loads(reply, object_pairs_hook=unique_fields)
 
 
 def schema_errors(parsed: Any) -> list[dict[str, str]]:
@@ -58,6 +72,8 @@ def schema_errors(parsed: Any) -> list[dict[str, str]]:
                 error(f"{path}.inputs", "must be a non-empty object of string values")
                 continue
             for token, value in inputs.items():
-                text(token, f"{path}.inputs key", nonempty=True)
-                text(value, f"{path}.inputs.{token}", nonempty=True)
+                if not re.fullmatch(r"I[1-9][0-9]*", token):
+                    error(f"{path}.inputs.{token}", "must use an input token such as I1")
+                if not isinstance(value, str) or not re.fullmatch(r"[+-]?(?:[0-9]+|0[xX][0-9a-fA-F]+)", value):
+                    error(f"{path}.inputs.{token}", "must be a decimal or hexadecimal integer string")
     return errors

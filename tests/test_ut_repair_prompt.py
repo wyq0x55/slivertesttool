@@ -71,6 +71,30 @@ def test_system_prompt_is_shared_by_every_function_of_a_batch():
     assert repair._system_prompt(CONSTRAINTS) == repair._system_prompt(reordered)
 
 
+def test_budget_prompt_defers_oversized_obligation_and_only_shows_bound_columns(monkeypatch):
+    oversize = dict(GAP, obligation_id="oversize", budget_handoff=True)
+    gap = dict(GAP, budget_handoff=True)
+    check = dict(CHECK, completeness=COMPLETENESS, candidate_witnesses={"repair_context": [
+        {"obligation_id": "oversize", "path": [{"raw": "x" * (repair.repair_context.MAX_CONTEXT_CHARS + 1)}]},
+        {"obligation_id": gap["obligation_id"], "path": [{"atoms": [{"input_tokens": ["I2"]}]}]},
+    ]})
+    monkeypatch.setattr(repair, "_MAX_BUDGET_COLUMN_CHARS", 1)
+    monkeypatch.setattr(ai_config, "get_ai_config", lambda: {ai_config.KEY_MODEL: "fake"})
+    def invoke(messages, **kwargs):
+        prompt = messages[1]["content"]
+        assert kwargs["local_only"] is True
+        assert "I1 = a.c/x" not in prompt and "I2 = a.c/y" in prompt
+        assert "oversize" not in prompt and gap["obligation_id"] in prompt
+        return json.dumps({"rows": [{"obligation": gap["obligation_id"], "base_row": 1, "inputs": {"I2": "2"}}]})
+
+    monkeypatch.setattr(repair.provider, "invoke_chat", invoke)
+    result = repair.revise(constraints=CONSTRAINTS, target={"function": "f"}, csv_bytes=CSV.encode("cp932"),
+                           check=check, execution=None, history=[], open_gaps=[oversize, gap],
+                           allowed={"oversize", gap["obligation_id"]}, local_only=True)
+    assert result.meta["deferred_obligations"] == ["oversize"]
+    assert result.csv_bytes.endswith(b",0,2,\r\n")
+
+
 def test_columns_precede_gaps_rows_verdict_and_history():
     history = [{"seq": 1, "origin": "GENERATOR", "verdict": "FAIL", "codes": ["X"]}]
     first = _user(CSV, CHECK, history)
@@ -129,7 +153,7 @@ def test_system_prompt_asks_for_rows_not_a_csv():
     system = repair._system_prompt(CONSTRAINTS)
     assert '"rows"' in system and '"declined"' in system and "不要输出 CSV" in system
     assert "不能仅凭冲突认定缺少输入" in system
-    assert repair.PROMPT_VERSION == "ut-repair/10"
+    assert repair.PROMPT_VERSION == "ut-repair/11"
 
 
 def _revise(monkeypatch, reply, allowed=frozenset({"b6:boundary:1:above:2"})):
@@ -149,7 +173,7 @@ def test_reply_rows_are_appended_and_claims_recorded(monkeypatch):
     assert revision.csv_bytes.decode("cp932") == CSV + ";$L$,LLM add b6:boundary:1:above:2\r\n,0,2,\r\n"
     assert revision.meta["claimed"] == ["b6:boundary:1:above:2"]
     assert [item["index"] for item in revision.meta["rejected"]] == [1]
-    assert revision.meta["prompt_version"] == "ut-repair/10"
+    assert revision.meta["prompt_version"] == repair.PROMPT_VERSION
 
 
 def test_a_declining_reply_adds_nothing(monkeypatch):
@@ -393,6 +417,7 @@ def test_malformed_reply_fields_return_structured_revision(monkeypatch, reply, p
     ("inputs", {}, "inputs"), ("inputs", {"I2": None}, "inputs.I2"),
     ("inputs", {"I2": 2}, "inputs.I2"), ("inputs", {"I2": True}, "inputs.I2"),
     ("inputs", {"I2": [2]}, "inputs.I2"), ("inputs", {"I2": {}}, "inputs.I2"),
+    ("inputs", {"x": "2"}, "inputs.x"), ("inputs", {"I2": "five"}, "inputs.I2"),
     ("inputs", {"I2": ""}, "inputs.I2"), ("reason", {}, "reason"),
     ("reason", None, "reason"), ("extra", 1, "extra"),
 ])

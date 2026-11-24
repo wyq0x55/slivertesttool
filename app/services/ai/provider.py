@@ -12,6 +12,7 @@ mode), vLLM / Ollama local gateways, and most intranet LLM proxies.
 from __future__ import annotations
 
 import http.client
+import ipaddress
 import json
 import re
 import time
@@ -27,6 +28,23 @@ from . import config
 
 class ProviderError(RuntimeError):
     """Provider unreachable / non-200 / unparseable response."""
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _local_model_host(hostname: str) -> bool:
+    if hostname == "localhost":
+        return True
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        return False
+    return address.is_loopback or any(address in network for network in (
+        ipaddress.ip_network("10.0.0.0/8"), ipaddress.ip_network("172.16.0.0/12"),
+        ipaddress.ip_network("192.168.0.0/16"), ipaddress.ip_network("fc00::/7")))
 
 
 _provenance: ContextVar[dict[str, int] | None] = ContextVar(
@@ -69,7 +87,8 @@ def chat(messages: list[dict[str, str]], *,
          timeout: Optional[int] = None,
          usage: Optional[dict[str, int]] = None,
          model: Optional[str] = None,
-         stream: bool = False) -> str:
+         stream: bool = False,
+         local_only: bool = False) -> str:
     """Call the configured model once and return the assistant text.
 
     ``temperature`` defaults low: test-case generation wants determinism and
@@ -91,6 +110,10 @@ def chat(messages: list[dict[str, str]], *,
             and cfg[config.KEY_MODEL]):
         raise ProviderError("AI 未配置：请先在系统设置中填写 api_base / api_key / model")
     url = cfg[config.KEY_API_BASE].rstrip("/") + "/chat/completions"
+    endpoint = urlparse(url)
+    hostname = (endpoint.hostname or "").lower()
+    if local_only and (endpoint.scheme not in {"http", "https"} or not _local_model_host(hostname)):
+        raise ProviderError("预算补行需要本地模型地址（回环或内网 IP）")
     body: dict[str, Any] = {
         "model": model or cfg[config.KEY_MODEL],
         "messages": messages,
@@ -111,7 +134,6 @@ def chat(messages: list[dict[str, str]], *,
         },
         method="POST",
     )
-    hostname = (urlparse(url).hostname or "").lower()
     is_local = (
         hostname in ("127.0.0.1", "localhost", "::1")
         or hostname.startswith("10.")
@@ -121,8 +143,11 @@ def chat(messages: list[dict[str, str]], *,
     )
     # Local and intranet models must not be routed through the system proxy;
     # every other endpoint keeps the default ``urlopen`` handling.
-    open_url = (urllib.request.build_opener(urllib.request.ProxyHandler({})).open
-                if is_local else urllib.request.urlopen)
+    if local_only:
+        open_url = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect()).open
+    else:
+        open_url = (urllib.request.build_opener(urllib.request.ProxyHandler({})).open
+                    if is_local else urllib.request.urlopen)
     started = time.monotonic()
     try:
         with open_url(

@@ -30,7 +30,7 @@ from ..ai import config as ai_config
 from ..ai import provider
 from . import diagnostic, increment, repair_context, repair_exchange, repair_reply, repair_source
 
-PROMPT_VERSION = "ut-repair/10"
+PROMPT_VERSION = "ut-repair/11"
 # Bound the prompt: issue details are already truncated by ut-agent.
 _MAX_DETAIL_CHARS = 6000
 _MAX_DECISION_CHARS = 200
@@ -38,6 +38,7 @@ _MAX_DECISION_CHARS = 200
 _GAP_CODE = "INPUT_OBLIGATION_UNRESOLVED"
 _MAX_PROMPT_CHARS = 96000
 _MAX_ROW_CHARS = 12000
+_MAX_BUDGET_COLUMN_CHARS = 40000
 _MAX_HISTORY = 3
 # ut-agent gap reasons that concern outputs only (see _gap_reason).
 _ORACLE_PREFIX = "缺少期望值 oracle:"
@@ -80,17 +81,20 @@ def _system_prompt(constraints: dict[str, Any]) -> str:
         f"{rules}\n\n策略参数：{policies}\n\n"
         f"## 覆盖要求\nC0: {coverage.get('c0')} / C1: {coverage.get('c1')} / "
         f"MC/DC: {coverage.get('mcdc')}（true 表示必须 100%）\n\n"
-        "## 输出\n只输出一个 JSON 对象，不要输出其他文字：\n"
-        '{"rows": [{"obligation": "<缺口义务 ID 或校验问题代码>", "base_row": <参考行编号>, '
-        '"inputs": {"I<n>": "<取值>"}, "reason": "<取值依据>"}], '
-        '"declined": [{"obligation": "<义务 ID>", "reason": "<无法补齐的原因>"}], '
-        '"rationale": "<总体说明>"}\n\n'
+        "## 输出\n返回一个 JSON 对象，包含 rows 数组、declined 数组和 rationale 字符串。"
+        "以下是格式示例；义务 ID、列、行号和取值必须使用本轮数据。\n"
+        '{"rows":[{"obligation":"b0:T","base_row":1,"inputs":{"I1":"5"},"reason":"x >= 5"}],'
+        '"declined":[],"rationale":""}\n'
+        "没有提议时用空数组 rows；declined 的元素只含 obligation 和非空 reason。"
+        "使用双引号、整数行号和字符串形式的十进制或十六进制整数值。"
+        "回复从 { 开始、以 } 结束，禁止代码围栏、附加字段和重复 JSON 键。\n\n"
         "## 方式\n"
         "- 不要输出 CSV。每个新增行 = 复制 base_row 指定的现有数据行，只改 inputs 中列出的输入列；"
         "base_row 0 表示全部输入为空的行。\n"
         f"- 输入列用 I1..In 引用（见「输入列」）；不能改输出列，{output_rule}\n"
         f"- 已有行、列与期望值由平台保持不变；{expectation_rule}\n"
-        "- obligation 只能是「待补缺口」中的义务 ID，或「校验判定」中的问题代码（例如覆盖率不足）。\n"
+        "- obligation 必须逐字复制本轮「待补缺口」中的义务 ID。"
+        "base_row 必须是已列出的数据行编号；无基准行时用整数 0，并填入证明义务所需的每个输入。\n"
         "- 依据判定式与列含义推出取值并写在 reason 中；不要猜测，推不出的义务放进 declined 并说明原因。\n"
         "- 新增行的输入不能与任何已有行完全相同。\n"
         "- 程序会用实际新增行重新检查义务、父分支路径和 MC/DC 配对；认领义务不等于满足义务。"
@@ -102,7 +106,7 @@ def _system_prompt(constraints: dict[str, Any]) -> str:
         "不能仅凭冲突认定缺少输入。只在给定语义证据支持时新增行；否则不新增，在 rationale 中说明，交由人工检查。"
         f"\n- {coverage_name}只证明已执行版本的覆盖状态；UNKNOWN 映射、覆盖百分比和汇编地址"
         "不能代替类型化输入见证，也不能证明某个新增行已经走通分支。"
-        "\n- 简短输出取值依据，每轮最多新增 20 行；不要复述提示词和历史。"
+        f"\n- 简短输出取值依据，每轮最多新增 {increment.MAX_ROWS_PER_ROUND} 行；不要复述提示词和历史。"
     )
 
 
@@ -182,8 +186,8 @@ def _gaps_section(completeness: Optional[dict[str, Any]], open_gaps: list[dict[s
             f"未解决 {completeness.get('unresolved_count')} 个。")
     others = (completeness.get("unresolved_count") or 0) - len(open_gaps)
     if others > 0:
-        head += (f"其中 {others} 个已补行待确认、已声明无法补齐，或缺的是语义/环境证据、待人工确认不可达，"
-                 "不要为它们新增行。")
+        head += (f"其中 {others} 个已补行待确认、已声明无法补齐、待后续轮次处理或需人工复核。"
+                 "只为下面列出的义务新增行。")
     gaps = "\n".join(_gap_line(item) for item in open_gaps)
     return f"## 待补缺口（缺用例：生成器没有给出已证明输入的义务）\n{head}\n{gaps or '- 无'}"
 
@@ -199,22 +203,26 @@ def _editable_columns(table: increment.Table, check: dict[str, Any]) -> Optional
             or witnesses.get("input_scope_complete") is not True
             or (witnesses.get("evidence") or {}).get("identified") is not True):
         return None
+    return _context_columns(table, witnesses.get("repair_context") or []) or None
+
+
+def _context_columns(table: increment.Table, records: list[dict[str, Any]]) -> set[int]:
     tokens = set()
-    for record in witnesses.get("repair_context") or []:
+    for record in records:
         for branch in record.get("path") or []:
             for atom in branch.get("atoms") or []:
                 for key in ("input_tokens", "right_input_tokens", "mask_input_tokens"):
                     tokens.update(atom.get(key) or [])
-    if not tokens or any(not re.fullmatch(r"I[1-9][0-9]*", t) for t in tokens):
-        return None
-    columns = {int(token[1:]) - 1 for token in tokens}
-    return columns if max(columns) < len(table.inputs) else None
+    return {int(token[1:]) - 1 for token in tokens
+            if isinstance(token, str) and re.fullmatch(r"I[1-9][0-9]*", token)
+            and int(token[1:]) <= len(table.inputs)}
 
 
-def _columns_section(table: increment.Table, check: dict[str, Any]) -> str:
+def _columns_section(table: increment.Table, check: dict[str, Any],
+                     scope: Optional[set[int]] = None) -> str:
     """Factor repeated exact column-name prefixes without changing I<n> IDs."""
     rendered = increment.columns_section(table, (check.get("input_ranges") or {}).get("contract"))
-    visible = _editable_columns(table, check)
+    visible = scope if scope is not None else _editable_columns(table, check)
     visible = visible if visible is not None else set(range(len(table.inputs)))
     candidates: dict[str, list[int]] = {}
     for index, name in enumerate(table.inputs):
@@ -251,14 +259,14 @@ def _columns_section(table: increment.Table, check: dict[str, Any]) -> str:
 
 def _function_prompt(target: dict[str, Any], table: increment.Table, check: dict[str, Any],
                      *, context: Optional[repair_context.PromptContext] = None,
-                     source: Optional[dict[str, Any]] = None) -> str:
+                     source: Optional[dict[str, Any]] = None, scope: Optional[set[int]] = None) -> str:
     if context is None:
         context = repair_context.pack((check.get("candidate_witnesses") or {}).get("repair_context") or [])
     return (
         f"被测函数：{target.get('function')}（{target.get('source_rel')}）\n\n"
         f"{repair_source.section(source)}"
         f"## 输入列（{len(table.inputs)} 个；输出列 {len(table.outputs)} 个，不可改）\n"
-        f"{_columns_section(table, check)}\n\n"
+        f"{_columns_section(table, check, scope) or '无可修改的已绑定输入列'}\n\n"
         "只修改上面列出的输入列；未列出的列保留参考行原值，不能用名称相似的列代替。\n\n"
         "## 义务语义证据（同一函数固定，未列出的控制关系不能猜测）\n"
         "If the context below is a JSON array, each element is one complete obligation record "
@@ -280,7 +288,7 @@ def prompt_prefix(constraints: dict[str, Any], target: dict[str, Any], csv_bytes
     return _make_prefix(constraints, target, table, check, source)
 
 
-def _make_prefix(constraints, target, table, check, source=None):
+def _make_prefix(constraints, target, table, check, source=None, obligation_ids=None, scope=None):
     # Hash complete evidence independently of bounded/compressed rendering.
     facts = {"constraints": constraints,
              "target": {k: target.get(k) for k in ("id", "project_id", "source_rel", "unit_rel", "function")},
@@ -292,15 +300,19 @@ def _make_prefix(constraints, target, table, check, source=None):
              "semantic_context": sorted((check.get("candidate_witnesses") or {}).get("repair_context") or [],
                                         key=lambda r: str(r.get("obligation_id", "")))}
     digest = hashlib.sha256(json.dumps(facts, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
-    context = repair_context.pack(facts["semantic_context"])
+    context = repair_context.pack([record for record in facts["semantic_context"]
+                                   if obligation_ids is None or record.get("obligation_id") in obligation_ids])
     return {"version": PROMPT_VERSION, "system": _system_prompt(constraints),
-            "function": _function_prompt(target, table, check, context=context, source=source),
+            "function": _function_prompt(target, table, check, context=context, source=source, scope=scope),
             "evidence_sha256": digest,
             "context_budget": context.budget()}
 
 
-def _reference_rows(table: increment.Table, check: Optional[dict[str, Any]] = None) -> str:
-    visible = _editable_columns(table, check or {})
+def _reference_rows(table: increment.Table, check: Optional[dict[str, Any]] = None,
+                    scope: Optional[set[int]] = None) -> str:
+    if not table.rows:
+        return increment.rows_section(table)
+    visible = scope if scope is not None else _editable_columns(table, check or {})
     if visible is not None:
         lines = ["仅显示可修改输入；其余输入从 base_row 复制。"]
         lines.extend(f"#{n}: " + " ".join(f"I{i + 1}={row[i + 1] or '(空)'}" for i in sorted(visible))
@@ -319,13 +331,14 @@ def _reference_rows(table: increment.Table, check: Optional[dict[str, Any]] = No
 
 def _user_prompt(target: dict[str, Any], table: increment.Table, check: dict[str, Any],
                  execution: Optional[dict[str, Any]], history: list[dict[str, Any]],
-                 open_gaps: list[dict[str, Any]], *, function_prefix: Optional[str] = None) -> str:
+                 open_gaps: list[dict[str, Any]], *, function_prefix: Optional[str] = None,
+                 scope: Optional[set[int]] = None) -> str:
     issues = _bounded_records(
         [issue for issue in check.get("issues", ()) if issue.get("code") not in
          {_GAP_CODE, "OUTPUT_ORACLE_PENDING"}],
         _MAX_DETAIL_CHARS)
     execution_summary = json.dumps(
-        {key: (execution or {}).get(key) for key in ("status", "exit_code", "diagnostic", "coverage")},
+        {key: (execution or {}).get(key) for key in ("status", "exit_code", "diagnostic")},
         ensure_ascii=False,
     )
     rounds = "\n".join(_history_line(item) for item in history[-_MAX_HISTORY:]) or "- 无"
@@ -335,7 +348,7 @@ def _user_prompt(target: dict[str, Any], table: increment.Table, check: dict[str
     return (
         (function_prefix if function_prefix is not None else _function_prompt(target, table, check)) +
         f"{_gaps_section(check.get('completeness'), open_gaps)}\n\n"
-        f"## 现有数据行（{len(table.rows)} 行）\n{_reference_rows(table, check)}\n\n"
+        f"## 现有数据行（{len(table.rows)} 行）\n{_reference_rows(table, check, scope)}\n\n"
         f"## 当前版本的校验判定：{check.get('verdict')}\n{issues}\n\n"
         f"## 上轮新增行的程序检查反馈\n{feedback}\n\n"
         f"## 执行摘要\n{execution_summary}\n\n"
@@ -397,7 +410,8 @@ def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: by
            history: list[dict[str, Any]], open_gaps: list[dict[str, Any]], allowed: set[str],
            model: str = "", timeout: int = 900,
            prefix_snapshot: Optional[dict[str, Any]] = None, observe=None,
-           diagnostic_dir: Path | None = None, source: Optional[dict[str, Any]] = None) -> Revision:
+           diagnostic_dir: Path | None = None, source: Optional[dict[str, Any]] = None,
+           local_only: bool = False) -> Revision:
     """Ask the configured model for input rows and append the valid ones.
 
     Raises :class:`provider.ProviderError` when the model is unreachable so the
@@ -418,7 +432,31 @@ def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: by
     except (UnicodeDecodeError, increment.TableError) as exc:
         meta["error"] = f"当前 CSV 无法追加行：{exc}"
         return Revision(None, meta)
-    prefix = _make_prefix(constraints, target, table, check, source)
+    scope = None
+    domains = (check.get("input_ranges") or {}).get("contract")
+    if local_only and open_gaps:
+        records = (check.get("candidate_witnesses") or {}).get("repair_context") or []
+        by_id = {record.get("obligation_id"): record for record in records}
+        batch_gaps, batch_records = [], []
+        for gap in sorted(open_gaps, key=lambda gap: gap.get("budget_handoff") is not True):
+            obligation = by_id.get(gap["obligation_id"])
+            combined = batch_records if obligation is None else [*batch_records, obligation]
+            if combined is batch_records or repair_context.pack(combined).complete:
+                batch_gaps.append(gap)
+                batch_records = combined
+            if len(batch_gaps) == increment.MAX_ROWS_PER_ROUND:
+                break
+        open_gaps = batch_gaps or open_gaps[:1]
+        selected = {gap["obligation_id"] for gap in open_gaps}
+        meta["deferred_obligations"] = sorted(allowed - selected)
+        allowed = allowed & selected
+        if len(_columns_section(table, check)) > _MAX_BUDGET_COLUMN_CHARS:
+            scope = _context_columns(table, [record for record in records
+                                            if record.get("obligation_id") in allowed])
+            required_keys = {key for gap in open_gaps for key in (gap.get("input_values") or {})}
+            scope.update(index for index, column in enumerate((domains or {}).get("columns") or [])
+                         if column.get("key") in required_keys)
+    prefix = _make_prefix(constraints, target, table, check, source, allowed if local_only else None, scope)
     # Drift is a change of evidence, not of rendering: the editable-column
     # scope follows the round's check (a coverage error widens it), so the
     # rendered prefix may differ round to round while the digest holds.
@@ -432,12 +470,12 @@ def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: by
         meta.update(code="PROMPT_BUDGET_EXCEEDED", model_contacted=False,
                     error=(f"Complete typed repair context exceeds the {repair_context.MAX_CONTEXT_CHARS}"
                            "-character budget; no tasks sent."),
-                    deferred_obligations=sorted(allowed | {gap["obligation_id"] for gap in open_gaps}))
+                    deferred_obligations=sorted(allowed | set(meta.get("deferred_obligations", ()))))
         return Revision(None, meta)
     messages = [
         {"role": "system", "content": prefix["system"]},
         {"role": "user", "content": _user_prompt(target, table, check, execution, history,
-                                                 open_gaps, function_prefix=prefix["function"])},
+                                                 open_gaps, function_prefix=prefix["function"], scope=scope)},
     ]
     meta["prefix"] = {
         "project_sha256": hashlib.sha256(prefix["system"].encode("utf-8")).hexdigest(),
@@ -446,11 +484,12 @@ def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: by
         "evidence_sha256": prefix["evidence_sha256"],
     }
     meta["prompt_chars"] = sum(len(m["content"]) for m in messages)
-    editable = _editable_columns(table, check)
+    editable = scope if scope is not None else _editable_columns(table, check)
     meta["editable_input_columns"] = len(editable) if editable is not None else len(table.inputs)
     if meta["prompt_chars"] > _MAX_PROMPT_CHARS:
         meta.update(error="修订上下文超出预算，需人工缩小处理范围", code="PROMPT_BUDGET_EXCEEDED",
-                    model_contacted=False, deferred_obligations=sorted(allowed))
+                    model_contacted=False,
+                    deferred_obligations=sorted(allowed | set(meta.get("deferred_obligations", ()))))
         return Revision(None, meta)
     meta["prompt_sha256"] = hashlib.sha256(
         json.dumps(messages, ensure_ascii=False).encode("utf-8")).hexdigest()
@@ -469,9 +508,9 @@ def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: by
             return Revision(None, meta)
     with observe("input_model") if observe is not None else nullcontext():
         meta["model_contacted"] = True
-        reply = provider.invoke_chat(messages, temperature=0.1, max_tokens=8192,
+        reply = provider.invoke_chat(messages, temperature=0, max_tokens=8192,
                                      json_mode=True, usage=usage, model=model or None,
-                                     timeout=timeout, stream=True)
+                                     timeout=timeout, stream=True, **({"local_only": True} if local_only else {}))
     meta["usage"] = usage
     if diagnostic_dir is not None:
         try:
@@ -480,7 +519,7 @@ def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: by
             meta.update(code="DIAGNOSTIC_WRITE_FAILED", error=f"Cannot retain model response: {exc}")
             return Revision(None, meta)
     try:
-        parsed = provider.extract_json(reply)
+        parsed = repair_reply.parse(reply)
     except ValueError as exc:
         meta.update(code="INVALID_MODEL_RESPONSE", error=f"模型输出不可用：{exc}")
         meta["reply_head"] = (reply or "")[:2000]
@@ -493,8 +532,7 @@ def revise(*, constraints: dict[str, Any], target: dict[str, Any], csv_bytes: by
                     reply_head=reply[:2000])
         return Revision(None, meta)
     meta["rationale"] = parsed.get("rationale", "")
-    applied = increment.apply(table, parsed.get("rows", []), allowed,
-                              (check.get("input_ranges") or {}).get("contract"), editable_columns=editable)
+    applied = increment.apply(table, parsed.get("rows", []), allowed, domains, editable_columns=editable)
     claimed = [row["obligation"] for row in applied.accepted]
     meta.update(rows=applied.accepted, rejected=applied.rejected, claimed=claimed,
                 declined=[oid for oid in _declined(parsed, allowed) if oid not in claimed])

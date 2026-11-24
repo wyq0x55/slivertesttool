@@ -134,7 +134,16 @@ repair provider consumes no input round; retry resumes that stage without
 renewing the stub evidence. A stub retry still creates a new attempt so old
 review selections remain stale.
 
-Repair prompt version `ut-repair/8.0` distinguishes scalar input constraints
+When deterministic generation exhausts its budget, admissible unfinished
+obligations can enter the configured local model's repair rounds. The endpoint
+must use a loopback or private-network address. Existing projected rows are
+preserved. If generation stopped before producing a row, a checked header
+supplies the column contract, and the first proposed row uses `base_row: 0`.
+An operator stop does not trigger this handoff.
+
+Repair prompt version `ut-repair/11` requires a single JSON object and bounds
+each budget handoff by the selected obligations and their typed input context.
+It distinguishes scalar input constraints
 from `predicate_context`. LLVM coverage stays in the dynamic execution section and does not enter the stable function prefix. Raw decision atoms describe the typed decision;
 they are not a conjunction that every proposed input must make true. An exact
 boundary with no required outcome does not acquire one from its decision text.
