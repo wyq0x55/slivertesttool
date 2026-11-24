@@ -127,6 +127,44 @@ change the job's verdict, the batch status or the candidates, and a ledger it
 writes binds only the *next* batch whose generation reads it - the current batch
 keeps the conclusion it already reached.
 
+## Budget suggestion
+
+`GET /budget/suggestion` (read-only, `project.view`) turns the project's own
+finished batches into advice for the next batch's `function_step_limit`. The
+rule is the one the ceiling was always derived from: ceiling ≈
+steps-per-obligation coefficient × obligation count. It reads no new data -
+each finished batch froze its declared ceiling in `config_snapshot`, and each
+job froze the steps it consumed in its generation receipt plus the obligation
+count and exhaustion flag in its witness handoff.
+
+One sample is one function of one finished batch; `generating` and `running`
+batches are skipped because their outcome still moves, and samples never cross
+projects. Only functions that did **not** exhaust their budget enter the
+coefficient: an exhausted function's `steps_used` stopped at the ceiling, so
+counting it would pull the coefficient below the evidence. Those samples are
+still counted in the exhaustion rate and reported with their stop positions.
+The coefficient is
+the **median** of `steps_used / obligations`, not the mean, because one
+repair-heavy function would otherwise decide the value for all of them.
+
+The suggestion is `ceil(median × target obligations × safety factor)`, at
+least 1. The safety factor defaults to 1.5 (`budget.DEFAULT_SAFETY_FACTOR`):
+the median describes functions that already ran, and a new one may sit above
+the middle of that sample. The target obligation count defaults to the median
+obligation count of the samples and can be overridden with
+`?target_obligations=`. Below two finished batches or three non-exhausted
+functions the response is `state=INSUFFICIENT_SAMPLES` with what is missing,
+never a number; the operator keeps choosing the ceiling by hand until then.
+
+The response lists the samples it used, their batch IDs, the median, the
+safety factor, the target, the suggestion and a `sample_digest` (SHA-256 over
+the sorted samples), so the same records always produce the same number and
+can be re-derived later. Nothing is written back: no batch's snapshot is
+changed, no history is rewritten, and generation never reads the coefficient.
+The binding page shows the number next to the ceiling field and the
+"fill" button only copies it into the form - saving that form is what makes it
+reach batches created afterwards.
+
 ## Derived batches and comparison
 
 `POST /batches/<id>/derive` queues a new batch for the functions whose witness

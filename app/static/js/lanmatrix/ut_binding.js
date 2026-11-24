@@ -21,6 +21,7 @@
   var draft = {}, snapshots = {}, savedConfig = null, savedState = "", rawSnapshot = "";
   var busy = true, loaded = false;
   var choices = null;
+  var suggestion = null;
   var pickers = Array.prototype.slice.call(root.querySelectorAll("[data-path-picker]"));
   function $(id) { return document.getElementById(id); }
   function field(path) { return $("ut-m-" + path.replace(".", "-")); }
@@ -325,6 +326,7 @@
       $(id).disabled = locked || readonly || (!choices && (id === "ut-config-save" || id === "ut-manifest-validate"));
     });
     $("ut-manifest-export").disabled = locked;
+    $("ut-budget-fill").disabled = locked || readonly || suggestion === null;
     pickers.forEach(function (button) { button.disabled = locked || readonly; });
     policyView();
     changed();
@@ -346,6 +348,33 @@
     if (c.manifest_error) fail(c.manifest_error, null, false);
   }
   function editable() { return loaded && !busy && LMUt.can("configure"); }
+  // The calibration reads finished batches and only ever offers advice. It is
+  // shown here and copied into the form on an explicit click; this script
+  // never saves, and a saved value still only reaches batches created later.
+  function renderBudget(result) {
+    var node = $("ut-budget-suggestion"), body = result && result.status === "fulfilled" ? result.value : null;
+    suggestion = body && body.state === "OK" && Number.isInteger(body.suggested_step_limit)
+      ? body.suggested_step_limit : null;
+    if (suggestion === null) {
+      node.textContent = body
+        ? "样本不足，暂不给出建议：上限需要至少 2 个已结束批次与 3 个未耗尽预算的函数，请先手动填写。"
+        : "无法读取历史批次样本，请手动填写上限。";
+    } else {
+      node.textContent = "历史样本建议 " + suggestion + "（" + body.samples.used_count + " 个函数 / "
+        + body.samples.batches.length + " 个批次，每义务约 " + body.coefficient.steps_per_obligation
+        + " 步 × 安全系数 " + body.coefficient.safety_factor + "）。需手动填入，保存后仅对新建批次生效。";
+    }
+    $("ut-budget-fill").disabled = !editable() || suggestion === null;
+  }
+  $("ut-budget-fill").addEventListener("click", function () {
+    if (!editable() || suggestion === null) return;
+    clearError();
+    var input = $("ut-c-function_step_limit");
+    input.value = String(suggestion);
+    // Reuse the input's own listener so dirty tracking and saving behave exactly
+    // as if the operator typed the number.
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
   KEYS.forEach(function (k) {
     ["input", "change"].forEach(function (event) {
       $("ut-c-" + k).addEventListener(event, function () { if (editable()) { lock(false); } });
@@ -496,14 +525,14 @@
   });
   (window.LMReady || Promise.resolve()).then(async function () {
     lock(true);
-    var results = await Promise.allSettled([LMApi.utGetConfig(pid), LMApi.utManifestOptions(pid)]);
+    var results = await Promise.allSettled([LMApi.utGetConfig(pid), LMApi.utManifestOptions(pid), LMApi.utBudgetSuggestion(pid)]);
     if (results[0].status !== "fulfilled") { fail(results[0].reason.message); return; }
     var optionError;
     try {
       if (results[1].status !== "fulfilled") throw results[1].reason;
       acceptChoices(results[1].value);
     } catch (e) { optionError = e; }
-    savedConfig = results[0].value; populate(savedConfig); lock(false);
+    savedConfig = results[0].value; populate(savedConfig); lock(false); renderBudget(results[2]);
     if (optionError) fail(optionError.message, null, false);
   });
 })(window, document);

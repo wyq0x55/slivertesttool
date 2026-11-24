@@ -2,6 +2,7 @@
 
     GET  /config                         project binding (project.view)
     PUT  /config                         update binding (project.edit)
+    GET  /budget/suggestion              ?target_obligations&safety_factor; read-only ceiling advice (project.view)
     GET  /server-paths                   ?kind=directory|csv&path; server listing (project.edit)
     POST /targets/import                 re-read the project index (item.edit)
     GET  /targets                        実施一覧 with each target's latest job
@@ -34,7 +35,7 @@ from flask import Blueprint, Response, g, request
 from ...jobqueue import ut_tasks
 from ...services.lanmatrix.errors import RequestParamError, ServiceError
 from ...services.ut_pipeline import export as ut_export
-from ...services.ut_pipeline import pipeline, server_paths, toolchains, witness
+from ...services.ut_pipeline import budget, pipeline, server_paths, toolchains, witness
 from ...services.ut_pipeline.repair import normalize_csv
 from ._base import _project_and_role, arg_int, arg_str, err, login_required, ok, register_common
 
@@ -91,6 +92,27 @@ def put_config(project_id: int):
     _project_and_role(project_id, "project.edit")
     config = pipeline.save_config(project_id, _body(), g.user.id)
     return ok(pipeline.config_document(config))
+
+
+@bp.get("/budget/suggestion")
+@login_required
+def budget_suggestion(project_id: int):
+    """Advice for the next batch's ceiling, read-only.
+
+    Nothing here is applied: an operator copies the number into the binding
+    form, and the ordinary save path is what makes it reach a new batch.
+    """
+    _project_and_role(project_id, "project.view")
+    raw = arg_str("safety_factor", "")
+    try:
+        safety_factor = float(raw) if raw else budget.DEFAULT_SAFETY_FACTOR
+    except ValueError:
+        raise ServiceError("安全系数必须是正数", code="BAD_REQUEST")
+    return ok(budget.estimate(
+        project_id=project_id,
+        target_obligations=arg_int("target_obligations", None, minimum=1, maximum=1_000_000_000),
+        safety_factor=safety_factor,
+    ))
 
 
 @bp.post("/manifest/validate")
