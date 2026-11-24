@@ -590,6 +590,10 @@ test("createMenu registers Ribbon/ContextMenu entries, _runAtRendered handles al
   assert.ok(mountedIds.indexOf("lm.menu.queue") > mountedIds.indexOf("lm.menu.export"));
   assert.ok(mountedIds.indexOf("lm.menu.queue") < mountedIds.indexOf("lm.menu.help"));
   assert.deepEqual(toHostRealm(menuById["lm.menu.help"].targets), ["ribbon.start.others"]);
+  // 帮助 is merged into the built-in keyboard-icon button: our item borrows that
+  // glyph, and the built-in shortcut item is hidden so only one help entry shows.
+  assert.equal(menuById["lm.menu.help"].spec.icon, "ShortcutIcon");
+  assert.equal(menuById["lm.menu.help"].spec.title, "帮助");
   assert.deepEqual(toHostRealm(menuById["lm.ctx.duplicate-row"].targets), [
     ["contextMenu.rowHeader", "contextMenu.others"],
     ["contextMenu.mainArea", "contextMenu.others"],

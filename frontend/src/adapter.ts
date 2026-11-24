@@ -230,11 +230,17 @@ const HEADER_ROWS = 1; // row 0 is the header; data starts at row 1
 
 // Univer's core preset ships its own "快捷键" ribbon button
 // (ShortcutPanelMenuItemFactory, id base-ui.operation.toggle-shortcut-panel)
-// right after ours, and both open a shortcut panel. Our 帮助 dialog also carries
-// 其他操作方式, so the built-in one is redundant. Hiding it goes through the
-// preset's `menu` config: the facade menu object returned by createMenu only has
-// appendTo(), with no hide/unregister API.
+// that opens the built-in shortcut panel. Our 帮助 dialog covers the same
+// keymap plus 其他操作方式, so the built-in button is hidden and our help item
+// reuses its keyboard glyph (ShortcutIcon): one keyboard-icon button in the
+// ribbon, opening the full help dialog. Hiding goes through the preset's `menu`
+// config: the facade menu object returned by createMenu only has appendTo(),
+// with no hide/unregister API.
 const HIDDEN_SHORTCUT_MENU_ID = "base-ui.operation.toggle-shortcut-panel";
+// Icon registered by @univerjs/design and used by the hidden built-in button
+// above (ShortcutPanelMenuItemFactory). A facade item with this icon renders
+// icon-only, exactly like the button it replaces.
+const HELP_ICON = "ShortcutIcon";
 
 export class UniverGridAdapter {
   engine = "univer";
@@ -621,7 +627,7 @@ export class UniverGridAdapter {
     const opts = this.opts || ({} as MountOpts);
 
     const appendMenu = (
-      spec: { id: string; title: string; tooltip?: string; action: () => void },
+      spec: { id: string; title: string; tooltip?: string; icon?: string; action: () => void },
       targets: Array<string | string[]>
     ) => {
       try {
@@ -688,7 +694,8 @@ export class UniverGridAdapter {
       appendMenu(
         {
           id: "lm.menu.help",
-          title: "帮助 ?",
+          title: "帮助",
+          icon: HELP_ICON,
           tooltip: "快捷键与操作帮助（快捷键 ?）",
           action: () => {
             if (this.suspended) return;
