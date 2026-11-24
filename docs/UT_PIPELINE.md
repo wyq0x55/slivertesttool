@@ -74,6 +74,25 @@ versioned requirements when queued. Changing `function_step_limit` therefore
 affects only batches created afterwards; a queued, running or delivered batch
 keeps the value it froze.
 
+`budget_stop_observations`, when declared, lets a batch stop a function early
+instead of paying to the ceiling: ut-agent asks its own deterministic forecast at
+every obligation boundary, and once that many boundaries agree the projection no
+longer fits, the function yields. Empty keeps the forecast advisory. The count is
+a declared input, so the same IR, rules, ceiling and count stop at the same
+obligation; the forecast reads measured costs but only decides *when to stop*,
+never what an expectation is. A stopped function keeps its finished cases and
+hands the unstarted obligations to review exactly like a budget stop, and the
+batch continues with its other functions.
+
+Stopping an active job no longer waits for the current function to finish: the
+worker writes `<batch>/stop.request`, which `ut-agent bridge generate --stop-file`
+reads at the next obligation boundary. Generation ends there, finished cases stay
+and the rest become review work. The stop is recorded as `OPERATOR_STOP:`, never
+as `GENERATION_BUDGET_EXHAUSTED:` - no budget measurement was made, so triage
+must not read an operator's decision as evidence that the ceiling is too low. The
+file is removed when the attempt ends, on stop and on resume, so it can never
+stop the next run.
+
 ## Budget exhaustion and witness handoff
 
 ut-agent's generation report records, for each function, whether its unfinished

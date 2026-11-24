@@ -255,16 +255,29 @@ class UtAgentBridge:
                  on_unit: Callable[[dict], None] | None = None,
                  on_forecast: Callable[[dict], None] | None = None,
                  history_dir: Path | None = None,
-                 function_step_limit: int | None = None) -> dict[str, Any]:
+                 function_step_limit: int | None = None,
+                 budget_stop_observations: int | None = None,
+                 stop_file: str | None = None) -> dict[str, Any]:
         if function_step_limit is not None and (
                 type(function_step_limit) is not int or function_step_limit < 1):
             raise BridgeError("function_step_limit must be a positive integer")
+        if budget_stop_observations is not None and (
+                type(budget_stop_observations) is not int
+                or not 1 <= budget_stop_observations <= 10):
+            raise BridgeError("budget_stop_observations must be an integer from 1 to 10")
         args = ["generate", *self._manifest(manifest), "--index-csv", index_csv,
                 "--product-root", product_root, "--out", str(out),
                 "--progress-dir", str(progress_dir)]
-        # Omitted, never defaulted here: ut-agent keeps its own ceiling.
+        # Omitted, never defaulted here: ut-agent keeps its own ceiling, and its
+        # forecast only ends a function when the batch asks for it.
         if function_step_limit is not None:
             args += ["--function-step-limit", str(function_step_limit)]
+        if budget_stop_observations is not None:
+            args += ["--budget-stop-observations", str(budget_stop_observations)]
+        # Always passed: an operator may ask to stop at any point in the run, and
+        # ut-agent only reads the file between obligations.
+        if stop_file is not None:
+            args += ["--stop-file", stop_file]
         for name in functions:
             args += ["--function", name]
         if self.settings.extractor:

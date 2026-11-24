@@ -10,7 +10,7 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy.engine import Connection, Engine
 
-HEAD_REVISION = "0006_project_clean_room"
+HEAD_REVISION = "0007_budget_stop"
 _MIGRATIONS_DIR = Path(__file__).resolve().parent
 
 
@@ -42,12 +42,16 @@ def _reconcile_head_invariants(conn: Connection) -> None:
     clean_room_mod = importlib.import_module(
         "app.migrations.versions.0006_project_clean_room"
     )
+    budget_stop_mod = importlib.import_module(
+        "app.migrations.versions.0007_budget_stop"
+    )
     baseline_mod.reconcile_baseline_schema(conn)
     rollups_mod.reconcile_governance_and_rollups(conn)
     step_budget_mod.reconcile_step_budget(conn)
     witness_mod.reconcile_witness_handoff(conn)
     lineage_mod.reconcile_batch_lineage(conn)
     clean_room_mod.reconcile_project_clean_room(conn)
+    budget_stop_mod.reconcile_budget_stop(conn)
 
 
 def _run_with_connection(conn: Connection, *, force_reconcile: bool = False) -> str:
