@@ -17,6 +17,8 @@ Two rules the rest of the code depends on:
 from __future__ import annotations
 
 import datetime as _dt
+import logging
+from types import SimpleNamespace
 from typing import Optional
 
 from ...extensions import db
@@ -24,6 +26,8 @@ from ...models import (FieldDefinition, LMUser, Project, Task, TestItemRow)
 from ...services import task_service
 from . import audit, fields_service, items_service
 from .errors import ServiceError
+
+log = logging.getLogger(__name__)
 
 # How long a deleted thing stays restorable. Long enough to survive a weekend
 # and a holiday; short enough that the bin does not become a second database.
@@ -309,6 +313,116 @@ def purge(user: LMUser, project: Project, kind: str, obj_id) -> dict:
                  object_id=t.task_key, project_id=project.id)
     task_service.purge_task(t)
     return {"kind": kind, "id": obj_id, "title": title}
+
+
+def _locked_bin(model, project_id: int):
+    """Bin rows for one project, locked until this transaction commits.
+
+    ``FOR UPDATE`` makes a concurrent restore wait. PostgreSQL rechecks the
+    ``deleted_at`` predicate after that wait, so a restore that won the race is
+    simply not in the result. Callers still skip a row whose ``deleted_at`` was
+    cleared, because ``session.delete`` itself matches on the primary key only.
+    """
+    return model.query.filter(
+        model.project_id == project_id,
+        model.deleted_at.isnot(None),
+    ).with_for_update().all()
+
+
+def _drop_task_files(snapshots) -> None:
+    """Remove task files after their rows are committed gone.
+
+    ``remove_task_artifacts`` is not transactional. Running it before commit
+    means a later failure rolls the row back and leaves a restorable task whose
+    logs are already gone. A failure here instead leaves orphan files, which a
+    purge can live with; it must not be reported as "the delete did not happen".
+    """
+    for snap in snapshots:
+        try:
+            task_service.remove_task_artifacts(snap)
+        except Exception:
+            log.exception(
+                "purged task %s but its files could not be removed",
+                getattr(snap, "task_key", None))
+
+
+def purge_filtered(user: LMUser, project: Project, kind: Optional[str] = None) -> dict:
+    """Delete every entry the current filter matches, for real.
+
+    The bin can hold thousands of entries while the page shows one hundred, so
+    "彻底删除" has to work on the filter, not on the visible page. Calling
+    ``purge`` once per row would mean one commit (and one round trip) per row;
+    this takes the retention sweep's shape instead -- the same per-kind
+    teardown, one transaction -- while keeping the per-entry audit records
+    ``purge`` writes. A bulk deletion is still an explicit user decision, so
+    every object it removes stays traceable.
+
+    ``kind`` of ``None`` means every kind in the bin.
+
+    The matched rows are locked (``FOR UPDATE``) for the length of the
+    transaction, so a restore that commits first is not in the result, and one
+    that arrives second waits until this delete is durable. Task files are
+    removed only after that commit: ``remove_task_artifacts`` cannot be rolled
+    back, and deleting them earlier would hand a restore back a task whose logs
+    are already gone when a later row fails.
+    """
+    if kind is not None and kind not in KINDS:
+        raise ServiceError("未知的回收站类型: %s" % kind, code="VALIDATION_ERROR")
+
+    counts = {"items": 0, "fields": 0, "tasks": 0}
+    # Snapshots, not the ORM instances: after commit a deleted task is expired,
+    # and reading it back would query a row that no longer exists.
+    doomed_tasks = []
+
+    if kind in (None, "item"):
+        for row in _locked_bin(TestItemRow, project.id):
+            if row.deleted_at is None:
+                continue
+            # Read the identity before the delete: a deleted instance is
+            # expired on flush, and the audit record needs a case id.
+            row_id, case_id = row.id, row.case_id
+            db.session.delete(row)
+            audit.record("item.purge", actor_id=user.id, object_type="item",
+                         object_id=row_id, project_id=project.id,
+                         old_value={"case_id": case_id})
+            counts["items"] += 1
+
+    if kind in (None, "field"):
+        for f in _locked_bin(FieldDefinition, project.id):
+            if f.deleted_at is None:
+                continue
+            # Same reason as the sweep: purging a field is what finally drops
+            # its values from every row, so it goes through the field service.
+            fields_service.purge_field(user, project.id, f, commit=False)
+            counts["fields"] += 1
+
+    if kind in (None, "task"):
+        for t in _locked_bin(Task, project.id):
+            if t.deleted_at is None:
+                continue
+            task_key = t.task_key
+            doomed_tasks.append(SimpleNamespace(
+                workspace=getattr(t, "workspace", None),
+                test_id=getattr(t, "test_id", None),
+                task_key=task_key,
+            ))
+            # Audited before the row vanishes, so object_id keeps its key.
+            # The files wait until the commit below succeeds.
+            audit.record("task.purge", actor_id=user.id, object_type="task",
+                         object_id=task_key, project_id=project.id)
+            db.session.delete(t)
+            counts["tasks"] += 1
+
+    total = sum(counts.values())
+    counts["total"] = total
+    if total:
+        audit.record("trash.purge_filtered", actor_id=user.id,
+                     object_type="trash", object_id=project.id,
+                     project_id=project.id,
+                     new_value=dict(counts, kind=kind))
+    db.session.commit()
+    _drop_task_files(doomed_tasks)
+    return counts
 
 
 # --------------------------------------------------------------------------- #
