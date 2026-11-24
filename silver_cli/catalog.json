@@ -627,6 +627,23 @@
   },
   {
    "body_fields": [
+    "kind"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "audit_trash.purge_trash_filtered",
+   "path": "/api/v1/projects/<int:project_id>/trash/purge-filtered",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "Delete everything the bin's current kind filter matches."
+  },
+  {
+   "body_fields": [
     "id",
     "kind"
    ],

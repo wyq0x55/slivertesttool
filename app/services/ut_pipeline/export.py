@@ -76,6 +76,7 @@ def _batch_view(batch: UtBatch) -> dict[str, Any]:
         "id": batch.id,
         "status": batch.status,
         "function_step_limit": snapshot.get("function_step_limit"),
+        "budget_stop_observations": snapshot.get("budget_stop_observations"),
         "generation_step_limit": (batch.provenance or {}).get("generation_step_limit"),
     }
 
@@ -104,6 +105,7 @@ def _side(job: UtJob, batch: UtBatch) -> dict[str, Any]:
         "job_id": job.id,
         "state": job.state,
         "step_limit": snapshot.get("function_step_limit"),
+        "budget_stop_observations": snapshot.get("budget_stop_observations"),
         "generation_step_limit": (batch.provenance or {}).get("generation_step_limit"),
         "handoff_state": record.get("state"),
         "obligations_total": obligations.get("total"),

@@ -80,7 +80,8 @@ _CONFIG_TEXT_FIELDS = ("manifest_path", "index_csv", "product_root",
                        "stub_model", "host_clang", "host_llvm_cov", "host_llvm_profdata",
                        "host_profile_runtime")
 # Numeric settings that may stay undeclared; NULL keeps the ut-agent default.
-_OPTIONAL_NUMERIC_FIELDS = (("function_step_limit", 1, 1_000_000_000),)
+_OPTIONAL_NUMERIC_FIELDS = (("function_step_limit", 1, 1_000_000_000),
+                            ("budget_stop_observations", 1, 10))
 _REQUIRED_FIELDS = ("manifest_path", "index_csv", "product_root")
 _JOB_LIST_LIMIT = 500
 
@@ -149,6 +150,16 @@ def frozen_step_limit(config: dict[str, Any]) -> Optional[int]:
     return value
 
 
+def frozen_budget_stop(config: dict[str, Any]) -> Optional[int]:
+    """How many agreeing forecasts end a function; ``None`` leaves them advisory."""
+    value = config.get("budget_stop_observations")
+    if value is None:
+        return None
+    if type(value) is not int or not 1 <= value <= 10:
+        raise BridgeError("Invalid frozen budget_stop_observations")
+    return value
+
+
 def _step_limit_unsupported(exc: Exception, limit: Optional[int]) -> bool:
     """True when this ut-agent predates ``--function-step-limit``.
 
@@ -158,6 +169,20 @@ def _step_limit_unsupported(exc: Exception, limit: Optional[int]) -> bool:
     distinguish the builds; the launch itself is the only reliable test.
     """
     return bool(limit) and "unrecognized arguments: --function-step-limit" in str(exc)
+
+
+def _budget_stop_unsupported(exc: Exception, observations: Optional[int]) -> bool:
+    """True when this ut-agent predates ``--budget-stop-observations``.
+
+    Same launch-time test as the ceiling: argparse rejects an unknown flag
+    before any work starts, and the older builds declare no capability key.
+    """
+    return bool(observations) and "unrecognized arguments: --budget-stop-observations" in str(exc)
+
+
+def _stop_file_unsupported(exc: Exception) -> bool:
+    """True when this ut-agent predates ``--stop-file``."""
+    return "unrecognized arguments: --stop-file" in str(exc)
 
 
 def save_config(project_id: int, values: dict[str, Any], user_id: int) -> UtPipelineConfig:
@@ -734,11 +759,14 @@ def _run_generation(batch_id: int, on_ready: Callable[[int], None] | None) -> li
 
     # Declared before the attempt: a constraint failure precedes the frozen read.
     limit: Optional[int] = None
+    stop_observations: Optional[int] = None
     generation_dir = _batch_dir(batch.project_id, batch.id) / "generation"
+    stop_file = _stop_file(batch.project_id, batch.id)
     try:
         batch.constraints = bridge.constraints(config["manifest_path"])
         db.session.commit()
         limit = frozen_step_limit(config)
+        stop_observations = frozen_budget_stop(config)
         progress_dir = _generation_progress_dir(batch.project_id, batch.id)
         # History first: the forecast reads one document per function, so the
         # in-flight run cannot observe itself.
@@ -749,16 +777,22 @@ def _run_generation(batch_id: int, on_ready: Callable[[int], None] | None) -> li
             _write_json_atomic(progress_dir / "forecast.json",
                                _forecast_record(report, _iso(_utcnow())))
 
-        document = bridge.generate(
-            config["manifest_path"], config["index_csv"], config["product_root"],
-            generation_dir,
-            list(by_function),
-            progress_dir=progress_dir,
-            on_unit=completed,
-            on_forecast=observe_forecast,
-            history_dir=history_dir,
-            function_step_limit=limit,
-        )
+        try:
+            document = bridge.generate(
+                config["manifest_path"], config["index_csv"], config["product_root"],
+                generation_dir,
+                list(by_function),
+                progress_dir=progress_dir,
+                on_unit=completed,
+                on_forecast=observe_forecast,
+                history_dir=history_dir,
+                function_step_limit=limit,
+                budget_stop_observations=stop_observations,
+                stop_file=None if stop_file is None else str(stop_file),
+            )
+        finally:
+            # A finished attempt must not stop the next one.
+            _clear_stop_file(stop_file)
         for unit in document.get("units", ()):
             accept(unit, document.get("provenance"))
         if set(by_function) - handed.keys():
@@ -771,11 +805,22 @@ def _run_generation(batch_id: int, on_ready: Callable[[int], None] | None) -> li
         batch.finished_at = _utcnow()
         unfinished = (UtJob.query.filter_by(batch_id=batch_id, state=UtJob.GENERATING)
                       .with_for_update(of=UtJob).populate_existing().all())
-        unsupported = _step_limit_unsupported(exc, limit)
+        unsupported_ceiling = _step_limit_unsupported(exc, limit)
+        unsupported_stop = _budget_stop_unsupported(exc, stop_observations)
         for job in unfinished:
             if job.stop_requested_at is not None:
                 _halt(job)
-            elif unsupported:
+            elif _stop_file_unsupported(exc):
+                _gate(job, UtJob.BLOCKED,
+                      "当前 ut-agent 不支持 --stop-file：请升级到包含该参数的版本；"
+                      "升级前无法在义务边界停止生成。",
+                      GateCode.ENV_BLOCKED)
+            elif unsupported_stop:
+                _gate(job, UtJob.BLOCKED,
+                      "当前 ut-agent 不支持 --budget-stop-observations：请升级到包含该参数的版本，"
+                      "或把「预测早停次数」留空后重建批次。",
+                      GateCode.ENV_BLOCKED)
+            elif unsupported_ceiling:
                 _gate(job, UtJob.BLOCKED,
                       "当前 ut-agent 不支持 --function-step-limit：请升级到包含该参数的版本，"
                       "或把「函数语义步数上限」留空后重建批次。",
@@ -1585,11 +1630,13 @@ def _halt(job: UtJob) -> None:
     _set_state(job, UtJob.STOPPED)
     job.reason = "已按请求停止；当前候选、机器判定与修订记录均已保留，可继续或重新入队"
     job.gate_code = GateCode.STOPPED
+    _clear_stop_file(_stop_file(job.project_id, job.batch_id))
 
 
 def _resume(job: UtJob) -> None:
     job.stop_requested_at = None
     job.stop_requested_by = None
+    _clear_stop_file(_stop_file(job.project_id, job.batch_id))
 
 
 def stop_job(project_id: int, job_id: int, user_id: int) -> UtJob:
@@ -1620,6 +1667,26 @@ def stop_batch(project_id: int, batch_id: int, user_id: int) -> dict[str, int]:
     return {"requested": len(jobs), "stopped": stopped, "stopping": len(jobs) - stopped}
 
 
+def _stop_file(project_id: int, batch_id: int) -> Optional[Path]:
+    """Where a running worker sees an operator's stop request.
+
+    ``None`` when the app declares no workspace root: such a process writes no
+    generation output, so no worker can be watching a stop file either.
+    """
+    if "WORKSPACE_DIR" not in current_app.config:
+        return None
+    return _batch_dir(project_id, batch_id) / "stop.request"
+
+
+def _clear_stop_file(path: Optional[Path]) -> None:
+    if path is None:
+        return
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+
 def _request_stop(job: UtJob, user_id: int, *, batch_wide: bool = False) -> int:
     """Return 1 when the job stopped now, 0 when its worker will stop it."""
     if job.stop_requested_at is None:
@@ -1628,6 +1695,13 @@ def _request_stop(job: UtJob, user_id: int, *, batch_wide: bool = False) -> int:
         audit.record("ut.job.stop", actor_id=user_id, object_type="ut_job", object_id=job.id,
                      project_id=job.project_id, old_value={"state": job.state},
                      new_value={"batch_id": job.batch_id, "batch_wide": batch_wide})
+        if job.state != UtJob.QUEUED:
+            # The worker checks this file between obligations, so a stop no
+            # longer waits for the whole function to finish.
+            path = _stop_file(job.project_id, job.batch_id)
+            if path is not None:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
     if job.state == UtJob.QUEUED:
         _halt(job)
         return 1
