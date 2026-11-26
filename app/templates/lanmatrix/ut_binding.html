@@ -66,7 +66,7 @@
       </div>
       <div class="ut-subsection">
         <h3>生成预算</h3>
-        <div class="ut-fields"><div class="field"><label for="ut-c-function_step_limit">函数语义步数上限</label><input id="ut-c-function_step_limit" type="number" min="1" max="1000000000" step="1" placeholder="留空沿用 ut-agent 默认值"><p class="ut-hint">按义务数估算的单函数上限，写入批次快照后只对之后新建的批次生效。某函数耗尽预算即停下，批次继续生成其余函数。</p><p class="ut-hint" id="ut-budget-suggestion" aria-live="polite">正在读取历史批次样本…</p><button class="btn" id="ut-budget-fill" type="button" disabled>填入建议值</button></div><div class="ut-fields"><div class="field"><label for="ut-c-budget_stop_observations">预测早停次数</label><input id="ut-c-budget_stop_observations" type="number" min="1" max="10" step="1" placeholder="留空沿用 ut-agent 默认值"><p class="ut-hint">在义务边界或义务内的进度检查点，连续多少次预算预估都超出上限就提前停下该函数，保留已完成用例并交给分拣。留空则沿用 ut-agent 默认值（默认 2 次）。</p></div></div></div>
+        <div class="ut-fields"><div class="field"><label for="ut-c-function_step_limit">函数语义步数上限</label><input id="ut-c-function_step_limit" type="number" min="1" max="1000000000" step="1" placeholder="留空沿用 ut-agent 默认值"><p class="ut-hint">按义务数估算的单函数上限，写入批次快照后只对之后新建的批次生效。某函数耗尽预算即停下，批次继续生成其余函数。</p><p class="ut-hint" id="ut-budget-suggestion" aria-live="polite">正在读取历史批次样本…</p><button class="btn" id="ut-budget-fill" type="button" disabled>填入建议值</button></div><div class="ut-fields"><div class="field"><label for="ut-c-budget_stop_observations">预测早停次数</label><input id="ut-c-budget_stop_observations" type="number" min="1" max="10" step="1" placeholder="留空使用 2 次"><p class="ut-hint">在义务边界或义务内的进度检查点，连续多少次预算预估都超出上限就提前停下该函数，保留已完成用例并交给分拣。留空时，批次使用 2 次。</p></div></div></div>
       </div>
       <div class="ut-subsection">
         <h3>AI 辅助</h3>

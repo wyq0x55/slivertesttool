@@ -18,8 +18,8 @@ _TABLE = "ut_pipeline_configs"
 def reconcile_budget_stop(bind: Connection) -> None:
     """Ensure the nullable forecast stop count on ``bind``.
 
-    NULL is meaningful: the configuration asks for no early stop and forecasts
-    stay advisory, so the column carries no server-side default.
+    NULL marks an undeclared project setting. The service resolves the
+    effective count when it queues a batch.
     """
     inspector = inspect(bind)
     if _TABLE not in set(inspector.get_table_names()):

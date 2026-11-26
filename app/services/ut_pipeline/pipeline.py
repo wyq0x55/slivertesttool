@@ -79,9 +79,10 @@ _CONFIG_TEXT_FIELDS = ("manifest_path", "index_csv", "product_root",
                        "repair_model", "stub_mode",
                        "stub_model", "host_clang", "host_llvm_cov", "host_llvm_profdata",
                        "host_profile_runtime")
-# Numeric settings that may stay undeclared; NULL keeps the ut-agent default.
+# Numeric settings that may stay undeclared in project configuration.
 _OPTIONAL_NUMERIC_FIELDS = (("function_step_limit", 1, 1_000_000_000),
                             ("budget_stop_observations", 1, 10))
+_DEFAULT_BUDGET_STOP_OBSERVATIONS = 2
 _REQUIRED_FIELDS = ("manifest_path", "index_csv", "product_root")
 _JOB_LIST_LIMIT = 500
 
@@ -150,11 +151,12 @@ def frozen_step_limit(config: dict[str, Any]) -> Optional[int]:
     return value
 
 
-def frozen_budget_stop(config: dict[str, Any]) -> Optional[int]:
-    """How many agreeing forecasts end a function; ``None`` leaves ut-agent's own default."""
+def frozen_budget_stop(config: dict[str, Any]) -> int:
+    """Resolve the early-stop count, including snapshots created before it was pinned."""
     value = config.get("budget_stop_observations")
     if value is None:
-        return None
+        # Some ut-agent versions support the flag but disable early stop without it.
+        return _DEFAULT_BUDGET_STOP_OBSERVATIONS
     if type(value) is not int or not 1 <= value <= 10:
         raise BridgeError("Invalid frozen budget_stop_observations")
     return value
@@ -371,8 +373,10 @@ def create_batch(project_id: int, target_ids: Any, user_id: int, label: str = ""
         raise ServiceError(
             "以下函数已在队列中：" + ", ".join(sorted({job.target.function for job in busy})),
             code="DUPLICATE")
+    snapshot = config.to_dict()
+    snapshot["budget_stop_observations"] = frozen_budget_stop(snapshot)
     batch = UtBatch(project_id=project_id, label=(label or "")[:128], created_by=user_id,
-                    status=UtBatch.STATUS_GENERATING, config_snapshot=config.to_dict(),
+                    status=UtBatch.STATUS_GENERATING, config_snapshot=snapshot,
                     derived_from_batch_id=derived_from)
     db.session.add(batch)
     db.session.flush()
@@ -827,8 +831,7 @@ def _run_generation(batch_id: int, on_ready: Callable[[int], None] | None) -> li
                       GateCode.ENV_BLOCKED)
             elif unsupported_stop:
                 _gate(job, UtJob.BLOCKED,
-                      "当前 ut-agent 不支持 --budget-stop-observations：请升级到包含该参数的版本，"
-                      "或把「预测早停次数」留空后重建批次。",
+                      "当前 ut-agent 不支持 --budget-stop-observations：请升级到包含该参数的版本后重建批次。",
                       GateCode.ENV_BLOCKED)
             elif unsupported_ceiling:
                 _gate(job, UtJob.BLOCKED,

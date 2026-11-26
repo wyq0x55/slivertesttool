@@ -74,12 +74,13 @@ versioned requirements when queued. Changing `function_step_limit` therefore
 affects only batches created afterwards; a queued, running or delivered batch
 keeps the value it froze.
 
-`budget_stop_observations`, when declared, lets a batch stop a function early
-instead of paying to the ceiling: ut-agent asks its own deterministic forecast at
-every obligation boundary and at semantic progress checkpoints inside an
-obligation (every one million charged steps). When that many consecutive
-observations project an overrun, the function yields. Empty keeps ut-agent's
-own default (`2`). The count is a declared input, so the same IR, rules, ceiling and
+`budget_stop_observations` lets a batch stop a function early. ut-agent checks
+its deterministic forecast at obligation boundaries and, on versions with
+in-obligation checks, at semantic progress checkpoints every million charged
+steps. When that many consecutive observations project an overrun, the function
+yields. Silver freezes `2` for an empty setting and passes the count explicitly
+to ut-agent. Older batch snapshots with an empty or missing count also use `2`.
+The count is a generation input, so the same IR, rules, ceiling and
 count stop at the same point. The forecast reads measured costs but only decides
 *when to stop*, never what an expectation is. The function keeps its finished
 cases and leaves unfinished obligations for review; the batch continues with

@@ -508,7 +508,7 @@
       values.budget_stop_observations = stopObservations === "" ? null : Number(stopObservations);
       if (values.budget_stop_observations !== null &&
           (!Number.isInteger(values.budget_stop_observations) || values.budget_stop_observations < 1 || values.budget_stop_observations > 10))
-        throw error("预测早停次数必须是 1 至 10 之间的整数，留空则沿用 ut-agent 默认值。", $("ut-c-budget_stop_observations"));
+        throw error("预测早停次数必须是 1 至 10 之间的整数，留空使用 2 次。", $("ut-c-budget_stop_observations"));
       values.max_repair_rounds = Number(values.max_repair_rounds);
       if (values.stub_mode === "llm") {
         values.stub_max_rounds = Number(values.stub_max_rounds);

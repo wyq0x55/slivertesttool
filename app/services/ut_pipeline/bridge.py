@@ -268,8 +268,8 @@ class UtAgentBridge:
         args = ["generate", *self._manifest(manifest), "--index-csv", index_csv,
                 "--product-root", product_root, "--out", str(out),
                 "--progress-dir", str(progress_dir)]
-        # Omitted, never defaulted here: ut-agent keeps its own ceiling, and its
-        # forecast only ends a function when the batch asks for it.
+        # The pipeline supplies its frozen early-stop count. An omitted step
+        # limit still leaves the ceiling to ut-agent.
         if function_step_limit is not None:
             args += ["--function-step-limit", str(function_step_limit)]
         if budget_stop_observations is not None:

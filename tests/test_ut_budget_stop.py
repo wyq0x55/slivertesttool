@@ -62,12 +62,6 @@ def test_only_a_missing_stop_file_flag_is_an_unsupported_tool():
 # --------------------------------------------------------------------------- #
 # Frozen snapshot read
 # --------------------------------------------------------------------------- #
-def test_an_undeclared_count_leaves_the_forecast_advisory():
-    assert pipeline.frozen_budget_stop({}) is None
-    assert pipeline.frozen_budget_stop({"budget_stop_observations": None}) is None
-    assert pipeline.frozen_budget_stop({"budget_stop_observations": 3}) == 3
-
-
 @pytest.mark.parametrize("value", [0, 11, True, "2", 1.5])
 def test_a_tampered_frozen_count_stops_the_batch(value):
     with pytest.raises(BridgeError, match="Invalid frozen budget_stop_observations"):
@@ -79,12 +73,33 @@ def test_a_tampered_frozen_count_stops_the_batch(value):
 # --------------------------------------------------------------------------- #
 def test_the_count_is_saved_and_frozen_into_the_batch(env):
     targets = _configure(env)
-    status, body = env.call("put", "/config", json={"budget_stop_observations": 2})
+    status, body = env.call("put", "/config", json={"budget_stop_observations": 3})
     assert status == 200, body
-    assert body["data"]["budget_stop_observations"] == 2
+    assert body["data"]["budget_stop_observations"] == 3
 
     _enqueue(env, targets["f"])
+    assert env.bridge.budget_stop_observations == 3
+
+
+def test_a_blank_setting_freezes_and_passes_the_default_count(env, app_ctx):
+    from app.extensions import db
+    from app.models.ut_pipeline import UtBatch, UtJob
+
+    targets = _configure(env)
+    job_id, = _enqueue(env, targets["f"])
     assert env.bridge.budget_stop_observations == 2
+    with app_ctx.app_context():
+        job = db.session.get(UtJob, job_id)
+        batch = db.session.get(UtBatch, job.batch_id)
+        assert batch.config_snapshot["budget_stop_observations"] == 2
+
+
+@pytest.mark.parametrize("snapshot", [{}, {"budget_stop_observations": None}])
+def test_old_snapshots_pass_the_default_count_to_the_cli(snapshot, tmp_path, monkeypatch):
+    bridge, seen = _bridge(monkeypatch)
+    bridge.generate("m.json", "i.csv", "P", tmp_path, ["f"], progress_dir=tmp_path,
+                    budget_stop_observations=pipeline.frozen_budget_stop(snapshot))
+    assert seen[0][seen[0].index("--budget-stop-observations") + 1] == "2"
 
 
 def test_a_cleared_count_is_accepted_as_null(env):
@@ -170,3 +185,13 @@ def test_an_older_tool_without_a_stop_file_blocks_the_job(env):
     assert job["state"] == "blocked"
     assert job["gate_code"] == "ENV_BLOCKED"
     assert "--stop-file" in job["reason"]
+
+
+def test_an_older_tool_without_forecast_stop_blocks_even_with_a_blank_setting(env):
+    targets = _configure(env)
+    env.bridge.generate_error = "ut-agent failed: unrecognized arguments: --budget-stop-observations 2"
+    job_id, = _enqueue(env, targets["f"])
+    job = _job(env, job_id)
+    assert job["state"] == "blocked"
+    assert job["gate_code"] == "ENV_BLOCKED"
+    assert "--budget-stop-observations" in job["reason"]

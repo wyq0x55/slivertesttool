@@ -37,7 +37,7 @@ class UtPipelineConfig(db.Model):
     # Per-function semantic step ceiling handed to ut-agent; NULL keeps its own default.
     function_step_limit = db.Column(db.Integer, nullable=True, default=None)
     # Consecutive over-budget forecasts that must agree before the function
-    # yields to the handoff; NULL keeps ut-agent's own default.
+    # yields to the handoff; NULL uses the platform default when queued.
     budget_stop_observations = db.Column(db.Integer, nullable=True, default=None)
     host_clang = db.Column(db.String(1024), nullable=False, default="clang")
     host_llvm_cov = db.Column(db.String(1024), nullable=False, default="llvm-cov")
