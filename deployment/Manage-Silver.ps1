@@ -145,6 +145,7 @@ function Set-ServiceConfig($Release) {
 <service>
   <id>$id</id>
   <name>Silver Test Platform ($role)</name>
+  <description>Runs the Silver Test Platform $role process.</description>
   <executable>$executable</executable>
   <arguments>$arguments</arguments>
   <workingdirectory>$working</workingdirectory>
