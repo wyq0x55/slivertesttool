@@ -181,7 +181,8 @@ validation gate on a machine with the Silver runtime.
 ## Run
 
 For a managed Windows LAN installation, see the [Windows deployment guide](docs/windows-deployment.md)
-for tagged offline packages, Windows services, upgrades and rollback.
+([中文版](docs/windows-deployment.zh-CN.md)) for tagged offline packages, Windows services,
+upgrades and rollback.
 
 **Recommended — one command starts everything** (web server + task worker + collaboration server):
 

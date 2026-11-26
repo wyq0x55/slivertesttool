@@ -1,5 +1,7 @@
 # Windows LAN deployment
 
+[简体中文](windows-deployment.zh-CN.md)
+
 Install the platform on one always-on x64 Windows host. Teammates access the
 host's Web URL. The host runs one Web service, one Huey worker for both queues,
 and optionally one collaboration process. PostgreSQL can run locally or on an

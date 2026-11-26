@@ -20,6 +20,7 @@ RUNTIME_FILES = {
     ".env.example", "requirements.txt", "manage.py", "run_web.py", "run_worker.py",
     "run_collab.py", "scripts/lm_backup.py", "deployment/runtime.py",
     "deployment/Manage-Silver.ps1", "docs/windows-deployment.md",
+    "docs/windows-deployment.zh-CN.md",
 }
 FRONTEND_ASSETS = (
     "vendor/univer/univer.full.umd.js", "vendor/univer/univer.full.umd.css",
