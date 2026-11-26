@@ -56,20 +56,22 @@
       指定已保存的测试行，生成手顺草稿供人工审核。矩阵编辑页没有网格选择时，在这里直接填写行 ID；
       服务器读取真实行内容及版本，权限与草稿审核流程不变。
     </p>
-    <div class="mforms">
-      <div class="row wrap">
-        <label class="uplbl">已保存测试行 ID
-          <input id="lm-ai-row-ids" class="inbox" placeholder="例如：12, 13" autocomplete="off"
-            title="多个行 ID 用逗号或空格分隔，最多 200 行">
-        </label>
-        <label class="uplbl">已保存模型 ID（可留空使用当前模型）
-          <input id="lm-ai-model-id" class="inbox" type="number" min="1" step="1" placeholder="模型 ID">
-        </label>
-      </div>
-      <div class="row wrap">
-        <button class="btn btn-primary" id="lm-ai-generate" type="button">AI 生成手顺</button>
-        <a class="btn" id="lm-ai-draft-link" hidden>查看草稿</a>
-      </div>
+    <div class="lm-exec-fields">
+      <label class="lm-exec-field" for="lm-ai-row-ids">
+        <span class="lm-exec-field-label">已保存测试行 ID</span>
+        <input id="lm-ai-row-ids" class="ipt" placeholder="例如：12, 13" autocomplete="off"
+          title="多个行 ID 用逗号或空格分隔，最多 200 行">
+      </label>
+      <label class="lm-exec-field" for="lm-ai-model-id">
+        <span class="lm-exec-field-label">已保存模型 ID
+          <span class="lm-exec-field-opt">（可留空使用当前模型）</span>
+        </span>
+        <input id="lm-ai-model-id" class="ipt" type="number" min="1" step="1" placeholder="模型 ID">
+      </label>
+    </div>
+    <div class="lm-exec-actions">
+      <button class="btn btn-primary" id="lm-ai-generate" type="button">AI 生成手顺</button>
+      <a class="btn" id="lm-ai-draft-link" hidden>查看草稿</a>
     </div>
     <p class="lm-muted" id="lm-ai-status" role="status" aria-live="polite"></p>
   </div>

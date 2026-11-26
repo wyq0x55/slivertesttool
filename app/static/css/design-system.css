@@ -1204,6 +1204,28 @@ textarea.lmui-input{ resize:vertical; min-height:76px; }
   gap:12px; margin:0 0 14px; }
 .lm-sec-head h2{ font-size:15.5px; font-weight:600; letter-spacing:-0.015em; }
 
+/* 执行配置: stacked section headings and the AI form.
+   The section headings follow a card, so they need the gap the card does not
+   provide; without it each heading reads as attached to the previous card.
+   The fields are a grid because the legacy `.lm-card label` + input rules make
+   an inline label stretch unpredictably when one input is `type="text"` and
+   the other is a number. */
+.lm-exec-config .lm-card + .lm-sec-head{ margin-top:32px; }
+.lm-exec-config .lm-check-inline{ display:inline-flex; margin:0; font-weight:600; }
+.lm-exec-config .lm-exec-fields{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:16px 20px; margin-top:16px; }
+.lm-exec-config .lm-exec-field{ display:flex; flex-direction:column; gap:6px; margin:0;
+  min-width:0; font-size:12.5px; font-weight:600; color:var(--text-2); }
+.lm-exec-config .lm-exec-field-label{ line-height:1.45; }
+.lm-exec-config .lm-exec-field-opt{ font-weight:400; color:var(--text-3); }
+.lm-exec-config .lm-exec-field .ipt{ width:100%; margin:0; padding:0 12px;
+  border-color:var(--border); border-radius:var(--radius-sm); font-size:13.5px; }
+.lm-exec-config .lm-exec-actions{ display:flex; flex-wrap:wrap; align-items:center;
+  gap:10px; margin-top:18px; }
+@media (max-width:720px){
+  .lm-exec-config .lm-exec-fields{ grid-template-columns:1fr; }
+}
+
 /* Checkbox that sits inline in a .toolbar next to inputs and buttons. */
 .lm-check-inline{ display:inline-flex; align-items:center; gap:7px; font-size:13px;
   color:var(--text-2); white-space:nowrap; cursor:pointer; }
