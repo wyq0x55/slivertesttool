@@ -247,6 +247,33 @@ def export_io(project_id):
                      download_name=f"{project.code}_io_{ts}.xlsx",
                      mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+def _export_testcase_archive(project_id, *, legacy):
+    from ...services.lanmatrix import testcase_archive_service
+
+    project, _ = _project_and_role(project_id, "export.run")
+    buf = testcase_archive_service.export_project(
+        project, legacy=legacy, test_ids=request.args.getlist("test_ids"))
+    format_name = "legacy_judge" if legacy else "silver_json"
+    ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    return send_file(buf, as_attachment=True,
+                     download_name=f"{project.code}_{format_name}_{ts}.zip",
+                     mimetype="application/zip")
+
+
+@bp.get("/projects/<int:project_id>/legacy-judge/export")
+@login_required
+def export_legacy_judge(project_id):
+    """Export authored Silver testcases in the legacy CSVLESS layout."""
+    return _export_testcase_archive(project_id, legacy=True)
+
+
+@bp.get("/projects/<int:project_id>/silver-json/export")
+@login_required
+def export_silver_json(project_id):
+    """Export authored Silver testcases with the current JSON runner."""
+    return _export_testcase_archive(project_id, legacy=False)
+
+
 @bp.post("/projects/<int:project_id>/exports")
 @login_required
 def create_export(project_id):

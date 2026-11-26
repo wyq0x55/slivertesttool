@@ -252,6 +252,7 @@ test("editor export dialog clears and fills its mounted alert", async () => {
     },
     LMApi: api,
     pid: 7,
+    setTimeout: (callback) => callback(),
     URL: { createObjectURL: () => "blob:", revokeObjectURL() {} },
   });
   vm.runInContext(section(source,
@@ -271,6 +272,18 @@ test("editor export dialog clears and fills its mounted alert", async () => {
   await get("lm-export-ok").dispatch("click", { preventDefault() {} });
   assert.equal(exportError.textContent, "");
   assert.equal(get("lm-export-dialog").open, false);
+
+  get("lm-export-format").value = "legacy_judge";
+  get("lm-export").dispatch("click");
+  api.exportSilverTestcases = async (projectId, format) => {
+    assert.equal(projectId, 7);
+    assert.equal(format, "legacy_judge");
+    throw new Error("invalid testcase step");
+  };
+  await get("lm-export-ok").dispatch("click", { preventDefault() {} });
+  assert.equal(exportError.textContent, "invalid testcase step");
+  assert.equal(get("lm-export-dialog").open, true);
+  assert.equal(get("lm-export-ok").disabled, false);
 
   assertNeverHides({ exportError });
 });

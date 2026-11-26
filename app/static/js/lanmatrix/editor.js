@@ -1461,11 +1461,13 @@
   }
   document.getElementById("lm-export").addEventListener("click", openExportDialog);
 
-  document.getElementById("lm-export-ok").addEventListener("click", async (e) => {
+  const exportButton = document.getElementById("lm-export-ok");
+  exportButton.addEventListener("click", async (e) => {
     e.preventDefault();
     const err = document.getElementById("lm-export-error");
     err.textContent = "";
     const format = exportFormatSel ? exportFormatSel.value : "generic";
+    exportButton.disabled = true;
     try {
       if (format === "test_matrix" || format === "libfunc" || format === "const"
           || format === "io") {
@@ -1479,17 +1481,22 @@
         a.href = urlFor(pid);
         a.click();
       } else {
-        const blob = await LMApi.exportProject(pid, {});
+        const silverArchive = format === "legacy_judge" || format === "silver_json";
+        const blob = silverArchive
+          ? await LMApi.exportSilverTestcases(pid, format)
+          : await LMApi.exportProject(pid, {});
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `project_${pid}_export.xlsx`;
+        a.download = silverArchive ? `project_${pid}_${format}.zip` : `project_${pid}_export.xlsx`;
         a.click();
-        URL.revokeObjectURL(url);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
       }
       exportDialog.close();
     } catch (ex) {
       err.textContent = ex.message;
+    } finally {
+      exportButton.disabled = false;
     }
   });
 

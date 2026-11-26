@@ -16,7 +16,7 @@
     }
   }
 
-  async function request(method, path, { body, raw, query, headers: extraHeaders, signal } = {}) {
+  async function request(method, path, { body, raw, query, headers: extraHeaders, signal, jsonErrors } = {}) {
     const headers = { ...(extraHeaders || {}) };
     let url = BASE + path;
     if (query) {
@@ -35,9 +35,9 @@
       opts.body = JSON.stringify(body);
     }
     const resp = await fetch(url, opts);
-    if (raw) {
-      if (!resp.ok) throw new ApiError("HTTP_" + resp.status, "请求失败", null, resp.status);
-      return resp;
+    if (raw && resp.ok) return resp;
+    if (raw && !jsonErrors) {
+      throw new ApiError("HTTP_" + resp.status, "请求失败", null, resp.status);
     }
     const rawBody = await resp.text();
     if (!rawBody) throw new ApiError("BAD_RESPONSE", "服务器无响应", null, resp.status);
@@ -291,6 +291,11 @@
     },
     async exportProject(id, payload) {
       const resp = await request("POST", `/projects/${id}/exports`, { body: payload || {}, raw: true });
+      return resp.blob();
+    },
+    async exportSilverTestcases(id, format) {
+      const route = format === "legacy_judge" ? "legacy-judge" : "silver-json";
+      const resp = await request("GET", `/projects/${id}/${route}/export`, { raw: true, jsonErrors: true });
       return resp.blob();
     },
 

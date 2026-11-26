@@ -1301,6 +1301,23 @@
    "form_fields": [],
    "method": "GET",
    "mutating": false,
+   "name": "imports_exports.export_legacy_judge",
+   "path": "/api/v1/projects/<int:project_id>/legacy-judge/export",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [
+    "test_ids"
+   ],
+   "response_kind": "download",
+   "summary": "Export authored Silver testcases in the legacy CSVLESS layout."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
    "name": "imports_exports.export_libfunc",
    "path": "/api/v1/projects/<int:project_id>/libfunc/export",
    "path_params": {
@@ -1309,6 +1326,23 @@
    "query_params": [],
    "response_kind": "download",
    "summary": "Export the project's Lib(Func) rows as a block-structured .xlsx."
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "imports_exports.export_silver_json",
+   "path": "/api/v1/projects/<int:project_id>/silver-json/export",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [
+    "test_ids"
+   ],
+   "response_kind": "download",
+   "summary": "Export authored Silver testcases with the current JSON runner."
   },
   {
    "body_fields": [],
