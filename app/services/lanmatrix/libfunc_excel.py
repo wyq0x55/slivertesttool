@@ -1,20 +1,10 @@
 """Excel -> Lib(Func) conversion (openpyxl, Flask-independent).
 
-The function-library workbook ("Lib") is **block-structured**, not a flat table.
-Each worksheet holds one or more *function blocks*, and every block looks like::
-
-    | No. | <lib_func>       |    | <lib_name / 題名>            |   <- block header
-    |     | 目的             | :<purpose>                          |
-    |     | 引数             | :<arguments>                        |
-    |     | 仮引数           | :<formal parameters>                |
-    |     | 備考             | :<note>                             |
-    |                                                                |   <- blank
-    | 手順番号|手順目的|操作手順|サブルーチン|引数|入力値…|期待値…|確認タイミング |  <- step header
-    |         |        |        |            |    |<signal display names>       |
-    |         |        |        |            |    |<signal identifiers>         |
-    |   1     | …      | …      | …          | …  | …                           |  <- step rows
-    |   2     | …                                                             |
-    (blank row separates the next block)
+Silver's named blocks have ``ライブラリ関数名：`` in column A and the function
+identifier in column B. Metadata labels such as ``目的：`` sit in B and their
+values in C. Numbered blocks have a numeric index in A, the function identifier
+in B, and an optional display title (題名) in D. Their metadata may prefix values
+in C with a colon. Flat header-driven tables are also supported.
 
 The step table geometry (``手順番号 .. 確認タイミング`` header + two signal-name
 rows + step rows) is **identical** to the Test-Matrix detail sheets, so this
@@ -22,10 +12,9 @@ parser reuses :func:`matrix_excel.parse_step_table` verbatim to build ``lib_stb`
 — the same JSON document (input/expected signals + step rows) the step editor
 uses.
 
-Sheets are classified as *initialization* (``isinit=True``) or not: if any
-worksheet's title looks like an init sheet (``初期化`` / ``init`` …) the title
-decides; otherwise the **first** worksheet is treated as the init sheet (per the
-convention that the first Lib sheet holds initialization functions).
+Named blocks take ``isinit`` from the sheet title. Numbered blocks and flat
+tables also support the historical first-sheet convention when no sheet has an
+initialization title.
 
 ``parse_workbook`` returns::
 
@@ -55,9 +44,8 @@ _META_LABELS: dict[str, str] = {
     "備考": "lib_note",
     "备考": "lib_note",
 }
-_META_LABEL_SET = frozenset(_META_LABELS.keys())
-
 _STEP_HEADER_LABEL = "手順番号"
+_FUNC_NAME_LABEL = "ライブラリ関数名"
 
 # Column positions (1-based), shared with the Test-Matrix detail sheets.
 _COL_NO = _mx.COL_STEP_NO        # B — block No. / step number
@@ -93,8 +81,9 @@ def parse_workbook(source: Union[str, BinaryIO],
         headers = _find_block_headers(ws)
         if headers:
             sheets.append(ws.title)
+            named_init = _is_init_title(ws.title)
             for hr in headers:
-                items.append(_parse_block(ws, hr, is_init))
+                items.append(_parse_block(ws, hr, is_init, named_init))
             continue
         # Fallback: a flat header-driven table (legacy / hand-authored files).
         flat = _parse_flat_sheet(ws, is_init)
@@ -134,20 +123,23 @@ def _find_block_headers(ws) -> list[int]:
 
 
 def _is_block_header(ws, r: int) -> bool:
-    """A block header has a No. in col A and a function id in col B (which is
-    neither a metadata label nor the step-table header)."""
-    no = ws.cell(r, 1).value
+    marker = ws.cell(r, 1).value
     func = _cell_str(ws.cell(r, _COL_NO).value)
-    if no is None or not func:
+    if marker is None or not func:
         return False
-    if func in _META_LABEL_SET or func == _STEP_HEADER_LABEL:
-        return False
-    return _looks_numeric(no)
+    if _label(marker) == _FUNC_NAME_LABEL:
+        return True
+    return (
+        func not in _META_LABELS
+        and func != _STEP_HEADER_LABEL
+        and _looks_numeric(marker)
+    )
 
 
-def _parse_block(ws, header_row: int, is_init: bool) -> dict[str, Any]:
+def _parse_block(ws, header_row: int, is_init: bool, named_init: bool) -> dict[str, Any]:
+    named = _label(ws.cell(header_row, 1).value) == _FUNC_NAME_LABEL
     item: dict[str, Any] = {key: "" for key in _FIELD_KEYS}
-    item["isinit"] = bool(is_init)
+    item["isinit"] = named_init if named else is_init
     item["lib_func"] = _cell_str(ws.cell(header_row, _COL_NO).value)
     item["lib_name"] = _cell_str(ws.cell(header_row, _COL_TITLE).value)
 
@@ -155,25 +147,21 @@ def _parse_block(ws, header_row: int, is_init: bool) -> dict[str, Any]:
     # (手順番号) or the next block, whichever comes first.
     r = header_row + 1
     max_row = ws.max_row  # rescans every cell on each access
+    in_sig, exp_sig, steps = [], [], []
     while r <= max_row:
-        label = _cell_str(ws.cell(r, _COL_NO).value)
-        if label == _STEP_HEADER_LABEL or _is_block_header(ws, r):
+        if _is_block_header(ws, r):
+            break
+        label = _label(ws.cell(r, _COL_NO).value)
+        if label == _STEP_HEADER_LABEL:
+            in_sig, exp_sig, steps = _mx.parse_step_table(
+                ws, r, stop_on_block=_is_block_header)
             break
         key = _META_LABELS.get(label)
         if key:
-            item[key] = _strip_leading_colon(_cell_str(ws.cell(r, _COL_META_VAL).value))
+            value = _cell_str(ws.cell(r, _COL_META_VAL).value)
+            item[key] = value if named else _strip_leading_colon(value)
         r += 1
 
-    # Step table (手順) — reuse the shared Test-Matrix procedure-table parser.
-    step_header = _mx._find_step_header(ws, header_row)
-    if step_header is not None:
-        try:
-            in_sig, exp_sig, steps = _mx.parse_step_table(
-                ws, step_header, stop_on_block=_is_block_header)
-        except Exception:  # noqa: BLE001 - never let one bad block abort import
-            in_sig, exp_sig, steps = [], [], []
-    else:
-        in_sig, exp_sig, steps = [], [], []
     item["lib_stb"] = {
         "input_signals": in_sig,
         "expected_signals": exp_sig,
@@ -258,6 +246,10 @@ def _looks_numeric(val: Any) -> bool:
         return False
 
 
+def _label(value: Any) -> str:
+    return _cell_str(value).rstrip(":：").rstrip()
+
+
 def _strip_leading_colon(text: str) -> str:
     t = text.lstrip()
     if t[:1] in (":", "："):
@@ -270,8 +262,8 @@ def _cell_str(val: Any) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Export (Lib items -> block-structured .xlsx). Geometry mirrors the parser so an
-# exported file re-imports losslessly, and matches the Test-Matrix detail layout.
+# Export (Lib items -> block-structured .xlsx). Geometry mirrors the numbered
+# blocks and matches the Test-Matrix detail layout.
 # --------------------------------------------------------------------------- #
 _INIT_SHEET_TITLE = "初期化"
 _MAIN_SHEET_TITLE = "Func"

@@ -591,6 +591,81 @@ def test_other_special_import_previews_do_not_mutate_project(
     ).count() == 2
 
 
+def test_silver_libfunc_import_preserves_japanese_subroutine_calls(client, replace_case):
+    from io import BytesIO
+
+    from openpyxl import Workbook
+
+    from app.models import TestItemRow
+    from app.services.lanmatrix import silver_json_export
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "ライブラリ関数"
+    for row in (
+        ["ライブラリ関数一覧"],
+        ["ライブラリ関数名：", "手順未定"],
+        [None, "目的：", "準備中"],
+        ["ライブラリ関数名：", "動作確認"],
+        [None, "目的：", "位置を設定する"],
+        [None, "引数：", "なし"],
+        [None, "仮引数：", "-"],
+        [None, "備考：", "位置設定を呼び出す"],
+        [None, "手順番号", "手順目的", "操作手順", "サブルーチン", "引数", "確認タイミング"],
+        [None],
+        [None],
+        [None, 1, "トリガ入力", "位置設定", "位置設定", "12", "-"],
+        ["ライブラリ関数名:", "位置設定"],
+        [None, "仮引数:", "pos"],
+        [None, "手順番号", "手順目的", "操作手順", "サブルーチン", "引数", "入力値", "確認タイミング"],
+        [None, None, None, None, None, None, "位置"],
+        [None, None, None, None, None, None, "ecu.position"],
+        [None, 1, "トリガ入力", "位置設定", None, None, "pos", "-"],
+    ):
+        sheet.append(row)
+    source = BytesIO()
+    workbook.save(source)
+    source.seek(0)
+
+    headers = _login(client, replace_case["admin_username"], ADMIN_PASSWORD)
+    project_id = replace_case["project_id"]
+    preview = client.post(
+        f"/api/v1/projects/{project_id}/libfunc/import",
+        data={"file": (source, "LibFunc.xlsx"), "mode": "upsert"},
+        headers=headers,
+    )
+    assert preview.status_code == 201
+    job = preview.get_json()["data"]["job"]
+    assert job["preview"]["valid"] == 3
+    response = client.post(f"/api/v1/imports/{job['id']}/commit", headers=headers)
+    assert response.status_code == 200
+    assert response.get_json()["data"]["inserted"] == 3
+
+    rows = TestItemRow.query.filter_by(project_id=project_id, sheet="lib").all()
+    by_name = {row.case_id: row for row in rows}
+    assert set(by_name) == {"手順未定", "動作確認", "位置設定"}
+    assert not by_name["手順未定"].get_field("lib_stb")
+    wrapper = by_name["動作確認"]
+    assert wrapper.get_field("lib_func") == "動作確認"
+    assert wrapper.get_field("lib_value") == "位置を設定する"
+    assert wrapper.get_field("lib_arg") == "なし"
+    assert wrapper.get_field("lib_para") == "-"
+    assert wrapper.get_field("lib_note") == "位置設定を呼び出す"
+
+    test_row = TestItemRow(case_id="TC1", custom_values={
+        "steps": {"steps": [{"no": 1, "subroutine": "動作確認"}]},
+    })
+    documents = silver_json_export.build_documents(test_row, [], rows)
+    subs = documents["library"]["subroutines"]
+    assert set(subs) == {"動作確認", "位置設定"}
+    assert subs["動作確認"]["kind"] == "process"
+    assert "params" not in subs["動作確認"]
+    assert subs["動作確認"]["steps"][0]["actions"] == [
+        {"subroutine": "位置設定", "args": ["12"]},
+    ]
+    assert subs["位置設定"]["steps"][0]["inputs"][0]["param"] == "pos"
+
+
 def test_special_replace_all_rechecks_permission_at_commit(app, replace_case):
     from app.extensions import db
     from app.models import DataJob, LMUser, Project, ProjectMember

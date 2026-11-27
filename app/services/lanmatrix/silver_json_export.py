@@ -503,9 +503,10 @@ def _parse_lib_params(raw: Any) -> list[tuple[str, Any]]:
     parameter (``value``) and multiple parameters (``value1,value2``) are both
     accepted, with optional defaults (``value1=0,value2=1``). Defaults are
     coerced numerically where possible; a bare name has a ``None`` default.
-    Duplicate names keep their first occurrence.
+    A blank or ``-`` cell declares no parameters. Duplicate names keep their
+    first occurrence.
     """
-    if raw is None:
+    if _blank_cell(raw):
         return []
     text = raw if isinstance(raw, str) else str(raw)
     out: list[tuple[str, Any]] = []
