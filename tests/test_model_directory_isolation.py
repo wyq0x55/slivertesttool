@@ -24,7 +24,7 @@ def registry(tmp_path, monkeypatch):
         row.id = len(rows) + 1
         rows.append(row)
 
-    def select(_project_id, name, version=None, model_id=None):
+    def select(_project_id, name, version=None, model_id=None, *, lock=False):
         matches = [row for row in rows if row.name == name or row.id == model_id]
         if version:
             matches = [row for row in matches if row.version == version]
@@ -43,6 +43,9 @@ def registry(tmp_path, monkeypatch):
         def all(self):
             return list(self._items)
 
+        def first(self):
+            return self._items[0] if self._items else None
+
         def filter_by(self, **kwargs):
             return Query(row for row in self._items
                          if all(getattr(row, key) == value for key, value in kwargs.items()))
@@ -55,6 +58,7 @@ def registry(tmp_path, monkeypatch):
 
     monkeypatch.setattr(project_model_service, "_query", lambda *_args: Query(rows))
     monkeypatch.setattr(project_model_service, "_select_model", select)
+    monkeypatch.setattr(project_model_service, "TestBook", SimpleNamespace(query=Query([])))
     monkeypatch.setattr(project_model_service, "has_models", lambda *_args: bool(rows))
     monkeypatch.setattr(project_model_service, "_audit_version_change", Mock())
     with application.app_context():
