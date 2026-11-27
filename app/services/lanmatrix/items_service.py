@@ -106,6 +106,20 @@ def _valid_book_id(project_id: int, book_id: Optional[int]) -> Optional[int]:
     return wanted
 
 
+def validate_creation_book_id(project: Project, sheet: str,
+                              book_id: Optional[int]) -> Optional[int]:
+    if project.project_type == "silver_books":
+        if sheet in ("test", "io"):
+            if book_id in (None, ""):
+                raise ServiceError("请选择式样书", code="VALIDATION_ERROR")
+            if isinstance(book_id, bool) or not isinstance(book_id, (int, str)):
+                raise ServiceError("式样书不存在", code="NOT_FOUND")
+        elif book_id not in (None, ""):
+            raise ServiceError("Lib 和 Const 由项目共享，不能指定式样书",
+                               code="VALIDATION_ERROR")
+    return _valid_book_id(project.id, book_id)
+
+
 def _apply_field_defaults(project_id: int, values: dict[str, Any],
                           specs: list, book_id: Optional[int] = None) -> dict[str, Any]:
     """Fill in field ``default_value`` for keys the caller left empty.
@@ -201,7 +215,7 @@ def create_item(user: LMUser, project: Project, values: dict[str, Any],
     row_sheet = (sheet or values.pop("sheet", None) or fld.DEFAULT_SHEET)
     if row_sheet not in fld.SHEETS:
         row_sheet = fld.DEFAULT_SHEET
-    book_id = _valid_book_id(project.id, book_id)
+    book_id = validate_creation_book_id(project, row_sheet, book_id)
     # Only validate/apply fields that belong to this row's sheet, so required
     # fields from other tabs don't block a const/lib row and vice-versa.
     specs = [s for s in specs if getattr(s, "sheet", "test") == row_sheet]
@@ -279,10 +293,10 @@ def create_items(user: LMUser, project: Project, values: dict[str, Any],
     raw_input = dict(values or {})
     if book_id is None:
         book_id = raw_input.pop("book_id", None)
-    book_id = _valid_book_id(project.id, book_id)
     row_sheet = (sheet or raw_input.pop("sheet", None) or fld.DEFAULT_SHEET)
     if row_sheet not in fld.SHEETS:
         row_sheet = fld.DEFAULT_SHEET
+    book_id = validate_creation_book_id(project, row_sheet, book_id)
     specs = [s for s in specs if getattr(s, "sheet", "test") == row_sheet]
 
     defs = {f.field_key: f for f in list_fields(project.id, active_only=True)}
@@ -425,13 +439,17 @@ def add_pool_entry(user: LMUser, project: Project, sheet: str,
     if sheet not in _POOL_SPECS:
         raise ServiceError("不支持的参考池", code="VALIDATION_ERROR")
     values = dict(values or {})
+    scoped_book = None
+    if project.project_type == "silver_books":
+        if book_id is None:
+            book_id = values.pop("book_id", None)
+        scoped_book = validate_creation_book_id(project, sheet, book_id)
     for key in _POOL_REQUIRED[sheet]:
         if not str(values.get(key, "") or "").strip():
             raise ServiceError(f"{_POOL_LABELS.get(key, key)} 不能为空",
                                code="VALIDATION_ERROR")
     fields_service.ensure_fields(user, project, getattr(fld, _POOL_SPECS[sheet]))
-    scoped_book = None
-    if sheet == "io":
+    if sheet == "io" and project.project_type != "silver_books":
         scoped_book = _valid_book_id(project.id, book_id)
     _check_pool_unique(project.id, sheet, _POOL_UNIQUE[sheet], values,
                        book_id=scoped_book)
@@ -852,7 +870,7 @@ def materialize_create(user: LMUser, project: Project, state: dict[str, Any],
     if row_sheet not in fld.SHEETS:
         row_sheet = fld.DEFAULT_SHEET
     order = row_order if row_order is not None else _max_row_order(project.id) + 1
-    row_book_id = _valid_book_id(project.id, state.get("book_id"))
+    row_book_id = validate_creation_book_id(project, row_sheet, state.get("book_id"))
     kwargs: dict[str, Any] = dict(
         project_id=project.id, sheet=row_sheet, book_id=row_book_id,
         row_order=order,

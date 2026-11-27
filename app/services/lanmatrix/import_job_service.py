@@ -15,6 +15,7 @@ from ...models import (
     DataJob, FieldDefinition, Project, ProjectMember, TestBook, TestItemRow,
 )
 from . import audit, fields as fld, fields_service, permissions, service, settings, validation
+from .items_service import validate_creation_book_id
 from .validation import FieldSpec
 
 logger = logging.getLogger(__name__)
@@ -104,6 +105,14 @@ def _identity_key(import_format: str, identity: Any) -> str:
     return value.lower() if import_format == "io" else value
 
 
+def require_legacy_test_import(project: Project) -> None:
+    if getattr(project, "project_type", None) == "silver_books":
+        raise service.ServiceError(
+            "Silver 多式样书项目请在式样书管理中使用「导入式样书」",
+            code="VALIDATION_ERROR",
+        )
+
+
 def create_special_preview(
     user, project: Project, source, *, import_format: str,
     original_filename: str = "", mode: str = "upsert",
@@ -112,6 +121,8 @@ def create_special_preview(
 ) -> DataJob:
     if import_format not in _SPECIAL_FORMATS:
         raise service.ServiceError("不支持的导入格式", code="VALIDATION_ERROR")
+    if import_format == "test_matrix":
+        require_legacy_test_import(project)
     if mode not in _SPECIAL_MODES:
         raise service.ServiceError(f"未知导入模式: {mode}", code="VALIDATION_ERROR")
     if import_format == "book":
@@ -124,16 +135,10 @@ def create_special_preview(
             raise service.ServiceError(
                 "式样书导入只支持按 ID 合并", code="VALIDATION_ERROR",
             )
-    if import_format == "io" and project.project_type == "silver_books":
-        # In a multi-book project the I/O pool is per specification book: two
-        # books may legitimately declare the same signal name. A project-wide
-        # pool here would make the second look like a duplicate.
-        if book_id in (None, ""):
-            raise service.ServiceError(
-                "请选择要导入到的式样书", code="VALIDATION_ERROR",
-            )
-    elif import_format == "io":
-        book_id = None
+    sheet, field_definitions, identity_field = _SPECIAL_FORMATS[import_format]
+    scoped_book_id = None
+    if project.project_type == "silver_books" and sheet != "test":
+        scoped_book_id = validate_creation_book_id(project, sheet, book_id)
     if not project.is_editable:
         raise service.ServiceError("项目当前不可编辑", code="PROJECT_LOCKED")
     if mode == "replace_all":
@@ -152,7 +157,6 @@ def create_special_preview(
         books_service.ensure_book_fields(user, project)
     target_book = None
     target_book_id = None
-    scoped_book_id = None
     if import_format == "book":
         from . import books_service, fields as _fields
 
@@ -179,14 +183,9 @@ def create_special_preview(
                 )
             books_service.validate_model(project.id, model_id)
             book_name = requested
-    if import_format == "io" and book_id not in (None, ""):
-        from . import books_service
-
-        scoped_book_id = books_service.get_book(project.id, book_id).id
     if import_format == "book":
         scoped_book_id = target_book_id
 
-    sheet, field_definitions, identity_field = _SPECIAL_FORMATS[import_format]
     specs = _field_specs(project.id, sheet, field_definitions)
     rows, errors, inserts, updates = _build_preview_rows(
         project, import_format, items, specs, identity_field, mode,
@@ -293,6 +292,8 @@ def commit_special_import(user, project: Project, job: DataJob) -> dict[str, Any
             raise service.ServiceError("导入任务状态无效", code="VALIDATION_ERROR")
         if import_format not in _SPECIAL_FORMATS:
             raise service.ServiceError("导入任务格式无效", code="VALIDATION_ERROR")
+        if import_format == "test_matrix":
+            require_legacy_test_import(project)
         if job.expires_at is None:
             raise service.ServiceError(
                 "导入预览缺少有效期，请重新上传", code="IMPORT_PREVIEW_INVALID",
@@ -360,11 +361,13 @@ def commit_special_import(user, project: Project, job: DataJob) -> dict[str, Any
 
         sheet, field_definitions, _identity_field = _SPECIAL_FORMATS[import_format]
         snapshot_book_id = book.id if book is not None else parameters.get("book_id")
-        if snapshot_book_id in (None, ""):
+        _lock_special_import_tables()
+        if project.project_type == "silver_books" and sheet != "test":
+            snapshot_book_id = validate_creation_book_id(project, sheet, snapshot_book_id)
+        elif snapshot_book_id in (None, ""):
             snapshot_book_id = None
         else:
             snapshot_book_id = int(snapshot_book_id)
-        _lock_special_import_tables()
         if expected_snapshot != capture_snapshot(
                 project.id, sheet, book_id=snapshot_book_id):
             raise service.ServiceError(

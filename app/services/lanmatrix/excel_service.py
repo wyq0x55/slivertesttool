@@ -35,6 +35,7 @@ def create_import_preview(
     user, project: Project, source: Union[str, "BinaryIO"],
     *, original_filename: str = "", mode: str = "upsert",
 ) -> DataJob:
+    import_job_service.require_legacy_test_import(project)
     if mode not in IMPORT_MODES:
         raise service.ServiceError(f"未知导入模式: {mode}", code="VALIDATION_ERROR")
     if not project.is_editable:
@@ -167,6 +168,7 @@ def commit_import(user, project: Project, job: DataJob) -> dict:
 def _commit_generic_import(user, project: Project, job: DataJob) -> dict:
     if job.job_type != "import" or job.status != "previewed":
         raise service.ServiceError("导入任务状态无效", code="VALIDATION_ERROR")
+    import_job_service.require_legacy_test_import(project)
     if not project.is_editable:
         raise service.ServiceError("项目当前不可编辑", code="PROJECT_LOCKED")
     if job.expires_at is None:
