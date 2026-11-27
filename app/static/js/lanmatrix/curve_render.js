@@ -199,6 +199,15 @@
     if (model.hoverX !== null && model.hoverX !== undefined && model.hoverX >= X0 && model.hoverX <= X1) {
       p.line([[model.hoverX, AXIS_H], [model.hoverX, H]], th.text3, 1, [3, 3]);
     }
+    if (model.zoomBand) {
+      const za = Math.max(X0, Math.min(model.zoomBand[0], model.zoomBand[1]));
+      const zb = Math.min(X1, Math.max(model.zoomBand[0], model.zoomBand[1]));
+      if (zb > za) {
+        p.rect(za, 0, zb - za, H, th.fillSoft);
+        p.line([[za, 0], [za, H]], th.brand, 1.5);
+        p.line([[zb, 0], [zb, H]], th.brand, 1.5);
+      }
+    }
   }
 
   function yScale(lane, y, h) {
