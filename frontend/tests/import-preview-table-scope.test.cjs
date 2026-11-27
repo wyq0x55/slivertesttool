@@ -73,6 +73,7 @@ function makeSandbox({ createElement, response, mode = "upsert", format = "gener
     importSummary: summary,
     IMPORT_FORMATS: { [format]: { label: "通用模板", call: specCall } },
     IMPORT_SHEETS: { [format]: "test" },
+    IS_BOOKS: false,
     pendingFile: null,
     pendingJob: null,
     previewRequest: 0,
@@ -81,7 +82,10 @@ function makeSandbox({ createElement, response, mode = "upsert", format = "gener
     esc: realEsc,
     updateImportCommitButton() {},
   });
-  vm.runInContext(extractFunction("previewImport"), context, { filename: editorPath });
+  vm.runInContext([
+    extractFunction("bookImportOptions"),
+    extractFunction("previewImport"),
+  ].join("\n"), context, { filename: editorPath });
   return { context, created, summary, commitButton, errorEl, calls };
 }
 

@@ -44,6 +44,7 @@ function makeNode(id) {
     open: false,
     className: "",
     dataset: {},
+    options: [],
     selectedOptions: [],
     listeners: {},
     hiddenWrites: [],
@@ -206,6 +207,7 @@ test("editor queue dialog announces selection and enqueue failures without hidin
     queueOk,
     queueChecked,
     queueDialog: dialog,
+    IS_BOOKS: false,
     enqueueSelectedRuns: (...args) => enqueue(...args),
     window: { LMDefaultModel: "model" },
     toast() {},
@@ -217,7 +219,7 @@ test("editor queue dialog announces selection and enqueue failures without hidin
   const click = () => queueOk.dispatch("click", { preventDefault() {} });
 
   await click();
-  assert.equal(queueError.textContent, "请至少选择一个 test_id。");
+  assert.equal(queueError.textContent, "请至少选择一个测试用例。");
 
   queueChecked.add("case-1");
   await click();
@@ -252,6 +254,9 @@ test("editor export dialog clears and fills its mounted alert", async () => {
     },
     LMApi: api,
     pid: 7,
+    IS_BOOKS: false,
+    books: [],
+    currentBookId: null,
     setTimeout: (callback) => callback(),
     URL: { createObjectURL: () => "blob:", revokeObjectURL() {} },
   });
@@ -288,7 +293,7 @@ test("editor export dialog clears and fills its mounted alert", async () => {
   assertNeverHides({ exportError });
 });
 
-function importHarness() {
+function importHarness({ books = [], currentBookId = null } = {}) {
   const nodes = new Map();
   const get = (id) => {
     if (!nodes.has(id)) nodes.set(id, makeNode(id));
@@ -305,9 +310,16 @@ function importHarness() {
     return response.promise;
   };
   const context = vm.createContext({
-    document: { getElementById: get, querySelectorAll: () => [] },
+    document: {
+      getElementById: get,
+      querySelectorAll: () => [],
+      createElement: makeNode,
+    },
     pid: 1,
     currentSheet: "test",
+    IS_BOOKS: books.length > 0,
+    books,
+    currentBookId,
     esc: (value) => String(value),
     isUniver: () => false,
     collabActive: () => false,
@@ -321,6 +333,8 @@ function importHarness() {
       importLibFunc: preview,
       importConst: preview,
       importIo: preview,
+      importBook: preview,
+      listProjectModels: async () => ({ models: [] }),
       commitImport(jobId) {
         const response = deferred();
         commits.push({ ...response, jobId });
@@ -371,4 +385,22 @@ test("editor import dialog clears and fills its mounted alert", async () => {
   assert.equal(importError.textContent, "permission denied");
 
   assertNeverHides({ importError });
+});
+
+test("book import lists the books and sends the selected book ID", async () => {
+  const harness = importHarness({
+    books: [{ id: 3, name: "Book A" }, { id: 8, name: "Book B" }],
+    currentBookId: 8,
+  });
+  harness.get("lm-import").dispatch("click");
+  await settle();
+
+  const select = harness.get("lm-import-book");
+  assert.deepEqual(select.children.map((option) => option.value), ["__new__", "3", "8"]);
+  assert.equal(select.value, "8");
+
+  const uploading = harness.upload();
+  assert.equal(harness.previews[0].mode.bookId, 8);
+  harness.previews[0].resolve(job(1));
+  await uploading;
 });

@@ -21,9 +21,10 @@ function elements() {
     if (!nodes.has(id)) {
       nodes.set(id, {
         value: "", textContent: "", innerHTML: "", hidden: true,
-        disabled: false, open: false, selectedOptions: [], listeners: {},
+        disabled: false, open: false, options: [], selectedOptions: [], listeners: {},
         addEventListener(type, callback) { this.listeners[type] = callback; },
         querySelectorAll() { return []; },
+        replaceChildren() { this.innerHTML = ""; },
         showModal() { this.open = true; },
         close() {
           this.open = false;
@@ -59,6 +60,7 @@ function importHarness() {
   const context = vm.createContext({
     document: { getElementById: get, querySelectorAll: () => [] },
     pid: 1, currentSheet: "test", esc: (value) => String(value),
+    IS_BOOKS: false,
     isUniver: () => false, collabActive: () => false,
     applySheetContext: async () => {}, loadFields: async () => {},
     loadItems: async () => {}, toast: (message, ok) => toasts.push({ message, ok }),

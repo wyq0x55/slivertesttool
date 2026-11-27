@@ -39,6 +39,7 @@ test("executionSnapshot fetches unfiltered sheets even when quick search is acti
     quick: "TC-1",
     currentSheet: "test",
     pid: 9,
+    IS_BOOKS: false,
     savingCount: 0,
     grid: null,
     collabConn: "disconnected",
@@ -99,6 +100,7 @@ test("enqueueSelectedRuns retries COLLAB_INPUTS_NOT_MATERIALIZED during collab d
   let rowErrors = {};
   const context = vm.createContext({
     pid: 9,
+    IS_BOOKS: false,
     savingCount: 0,
     grid: null,
     collabConn: "connected",
@@ -200,8 +202,32 @@ test("steps_editor open() binds onPrepare and awaits it before onEnqueue", async
 });
 
 test("project_tasks onEnqueue resolves case_id fallback via logicalId", () => {
-  const start = tasksSource.indexOf("  async function openSteps(testId) {");
-  assert.ok(start >= 0);
-  const openStepsSection = tasksSource.slice(start, start + 2600);
+  const openStepsSection = sliceBetween(
+    tasksSource, "  async function openSteps(", "  function closeDetail("
+  );
   assert.match(openStepsSection, /items\.filter\(\(item\)\s*=>\s*logicalId\(item\)\s*===\s*targetId\)/);
+});
+
+test("project_tasks keeps the steps drawer in the task's book and row", async () => {
+  const rowInOtherBook = { uuid: "other-row", test_id: "TC-1", book_id: 6 };
+  const replacement = { uuid: "replacement", case_id: "TC-1", book_id: 7 };
+  const opened = [];
+  const messages = [];
+  const stepsEditor = { open: (item) => opened.push(item) };
+  const context = vm.createContext({
+    window: { LMStepsEditor: stepsEditor },
+    LMStepsEditor: stepsEditor,
+    fetchTestItems: async () => [rowInOtherBook, replacement],
+    toast: (message) => messages.push(message),
+  });
+  vm.runInContext(sliceBetween(
+    tasksSource, "  async function openSteps(", "  function closeDetail("
+  ), context);
+
+  await context.openSteps("TC-1", "deleted-row", 7);
+  assert.deepEqual(opened, []);
+  assert.match(messages[0], /未找到/);
+
+  await context.openSteps("TC-1", "", 7);
+  assert.deepEqual(opened, [replacement]);
 });

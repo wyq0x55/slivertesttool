@@ -1751,7 +1751,7 @@
   const importModelSel = document.getElementById("lm-import-model");
   const importModelLabel = document.getElementById("lm-import-model-label");
   let importModels = [];
-  function importBookOptions(allowNew = true) {
+  function renderImportBookOptions(allowNew) {
     if (!importBookSel) return;
     const previous = importBookSel.value;
     const opts = [];
@@ -1801,7 +1801,7 @@
     if (importBookBlock) importBookBlock.hidden = !needsBook;
     if (!needsBook) return;
     const allowNew = format === "book";
-    importBookOptions(allowNew);
+    renderImportBookOptions(allowNew);
     const creating = allowNew && importBookSel && importBookSel.value === "__new__";
     if (importBookNameLabel) importBookNameLabel.hidden = !creating;
     if (importBookName) {

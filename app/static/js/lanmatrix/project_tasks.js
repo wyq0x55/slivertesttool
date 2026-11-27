@@ -939,18 +939,20 @@
         const direct = it && it.test_id != null ? String(it.test_id).trim() : "";
         return direct || (it && it.case_id != null ? String(it.case_id).trim() : "");
       };
-      // In a multi-book project the same test id exists in several books. Use
-      // the task's row UUID first; the id lookup is only the legacy fallback.
-      const row = (wantUuid
-        ? items.find((it) => it && String(it.uuid || "") === wantUuid)
-        : null) || items.find((it) => logicalId(it) === tid);
+      const taskBookId = bookId ? Number(bookId) : null;
+      const matchingRow = wantUuid && items.find((item) => item
+        && (taskBookId == null || Number(item.book_id) === taskBookId)
+        && String(item.uuid || "") === wantUuid);
+      const row = matchingRow || ((!wantUuid || taskBookId == null) && items.find((item) => item
+        && (taskBookId == null || Number(item.book_id) === taskBookId)
+        && logicalId(item) === tid));
       if (!row) {
         toast(`在测试表中未找到 test id「${tid}」对应的行`, false);
         return;
       }
       const scopedBookId = row.book_id != null
         ? Number(row.book_id)
-        : (bookId ? Number(bookId) : null);
+        : taskBookId;
       LMStepsEditor.open(row, {
         fieldKey: "steps",
         testId: tid,
