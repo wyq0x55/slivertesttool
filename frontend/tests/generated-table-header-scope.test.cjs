@@ -37,6 +37,10 @@ function missingScope(source) {
   return headerTags(source).filter((tag) => !/\bscope="col"/.test(tag));
 }
 
+function missingAnyScope(source) {
+  return headerTags(source).filter((tag) => !/\bscope="(?:col|row)"/.test(tag));
+}
+
 function siteSlice(source, marker) {
   const at = source.indexOf(marker);
   assert.ok(at >= 0, `header site not found (marker ${JSON.stringify(marker)})`);
@@ -137,9 +141,9 @@ test("steps_editor.js: no header cell is both silent and unnamed", () => {
 
 test("ut_tasks.ts: all four runtime header sites declare column scope", () => {
   const source = read(UT_TASKS_TS);
-  assert.deepEqual(missingScope(source, UT_TASKS_TS), [],
-    `ut_tasks.ts headers without scope="col": ${missingScope(source, UT_TASKS_TS).join(", ")}`);
-  assert.equal(headerTags(source).length, 15, "ut_tasks.ts header-cell count changed; update the scope audit");
+  assert.deepEqual(missingAnyScope(source), [],
+    `ut_tasks.ts headers without scope: ${missingAnyScope(source).join(", ")}`);
+  assert.equal(headerTags(source).length, 16, "ut_tasks.ts header-cell count changed; update the scope audit");
 
   for (const site of SITES) {
     const slice = siteSlice(source, site.marker);
@@ -155,9 +159,9 @@ test("generated ut_tasks.js matches the TypeScript header sites", () => {
   const ts = read(UT_TASKS_TS);
 
   // A stale build leaves bare `<th>` in the shipped file.
-  assert.deepEqual(missingScope(source, UT_TASKS_JS), [],
-    `generated ut_tasks.js headers without scope="col" (stale build?): ${missingScope(source, UT_TASKS_JS).join(", ")}`);
-  assert.equal(headerTags(source).length, 15, "generated header-cell count changed; rebuild and re-audit");
+  assert.deepEqual(missingAnyScope(source), [],
+    `generated ut_tasks.js headers without scope (stale build?): ${missingAnyScope(source).join(", ")}`);
+  assert.equal(headerTags(source).length, 16, "generated header-cell count changed; rebuild and re-audit");
 
   for (const site of SITES) {
     const built = siteSlice(source, site.marker);

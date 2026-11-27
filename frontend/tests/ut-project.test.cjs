@@ -17,11 +17,12 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
   function get(id) {
     if (!nodes.has(id)) nodes.set(id, {
       dataset: {}, value: "", textContent: "", innerHTML: "", hidden: false,
-      disabled: false, listeners: {}, children: [],
+      disabled: false, checked: false, listeners: {}, children: [],
       classList: { toggle() {} },
       setAttribute() {},
       querySelectorAll() { return []; },
       addEventListener(type, listener) { this.listeners[type] = listener; },
+      dispatchEvent(ev) { if (this.listeners[ev.type]) this.listeners[ev.type].call(this, ev); },
       get firstChild() { return this.children[0]; },
       appendChild(node) { this.children.push(node); },
       removeChild(node) { this.children.splice(this.children.indexOf(node), 1); },
@@ -32,7 +33,7 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
   root.dataset.project = "4";
   get("ut-detail").hidden = true;
   const details = [], previews = [], reviews = [], revisions = [], batches = [], sheets = [], downloads = [];
-  const stops = [], diagnostics = [], coverages = [];
+  const stops = [], diagnostics = [], coverages = [], witnessCalls = [], derived = [];
   let failList = false, onPop;
   // Browsers always provide visibility events; timers are recorded so a test
   // can fire the next poll itself.
@@ -58,14 +59,14 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
     LMStepsEditor: { open(item, opts) { sheets.push({ item, opts }); }, close() {} },
   };
   const context = vm.createContext({
-    window, document,
+    window, document, Event,
     setTimeout: (callback) => timers.push(callback), clearTimeout() {},
     LMApi: {
       utJobs: () => {
         calls.jobs += 1;
         return failList ? Promise.reject(new Error("list offline")) : Promise.resolve(lists.jobs || []);
       },
-      utBatches: () => Promise.resolve([]),
+      utBatches: () => Promise.resolve(lists.batches || []),
       utGetConfig: () => Promise.resolve({ manifest_path: "manifest.json" }),
       utTargets: () => {
         calls.targets += 1;
@@ -92,8 +93,21 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
       utReview(...args) { const d = deferred(); reviews.push({ ...d, args }); return d.promise; },
       utRevise(...args) { const d = deferred(); revisions.push({ ...d, args }); return d.promise; },
       utStop(pid, id) { const d = deferred(); stops.push({ ...d, id }); return d.promise; },
+      utWitnessTriage(pid, id) {
+        const d = deferred(); witnessCalls.push({ step: "triage", pid, id, ...d }); return d.promise;
+      },
+      utWitnessPropose(pid, id) {
+        const d = deferred(); witnessCalls.push({ step: "propose", pid, id, ...d }); return d.promise;
+      },
+      utWitnessConfirm(pid, id, write) {
+        const d = deferred(); witnessCalls.push({ step: "confirm", pid, id, write, ...d }); return d.promise;
+      },
+      utDeriveBatch(pid, batchId, body) {
+        const d = deferred(); derived.push({ pid, batchId, body, ...d }); return d.promise;
+      },
+      utCompareBatches: () => Promise.resolve({ data: { functions: [] } }),
     },
-    LMUI: { alert: async () => {}, confirm: async (options) => lists.confirm ? lists.confirm(options) : true },
+    LMUI: { alert: async () => {}, toast() {}, confirm: async (options) => lists.confirm ? lists.confirm(options) : true },
     LMUrl: {
       get: () => "", set() {}, replace() {},
       onPop(listener) { onPop = listener; },
@@ -119,7 +133,7 @@ function harness(capabilities = { edit: true, review: true }, page = "ut_tasks.j
   }
   return { get, root, details, previews, reviews, revisions, batches, sheets, stops, open, pin, click,
     pop: (q) => onPop(q), failList: () => { failList = true; }, common: window.LMUt,
-    document, docListeners, timers, calls, downloads, diagnostics, coverages };
+    document, docListeners, timers, calls, downloads, diagnostics, coverages, witnessCalls, derived };
 }
 
 function candidate(id, seq) {
@@ -1503,4 +1517,90 @@ test("job detail identifies the batch by its test rules and lists policy require
   assert.match(h.get("ut-d-requirements").textContent, /测试要求 v1/);
   assert.match(h.get("ut-d-requirements").textContent, /C0 · C1 · MC\/DC · 边界值 ±1 · MC\/DC「組合せ」分组/);
   assert.match(h.get("ut-d-requirements").textContent, /universal-test-rules@1/);
+});
+
+test("budget-exhausted witness panel triggers triage, local-model propose, confirm, and derive from UI", async () => {
+  const confirmTitles = [];
+  const h = harness(undefined, "ut_tasks.js", {
+    batches: [{ id: 1, status: "running", states: { awaiting_review: 1 }, created_at: "2026-10-19T12:00:00Z" }],
+    confirm: (opts) => { confirmTitles.push(opts.title); return true; },
+  });
+  const baseWitness = {
+    contract: "silver.ut-witness/1",
+    handoff: {
+      state: "HANDOFF_READY",
+      budget: { total: 1000, completed: 1000, remaining: 2 },
+      obligations: { total: 5, unresolved: 2, by_cause: { BUDGET: 2 } },
+      admissible: { count: 2, obligation_ids: ["o1", "o2"] },
+      mcdc: { total: 1, pending_pair_ids: ["m1"] },
+    },
+    triage: null,
+    proposal: null,
+    confirm: null,
+  };
+  await ready(h, { ...job(), witness: baseWitness });
+  assert.equal(h.get("ut-d-witness").hidden, false);
+  assert.equal(h.get("ut-d-witness-triage").hidden, false);
+  assert.equal(h.get("ut-d-witness-propose").hidden, true);
+
+  h.click("ut-d-witness-triage");
+  await settle();
+  assert.equal(h.witnessCalls.length, 1);
+  assert.equal(h.witnessCalls[0].step, "triage");
+  h.witnessCalls[0].resolve({ status: "QUEUED" });
+  await settle();
+  h.timers.at(-1)();
+  await settle();
+
+  const afterTriage = { ...job(), witness: { ...baseWitness, triage: { status: "PROPOSABLE", proposable: 2, excluded: 0 } } };
+  h.details.at(-1).resolve(afterTriage);
+  await settle();
+  assert.equal(h.get("ut-d-witness-propose").hidden, false);
+
+  h.click("ut-d-witness-propose");
+  await settle();
+  assert.equal(h.witnessCalls.length, 2);
+  assert.equal(h.witnessCalls[1].step, "propose");
+  assert.equal(confirmTitles.at(-1), "调用本地模型");
+  h.witnessCalls[1].resolve({ status: "QUEUED" });
+  await settle();
+  h.timers.at(-1)();
+  await settle();
+
+  const afterPropose = {
+    ...afterTriage,
+    witness: { ...afterTriage.witness, proposal: { status: "UNCONFIRMED_CANDIDATES", model: "local-qwen", proposable: 2 } },
+  };
+  h.details.at(-1).resolve(afterPropose);
+  await settle();
+  assert.equal(h.get("ut-d-witness-confirm").hidden, false);
+  assert.equal(h.get("ut-d-witness-write-line").hidden, false);
+
+  h.get("ut-d-witness-write").checked = true;
+  h.click("ut-d-witness-confirm");
+  await settle();
+  assert.equal(h.witnessCalls.length, 3);
+  assert.deepEqual({ step: h.witnessCalls[2].step, write: h.witnessCalls[2].write }, { step: "confirm", write: true });
+  h.witnessCalls[2].resolve({ status: "QUEUED" });
+  await settle();
+  h.timers.at(-1)();
+  await settle();
+
+  h.get("ut-batch").value = "1";
+  h.get("ut-batch").dispatchEvent(new Event("change"));
+  await settle();
+  const afterConfirm = {
+    ...afterPropose,
+    witness: { ...afterPropose.witness, confirm: { status: "CONFIRMED", confirmed: 2, write: true } },
+  };
+  h.details.at(-1).resolve(afterConfirm);
+  await settle();
+  assert.equal(h.get("ut-batch-derive").hidden, false);
+
+  h.click("ut-batch-derive");
+  await settle();
+  assert.equal(h.derived.length, 1);
+  assert.equal(h.derived[0].batchId, 1);
+  h.derived[0].resolve({ data: { id: 2 } });
+  await settle();
 });

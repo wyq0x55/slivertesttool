@@ -204,14 +204,11 @@
       renderBatchInfo();
     }
     function confirmedHere() {
-      // The job list omits the witness record; the open job's detail carries it,
-      // which is the job whose confirmation an operator would act on.
       if (!job || String(job.batch_id) !== String(batchId)) return false;
       var witness = job.witness || {};
       var record = witness.handoff || {};
       var confirmation = witness.confirm || {};
-      return (record.state === "HANDOFF_READY" || record.state === "NO_ADMISSIBLE_OBLIGATION")
-        && confirmation.status === "CONFIRMED";
+      return (record.state === "HANDOFF_READY" || record.state === "NO_ADMISSIBLE_OBLIGATION") && confirmation.status === "CONFIRMED";
     }
     function renderDerive() {
       var button = $("ut-batch-derive");
@@ -221,24 +218,26 @@
     }
     function lineageLine(b) {
       if (!b.derived_from_batch_id) return "";
-      return ' · <a href="#" data-batch="' + b.derived_from_batch_id + '">派生自批次 #' +
-        b.derived_from_batch_id + "</a>";
+      return ' · <a href="#" data-batch="' + b.derived_from_batch_id + '">派生自批次 #' + b.derived_from_batch_id + "</a>";
     }
     function renderComparison(b) {
       var panel = $("ut-compare");
       if (!panel) return;
-      if (!b || !b.derived_from_batch_id) { panel.hidden = true; return; }
+      if (!b || !b.derived_from_batch_id) {
+        panel.hidden = true;
+        return;
+      }
       var shown = b.id;
       LMApi.utCompareBatches(pid, shown, b.derived_from_batch_id).then(function(res) {
         if (String(batchId) !== String(shown)) return;
         var rows = (res.data.functions || []).map(function(row) {
-          return '<tr><th scope="row">' + esc(row.function) + "</th><td>" +
-            sideText(row.base) + "</td><td>" + sideText(row.derived) + "</td></tr>";
+          return '<tr><th scope="row">' + esc(row.function) + "</th><td>" + sideText(row.base) + "</td><td>" + sideText(row.derived) + "</td></tr>";
         });
-        $("ut-compare-body").innerHTML = rows.join("") ||
-          '<tr><td colspan="3">源批次没有可对照的函数</td></tr>';
+        $("ut-compare-body").innerHTML = rows.join("") || '<tr><td colspan="3">源批次没有可对照的函数</td></tr>';
         panel.hidden = false;
-      }).catch(function(e) { LMUI.toast(e.message, "error"); });
+      }).catch(function(e) {
+        LMUI.toast(e.message, "error");
+      });
     }
     function sideText(side) {
       if (!side) return "本批次未重生成";
@@ -278,9 +277,7 @@
         "创建 " + U.time(b.created_at),
         b.finished_at ? "结束 " + U.time(b.finished_at) : ""
       ].filter(Boolean).map(esc).join(" · ");
-      box.innerHTML = '<span class="ut-batch-facts">' + facts + lineageLine(b) +
-        '</span><span class="ut-batch-states">' + states + "</span>" +
-        (b.error ? '<span class="ut-batch-err">' + esc(b.error) + "</span>" : "");
+      box.innerHTML = '<span class="ut-batch-facts">' + facts + lineageLine(b) + '</span><span class="ut-batch-states">' + states + "</span>" + (b.error ? '<span class="ut-batch-err">' + esc(b.error) + "</span>" : "");
       renderComparison(b);
     }
     async function loadJobs() {
@@ -641,15 +638,14 @@
         openDetails[d.dataset.keep] = d.open;
       });
     }
-    // Budget-exhaustion handoff is a record of generation, not job state: it
-    // never opens review, and only an operator click may reach the model.
     var WITNESS_LABEL = {
       HANDOFF_READY: "可分拣",
       NO_ADMISSIBLE_OBLIGATION: "没有可提议的义务",
       NO_SUITE: "缺少分拣输入",
       UNKNOWN: "分拣记录不可用"
     };
-    var witnessTimer = null, witnessPending = null;
+    var witnessTimer = null;
+    var witnessPending = null;
     function witnessRunning(doc) {
       var held = doc && doc.witness || {};
       return ["triage", "proposal", "confirm"].some(function(key) {
@@ -661,45 +657,37 @@
       var admissible = handoff.admissible || {}, mcdc = handoff.mcdc || {};
       var rows = [];
       function add(key, value) {
-        if (value === null || value === undefined || value === "") return;
+        if (value === null || value === void 0 || value === "") return;
         rows.push("<dt>" + key + "</dt><dd>" + esc(String(value)) + "</dd>");
       }
-      add("未解义务", counts.unresolved == null ? null
-        : counts.unresolved + " / " + (counts.total == null ? "—" : counts.total));
-      add("可提议", admissible.count == null ? null
-        : admissible.count + (admissible.unclassified ? "（未分类 " + admissible.unclassified + "）" : ""));
+      add("未解义务", counts.unresolved == null ? null : counts.unresolved + " / " + (counts.total == null ? "—" : counts.total));
+      add("可提议", admissible.count == null ? null : admissible.count + (admissible.unclassified ? "（未分类 " + admissible.unclassified + "）" : ""));
       add("剩余义务", budget.remaining);
-      add("语义步数", budget.completed == null ? null
-        : budget.completed + " / " + (budget.total == null ? "—" : budget.total));
+      add("语义步数", budget.completed == null ? null : budget.completed + " / " + (budget.total == null ? "—" : budget.total));
       var causes = Object.keys(counts.by_cause || {}).map(function(cause) {
         return cause + " × " + counts.by_cause[cause];
       });
       add("按原因", causes.length ? causes.join("；") : null);
-      add("MC/DC 未完成配对", mcdc.total == null ? null
-        : (mcdc.pending_pair_ids || []).length + " / " + mcdc.total);
+      add("MC/DC 未完成配对", mcdc.total == null ? null : (mcdc.pending_pair_ids || []).length + " / " + mcdc.total);
       return rows.join("");
     }
-    function witnessNote(witness, handoff) {
+    function witnessNote(witness, _handoff) {
       var triage = witness.triage, proposal = witness.proposal, lines = [];
       if (triage) {
         if (triage.status === "RUNNING") lines.push("分拣进行中…");
         else if (triage.status === "FAILED") lines.push("分拣失败：" + (triage.error || "—"));
-        else lines.push("分拣：" + (triage.status || "—") + "，可行义务 " + (triage.proposable || 0)
-          + "，排除 " + (triage.excluded || 0));
+        else lines.push("分拣：" + (triage.status || "—") + "，可行义务 " + (triage.proposable || 0) + "，排除 " + (triage.excluded || 0));
       }
       if (proposal) {
         if (proposal.status === "RUNNING") lines.push("本地模型提议中…");
         else if (proposal.status === "FAILED") lines.push("提议失败：" + (proposal.error || "—"));
-        else lines.push("提议：模型 " + (proposal.model || "—") + "，可提议义务 "
-          + (proposal.proposable == null ? "—" : proposal.proposable) + "（候选仍需人工确认）");
+        else lines.push("提议：模型 " + (proposal.model || "—") + "，可提议义务 " + (proposal.proposable == null ? "—" : proposal.proposable) + "（候选仍需人工确认）");
       }
       var confirm = witness.confirm;
       if (confirm) {
         if (confirm.status === "RUNNING") lines.push("宿主确认中…");
         else if (confirm.status === "FAILED") lines.push("确认失败：" + (confirm.error || "—"));
-        else lines.push("确认：已确认 " + (confirm.confirmed || 0) + " 项"
-          + (confirm.write ? "，已写入项目台账" : "，未写入项目台账")
-          + "；宿主执行只是观测，不计为目标证据。");
+        else lines.push("确认：已确认 " + (confirm.confirmed || 0) + " 项" + (confirm.write ? "，已写入项目台账" : "，未写入项目台账") + "；宿主执行只是观测，不计为目标证据。");
       }
       return lines.join(" ");
     }
@@ -712,7 +700,7 @@
       }
       section.hidden = false;
       var handoff = witness.handoff || {}, state2 = handoff.state || "UNKNOWN";
-      var label = WITNESS_LABEL[state2] || ("未知状态 " + state2);
+      var label = WITNESS_LABEL[state2] || "未知状态 " + state2;
       var head = "状态：" + label + "（" + state2 + "）";
       if (handoff.reason) head += "——" + handoff.reason;
       if (handoff.error) head += "。ut-agent 报告：" + handoff.error;
@@ -731,8 +719,6 @@
       proposeButton.hidden = triage.status !== "PROPOSABLE";
       proposeButton.disabled = running || witnessPending != null || !editable;
       proposeButton.textContent = proposal.status ? "用本地模型重新提议" : "用本地模型提议";
-      // Confirmation replays the candidates on the batch's frozen host
-      // toolchain; it needs candidates and never changes this batch's verdict.
       var confirm = witness.confirm || {}, candidatesReady = proposal.status === "UNCONFIRMED_CANDIDATES";
       var confirmButton = $("ut-d-witness-confirm");
       confirmButton.hidden = !candidatesReady;
@@ -741,10 +727,9 @@
       var writeLine = $("ut-d-witness-write-line");
       writeLine.hidden = !candidatesReady;
       $("ut-d-witness-write").disabled = running || witnessPending != null || !editable;
-      $("ut-d-witness-note").textContent = witnessNote(witness, handoff)
-        || "分拣与提议只读生成输入；候选需经宿主确认，且确认只对下一批生效。";
-      clearTimeout(witnessTimer);
-      witnessTimer = running ? setTimeout(refresh, 3000) : null;
+      $("ut-d-witness-note").textContent = witnessNote(witness) || "分拣与提议只读生成输入；候选需经宿主确认，且确认只对下一批生效。";
+      if (witnessTimer !== null) clearTimeout(witnessTimer);
+      witnessTimer = running ? setTimeout(refresh, 3e3) : null;
     }
     async function startWitness(step) {
       if (!detailFresh || !job || witnessPending != null || !U.can("edit")) return;
@@ -753,8 +738,7 @@
       if (step === "propose") {
         var ok = await LMUI.confirm({
           title: "调用本地模型",
-          body: "这次提议会调用已配置的本地模型，为作业 #" + id
-            + " 的未完成义务生成候选输入。模型返回的只是候选，仍需人工确认，作业状态不变。",
+          body: "这次提议会调用已配置的本地模型，为作业 #" + id + " 的未完成义务生成候选输入。模型返回的只是候选，仍需人工确认，作业状态不变。",
           confirmText: "开始提议"
         });
         if (!ok) return;
@@ -763,12 +747,7 @@
         ledger = !!$("ut-d-witness-write").checked;
         var confirmed = await LMUI.confirm({
           title: ledger ? "确认并写入项目台账" : "在宿主上确认候选",
-          body: "这次确认用该批次冻结的 Clang/LLVM 工具链，为作业 #" + id
-            + " 的候选逐个编译并运行单例 harness，记录覆盖是否观测到，写出确认报告。"
-            + (ledger
-              ? "已勾选写入：确认记录会合并进项目清单声明的台账文件，台账只在下一批生成时绑定，当前批次结论不变。"
-              : "未勾选写入：只记录确认结果，不改动项目台账。")
-            + "宿主执行只是观测，不计为目标证据或交付验证。",
+          body: "这次确认用该批次冻结的 Clang/LLVM 工具链，为作业 #" + id + " 的候选逐个编译并运行单例 harness，记录覆盖是否观测到，写出确认报告。" + (ledger ? "已勾选写入：确认记录会合并进项目清单声明的台账文件，台账只在下一批生成时绑定，当前批次结论不变。" : "未勾选写入：只记录确认结果，不改动项目台账。") + "宿主执行只是观测，不计为目标证据或交付验证。",
           confirmText: ledger ? "确认并写入" : "开始确认"
         });
         if (!confirmed) return;
@@ -779,18 +758,15 @@
         if (step === "propose") await LMApi.utWitnessPropose(pid, id);
         else if (step === "confirm") await LMApi.utWitnessConfirm(pid, id, ledger);
         else await LMApi.utWitnessTriage(pid, id);
-        say((step === "propose" ? "提议" : step === "confirm" ? "确认" : "分拣")
-          + "已排队（作业 #" + id + "），完成后刷新即可查看");
+        say((step === "propose" ? "提议" : step === "confirm" ? "确认" : "分拣") + "已排队（作业 #" + id + "），完成后刷新即可查看");
       } catch (e) {
         say(e.message, true);
       } finally {
         witnessPending = null;
         renderWitness();
       }
-      // The first look lands after the worker had time to claim the task; once
-      // the record says RUNNING, renderWitness keeps the poll going.
-      clearTimeout(witnessTimer);
-      witnessTimer = setTimeout(refresh, 3000);
+      if (witnessTimer !== null) clearTimeout(witnessTimer);
+      witnessTimer = setTimeout(refresh, 3e3);
     }
     function renderJob() {
       renderProgress();
