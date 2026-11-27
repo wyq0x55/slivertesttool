@@ -29,13 +29,15 @@
   let series = new Map();     // column id -> series entry
   let other = new Map();      // column id -> series entry of the comparison
   let compare = null;         // {taskKey, run, result, byName}
-  let readouts = new Map();   // column id -> value at cursor A
+  let readouts = { a: new Map(), b: new Map() };
   let views = [], currentView = null;
   let liveTimer = 0, fetchTimer = 0, urlTimer = 0;
   let pending = new Set();
   let eventsOffset = 0, rawOffset = 0, lower = "events";
   let colorSlots = new Map();
   let defaultKey = "";
+  let lastModel = null;
+  let drag = null;
 
   // ---------------------------------------------------------------- helpers
   const css = name => getComputedStyle(panel).getPropertyValue(name).trim();
@@ -127,16 +129,17 @@
     clearInterval(liveTimer); liveTimer = 0;
     ctx = null; lanes = []; view = null; cursors = { a: null, b: null };
     focusLane = -1; focusStep = null; hoverX = null; loaded = null;
-    series = new Map(); other = new Map(); compare = null; readouts = new Map();
+    series = new Map(); other = new Map(); compare = null; readouts = { a: new Map(), b: new Map() };
+    drag = null; lastModel = null;
     views = []; currentView = null; colorSlots = new Map(); eventsOffset = 0; rawOffset = 0; defaultKey = "";
     $("cv-body").hidden = true; $("cv-lower").hidden = true; $("cv-live").hidden = true;
     $("cv-first-fail").hidden = true; $("cv-compare-note").hidden = true;
     $("cv-run").replaceChildren(); $("cv-compare").replaceChildren(new Option("不对比", ""));
     $("cv-view").replaceChildren(new Option("默认（期望优先）", ""));
     $("cv-tree").replaceChildren(); tip.hidden = true;
-    ["cv-cur-a", "cv-cur-b", "cv-cur-d"].forEach(id => { $(id).textContent = "—"; });
-    $("cv-cur-step").textContent = "";
-    ["cv-clear-a", "cv-clear-b"].forEach(id => { $(id).hidden = true; });
+    if ($("cv-batch").open) $("cv-batch").close();
+    $("cv-measurements").open = false;
+    showCursors(); renderMeasurements();
   }
 
   async function load(run, restore) {
@@ -175,7 +178,7 @@
     if (ctx.live) liveTimer = setInterval(poll, 2000);
     if (restore && restore.a !== null) cursors.a = restore.a;
     if (restore && restore.b !== null) cursors.b = restore.b;
-    showCursors(); refreshCursor();
+    showCursors(); refreshCursors();
     requestDraw(true);
     loadLower();
   }
@@ -270,7 +273,7 @@
       if (following) { const span = view.end - view.start; view = clampView(ctx.domain[1] - span, ctx.domain[1]); }
       summary(); tree();
       if (!ctx.live) { clearInterval(liveTimer); liveTimer = 0; load(); return; }
-      loaded = null; requestDraw(true);
+      loaded = null; requestDraw(true); refreshCursors();
     } catch (error) {
       if (error.code === "CSV_OPTIONS") { clearInterval(liveTimer); liveTimer = 0; load(); }
     }
@@ -367,7 +370,7 @@
       lanes = lanes.filter(l => l.id !== c.id);
       colorSlots.delete(c.id);
     }
-    markViewDirty(); tree(); requestDraw(true); refreshCursor();
+    markViewDirty(); tree(); requestDraw(true); refreshCursors();
   }
 
   function setGroup(cols, on) {
@@ -387,7 +390,52 @@
       lanes = lanes.filter(l => !drop.has(l.id));
     }
     focusLane = focusId === null ? -1 : lanes.findIndex(l => l.id === focusId);
-    markViewDirty(); tree(); requestDraw(true); refreshCursor();
+    markViewDirty(); tree(); requestDraw(true); refreshCursors();
+  }
+
+  function applyBatch(text, append) {
+    const patterns = text.split(/\r?\n/).map(line => line.trim())
+      .filter(line => line && !line.startsWith("#"));
+    if (!patterns.length) return "请输入至少一个变量名或通配模式。";
+
+    const columns = ctx.columns.map(c => ({ c, name: c.name.toLowerCase(), label: display(c).toLowerCase() }));
+    const matches = new Map();
+    const missing = [];
+    for (const pattern of patterns) {
+      const matchesName = pattern.includes("*")
+        ? (() => {
+          const re = new RegExp("^" + pattern.toLowerCase().replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$");
+          return name => re.test(name);
+        })()
+        : (() => {
+          const term = pattern.toLowerCase();
+          return name => name === term;
+        })();
+      const found = columns.filter(({ name, label }) => matchesName(name) || matchesName(label));
+      if (!found.length) missing.push(pattern);
+      found.forEach(({ c }) => matches.set(c.id, c));
+    }
+    const missingText = missing.length ? "未匹配：" + missing.join("、") + "。" : "";
+    if (!matches.size) return missingText;
+
+    const existing = new Map(lanes.map(lane => [lane.id, lane]));
+    const focusId = lanes[focusLane]?.id;
+    const next = append ? new Map(existing) : new Map();
+    for (const c of matches.values()) {
+      next.set(c.id, existing.get(c.id) || { id: c.id, name: c.name, height: laneHeight(c) });
+    }
+    lanes = Array.from(next.values()).slice(0, ctx.limits.lanes);
+    const skipped = next.size - lanes.length;
+    focusLane = lanes.findIndex(lane => lane.id === focusId);
+    for (const id of colorSlots.keys()) {
+      if (!lanes.some(lane => lane.id === id)) colorSlots.delete(id);
+    }
+    $("cv-batch").close();
+    markViewDirty(); tree(); requestDraw(true); refreshCursors();
+    eventsOffset = 0; loadLower();
+    status("当前显示 " + lanes.length + " 条泳道。" +
+      (skipped ? "已达到泳道上限，省略 " + skipped + " 个匹配项。" : "") + missingText);
+    return "";
   }
 
   function syncFilterChips() {
@@ -402,7 +450,7 @@
     start = Math.max(lo, Math.min(start, hi - span));
     return { start, end: Math.min(hi, start + span) || start + span };
   }
-  function plotWidth() { return Math.max(100, wrap.clientWidth - LABEL_W - 8); }
+  function plotWidth() { return Math.max(1, wrap.clientWidth - LABEL_W - 8); }
   function timeAtX(x) { return view.start + (x - LABEL_W) / plotWidth() * (view.end - view.start); }
   function xAtTime(t) { return LABEL_W + (t - view.start) / (view.end - view.start) * plotWidth(); }
 
@@ -481,11 +529,13 @@
         series: mine, other: theirs, min, max, selected: i === focusLane,
         label: v => valueLabel(c, v), checks: checksByVar.get(c.name) || [],
         divergence: divergence.get(l.id),
-        readout: cursors.a !== null && readouts.has(l.id) ? valueLabel(c, readouts.get(l.id)) : undefined,
+        readout: readouts.a.has(l.id) ? valueLabel(c, readouts.a.get(l.id)) : undefined,
       };
     });
+    const drawnCursors = drag?.kind === "cursor" && drag.moved ? { ...cursors, [drag.key]: drag.time } : cursors;
+    const zoomBand = drag?.kind === "zoom" && drag.moved ? [drag.x0, drag.x1] : null;
     const m = { width, labelW: LABEL_W, theme: th, view, lanes: out, steps: ctx.judge.steps,
-                cursors, hoverX, focusStep, compare: compare && compare.result };
+                cursors: drawnCursors, hoverX, focusStep, compare: compare && compare.result, zoomBand };
     m.height = R.layout(m);
     return m;
   }
@@ -524,7 +574,6 @@
     drawMinimap(m.theme, width);
     lastModel = m;
   }
-  let lastModel = null;
 
   let density = null;
   async function loadDensity() {
@@ -555,32 +604,58 @@
   }
 
   // -------------------------------------------------------------- cursors
-  async function setCursor(key, t) {
+  function setCursor(key, t) {
+    const wasUnset = cursors[key] === null;
     cursors[key] = t === null ? null : Math.max(ctx.domain[0], Math.min(ctx.domain[1], t));
+    if (wasUnset && cursors.a !== null && cursors.b !== null) $("cv-measurements").open = true;
     showCursors();
-    if (key === "a") await refreshCursor();
-    requestDraw(false); markUrl();
+    refreshCursors([key]);
+    markUrl();
   }
-  function showCursors() {
+  function showCursors(active = cursors) {
     const fmt = t => t === null ? "—" : R.fmtValue(Number(t.toFixed(6))) + " s";
-    $("cv-cur-a").textContent = fmt(cursors.a);
-    $("cv-cur-b").textContent = fmt(cursors.b);
-    $("cv-cur-d").textContent = cursors.a !== null && cursors.b !== null ? fmt(Math.abs(cursors.b - cursors.a)) : "—";
+    $("cv-cur-a").textContent = fmt(active.a);
+    $("cv-cur-b").textContent = fmt(active.b);
+    $("cv-cur-d").textContent = active.a !== null && active.b !== null ? fmt(Math.abs(active.b - active.a)) : "—";
     $("cv-clear-a").hidden = cursors.a === null;
     $("cv-clear-b").hidden = cursors.b === null;
-    const s = cursors.a !== null ? stepAt(cursors.a) : null;
+    $("cv-zoom-cursors").disabled = cursors.a === null || cursors.b === null || cursors.a === cursors.b;
+    const s = active.a !== null ? stepAt(active.a) : null;
     $("cv-cur-step").textContent = s ? "A 在 Step" + s.step + "（" + (s.result || "—") + "）" + s.title : "";
   }
-  async function refreshCursor() {
-    readouts = new Map();
-    if (!ctx || cursors.a === null || !lanes.length) { requestDraw(false); return; }
-    const epoch = gen;
+  function renderMeasurements() {
+    const details = $("cv-measurements");
+    const rows = $("cv-measure-rows");
+    details.hidden = !lanes.length || (cursors.a === null && cursors.b === null);
+    if (details.hidden) { rows.replaceChildren(); return; }
+    const direction = cursors.a <= cursors.b ? 1 : -1;
+    rows.innerHTML = lanes.map((lane, index) => {
+      const c = columnById(lane.id);
+      const a = readouts.a.get(lane.id), b = readouts.b.get(lane.id);
+      const delta = Number.isFinite(a) && Number.isFinite(b) ? R.fmtValue(direction * (b - a)) : "—";
+      return `<tr tabindex="0" data-lane-index="${index}"${index === focusLane ? ' class="on"' : ""}><th scope="row" title="${esc(c.name)}">${esc(display(c))}</th>` +
+        `<td>${a === undefined ? "—" : esc(valueLabel(c, a))}</td>` +
+        `<td>${b === undefined ? "—" : esc(valueLabel(c, b))}</td><td>${esc(delta)}</td></tr>`;
+    }).join("");
+  }
+  function refreshCursors(keys = ["a", "b"]) {
+    const columns = lanes.map(l => l.id).join(",");
+    for (const key of keys) {
+      const values = new Map();
+      readouts[key] = values;
+      if (ctx && columns && cursors[key] !== null) loadCursorValues(key, columns, cursors[key], values);
+    }
+    renderMeasurements();
+    requestDraw(false);
+  }
+  async function loadCursorValues(key, columns, at, values) {
     try {
-      const data = await api("/values", params({ columns: lanes.map(l => l.id).join(","), at: cursors.a }));
-      if (!data || epoch !== gen) return;
-      Object.entries(data.values).forEach(([id, v]) => readouts.set(id, v));
+      const data = await api("/values", params({ columns, at }));
+      if (!data || readouts[key] !== values) return;
+      Object.entries(data.values).forEach(([id, value]) => values.set(id, value));
+      renderMeasurements();
       requestDraw(false);
-    } catch (error) { status(error.message); }
+    } catch (error) { if (readouts[key] === values) status(error.message); }
   }
   async function jumpEdge(key, dir) {
     if (focusLane < 0 || !lanes[focusLane]) { status("先点击左侧泳道名选中一条泳道。"); return; }
@@ -589,7 +664,7 @@
       const data = await api("/edge", params({ column: lanes[focusLane].id, at: from, dir }));
       if (!data) return;
       if (data.t === null) { status("该方向没有更多跳变。"); return; }
-      await setCursor(key, data.t);
+      setCursor(key, data.t);
       ensureVisible(data.t);
     } catch (error) { status(error.message); }
   }
@@ -619,7 +694,7 @@
         lanes.push({ id: c.id, name: c.name, height: laneHeight(c) }); added = true;
       }
     });
-    if (added) { tree(); markViewDirty(); requestDraw(true); }
+    if (added) { tree(); markViewDirty(); requestDraw(true); refreshCursors(); }
   }
   function firstFailure() {
     const f = ctx && ctx.judge.first_failure;
@@ -760,7 +835,7 @@
   }
   function exportImage(kind) {
     if (!lastModel || !lanes.length) { status("没有可导出的泳道。"); return; }
-    const m = Object.assign({}, lastModel, { hoverX: null });
+    const m = Object.assign({}, lastModel, { hoverX: null, zoomBand: null });
     if (kind === "svg") {
       const p = R.svgPainter(m.width, m.height, document.createElement("canvas").getContext("2d"));
       R.render(p, m);
@@ -858,19 +933,36 @@
     if (!lastModel) return -1;
     return lastModel.lanes.findIndex(l => y >= l.y && y < l.y + l.height);
   }
-  let drag = null;
+  function cursorAtX(x, y) {
+    if (x < LABEL_W || x > LABEL_W + plotWidth() || (y >= R.AXIS_H && y < R.AXIS_H + R.BAND_H)) return null;
+    const distance = key => {
+      const t = cursors[key];
+      return t === null || t < view.start || t > view.end ? Infinity : Math.abs(x - xAtTime(t));
+    };
+    const a = distance("a"), b = distance("b");
+    return Math.min(a, b) > 6 ? null : a <= b ? "a" : "b";
+  }
+  function cursorTimeAtX(x) {
+    return timeAtX(Math.max(LABEL_W, Math.min(LABEL_W + plotWidth(), x)));
+  }
   canvas.addEventListener("pointerdown", ev => {
-    if (!ctx) return;
+    if (!ctx || drag || ev.button !== 0) return;
     canvas.focus();
     const r = canvas.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
     const i = laneAtY(y);
-    if (x < LABEL_W && i >= 0) {
+    const cursor = ev.shiftKey ? null : cursorAtX(x, y);
+    if (cursor) {
+      drag = { kind: "cursor", key: cursor, x0: x, time: cursors[cursor], moved: false };
+    } else if (x < LABEL_W && i >= 0) {
       const lane = lastModel.lanes[i];
       if (x > LABEL_W - 26 && y < lane.y + 18) { // remove ×
-        lanes.splice(i, 1); focusLane = -1; markViewDirty(); tree(); requestDraw(true); return;
+        focusLane = -1; toggleLane(lanes[i], false); return;
       }
       const edge = Math.abs(y - (lane.y + lane.height)) <= 4;
       drag = { kind: edge ? "resize" : "move", index: i, y0: y, h0: lanes[i].height, moved: false };
+    } else if (y < R.AXIS_H && x >= LABEL_W) {
+      const clamped = Math.max(LABEL_W, Math.min(LABEL_W + plotWidth(), x));
+      drag = { kind: "zoom", x0: clamped, x1: clamped, moved: false, shift: ev.shiftKey };
     } else if (y < R.AXIS_H + R.BAND_H && y >= R.AXIS_H && x >= LABEL_W) {
       const t = timeAtX(x), s = stepAt(t);
       if (s) focusOnStep(s.step);
@@ -878,13 +970,27 @@
     } else {
       drag = { kind: "pan", x0: x, view0: Object.assign({}, view), moved: false, shift: ev.shiftKey };
     }
+    drag.pointerId = ev.pointerId;
+    hoverX = null; tip.hidden = true; requestDraw(false);
     canvas.setPointerCapture(ev.pointerId);
   });
   canvas.addEventListener("pointermove", ev => {
     if (!ctx) return;
     const r = canvas.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
     if (drag) {
-      if (drag.kind === "pan") {
+      if (ev.pointerId !== drag.pointerId) return;
+      if (drag.kind === "cursor") {
+        if (Math.abs(x - drag.x0) > 3) drag.moved = true;
+        if (drag.moved) {
+          drag.time = cursorTimeAtX(x);
+          showCursors({ ...cursors, [drag.key]: drag.time });
+          requestDraw(false);
+        }
+      } else if (drag.kind === "zoom") {
+        drag.x1 = Math.max(LABEL_W, Math.min(LABEL_W + plotWidth(), x));
+        if (Math.abs(drag.x1 - drag.x0) > 3) drag.moved = true;
+        requestDraw(false);
+      } else if (drag.kind === "pan") {
         const dx = x - drag.x0;
         if (Math.abs(dx) > 3) drag.moved = true;
         if (drag.moved) {
@@ -905,19 +1011,44 @@
       }
       return;
     }
-    canvas.style.cursor = x < LABEL_W ? (laneAtY(y) >= 0 && lastModel && Math.abs(y - (lastModel.lanes[laneAtY(y)].y + lastModel.lanes[laneAtY(y)].height)) <= 4 ? "ns-resize" : "grab") : "crosshair";
+    canvas.style.cursor = x < LABEL_W
+      ? (laneAtY(y) >= 0 && lastModel && Math.abs(y - (lastModel.lanes[laneAtY(y)].y + lastModel.lanes[laneAtY(y)].height)) <= 4 ? "ns-resize" : "grab")
+      : cursorAtX(x, y) ? "ew-resize" : y < R.AXIS_H ? "zoom-in" : "crosshair";
     hover(x, y);
   });
-  canvas.addEventListener("pointerup", ev => {
-    if (!drag) return;
+  function finishDrag(ev) {
+    if (!drag || ev.pointerId !== drag.pointerId) return;
     const r = canvas.getBoundingClientRect(), x = ev.clientX - r.left;
-    const d = drag; drag = null;
-    if (d.kind === "pan") {
-      if (!d.moved) setCursor(d.shift ? "b" : "a", timeAtX(x));
+    const d = drag, committed = ev.type === "pointerup"; drag = null;
+    if (d.kind === "cursor") {
+      if (committed && d.moved) setCursor(d.key, cursorTimeAtX(x));
+      else { showCursors(); requestDraw(false); }
+    } else if (d.kind === "zoom") {
+      if (committed && d.moved) {
+        const a = timeAtX(Math.min(d.x0, d.x1)), b = timeAtX(Math.max(d.x0, d.x1));
+        setView(a, b);
+      } else if (committed) {
+        setCursor(d.shift ? "b" : "a", cursorTimeAtX(x));
+      } else {
+        requestDraw(false);
+      }
+    } else if (d.kind === "pan") {
+      if (!d.moved && committed) setCursor(d.shift ? "b" : "a", timeAtX(x));
       else { markUrl(); requestDraw(true); }
-    } else if (d.kind === "move" && !d.moved) {
-      focusLane = focusLane === d.index ? -1 : d.index; requestDraw(false);
-    } else { markViewDirty(); }
+    } else if (d.kind === "move" && !d.moved && committed) {
+      focusLane = focusLane === d.index ? -1 : d.index; renderMeasurements(); requestDraw(false);
+    } else if (d.moved) {
+      markViewDirty();
+      if (d.kind === "move") renderMeasurements();
+    }
+  }
+  ["pointerup", "pointercancel", "lostpointercapture"].forEach(type => canvas.addEventListener(type, finishDrag));
+  canvas.addEventListener("contextmenu", ev => {
+    if (!ctx || ev.button !== 2 || drag) return;
+    const r = canvas.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
+    if (x < LABEL_W || x > LABEL_W + plotWidth() || (y >= R.AXIS_H && y < R.AXIS_H + R.BAND_H)) return;
+    ev.preventDefault();
+    setCursor("b", timeAtX(x));
   });
   canvas.addEventListener("pointerleave", () => { hoverX = null; tip.hidden = true; requestDraw(false); });
   canvas.addEventListener("wheel", ev => {
@@ -984,13 +1115,15 @@
     if (key === "ArrowRight" || key === "ArrowLeft") { handled(); jumpEdge(ev.shiftKey ? "b" : "a", key === "ArrowRight" ? 1 : -1); }
     else if (key === "ArrowDown" || key === "ArrowUp") {
       handled(); if (!lanes.length) return;
-      focusLane = Math.max(0, Math.min(lanes.length - 1, focusLane + (key === "ArrowDown" ? 1 : -1))); requestDraw(false);
+      focusLane = Math.max(0, Math.min(lanes.length - 1, focusLane + (key === "ArrowDown" ? 1 : -1)));
+      renderMeasurements(); requestDraw(false);
     } else if (key === "+" || key === "=") { handled(); const c = (view.start + view.end) / 2; setView(c - span / 4, c + span / 4); }
     else if (key === "-") { handled(); const c = (view.start + view.end) / 2; setView(c - span, c + span); }
     else if (key === "0") { handled(); setView(ctx.domain[0], ctx.domain[1]); }
     else if (key === "f" || key === "F") { handled(); firstFailure(); }
     else if ((key === "Delete" || key === "Backspace") && focusLane >= 0) {
-      handled(); lanes.splice(focusLane, 1); focusLane = -1; markViewDirty(); tree(); requestDraw(true);
+      handled(); const lane = lanes[focusLane]; focusLane = -1;
+      if (lane) toggleLane(lane, false);
     } else if (key === "Escape" && panel.classList.contains("cv-full")) { handled(); fullscreen(false); }
   });
 
@@ -1030,6 +1163,53 @@
   $("cv-fit").addEventListener("click", () => ctx && setView(ctx.domain[0], ctx.domain[1]));
   $("cv-clear-a").addEventListener("click", () => ctx && setCursor("a", null));
   $("cv-clear-b").addEventListener("click", () => ctx && setCursor("b", null));
+  $("cv-zoom-cursors").addEventListener("click", () => {
+    if (!ctx || cursors.a === null || cursors.b === null || cursors.a === cursors.b) return;
+    setView(Math.min(cursors.a, cursors.b), Math.max(cursors.a, cursors.b));
+    refreshEvents();
+  });
+  const measureRows = $("cv-measure-rows");
+  const selectMeasuredLane = target => {
+    const row = target && target.closest && target.closest("tr[data-lane-index]");
+    if (!row) return;
+    const index = Number(row.dataset.laneIndex);
+    if (!Number.isInteger(index) || index < 0 || index >= lanes.length) return;
+    focusLane = focusLane === index ? -1 : index;
+    renderMeasurements(); requestDraw(false);
+  };
+  measureRows.addEventListener("click", ev => selectMeasuredLane(ev.target));
+  measureRows.addEventListener("keydown", ev => {
+    if (ev.isComposing || ev.keyCode === 229) return;
+    if (ev.key === "Enter" || ev.key === " ") {
+      ev.preventDefault();
+      selectMeasuredLane(ev.target);
+    }
+  });
+  const batchDialog = $("cv-batch"), batchForm = $("cv-batch-form");
+  $("cv-batch-open").addEventListener("click", () => {
+    if (!ctx) return;
+    $("cv-batch-error").textContent = "";
+    if (!batchDialog.open) batchDialog.showModal();
+    $("cv-batch-names").focus();
+  });
+  $("cv-batch-fill").addEventListener("click", () => {
+    $("cv-batch-names").value = lanes.map(l => l.name).join("\n");
+    $("cv-batch-error").textContent = "";
+    $("cv-batch-names").focus();
+  });
+  batchForm.addEventListener("submit", ev => {
+    if (ev.submitter && ev.submitter.value === "cancel") return;
+    ev.preventDefault();
+    if (!ctx) return;
+    const err = applyBatch($("cv-batch-names").value, Boolean(ev.submitter && ev.submitter.value === "append"));
+    if (err) {
+      $("cv-batch-error").textContent = err;
+      $("cv-batch-names").focus();
+    }
+  });
+  batchDialog.addEventListener("click", ev => {
+    if (!("closedBy" in batchDialog) && ev.target === batchDialog) batchDialog.close("cancel");
+  });
   $("cv-first-fail").addEventListener("click", firstFailure);
   $("cv-run").addEventListener("change", () => { const n = Number($("cv-run").value); load(n, null); });
   $("cv-compare").addEventListener("change", () => setCompare($("cv-compare").value));
@@ -1039,7 +1219,7 @@
     $("cv-view-delete").hidden = !v;
     if (v) applyLayout(v.layout); else defaultLanes();
     if (window.LMUrl) LMUrl.replace({ cview: v ? v.id : null });
-    tree(); markUrl(); requestDraw(true); refreshCursor();
+    tree(); markUrl(); requestDraw(true); refreshCursors();
   });
   $("cv-view-save").addEventListener("click", saveView);
   $("cv-view-delete").addEventListener("click", deleteView);

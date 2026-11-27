@@ -53,16 +53,22 @@ Limits are live settings in **系统管理 → 授权 / 并发** (no restart):
 - Left: variables grouped by name prefix. The checkbox on a category selects or
   clears every variable in that group (up to the lane limit; changing signals
   before constants). Filter 判定涉及 / 有变化 / 全部; constant variables are folded
-  under 恒定 with their value. The default view lists expected/check variables
-  first, then stimulus inputs.
+  under 恒定 with their value. 批量选变量 opens a dialog to paste variable names
+  or `*` wildcard patterns (one per line, `#` comments ignored) to replace or
+  append lanes, or fill the current lanes into the box. The default view lists
+  expected/check variables first, then stimulus inputs.
 - Lanes: drag a label to reorder, drag its bottom edge to resize, × to remove.
   Top band: judge steps (failed in red); click a step to zoom to it, double-click
   to open it in 判定结果. Check markers sit on their lane at the verdict time
   (◆ passed, ▲ failed); hover for expected/observed.
-- Wheel zooms, drag pans, the minimap selects the window. Click sets cursor A,
-  Shift+click sets B (Δt shown). × next to A or B clears that cursor. Select a lane
-  and use ←/→ (Shift for B) to jump to its previous/next change. `0` shows everything,
-  `F` jumps to the first failure.
+- Wheel zooms, drag pans, dragging on the top time axis zooms to the selected
+  span, and the minimap selects the window. Click sets cursor A, right-click or
+  Shift+click sets B (Δt shown), and either cursor line can be dragged directly.
+  放大 A–B zooms to the span between A and B, 光标测量 lists each lane's exact A
+  and B values with signed `右 − 左` delta (clicking a row highlights that lane),
+  and × next to A or B clears that cursor. Select a lane and use ←/→ (Shift for B)
+  to jump to its previous/next change. `0` shows everything, `F` jumps to the
+  first failure.
 - 判定结果 → 曲线 on any step opens the curves focused on that step.
 - 事件列表: every change in time order (lanes / current range filters); 判定检查点:
   all checks; 原始数据: original records.
