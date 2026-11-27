@@ -113,8 +113,10 @@
     <h3 id="lm-import-dlg-title">导入</h3>
     <label for="lm-import-format">格式
       <select id="lm-import-format">
+        {% if not project or project.project_type != 'silver_books' %}
         <option value="generic">通用模板 (本平台导出/模板格式)</option>
         <option value="test_matrix">测试平台 (日文表头)</option>
+        {% endif %}
         <option value="libfunc">Lib 函数库 (lib_Func / 手順明细)</option>
         <option value="const">Const 常量表 (No. / 識別子名)</option>
         <option value="io">入出力信号池 (名称 / 路径)</option>
