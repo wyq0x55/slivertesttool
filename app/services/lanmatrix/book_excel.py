@@ -84,7 +84,7 @@ _COL_SIGNAL_START = _mx.COL_SIGNAL_START
 
 
 class BookExcelError(Exception):
-    """User-facing parse error for a specification book workbook."""
+    """User-facing error for a specification book workbook."""
 
 
 def _as_seekable(source: Union[str, BinaryIO]) -> Union[str, io.BytesIO]:
@@ -364,15 +364,23 @@ def build_workbook(items: list[dict[str, Any]], *,
     return wb
 
 
-def _write_value(cell, value, cache, *, keep_formula=False, force=False) -> None:
-    if cell.data_type == "f" and not force:
-        if value is None:
-            cache.pop(cell.coordinate, None)
-        else:
-            cache[cell.coordinate] = value
+def _same_value(first, second) -> bool:
+    return _text(_cell_or_none(first)) == _text(_cell_or_none(second))
+
+
+def _formula_conflict(cell) -> BookExcelError:
+    return BookExcelError(
+        f"无法导出「{cell.parent.title}」!{cell.coordinate}：修改值与原有公式不一致。"
+        "请修改公式引用的源字段，或在 Excel 中调整原公式后重新导入。"
+    )
+
+
+def _write_value(cell, value, cache) -> None:
+    if cell.data_type == "f":
+        if not _same_value(cache.get(cell.coordinate), value):
+            raise _formula_conflict(cell)
         return
-    original = cell.value
-    if force or _text(_cell_or_none(original)) != _text(_cell_or_none(value)):
+    if not _same_value(cell.value, value):
         cell.value = value
         if isinstance(value, str):
             cell.data_type = "s"
@@ -385,46 +393,70 @@ def _translated_formula(formula, origin: str, destination: str):
     return Translator(formula, origin=origin).translate_formula(destination)
 
 
-def _summary_formula_conflicts(key, cell, item, previous, cached, columns, source_row) -> bool:
-    """Check the template's identity formulas after changing their inputs."""
-    if cell.data_type != "f" or source_row is None:
-        return False
+def _write_summary_formula(key, cell, value, item, previous, cached, columns, source_row, cache):
+    """Preserve imported category and test numbers when row order breaks their sequence."""
+    original = cache.get(cell.coordinate)
     row = cell.row
     prior = row - 1
-    if key == "test_id" and isinstance(cell.value, str) and cell.value.startswith(
-            '="QTS-"&DB[[#This Row],[項目ID') and cell.value.endswith("]]"):
-        original = _text(cached.cell(source_row, columns["item_id"]).value)
-        return original != _text(item.get("item_id")) and (
-            item.get(key) != "QTS-" + _text(item.get("item_id")))
-    if key not in ("category", "test_no"):
-        return False
-
-    def row_identity(values):
-        return (_text(values.get("sheet_name")),
-                _to_int(values.get("category")), _to_int(values.get("test_no")))
-
-    context_fields = ("sheet_name", "category", "test_no")
-    old = {field: cached.cell(source_row, columns[field]).value for field in context_fields}
-    old_prior = {field: cached.cell(source_row - 1, columns[field]).value
-                 for field in context_fields}
-    if row_identity(item) == row_identity(old) and row_identity(previous) == row_identity(old_prior):
-        return False
-    category = previous.get("category")
-    number = previous.get("test_no")
-    if key == "category" and cell.value == f"=IFERROR(IF(C{row}<>C{prior},B{prior}+1,B{prior}),1)":
-        if isinstance(category, int):
-            expected = category + (item.get("sheet_name") != previous.get("sheet_name"))
+    if key == "test_id" and cell.value == f'="QTS-"&DB[[#This Row],[{SUMMARY_HEADERS[5]}]]':
+        if not _same_value(item.get("item_id"), cached.cell(source_row, columns["item_id"]).value):
+            if value != "QTS-" + _text(item.get("item_id")):
+                raise _formula_conflict(cell)
+            cache[cell.coordinate] = value
+            return
+    elif key in ("category", "test_no"):
+        old_prior_id = cached.cell(source_row - 1, columns["test_id"]).value
+        if old_prior_id == SUMMARY_HEADERS[0]:
+            old_prior_id = None
+        moved = _text(old_prior_id).strip() != _text(previous.get("test_id")).strip()
+        previous_category = previous.get("category")
+        category_column = get_column_letter(columns["category"])
+        sheet_column = get_column_letter(columns["sheet_name"])
+        number_column = get_column_letter(columns["test_no"])
+        category_now, category_before = f"{category_column}{row}", f"{category_column}{prior}"
+        category_formula = (
+            f"=IFERROR(IF({sheet_column}{row}<>{sheet_column}{prior},"
+            f"{category_before}+1,{category_before}),1)")
+        number_formula = (
+            f"=IF({category_now}<>{category_before},1,IFERROR({number_column}{prior}+1,1))")
+        if key == "category" and cell.value == category_formula:
+            current_name = _text(item.get("sheet_name")).strip().casefold()
+            previous_name = _text(previous.get("sheet_name")).strip().casefold()
+            expected = (previous_category + (current_name != previous_name)
+                        if isinstance(previous_category, int) else 1)
+            dependencies = ((item, source_row, "sheet_name"),
+                            (previous, source_row - 1, "sheet_name"),
+                            (previous, source_row - 1, "category"))
+        elif key == "test_no" and cell.value == number_formula:
+            previous_number = previous.get("test_no")
+            expected = (previous_number + 1
+                        if _to_int(item.get("category")) == previous_category
+                        and isinstance(previous_number, int) else 1)
+            dependencies = ((item, source_row, "category"),
+                            (previous, source_row - 1, "category"),
+                            (previous, source_row - 1, "test_no"))
         else:
-            expected = 1
-        return _to_int(item.get(key)) != expected
-    if key == "test_no" and cell.value == f"=IF(B{row}<>B{prior},1,IFERROR(E{prior}+1,1))":
-        same_category = _to_int(item.get("category")) == category
-        expected = number + 1 if same_category and isinstance(number, int) else 1
-        return _to_int(item.get(key)) != expected
-    return False
+            _write_value(cell, value, cache)
+            return
+        inputs_changed = moved or any(
+            not _same_value(values.get(field), cached.cell(old_row, columns[field]).value)
+            for values, old_row, field in dependencies
+            if values
+        )
+        if inputs_changed or _to_int(original) != value:
+            if expected == value:
+                cache[cell.coordinate] = expected
+                return
+            if moved and _to_int(original) == value:
+                cell.value = value
+                cache.pop(cell.coordinate, None)
+                return
+            raise _formula_conflict(cell)
+        return
+    _write_value(cell, value, cache)
 
 
-def _update_summary(ws, cached, items, cache) -> tuple[dict, dict[str, str]]:
+def _update_summary(ws, cached, items, cache) -> tuple[dict, dict[str, str], dict]:
     from .testmatrix_bridge import PRIORITY_EN_TO_JP, normalize_priority
 
     header, columns = _detect_header(cached)
@@ -446,10 +478,14 @@ def _update_summary(ws, cached, items, cache) -> tuple[dict, dict[str, str]]:
                 cell.value = None
                 cache.pop(cell.coordinate, None)
     exported = {}
+    changes = {}
     previous = {}
     for row, item in enumerate(items, start=header + 1):
         item = dict(item)
-        source = source_rows.get(item.get("test_id"), ())
+        test_id = item.get("test_id")
+        source_row = data_rows.get(test_id)
+        source = source_rows.get(test_id, ())
+        changed_fields = {}
         for column, (origin, value, data_type, style, cached_value) in enumerate(source, 1):
             cell = ws.cell(row, column)
             if isinstance(cell, MergedCell):
@@ -477,11 +513,17 @@ def _update_summary(ws, cached, items, cache) -> tuple[dict, dict[str, str]]:
                     value = _dt.datetime.fromisoformat(value)
                 except ValueError:
                     pass
-            force = _summary_formula_conflicts(
-                key, cell, item, previous, cached, columns, data_rows.get(item.get("test_id")))
-            _write_value(cell, value, cache, force=force)
+            if cell.data_type == "f":
+                _write_summary_formula(
+                    key, cell, value, item, previous, cached, columns, source_row or row, cache)
+            else:
+                _write_value(cell, value, cache)
+            actual = cache.get(cell.coordinate) if cell.data_type == "f" else cell.value
+            if not _same_value(actual, original):
+                changed_fields[key] = (column, actual)
             item[key] = value
-        exported[item.get("test_id")] = item
+        exported[test_id] = item
+        changes[test_id] = changed_fields
         previous = item
     for table in ws.tables.values():
         left, top, right, original_bottom = range_boundaries(table.ref)
@@ -499,7 +541,7 @@ def _update_summary(ws, cached, items, cache) -> tuple[dict, dict[str, str]]:
         test_id: _text(_to_int(cached.cell(row, columns["category"]).value)).strip()
         for test_id, row in data_rows.items()
     }
-    return exported, categories
+    return exported, categories, changes
 
 
 def normalize_result(value: Any) -> str:
@@ -517,10 +559,10 @@ def _export_result(value, original):
     return {"Pass": "Passed", "Fail": "Failed", "Not Tested": "-"}.get(outcome, value)
 
 
-def _detail_step_updates(cached, header, step_header, limit, item, max_column) -> tuple[int, dict]:
+def _detail_step_updates(cached, header, step_header, limit, item, max_column):
     steps = _steps_doc(item.get("steps"))
     if step_header is None and not any(steps.values()):
-        return header + len(DETAIL_LABELS), {}
+        return header + len(DETAIL_LABELS), {}, set()
     old_cells = {}
     old_end = header + len(DETAIL_LABELS)
     if step_header is not None:
@@ -532,22 +574,62 @@ def _detail_step_updates(cached, header, step_header, limit, item, max_column) -
         }, step_header))
         if (inputs, expecteds, old_steps) == tuple(
                 steps.get(key) or [] for key in ("input_signals", "expected_signals", "steps")):
-            return old_end, {}
+            return old_end, {}, set()
     else:
         step_header = old_end + 2
     new_cells = dict(_step_cells(steps, step_header)) if any(steps.values()) else {}
-    updates = {coord: None for coord in old_cells.keys() - new_cells.keys()}
-    updates.update(new_cells)
-    return old_end, updates
+    updates = {coord: value for coord, value in new_cells.items()
+               if coord not in old_cells or not _same_value(old_cells[coord], value)}
+    return old_end, updates, old_cells.keys() - new_cells.keys()
 
 
-def _update_details(wb, cached_wb, summary, items, original_categories, caches) -> None:
+def _write_detail_formula(cell, field, source, header, lookup_columns, lookup_id, cache, epoch):
+    column, value = source
+    name = lookup_columns.get(column)
+    key_cell = cell.parent.cell(header, _COL_TEST_ID)
+    key = cache.get(key_cell.coordinate) if key_cell.data_type == "f" else key_cell.value
+    if key != lookup_id or any(char in lookup_id for char in "*?~"):
+        raise _formula_conflict(cell)
+    lookup = f'VLOOKUP(B{header},DB[],COLUMN(DB[{name}]),0)'
+    formula = f'=": "&{lookup}' if field != "item_id" else f"={lookup}"
+    date_formula = field == "exec_date" and cell.value == f'=": "&TEXT({lookup},"yyyy/mm/dd")'
+    if name is None or (cell.value != formula and not date_formula):
+        raise _formula_conflict(cell)
+    if date_formula:
+        if isinstance(value, _dt.date):
+            cache[cell.coordinate] = ": " + value.strftime("%Y/%m/%d")
+        else:
+            cache.pop(cell.coordinate, None)
+        return
+    if isinstance(value, (_dt.date, _dt.time, _dt.timedelta)):
+        value = to_excel(value, epoch)
+    if value is None:
+        value = 0
+    if field != "item_id":
+        if isinstance(value, bool):
+            value = "TRUE" if value else "FALSE"
+        if isinstance(value, float):
+            value = format(value, ".15g")
+        value = ": " + str(value)
+    cache[cell.coordinate] = value
+
+
+def _update_details(wb, cached_wb, summary, items, original_categories, changes, caches) -> None:
     by_sheet = {source.title: _detail_blocks(source)
                 for source in cached_wb.worksheets if source.title.isdigit()}
     imported_blocks = {test_id: (title, row) for title, blocks in by_sheet.items()
                        for test_id, row, _ in blocks}
     next_sheet = wb.index(summary) + 1 + sum(
         name.isdigit() for name in wb.sheetnames[wb.index(summary) + 1:])
+    header_row, columns = _detect_header(summary)
+    lookup_columns = {}
+    table = summary.tables.get("DB")
+    if table is not None:
+        left, top, right, _bottom = range_boundaries(table.ref)
+        if left == columns["test_id"] == 1 and top == header_row:
+            lookup_columns = {column: table_column.name for column, table_column in
+                              zip(range(left, right + 1), table.tableColumns)}
+    first_lookup_ids = {test_id.casefold(): test_id for test_id in reversed(items)}
     for title, blocks in by_sheet.items():
         source = cached_wb[title]
         ws = wb[title]
@@ -567,7 +649,7 @@ def _update_details(wb, cached_wb, summary, items, original_categories, caches) 
             if item is not None and category == original_categories.get(test_id):
                 category = original_sheet
             step_header = _step_header(source, header, limit)
-            old_end, updates = _detail_step_updates(
+            old_end, updates, removed_cells = _detail_step_updates(
                 source, header, step_header, limit, item or {}, last_column)
             metadata_cells = {}
             if category.isdigit():
@@ -578,9 +660,9 @@ def _update_details(wb, cached_wb, summary, items, original_categories, caches) 
                             value = item.get(key)
                             if key == "exec_date" and isinstance(value, (_dt.datetime, _dt.date)):
                                 value = value.strftime("%Y/%m/%d")
-                            metadata_cells[row, 3] = ": " + _text(value)
+                            metadata_cells[row, 3] = (key, ": " + _text(value))
                             break
-                metadata_cells[header, _COL_ITEM_ID] = item.get("item_id")
+                metadata_cells[header, _COL_ITEM_ID] = ("item_id", item.get("item_id"))
             target = ws
             offset = 0
             new_end = max((row for row, _ in updates), default=old_end)
@@ -616,12 +698,22 @@ def _update_details(wb, cached_wb, summary, items, original_categories, caches) 
                             source_cache.pop(cell.coordinate, None)
             if category.isdigit():
                 target_cache = caches[target.title]
-                for (row, column), value in (updates | metadata_cells).items():
+                for row, column in removed_cells:
                     cell = target.cell(row + offset, column)
-                    is_summary_lookup = (cell.data_type == "f" and isinstance(cell.value, str)
-                                         and "DB[" in cell.value
-                                         and (row, column) in metadata_cells)
-                    _write_value(cell, value, target_cache, keep_formula=is_summary_lookup)
+                    cell.value = None
+                    target_cache.pop(cell.coordinate, None)
+                for (row, column), value in updates.items():
+                    cell = target.cell(row + offset, column)
+                    _write_value(cell, value, target_cache)
+                for (row, column), (field, value) in metadata_cells.items():
+                    cell = target.cell(row + offset, column)
+                    if cell.data_type != "f":
+                        _write_value(cell, value, target_cache)
+                    elif field in changes[test_id]:
+                        if first_lookup_ids[test_id.casefold()] != test_id:
+                            raise _formula_conflict(cell)
+                        _write_detail_formula(cell, field, changes[test_id][field], header + offset,
+                                              lookup_columns, test_id, target_cache, wb.epoch)
     for test_id, item in items.items():
         if test_id in imported_blocks:
             continue
@@ -669,9 +761,9 @@ def rebuild_workbook(source: Union[str, BinaryIO],
             cell.coordinate: cached[cell.coordinate].value
             for row in ws.iter_rows() for cell in row if cell.data_type == "f"
         }
-    exported, original_categories = _update_summary(
+    exported, original_categories, changes = _update_summary(
         summary, cached_wb[summary.title], items, caches[summary.title])
-    _update_details(wb, cached_wb, summary, exported, original_categories, caches)
+    _update_details(wb, cached_wb, summary, exported, original_categories, changes, caches)
     if active_sheet is not None:
         wb.active = wb.index(active_sheet)
     wb.calculation.fullCalcOnLoad = True

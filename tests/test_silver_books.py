@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 import zipfile
 
 import pytest
@@ -345,18 +346,23 @@ def test_workbook_writeback_preserves_formulas_and_reimports_without_excel():
     formula = '="QTS-"&DB[[#This Row],[項目ID ※「-」を「_」に変換。ID;;を削除]]'
     summary["A2"] = formula
     summary["E3"] = "=IF(B3<>B2,1,IFERROR(E2+1,1))"
+    summary["T2"] = None
     lookup = '=": "&VLOOKUP(B3,DB[],COLUMN(DB[結果]),0)'
     detail = workbook["1"]
     detail["D3"] = None
+    date_lookup = '=": "&TEXT(VLOOKUP(B3,DB[],COLUMN(DB[実施日]),0),"yyyy/mm/dd")'
+    detail["C11"] = date_lookup
     detail["C15"] = lookup
+    detail["C16"] = '=": "&VLOOKUP(B3,DB[],COLUMN(DB[備考]),0)'
     detail["B21"] = '=IF(ISNUMBER(INDIRECT("r[-1]c",FALSE)),INDIRECT("r[-1]c",FALSE)+1,1)'
     source = book_excel.workbook_bytes(workbook, caches={
         overview.title: {"A1": 0},
         summary.title: {"A2": "QTS-001", "E3": 2},
-        detail.title: {"C15": ": -", "B21": 1},
+        detail.title: {"C11": "#VALUE!", "C15": ": -", "C16": ": 0", "B21": 1},
     })
     edited = book_excel.parse_workbook(source)["items"]
     edited[0]["result"] = "PASS"
+    edited[0]["exec_date"] = "2026-04-02"
     edited[0]["steps"]["steps"][0]["purpose"] = "edited step"
     edited[0]["steps"]["steps"].extend(
         {"no": number, "operation": "CALL"} for number in range(2, 8))
@@ -374,6 +380,7 @@ def test_workbook_writeback_preserves_formulas_and_reimports_without_excel():
     header = next(cell.row for row in result[detail.title].iter_rows()
                   for cell in row if cell.column == 2 and cell.value == "QTS-001")
     assert lookup.replace("B3", f"B{header}") in detail_formulas
+    assert date_lookup.replace("B3", f"B{header}") in detail_formulas
     assert detail["B21"].value in detail_formulas
     reparsed = book_excel.parse_workbook(output)["items"]
     assert [item["test_id"] for item in reparsed] == ["QTS-001", "QTS-002", "QTS-003"]
@@ -381,7 +388,10 @@ def test_workbook_writeback_preserves_formulas_and_reimports_without_excel():
     assert len(reparsed[0]["steps"]["steps"]) == 7
     assert reparsed[0]["steps"]["steps"][0]["purpose"] == "edited step"
     cached = load_workbook(output, data_only=True)
+    assert result[summary.title]["S2"].value == "Passed"
+    assert cached["1"].cell(header + 8, 3).value == ": 2026/04/02"
     assert cached["1"].cell(header + 12, 3).value == ": Passed"
+    assert cached["1"].cell(header + 13, 3).value == ": 0"
 
     without_first = book_excel.rebuild_workbook(source, [edited[1]])
     shrunk = load_workbook(without_first)
@@ -389,6 +399,55 @@ def test_workbook_writeback_preserves_formulas_and_reimports_without_excel():
     assert shrunk[summary.title].tables["DB"].ref == "A1:W2"
     reparsed = book_excel.parse_workbook(without_first)["items"]
     assert [item["test_id"] for item in reparsed] == ["QTS-002"]
+
+
+@pytest.mark.parametrize("sheet,coordinate,formula", [
+    ("4.TestRequirement", "G2", '="old"'),
+    ("1", "C21", '="old"'),
+    ("1", "C4", '=": "&VLOOKUP(B3,DB[],COLUMN(DB[説明]),0)'),
+])
+def test_workbook_writeback_rejects_an_edit_that_would_change_only_a_formula_cache(
+        sheet, coordinate, formula):
+    from app.services.lanmatrix import book_excel
+
+    workbook = book_excel.build_workbook([_item("QTS-001", "old")])
+    workbook[book_excel.SUMMARY_SHEET].add_table(Table(displayName="DB", ref="A1:W2"))
+    workbook[sheet][coordinate] = formula
+    source = book_excel.workbook_bytes(workbook, caches={
+        sheet: {coordinate: ": old" if coordinate == "C4" else "old"},
+    })
+    items = book_excel.parse_workbook(source)["items"]
+    items[0]["purpose"] = "new"
+    items[0]["steps"]["steps"][0]["purpose"] = "new"
+
+    with pytest.raises(book_excel.BookExcelError, match=rf"「{re.escape(sheet)}」!{coordinate}"):
+        book_excel.rebuild_workbook(source, items)
+
+
+def test_workbook_writeback_validates_template_number_formula_against_its_inputs():
+    from app.services.lanmatrix import book_excel
+
+    first = _item("QTS-001", "first")
+    second = _item("QTS-002", "second")
+    second["test_no"] = 2
+    workbook = book_excel.build_workbook([first, second])
+    sheet = book_excel.SUMMARY_SHEET
+    workbook[sheet]["B3"] = "=IFERROR(IF(C3<>C2,B2+1,B2),1)"
+    workbook[sheet]["E3"] = "=IF(B3<>B2,1,IFERROR(E2+1,1))"
+    source = book_excel.workbook_bytes(workbook, caches={sheet: {"B3": 1, "E3": 2}})
+    items = book_excel.parse_workbook(source)["items"]
+    items[1]["test_no"] = 3
+
+    with pytest.raises(book_excel.BookExcelError, match=r"!E3"):
+        book_excel.rebuild_workbook(source, items)
+
+    items[1].update(sheet_name="OTHER SHEET", category=2, test_no=1)
+    output = book_excel.rebuild_workbook(source, items)
+    formulas = load_workbook(output)[sheet]
+    assert formulas["B3"].value == workbook[sheet]["B3"].value
+    assert formulas["E3"].value == workbook[sheet]["E3"].value
+    cached = load_workbook(output, data_only=True)[sheet]
+    assert (cached["B3"].value, cached["E3"].value) == (2, 1)
 
 
 def test_duplicate_source_detail_blocks_keep_their_formulas():
