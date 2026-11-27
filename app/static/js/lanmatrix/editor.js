@@ -2184,6 +2184,10 @@
             return latest.status || null;
           }) : null,
           });
+          const openDialog = document.getElementById("lm-steps-dialog");
+          if (!openDialog || !openDialog.open) {
+            if (grid && typeof grid.setSuspended === "function") grid.setSuspended(false);
+          }
         } catch (ex) {
           if (grid && typeof grid.setSuspended === "function") grid.setSuspended(false);
           throw ex;

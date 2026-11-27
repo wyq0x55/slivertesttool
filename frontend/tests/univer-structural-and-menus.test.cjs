@@ -936,3 +936,164 @@ test("editor_qualification refuses to queue when the Clean-Room setting cannot b
   );
   assert.equal(empty.runCalls.length, 0, "a project payload without a boolean must not enqueue as off");
 });
+
+test("UniverGridAdapter temporarily restores workbook editability during programmatic updates while suspended", () => {
+  const { exports } = loadTsModule("../src/adapter.ts", {
+    "./collab_overlay": {
+      CollabOverlay: class {
+        setSelections() {}
+        refresh() {}
+        dispose() {}
+      },
+    },
+    "./cell_tooltip": {
+      CellTooltip: class {
+        init() {}
+        dispose() {}
+      },
+    },
+  });
+  const Adapter = exports.UniverGridAdapter;
+
+  let editable = true;
+  const editableLog = [];
+  const violations = [];
+  const commandLog = [];
+  const recordCommand = (name) => {
+    commandLog.push({ name, editable });
+    if (!editable) violations.push(name);
+  };
+
+  let maxRows = 1000;
+  let maxCols = 64;
+  const fSheet = {
+    getSheetId: () => "sheet-test",
+    getSheetName: () => "矩阵",
+    getMaxRows: () => maxRows,
+    getRowCount: () => maxRows,
+    setRowCount: (n) => { recordCommand("setRowCount"); maxRows = n; },
+    getMaxColumns: () => maxCols,
+    getColumnCount: () => maxCols,
+    setColumnCount: (n) => { recordCommand("setColumnCount"); maxCols = n; },
+    setColumnWidth: () => recordCommand("setColumnWidth"),
+    setRowHeightsForced: () => recordCommand("setRowHeightsForced"),
+    setFreeze: () => recordCommand("setFreeze"),
+    getFilter: () => ({ remove: () => recordCommand("filter.remove") }),
+    getRange: () => ({
+      clearContent: () => recordCommand("clearContent"),
+      setValues: () => recordCommand("setValues"),
+      setValue: () => recordCommand("setValue"),
+      setBackgroundColor: () => recordCommand("setBackgroundColor"),
+      setFontWeight: () => recordCommand("setFontWeight"),
+      setHorizontalAlignment: () => recordCommand("setHorizontalAlignment"),
+      setDataValidation: () => recordCommand("setDataValidation"),
+      setNote: () => recordCommand("setNote"),
+      createFilter: () => recordCommand("createFilter"),
+    }),
+  };
+  const fWorkbook = {
+    getId: () => "wb-main",
+    getActiveSheet: () => fSheet,
+    getSheetByName: () => fSheet,
+    setActiveSheet: () => {},
+    setEditable: (v) => {
+      editable = Boolean(v);
+      editableLog.push(editable);
+    },
+  };
+  const univerAPI = {
+    Enum: { LifecycleStages: { Rendered: 2, Steady: 3 }, BuiltInUIPart: { FOOTER: "footer", TOOLBAR: "toolbar" } },
+    Event: { LifeCycleChanged: "LifeCycleChanged" },
+    getCurrentLifecycleStage: () => 2,
+    addEvent: () => ({ dispose() {} }),
+    onCommandExecuted: () => ({ dispose() {} }),
+    createWorkbook: () => fWorkbook,
+    newDataValidation: () => {
+      const builder = {
+        requireValueInList: () => builder,
+        requireDateBetween: () => builder,
+        setOptions: () => builder,
+        build: () => ({ built: true }),
+      };
+      return builder;
+    },
+    dispose: () => {},
+  };
+  const univer = { registerPlugin: () => {} };
+
+  const host = { style: {}, classList: { add() {} } };
+  const adapter = new Adapter(
+    {
+      createUniver: () => ({ univer, univerAPI }),
+      defaultTheme: {},
+      LocaleType: { ZH_CN: "zhCN" },
+      mergeLocales: (...args) => Object.assign({}, ...args),
+      UniverSheetsCorePreset: () => ({}),
+      UniverPresetSheetsCoreZhCN: {},
+      UniverSheetsFilterPreset: () => ({}),
+    },
+    {
+      host,
+      sheets: [{ key: "test", name: "矩阵" }],
+      fields: [
+        { field_key: "test_id", display_name: "Test ID", data_type: "text" },
+        { field_key: "result", display_name: "結果", data_type: "single_select", options: ["OK", "NG"] },
+        { field_key: "steps", display_name: "步骤明细", data_type: "steps" },
+      ],
+    },
+  );
+  adapter.init();
+  adapter.setSheetData("test", [{ id: 1, version: 1, test_id: "T1", result: "OK", steps: "{}" }]);
+
+  adapter.setSuspended(true);
+  assert.equal(editable, false);
+  editableLog.length = 0;
+  commandLog.length = 0;
+
+  const checkBatch = (label, fn) => {
+    editableLog.length = 0;
+    const beforeCount = commandLog.length;
+    fn();
+    assert.ok(commandLog.length > beforeCount, `${label}: expected Univer commands to execute`);
+    assert.deepEqual(toHostRealm(editableLog), [true, false], `${label}: should lift editable once for the batch and restore false`);
+    assert.equal(editable, false, `${label}: must remain non-editable while suspended`);
+    assert.equal(adapter.isSuspended(), true);
+  };
+
+  checkBatch("setSheetFields", () => {
+    adapter.setSheetFields("test", [
+      { field_key: "test_id", display_name: "Test ID", data_type: "text" },
+      { field_key: "result", display_name: "結果", data_type: "single_select", options: ["OK", "NG"] },
+      { field_key: "steps", display_name: "步骤明细", data_type: "steps" },
+    ]);
+  });
+  checkBatch("setSheetData", () => {
+    adapter.setSheetData("test", [
+      { id: 1, version: 2, test_id: "T1", result: "NG", steps: '{"steps":[{}]}' },
+      { id: 2, version: 1, test_id: "T2", result: "OK", steps: "{}" },
+    ]);
+  });
+  checkBatch("patchSheetData", () => {
+    adapter.patchSheetData("test", [
+      { id: 1, version: 3, test_id: "T1", result: "OK", steps: '{"steps":[{}]}' },
+      { id: 2, version: 1, test_id: "T2", result: "OK", steps: "{}" },
+    ]);
+  });
+  checkBatch("setRowFormats", () => {
+    adapter.setRowFormats("test", { 1: "#eaf7ee", 2: "#fdecec" });
+  });
+  checkBatch("setCellErrors", () => {
+    adapter.setCellErrors({ 1: { cells: ["test_id"], message: "冲突" } });
+  });
+  checkBatch("attachSecondaryPresets", () => {
+    adapter.attachSecondaryPresets({
+      UniverSheetsDataValidationPreset: () => ({ plugins: ["dv"] }),
+    });
+  });
+
+  assert.deepEqual(toHostRealm(violations), []);
+
+  adapter.setSuspended(false);
+  assert.equal(editable, true);
+  adapter.dispose();
+});

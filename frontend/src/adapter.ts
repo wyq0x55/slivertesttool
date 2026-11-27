@@ -265,6 +265,7 @@ export class UniverGridAdapter {
   private hasCondFmt = false;
 
   private applying = false;      // guards programmatic writes from re-triggering onSave
+  private applyingDepth = 0;     // tracks nested programmatic batches for editable restoration
   private switchingActive = false; // guards programmatic tab switches from re-firing onSheetChange
   private syncTimer: any = null; // debounce for range/paste/fill persistence
   private syncing = false;       // guards overlapping flushes
@@ -530,14 +531,11 @@ export class UniverGridAdapter {
     }
 
     if (validationAttached && this.ctxs.length) {
-      const prevApplying = this.applying;
-      this.applying = true;
       try {
-        this.ctxs.forEach((ctx) => this._applyValidations(ctx));
+        this._withApplying(() => {
+          this.ctxs.forEach((ctx) => this._applyValidations(ctx));
+        });
       } catch (_e) { /* best-effort */ }
-      finally {
-        this.applying = prevApplying;
-      }
     }
   }
 
@@ -790,6 +788,33 @@ export class UniverGridAdapter {
     } catch (_e) { /* workbook editable toggle is best-effort */ }
   }
 
+  // Temporarily lift WorkbookEditablePermission during programmatic batches
+  // while suspended so Univer's permission controller does not pop up
+  // protected-range alerts on host renders, row formats, or error highlights.
+  private _withApplying<T>(fn: () => T): T {
+    const isOutermost = this.applyingDepth === 0;
+    const prevApplying = this.applying;
+    let toggledEditable = false;
+    this.applyingDepth += 1;
+    this.applying = true;
+    if (isOutermost && this.suspended && this.fWorkbook && typeof this.fWorkbook.setEditable === "function") {
+      try {
+        this.fWorkbook.setEditable(true);
+        toggledEditable = true;
+      } catch (_e) { /* workbook editable toggle is best-effort */ }
+    }
+    try {
+      return fn();
+    } finally {
+      if (toggledEditable && this.fWorkbook && typeof this.fWorkbook.setEditable === "function") {
+        try { this.fWorkbook.setEditable(!this.suspended); }
+        catch (_e) { /* workbook editable toggle is best-effort */ }
+      }
+      this.applyingDepth = Math.max(0, this.applyingDepth - 1);
+      this.applying = this.applyingDepth > 0 ? true : prevApplying;
+    }
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -897,9 +922,11 @@ export class UniverGridAdapter {
     const ctx = this._ctx(key);
     if (!ctx) return;
     ctx.fields = (fields || []).slice();
-    this._renderHeader(ctx);
-    this._applyValidations(ctx);
-    if (ctx === this.active) this._applyFreeze(ctx);
+    this._withApplying(() => {
+      this._renderHeader(ctx);
+      this._applyValidations(ctx);
+      if (ctx === this.active) this._applyFreeze(ctx);
+    });
   }
 
   setSheetData(key: string, items: Item[]): void {
@@ -911,8 +938,11 @@ export class UniverGridAdapter {
     ctx.items = items || [];
     const present = new Set(ctx.items.map((i) => i.id));
     ctx.selected.forEach((id) => { if (!present.has(id)) ctx.selected.delete(id); });
-    this._renderRows(ctx);
-    if (ctx === this.active) { this._applyFreeze(ctx); this._emitSelection(); }
+    this._withApplying(() => {
+      this._renderRows(ctx);
+      if (ctx === this.active) this._applyFreeze(ctx);
+    });
+    if (ctx === this.active) this._emitSelection();
   }
 
   // True only while a real cell-editor session is open (a peer's remote apply
@@ -1050,8 +1080,7 @@ export class UniverGridAdapter {
     const next = new Set<string>();
     const rowByUuidId: Record<number, number> = {};
     ctx.items.forEach((it, idx) => { rowByUuidId[it.id as number] = idx; });
-    this.applying = true;
-    try {
+    this._withApplying(() => {
       Object.keys(m).forEach((idStr) => {
         const idx = rowByUuidId[Number(idStr)];
         if (idx === undefined) return;
@@ -1082,7 +1111,7 @@ export class UniverGridAdapter {
           }
         } catch (_e) { /* best-effort per cell */ }
       });
-    } finally { this.applying = false; }
+    });
     ctx.errCells = next;
   }
 
@@ -1116,9 +1145,7 @@ export class UniverGridAdapter {
     const vis = this._visibleFields(ctx);
     const width = Math.max(vis.length, 1);
     const map = ctx.rowFmt || {};
-    const prevApplying = Boolean(this.applying);
-    this.applying = true;
-    try {
+    this._withApplying(() => {
       let band = Math.max(
         ctx.items.length,
         ctx.lastFormattedRows || 0,
@@ -1151,7 +1178,7 @@ export class UniverGridAdapter {
           } catch (_e) { /* best-effort */ }
         });
       }
-    } finally { this.applying = prevApplying; }
+    });
   }
 
   // Incremental remote apply (real-time collaboration, design §1.3). When the
@@ -1181,8 +1208,7 @@ export class UniverGridAdapter {
     }
     if (structural) { this.setSheetData(key, items); return; }
 
-    this.applying = true;
-    try {
+    this._withApplying(() => {
       for (let r = 0; r < next.length; r++) {
         const a = prev[r];
         const b = next[r];
@@ -1198,9 +1224,7 @@ export class UniverGridAdapter {
         }
       }
       ctx.items = next;
-    } finally {
-      this.applying = false;
-    }
+    });
     // Row-id sequence is unchanged, so the current selection ids stay valid and
     // there is no need to re-emit selection or re-freeze.
   }
@@ -1296,19 +1320,18 @@ export class UniverGridAdapter {
   // range write. Best-effort across the facade's differing width APIs.
   private _ensureWidth(sheet: any, need: number): void {
     if (!sheet || need <= 0) return;
-    const prevApplying = Boolean(this.applying);
-    this.applying = true;
-    try {
-      let have = 0;
-      if (typeof sheet.getMaxColumns === "function") have = sheet.getMaxColumns();
-      else if (typeof sheet.getColumnCount === "function") have = sheet.getColumnCount();
-      if (have >= need) return;
-      if (typeof sheet.setColumnCount === "function") { sheet.setColumnCount(need); return; }
-      if (typeof sheet.insertColumns === "function") {
-        sheet.insertColumns(Math.max(have - 1, 0), need - have);
-      }
-    } catch (_e) { /* width grow is best-effort; render still tries */ }
-    finally { this.applying = prevApplying; }
+    this._withApplying(() => {
+      try {
+        let have = 0;
+        if (typeof sheet.getMaxColumns === "function") have = sheet.getMaxColumns();
+        else if (typeof sheet.getColumnCount === "function") have = sheet.getColumnCount();
+        if (have >= need) return;
+        if (typeof sheet.setColumnCount === "function") { sheet.setColumnCount(need); return; }
+        if (typeof sheet.insertColumns === "function") {
+          sheet.insertColumns(Math.max(have - 1, 0), need - have);
+        }
+      } catch (_e) { /* width grow is best-effort; render still tries */ }
+    });
   }
 
   private _getMaxRows(sheet: any): number {
@@ -1328,96 +1351,93 @@ export class UniverGridAdapter {
 
   private _ensureHeight(sheet: any, need: number): void {
     if (!sheet || need <= 0) return;
-    const prevApplying = Boolean(this.applying);
-    this.applying = true;
-    try {
-      let have = 0;
-      if (typeof sheet.getMaxRows === "function") have = sheet.getMaxRows();
-      else if (typeof sheet.getRowCount === "function") have = sheet.getRowCount();
-      if (!(have > 0 && have < need)) return;
-      if (typeof sheet.setRowCount === "function") { sheet.setRowCount(need); return; }
-      if (typeof sheet.insertRows === "function") {
-        sheet.insertRows(Math.max(have - 1, 0), need - have);
-      }
-    } catch (_e) { /* height grow is best-effort; render still tries */ }
-    finally { this.applying = prevApplying; }
+    this._withApplying(() => {
+      try {
+        let have = 0;
+        if (typeof sheet.getMaxRows === "function") have = sheet.getMaxRows();
+        else if (typeof sheet.getRowCount === "function") have = sheet.getRowCount();
+        if (!(have > 0 && have < need)) return;
+        if (typeof sheet.setRowCount === "function") { sheet.setRowCount(need); return; }
+        if (typeof sheet.insertRows === "function") {
+          sheet.insertRows(Math.max(have - 1, 0), need - have);
+        }
+      } catch (_e) { /* height grow is best-effort; render still tries */ }
+    });
   }
 
   private _renderHeader(ctx: SheetCtx): void {
     if (!ctx.fSheet) return;
     const vis = this._visibleFields(ctx);
-    this._ensureWidth(ctx.fSheet, vis.length + 1);
-    this.applying = true;
-    try {
-      const labels = vis.map((f) =>
-        (f.display_name || f.field_key) + (f.is_required ? " *" : "") + (f.is_readonly ? " 🔒" : ""));
-      if (labels.length) {
-        const range = ctx.fSheet.getRange(0, 0, 1, labels.length);
-        range.setValues([labels]);
-        try { range.setFontWeight("bold"); } catch (_e) { /* optional */ }
+    this._withApplying(() => {
+      this._ensureWidth(ctx.fSheet, vis.length + 1);
+      try {
+        const labels = vis.map((f) =>
+          (f.display_name || f.field_key) + (f.is_required ? " *" : "") + (f.is_readonly ? " 🔒" : ""));
+        if (labels.length) {
+          const range = ctx.fSheet.getRange(0, 0, 1, labels.length);
+          range.setValues([labels]);
+          try { range.setFontWeight("bold"); } catch (_e) { /* optional */ }
+        }
+      } catch (e) {
+        console.warn("[LMUniver] header render failed:", e);
       }
-    } catch (e) {
-      console.warn("[LMUniver] header render failed:", e);
-    } finally {
-      this.applying = false;
-    }
+    });
   }
 
   private _renderRows(ctx: SheetCtx): void {
     if (!ctx.fSheet) return;
     const vis = this._visibleFields(ctx);
-    this._ensureWidth(ctx.fSheet, vis.length + 1);
-    this.applying = true;
-    try {
-      this._ensureHeight(ctx.fSheet, HEADER_ROWS + ctx.items.length + 20);
-      let clearRows = Math.max(ctx.items.length + 50, ctx.lastRenderedRows || 0, 50);
-      const maxRows = this._getMaxRows(ctx.fSheet);
-      if (maxRows > HEADER_ROWS) {
-        clearRows = Math.min(clearRows, maxRows - HEADER_ROWS);
-      }
+    this._withApplying(() => {
+      this._ensureWidth(ctx.fSheet, vis.length + 1);
       try {
-        const clearRange = ctx.fSheet.getRange(HEADER_ROWS, 0, clearRows, Math.max(vis.length, 1));
-        clearRange.clearContent();
-        // clearContent keeps cell formatting, so any collaborator cell-error mark
-        // from a previous render would linger on now-stale rows. Wipe the
-        // data-region background too; error marks are re-applied afterwards by the
-        // editor (applyCellErrors).
-        try { clearRange.setBackgroundColor && clearRange.setBackgroundColor(null); } catch (_e) { /* optional */ }
-        ctx.errCells = new Set();
-      } catch (_e) { /* older facade: skip clear */ }
-
-      if (ctx.items.length && vis.length) {
-        const matrix = ctx.items.map((it) =>
-          vis.map((f) => this._toCellData(this._displayValue(it[f.field_key], f))));
-        ctx.fSheet.getRange(HEADER_ROWS, 0, matrix.length, vis.length).setValues(matrix);
-      }
-      ctx.lastRenderedRows = ctx.items.length;
-      vis.forEach((f, col) => {
-        if (!this._isStepsField(f)) return;
-        try { ctx.fSheet.setColumnWidth && ctx.fSheet.setColumnWidth(col, 130); } catch (_e) { /* best-effort */ }
+        this._ensureHeight(ctx.fSheet, HEADER_ROWS + ctx.items.length + 20);
+        let clearRows = Math.max(ctx.items.length + 50, ctx.lastRenderedRows || 0, 50);
+        const maxRows = this._getMaxRows(ctx.fSheet);
+        if (maxRows > HEADER_ROWS) {
+          clearRows = Math.min(clearRows, maxRows - HEADER_ROWS);
+        }
         try {
-          ctx.fSheet.getRange(HEADER_ROWS, col, Math.max(ctx.items.length, 1), 1)
-            .setHorizontalAlignment("center");
-        } catch (_e) { /* best-effort */ }
-      });
-      // Multi-line rich-text cells make Univer auto-grow the row to fit every
-      // line. We want uniform, fixed row heights instead. Forcing the height via
-      // SetRowHeightCommand also flips each row's `ia` (isAutoHeight) flag to
-      // FALSE, which permanently excludes the row from auto-height recalculation
-      // (see engine-render calculateAutoHeightInRange). Re-applied on every full
-      // render so a reload never leaves a stretched row behind.
-      this._lockRowHeights(ctx);
-      this._applyRowFormats(ctx);   // reload cleared backgrounds → repaint row colours
-      this._applyValidations(ctx);
-      this._applyFilter(ctx, vis.length);
-      // Record the columns this full render was drawn with, so a later
-      // incremental patch can detect a column change and re-render fully.
-      ctx.visSig = vis.map((f) => f.field_key).join("\u0001");
-    } catch (e) {
-      console.warn("[LMUniver] rows render failed:", e);
-    } finally {
-      this.applying = false;
-    }
+          const clearRange = ctx.fSheet.getRange(HEADER_ROWS, 0, clearRows, Math.max(vis.length, 1));
+          clearRange.clearContent();
+          // clearContent keeps cell formatting, so any collaborator cell-error mark
+          // from a previous render would linger on now-stale rows. Wipe the
+          // data-region background too; error marks are re-applied afterwards by the
+          // editor (applyCellErrors).
+          try { clearRange.setBackgroundColor && clearRange.setBackgroundColor(null); } catch (_e) { /* optional */ }
+          ctx.errCells = new Set();
+        } catch (_e) { /* older facade: skip clear */ }
+
+        if (ctx.items.length && vis.length) {
+          const matrix = ctx.items.map((it) =>
+            vis.map((f) => this._toCellData(this._displayValue(it[f.field_key], f))));
+          ctx.fSheet.getRange(HEADER_ROWS, 0, matrix.length, vis.length).setValues(matrix);
+        }
+        ctx.lastRenderedRows = ctx.items.length;
+        vis.forEach((f, col) => {
+          if (!this._isStepsField(f)) return;
+          try { ctx.fSheet.setColumnWidth && ctx.fSheet.setColumnWidth(col, 130); } catch (_e) { /* best-effort */ }
+          try {
+            ctx.fSheet.getRange(HEADER_ROWS, col, Math.max(ctx.items.length, 1), 1)
+              .setHorizontalAlignment("center");
+          } catch (_e) { /* best-effort */ }
+        });
+        // Multi-line rich-text cells make Univer auto-grow the row to fit every
+        // line. We want uniform, fixed row heights instead. Forcing the height via
+        // SetRowHeightCommand also flips each row's `ia` (isAutoHeight) flag to
+        // FALSE, which permanently excludes the row from auto-height recalculation
+        // (see engine-render calculateAutoHeightInRange). Re-applied on every full
+        // render so a reload never leaves a stretched row behind.
+        this._lockRowHeights(ctx);
+        this._applyRowFormats(ctx);   // reload cleared backgrounds → repaint row colours
+        this._applyValidations(ctx);
+        this._applyFilter(ctx, vis.length);
+        // Record the columns this full render was drawn with, so a later
+        // incremental patch can detect a column change and re-render fully.
+        ctx.visSig = vis.map((f) => f.field_key).join("\u0001");
+      } catch (e) {
+        console.warn("[LMUniver] rows render failed:", e);
+      }
+    });
     // Rows moved: reproject any remote-selection borders onto the new layout.
     if (this.overlay && ctx === this.active) this.overlay.refresh();
   }
@@ -1464,22 +1484,22 @@ export class UniverGridAdapter {
 
   private _applyFreeze(ctx: SheetCtx): void {
     if (!ctx.fSheet || HEADER_ROWS <= 0) return;
-    try {
-      if (typeof ctx.fSheet.setFreeze === "function") {
-        ctx.fSheet.setFreeze({ xSplit: 0, ySplit: HEADER_ROWS, startRow: HEADER_ROWS, startColumn: 0 });
-      } else if (typeof ctx.fSheet.setFrozenRows === "function") {
-        ctx.fSheet.setFrozenRows(HEADER_ROWS);
-      }
-    } catch (_e) { /* freeze is best-effort */ }
-    const vis = this._visibleFields(ctx);
-    if (!vis.length) return;
-    this.applying = true;
-    try {
-      const hdr = ctx.fSheet.getRange(0, 0, HEADER_ROWS, vis.length);
-      try { hdr.setBackgroundColor && hdr.setBackgroundColor("#eef1f8"); } catch (_e) { /* optional */ }
-      try { hdr.setFontWeight && hdr.setFontWeight("bold"); } catch (_e) { /* optional */ }
-    } catch (_e) { /* styling is best-effort */ }
-    finally { this.applying = false; }
+    this._withApplying(() => {
+      try {
+        if (typeof ctx.fSheet.setFreeze === "function") {
+          ctx.fSheet.setFreeze({ xSplit: 0, ySplit: HEADER_ROWS, startRow: HEADER_ROWS, startColumn: 0 });
+        } else if (typeof ctx.fSheet.setFrozenRows === "function") {
+          ctx.fSheet.setFrozenRows(HEADER_ROWS);
+        }
+      } catch (_e) { /* freeze is best-effort */ }
+      const vis = this._visibleFields(ctx);
+      if (!vis.length) return;
+      try {
+        const hdr = ctx.fSheet.getRange(0, 0, HEADER_ROWS, vis.length);
+        try { hdr.setBackgroundColor && hdr.setBackgroundColor("#eef1f8"); } catch (_e) { /* optional */ }
+        try { hdr.setFontWeight && hdr.setFontWeight("bold"); } catch (_e) { /* optional */ }
+      } catch (_e) { /* styling is best-effort */ }
+    });
   }
 
   private _displayValue(raw: any, f: Field): any {
@@ -1504,30 +1524,32 @@ export class UniverGridAdapter {
     if (typeof this.univerAPI.newDataValidation !== "function") return;
     const vis = this._visibleFields(ctx);
     const rows = Math.max(ctx.items.length, 1);
-    vis.forEach((f, col) => {
-      if (this._isStepsField(f) || f.is_readonly) return;
-      let rule: any = null;
-      try {
-        const b = this.univerAPI.newDataValidation();
-        if (f.data_type === "boolean") {
-          rule = b.requireValueInList(["是", "否"], false, true).build();
-        } else if (f.data_type === "single_select" && (f.options || []).length) {
-          rule = b.requireValueInList((f.options as string[]).slice(), false, true).build();
-        } else if (f.data_type === "multi_select" && (f.options || []).length) {
-          rule = b.requireValueInList((f.options as string[]).slice(), true, true).build();
-        } else if (f.data_type === "date" || f.data_type === "datetime") {
-          rule = b.requireDateBetween(new Date(1900, 0, 1), new Date(2999, 11, 31))
-            .setOptions({ allowBlank: true, showErrorMessage: false }).build();
+    this._withApplying(() => {
+      vis.forEach((f, col) => {
+        if (this._isStepsField(f) || f.is_readonly) return;
+        let rule: any = null;
+        try {
+          const b = this.univerAPI.newDataValidation();
+          if (f.data_type === "boolean") {
+            rule = b.requireValueInList(["是", "否"], false, true).build();
+          } else if (f.data_type === "single_select" && (f.options || []).length) {
+            rule = b.requireValueInList((f.options as string[]).slice(), false, true).build();
+          } else if (f.data_type === "multi_select" && (f.options || []).length) {
+            rule = b.requireValueInList((f.options as string[]).slice(), true, true).build();
+          } else if (f.data_type === "date" || f.data_type === "datetime") {
+            rule = b.requireDateBetween(new Date(1900, 0, 1), new Date(2999, 11, 31))
+              .setOptions({ allowBlank: true, showErrorMessage: false }).build();
+          }
+        } catch (_e) { rule = null; }
+        if (!rule) {
+          try { ctx.fSheet.getRange(HEADER_ROWS, col, rows, 1).setDataValidation(null); }
+          catch (_e2) { /* ignore */ }
+          return;
         }
-      } catch (_e) { rule = null; }
-      if (!rule) {
-        try { ctx.fSheet.getRange(HEADER_ROWS, col, rows, 1).setDataValidation(null); }
-        catch (_e2) { /* ignore */ }
-        return;
-      }
-      try {
-        ctx.fSheet.getRange(HEADER_ROWS, col, rows, 1).setDataValidation(rule);
-      } catch (_e) { /* validation is best-effort */ }
+        try {
+          ctx.fSheet.getRange(HEADER_ROWS, col, rows, 1).setDataValidation(rule);
+        } catch (_e) { /* validation is best-effort */ }
+      });
     });
   }
 
@@ -2078,10 +2100,10 @@ export class UniverGridAdapter {
 
   private _revertCell(ctx: SheetCtx, row: number, col: number, display: any): void {
     if (!ctx.fSheet) return;
-    this.applying = true;
-    try { ctx.fSheet.getRange(row, col, 1, 1).setValue(this._toCellData(display)); }
-    catch (_e) { /* ignore */ }
-    finally { this.applying = false; }
+    this._withApplying(() => {
+      try { ctx.fSheet.getRange(row, col, 1, 1).setValue(this._toCellData(display)); }
+      catch (_e) { /* ignore */ }
+    });
   }
 
   private _onSelectionChanged(p: any): void {
