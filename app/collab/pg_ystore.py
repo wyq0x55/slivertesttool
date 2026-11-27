@@ -25,7 +25,7 @@ import time
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 import anyio
-from pycrdt import Doc
+from pycrdt import YMessageType, YSyncMessageType, get_state, merge_updates, read_message
 from pycrdt.store import BaseYStore, YDocNotFound
 
 # Merge the append-only log into a single squashed update once it grows past
@@ -76,6 +76,17 @@ class PgYStore(BaseYStore):
         async with self.lock:
             await anyio.to_thread.run_sync(self._write_sync, data, metadata, time.time())
 
+    async def persist_client_message(self, message: bytes) -> bool:
+        """Make a browser update visible cross-process before YRoom applies it."""
+        if len(message) >= 2 and message[0] == YMessageType.SYNC and message[1] in (
+            YSyncMessageType.SYNC_STEP2, YSyncMessageType.SYNC_UPDATE,
+        ):
+            update = read_message(message[2:])
+            if update != b"\x00\x00":
+                get_state(update)
+                await self.write(update)
+        return False
+
     # ------------------------------------------------------------------ #
     # Synchronous DB helpers (run in a worker thread + Flask app context)
     # ------------------------------------------------------------------ #
@@ -122,10 +133,9 @@ class PgYStore(BaseYStore):
                 .order_by(CollabDoc.seq.asc()).all())
         if len(rows) < 2:
             return
-        merged_doc = Doc()
-        for update, _ts in rows:
-            merged_doc.apply_update(bytes(update))
-        merged = merged_doc.get_update()
+        # A received update can still be waiting for a causal dependency.
+        # Merge the wire updates themselves so compaction preserves it too.
+        merged = merge_updates(*(bytes(update) for update, _ts in rows))
         latest_ts = rows[-1][1]
         try:
             CollabDoc.query.filter_by(project_id=self._pid).delete(

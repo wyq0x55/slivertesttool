@@ -193,9 +193,11 @@ class CollabWebsocketServer(WebsocketServer):
         pid = int(name.split(":", 1)[1])
         ydoc = Doc()
         ystore = PgYStore(name, self._app)
+        book_exports = await anyio.to_thread.run_sync(self._has_book_exports, pid)
 
         # 1) Hydrate: replay persisted CRDT updates; if none, seed from the DB.
         loaded = False
+        full = True
         try:
             async for update, _meta, _ts in ystore.read():
                 ydoc.apply_update(update)
@@ -211,7 +213,7 @@ class CollabWebsocketServer(WebsocketServer):
             # Existing doc: make sure every sheet array key exists, then fold
             # in what REST wrote to the database while no room was live.
             doc_model.ensure_sheets(ydoc)
-            covered = await self._reconcile_hydrated(ydoc, ystore, pid)
+            full, covered = await self._reconcile_hydrated(ydoc, ystore, pid)
         # Outbox entries committed before that database read are already in
         # the Doc. Later ones are delivered once the room is live.
         await anyio.to_thread.run_sync(self._acknowledge_writebacks_sync, covered)
@@ -219,6 +221,14 @@ class CollabWebsocketServer(WebsocketServer):
         # 2) Build the room (ystore persists every future update) and start it.
         room = YRoom(ydoc=ydoc, ystore=ystore)
         mat = Materializer(pid, self._app, persist=ystore.write)
+        if book_exports:
+            room.on_message = ystore.persist_client_message
+            room.on_message_error = self._raise_room_message_error
+            if full:
+                # Establish a baseline before the first browser edit can land.
+                # A Doc ahead of an existing mark must go through materialization.
+                await anyio.to_thread.run_sync(
+                    mat._store_mark_sync, doc_model.content_hash(ydoc))
         await self.start_room(room)
 
         # 3) Attach debounced materialization (Y.Doc -> TestItemRow). The room's
@@ -231,6 +241,18 @@ class CollabWebsocketServer(WebsocketServer):
         mat.schedule_flush()
         _log.info("collab room ready: %s (hydrated=%s)", name, loaded)
         return room
+
+    def _has_book_exports(self, pid: int) -> bool:
+        from ..extensions import db
+        from ..models import Project
+        with self._app.app_context():
+            project = db.session.get(Project, pid)
+            return project is not None and project.project_type == "silver_books"
+
+    @staticmethod
+    def _raise_room_message_error(exc, _message, _channel):
+        # End this socket so the provider resends its edits on reconnect.
+        raise exc
 
     def _bootstrap_sync(self, ydoc: Doc, pid: int) -> list[int]:
         from ..extensions import db
@@ -246,12 +268,12 @@ class CollabWebsocketServer(WebsocketServer):
         return covered
 
     async def _reconcile_hydrated(self, ydoc: Doc, ystore: PgYStore,
-                                  pid: int) -> list[int]:
+                                  pid: int) -> tuple[bool, list[int]]:
         """Bring a persisted Doc up to date with offline database writes.
 
         The room is neither observed nor exposed yet. Returns the outbox IDs
-        the database read already contained, for the caller to acknowledge
-        after the reconciled Doc is durable.
+        the database read already contained and whether the database won
+        reconciliation. The caller acknowledges only after the Doc is durable.
         """
         full, states, covered = await anyio.to_thread.run_sync(
             self._hydration_plan_sync, pid, doc_model.content_hash(ydoc))
@@ -269,7 +291,7 @@ class CollabWebsocketServer(WebsocketServer):
                          "a newer database version", pid)
         _log.info("reconciled project %s from DB: %s row change(s)",
                   pid, touched)
-        return covered
+        return full, covered
 
     def _hydration_plan_sync(self, pid: int, doc_hash: str):
         """Decide who wins and read the rows, under the REST writers' lock.

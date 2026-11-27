@@ -185,6 +185,8 @@ class Materializer:
                 _awareness_mod.snapshot_states(self._awareness))
             summary, idmaps, row_errors = await anyio.to_thread.run_sync(
                 self._materialize_sync, snapshot, row_uid)
+            if self._wrote_rows(summary):
+                self._marked_hash = None
             _log.info("materialized project %s: %s", self._pid, summary)
             # Push the authoritative id/version and any per-row validation errors
             # back into the Y.Doc on the loop thread; suppressed so it does not
@@ -194,6 +196,7 @@ class Materializer:
                 await self._persist_doc()
                 await self._mark_synced()
         except Exception:  # pragma: no cover - logged, never crashes the loop
+            self._marked_hash = None
             _log.exception("materialization failed for project %s", self._pid)
         finally:
             self._flushing = False
@@ -257,6 +260,11 @@ class Materializer:
                 mark.synced_at = now
             db.session.commit()
 
+    @staticmethod
+    def _wrote_rows(summary: dict) -> bool:
+        return any(sheet.get(key) for sheet in summary.values()
+                   for key in ("created", "updated", "removed"))
+
     def _materialize_sync(self, snapshot: dict[str, list[dict]],
                           row_uid: Optional[dict[str, int]] = None):
         """Reconcile every sheet, then read back the authoritative id/version.
@@ -269,7 +277,7 @@ class Materializer:
         its editor; rows without an entry keep the batch actor.
         """
         from ..extensions import db
-        from ..models import Project
+        from ..models import CollabSyncMark, Project
         from ..services.lanmatrix import items_service
         with self._app.app_context():
             project = Project.query.get(self._pid)
@@ -286,6 +294,12 @@ class Materializer:
                 result[sheet] = summary
                 for row_uuid, info in (summary.get("errors") or {}).items():
                     row_errors[row_uuid] = {**info, "sheet": sheet}
+            if project.project_type == "silver_books" and self._wrote_rows(result):
+                mark = db.session.get(CollabSyncMark, self._pid)
+                if mark is not None:
+                    # A later edit can restore the old fingerprint while this
+                    # commit is writing an intermediate snapshot to the rows.
+                    mark.content_hash = ""
             db.session.commit()
             idmaps = {sheet: items_service.sheet_uuid_index(self._pid, sheet)
                       for sheet in snapshot}

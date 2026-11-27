@@ -6,6 +6,7 @@ import datetime as _dt
 
 from flask import g, request, send_file
 
+from ...collab.book_export import export_block_reason
 from ...services import project_model_service
 from ...services.lanmatrix import books_service, import_job_service, permissions
 from ...services.lanmatrix.errors import ServiceError
@@ -108,7 +109,10 @@ def import_book(project_id):
 @login_required
 def export_book(project_id, book_id):
     project, _ = _books_project(project_id, "export.run")
+    blocked = _book_export_conflict(project.id, book_id)
     book = books_service.get_book(project.id, book_id)
+    if blocked:
+        return blocked
     buffer = books_service.export_book(project, book)
     filename = books_service._safe_filename(
         book.source_filename or f"{book.name}.xlsx", f"book_{book.id}.xlsx")
@@ -124,6 +128,9 @@ def export_book(project_id, book_id):
 @login_required
 def export_all_books(project_id):
     project, _ = _books_project(project_id, "export.run")
+    blocked = _book_export_conflict(project.id, None)
+    if blocked:
+        return blocked
     buffer = books_service.export_all_books(project)
     ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     return send_file(
@@ -131,3 +138,14 @@ def export_all_books(project_id):
         download_name=f"{project.code}_books_{ts}.zip",
         mimetype="application/zip",
     )
+
+
+def _book_export_conflict(project_id, book_id):
+    reason = export_block_reason(project_id, book_id, request.headers.get("X-LM-Export-Fence"))
+    if reason == "pending":
+        return err("COLLAB_BOOK_EXPORT_PENDING", "协同修改尚未保存，请在编辑器中连接协同并等待保存后重试。",
+                   status=409)
+    if reason == "invalid":
+        return err("COLLAB_BOOK_EXPORT_INVALID", "式样书中有未保存的无效修改，请修正标记的单元格后重试。",
+                   status=409)
+    return None

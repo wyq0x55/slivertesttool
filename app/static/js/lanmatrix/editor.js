@@ -1219,6 +1219,10 @@
   // test_id shared by multiple rows only enqueues once.
 
   async function waitForCommittedEdits() {
+    return waitForEditorCommit("运行");
+  }
+
+  async function waitForEditorCommit(action) {
     const active = document.activeElement;
     if (active && typeof active.blur === "function") active.blur();
     await new Promise((resolve) => setTimeout(resolve, 120));
@@ -1226,9 +1230,9 @@
     const busy = () => savingCount > 0 || (grid && (grid.syncing || grid.syncTimer ||
       grid.structuralPending || (grid.isEditing && grid.isEditing())));
     while (busy() && tries-- > 0) await new Promise((resolve) => setTimeout(resolve, 100));
-    if (busy()) throw new Error("保存尚未完成，请结束编辑并等待同步后再运行。");
+    if (busy()) throw new Error(`保存尚未完成，请结束编辑并等待同步后再${action}。`);
     if (collabActive() && collabConn !== "connected") {
-      throw new Error("协同连接未同步，请恢复连接后再运行。");
+      throw new Error(`协同连接未同步，请恢复连接后再${action}。`);
     }
   }
 
@@ -1629,6 +1633,41 @@
   document.getElementById("lm-export").addEventListener("click", openExportDialog);
   if (exportFormatSel) exportFormatSel.addEventListener("change", syncExportBooks);
 
+  async function downloadBookExport(url, fallbackName) {
+    await waitForEditorCommit("导出");
+    const receipt = collabActive() ? collab.beginBookExport() : null;
+    const headers = receipt ? { "X-LM-Export-Fence": receipt.fence } : {};
+    const deadline = Date.now() + 8000;
+    try {
+      for (;;) {
+        const response = await fetch(url, { headers, cache: "no-store" });
+        if (response.ok && !response.redirected) {
+          const disposition = response.headers.get("Content-Disposition") || "";
+          const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+          const plain = /filename=(?:"([^"]+)"|([^;]+))/i.exec(disposition);
+          const filename = encoded ? decodeURIComponent(encoded[1])
+            : (plain && (plain[1] || plain[2])) || fallbackName;
+          const blobUrl = URL.createObjectURL(await response.blob());
+          const link = document.createElement("a");
+          link.href = blobUrl;
+          link.download = filename;
+          link.click();
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+          return;
+        }
+        const payload = await response.json().catch(() => null);
+        const error = payload && payload.error;
+        if (!error || error.code !== "COLLAB_BOOK_EXPORT_PENDING" ||
+            Date.now() >= deadline || (receipt && collabConn !== "connected")) {
+          throw new Error((error && error.message) || "导出失败，请重试。");
+        }
+        await new Promise((resolve) => setTimeout(resolve, 400));
+      }
+    } finally {
+      if (receipt) receipt.release();
+    }
+  }
+
   const exportButton = document.getElementById("lm-export-ok");
   exportButton.addEventListener("click", async (e) => {
     e.preventDefault();
@@ -1644,11 +1683,11 @@
         if (format === "book_current" && !bookId) {
           throw new Error("请选择要导出的式样书");
         }
-        const a = document.createElement("a");
-        a.href = format === "book_current"
-          ? LMApi.bookExportUrl(pid, bookId)
-          : LMApi.allBooksExportUrl(pid);
-        a.click();
+        if (format === "book_current") {
+          await downloadBookExport(LMApi.bookExportUrl(pid, bookId), `book_${bookId}.xlsx`);
+        } else {
+          await downloadBookExport(LMApi.allBooksExportUrl(pid), `project_${pid}_books.zip`);
+        }
       } else if (format === "test_matrix" || format === "libfunc" || format === "const"
           || format === "io") {
         const urlFor = {

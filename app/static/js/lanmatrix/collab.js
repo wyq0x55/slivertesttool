@@ -244,6 +244,16 @@
 
   LMCollabController.prototype.isActive = function () { return this._active; };
 
+  LMCollabController.prototype.beginBookExport = function () {
+    if (!this.provider.synced) {
+      throw new Error("协同连接未同步，请恢复连接后再导出。");
+    }
+    const fences = this.doc.getMap("book_export_fences");
+    const fence = genUuid();
+    fences.set(fence, true);
+    return { fence, release: () => fences.delete(fence) };
+  };
+
   LMCollabController.prototype._Y = function () {
     return global.LMCollab && global.LMCollab.Y;
   };
