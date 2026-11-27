@@ -777,6 +777,125 @@
   },
   {
    "body_fields": [
+    "model_id",
+    "name",
+    "source_filename"
+   ],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "POST",
+   "mutating": true,
+   "name": "books.create_book",
+   "path": "/api/v1/projects/<int:project_id>/books",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "create book"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "DELETE",
+   "mutating": true,
+   "name": "books.delete_book",
+   "path": "/api/v1/projects/<int:project_id>/books/<int:book_id>",
+   "path_params": {
+    "book_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "delete book"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "books.export_all_books",
+   "path": "/api/v1/projects/<int:project_id>/books/export.zip",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "download",
+   "summary": "export all books"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "books.export_book",
+   "path": "/api/v1/projects/<int:project_id>/books/<int:book_id>/export",
+   "path_params": {
+    "book_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "download",
+   "summary": "export book"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [
+    "file"
+   ],
+   "form_fields": [
+    "book_id",
+    "book_name",
+    "model_id"
+   ],
+   "method": "POST",
+   "mutating": true,
+   "name": "books.import_book",
+   "path": "/api/v1/projects/<int:project_id>/books/import",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "import book"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "GET",
+   "mutating": false,
+   "name": "books.list_books",
+   "path": "/api/v1/projects/<int:project_id>/books",
+   "path_params": {
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "list books"
+  },
+  {
+   "body_fields": [],
+   "file_fields": [],
+   "form_fields": [],
+   "method": "PATCH",
+   "mutating": true,
+   "name": "books.update_book",
+   "path": "/api/v1/projects/<int:project_id>/books/<int:book_id>",
+   "path_params": {
+    "book_id": "int",
+    "project_id": "int"
+   },
+   "query_params": [],
+   "response_kind": "json",
+   "summary": "update book"
+  },
+  {
+   "body_fields": [
+    "book_id",
     "layout",
     "name",
     "test_id"
@@ -1024,6 +1143,7 @@
     "project_id": "int"
    },
    "query_params": [
+    "book_id",
     "test_id"
    ],
    "response_kind": "json",
@@ -1090,12 +1210,14 @@
     "project_id": "int"
    },
    "query_params": [
+    "book_id",
     "page",
     "page_size",
+    "row_uuid",
     "test_id"
    ],
    "response_kind": "json",
-   "summary": "Return paged matrix-backed run summaries for one exact test id."
+   "summary": "Return paged matrix-backed run summaries for one exact test id.\n\nMulti-book projects repeat テストIDs across books, so the caller may pass\nthe row UUID (preferred) or the book id to disambiguate. Callers that pass\nneither keep the legacy single-project behaviour."
   },
   {
    "body_fields": [],
@@ -1291,7 +1413,9 @@
    "path_params": {
     "project_id": "int"
    },
-   "query_params": [],
+   "query_params": [
+    "book_id"
+   ],
    "response_kind": "download",
    "summary": "Export the project's 入出力 pool rows as a flat-table .xlsx."
   },
@@ -1307,6 +1431,7 @@
     "project_id": "int"
    },
    "query_params": [
+    "row_uuids",
     "test_ids"
    ],
    "response_kind": "download",
@@ -1339,6 +1464,7 @@
     "project_id": "int"
    },
    "query_params": [
+    "row_uuids",
     "test_ids"
    ],
    "response_kind": "download",
@@ -1363,6 +1489,7 @@
    "body_fields": [],
    "file_fields": [],
    "form_fields": [
+    "book_id",
     "mode",
     "sheets"
    ],
@@ -1417,6 +1544,7 @@
     "file"
    ],
    "form_fields": [
+    "book_id",
     "mode"
    ],
    "method": "POST",
@@ -1489,6 +1617,7 @@
   },
   {
    "body_fields": [
+    "book_id",
     "values"
    ],
    "file_fields": [],
@@ -1597,6 +1726,7 @@
   {
    "body_fields": [
     "anchor_id",
+    "book_id",
     "count",
     "draft",
     "place",
@@ -1692,6 +1822,7 @@
     "project_id": "int"
    },
    "query_params": [
+    "book_id",
     "combinator",
     "filter",
     "page",
@@ -2692,6 +2823,7 @@
    "body_fields": [
     "clean_room",
     "expected_inputs",
+    "items",
     "model",
     "test_ids"
    ],
