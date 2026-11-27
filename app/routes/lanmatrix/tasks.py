@@ -648,7 +648,7 @@ def rerun_selected_tasks(project_id):
     import shutil
     from pathlib import Path
 
-    from ...models import TestItemRow
+    from ...models import ProjectModel, TestBook, TestItemRow
     from ...runners import run_layout
     from ...services.lanmatrix import silver_json_export as sje
 
@@ -721,7 +721,14 @@ def rerun_selected_tasks(project_id):
             continue
         test_id = task.test_id
         row = by_row_uuid.get(task.row_uuid) if task.row_uuid else None
-        if row is None:
+        if task.book_id:
+            if not task.row_uuid:
+                matching = [item for item in grouped.get(test_id, [])
+                            if item.book_id == task.book_id]
+                row = matching[0] if len(matching) == 1 else None
+            if row is not None and row.book_id != task.book_id:
+                row = None
+        elif row is None:
             row = by_test_id.get(test_id)
         if row is None:
             missing.append({"task_id": key, "test_id": test_id,
@@ -735,23 +742,11 @@ def rerun_selected_tasks(project_id):
         model_id = task.sil_model_id
         sil_ref = (task.sil_relpath or "").strip()
         if task.book_id:
-            # A retest follows the book's *current* binding: rebinding the book
-            # is the explicit action that moves future runs onto another build.
-            from ...services.lanmatrix import books_service
-            from ...models import TestBook
-
             book = TestBook.query.filter_by(
                 id=task.book_id, project_id=project.id).first()
             if book is None:
                 missing.append({"task_id": key, "test_id": test_id,
                                 "error": "式样书已不存在"})
-                continue
-            try:
-                model_id, model_name, model_version, sil_ref = (
-                    books_service.require_model(project.id, book))
-            except ServiceError as exc:
-                errors.append({"task_id": key, "test_id": test_id,
-                               "error": str(exc)})
                 continue
         committed_attempt = None
         try:
@@ -766,6 +761,8 @@ def rerun_selected_tasks(project_id):
             proj_root = run_layout.project_root(cfg, project)
             if task.book_id:
                 proj_root = proj_root / "books" / f"book_{task.book_id}"
+                previous_model_dir = run_evidence_service.attempt_dir(
+                    task, workspace=proj_root) / "model"
             task_service.requeue_task(
                 task, sil_relpath=sil_ref, sil_name=model_name,
                 sil_version=model_version, sil_model_id=model_id,
@@ -774,6 +771,18 @@ def rerun_selected_tasks(project_id):
                 clean_room=clean_room)
             if not sil_ref or not Path(sil_ref).is_file():
                 raise ValueError("保存的模型副本不存在")
+            if task.book_id:
+                captured = Path(sil_ref).resolve()
+                model = db.session.get(ProjectModel, model_id) if model_id is not None else None
+                if model is not None and model.project_id != project.id:
+                    raise ValueError("保存的模型不属于当前项目")
+                if captured.parent != previous_model_dir.resolve():
+                    registered = ProjectModel.query.filter_by(project_id=project.id)
+                    if model_id is not None:
+                        registered = registered.filter_by(id=model_id)
+                    if not any(entry.sil_path and Path(entry.sil_path).resolve() == captured
+                               for entry in registered):
+                        raise ValueError("保存的模型不属于当前项目")
             case_dir = run_layout.staging_dir(proj_root, test_id) / test_id
             run_evidence_service.validate_segment(test_id)
             run_evidence_service.checked_path(proj_root, case_dir)

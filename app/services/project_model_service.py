@@ -331,21 +331,24 @@ def _new_model_dir(config, project_id: int, name: str, version: str) -> Path:
 
 
 def _select_model(project_id: int, name: str, version: Optional[str] = None,
-                  model_id: Optional[int] = None):
+                  model_id: Optional[int] = None, *, lock: bool = False):
     """Pick one saved version of ``name``.
 
     A pinned version must match exactly. With no pin, the current row wins,
     otherwise the newest row.
     """
+    query = _query(project_id)
+    if lock:
+        query = query.populate_existing().with_for_update()
     if model_id is not None:
         try:
             model_id = int(model_id)
         except (TypeError, ValueError):
             return None
-        return _query(project_id).filter_by(id=model_id).first()
+        return query.filter_by(id=model_id).first()
 
     wanted = (version if version is not None else "").strip().lower()
-    rows = _query(project_id).filter_by(name=(name or "").strip()).all()
+    rows = query.filter_by(name=(name or "").strip()).all()
     if version is not None and version != "":
         return next((row for row in rows
                      if (row.version or "").lower() == wanted), None)
@@ -545,7 +548,7 @@ def resolve_id(project_id: int, model_id: int) -> tuple[int, str, str, Path]:
     """Resolve a pinned model id to ``(id, name, version, sil_path)``."""
     row = _select_model(project_id, "", model_id=model_id)
     if row is None or not row.sil_path:
-        raise ModelError("该式样书绑定的模型不存在，请重新绑定。")
+        raise ModelError("该式样书绑定的模型不存在。")
     return row.id, row.name, (row.version or ""), Path(row.sil_path)
 
 
@@ -595,15 +598,21 @@ def update_version(project_id: int, name: str, version: Optional[str],
     run records keep the value they were stamped with -- only future runs use
     the new label.
     """
-    target = _select_model(project_id, name, model_id=model_id)
+    target = _select_model(project_id, name, model_id=model_id, lock=True)
     if target is None:
         raise ModelError("未找到该模型，请刷新后重试。")
 
     new_version = normalise_version(version)
+    old_version = target.version or ""
+    if new_version != old_version:
+        bound = TestBook.query.filter_by(project_id=project_id, model_id=target.id).first()
+        if bound is not None:
+            raise ModelError(
+                f"模型「{target.name}」已绑定式样书「{bound.name}」，请另行登记新版本。"
+            )
     clash = _select_model(project_id, target.name, new_version or None)
     if clash is not None and clash.id != target.id and (clash.version or "") == new_version:
         raise ModelError("该版本已存在，不能把另一个副本改成同一版本。")
-    old_version = target.version or ""
     target.version = new_version or None
     if note is not None:
         target.version_note = str(note).strip()
@@ -988,12 +997,12 @@ def add_bundle_model(project_id: int, name: str, dll: FileStorage,
 def remove_model(project_id: int, name: str,
                  model_id: Optional[int] = None) -> bool:
     """Remove a project model. Bundle files on disk are deleted too."""
-    row = _select_model(project_id, name, model_id=model_id)
+    row = _select_model(project_id, name, model_id=model_id, lock=True)
     if row is None:
         return False
     bound = TestBook.query.filter_by(project_id=project_id, model_id=row.id).first()
     if bound is not None:
-        raise ModelError(f"模型「{row.name}」已绑定式样书「{bound.name}」，请先换绑后再删除。")
+        raise ModelError(f"模型「{row.name}」已绑定式样书「{bound.name}」，请先删除式样书。")
     was_current = bool(row.is_current)
     if row.kind == "bundle" and row.bundle_dir:
         shutil.rmtree(row.bundle_dir, ignore_errors=True)

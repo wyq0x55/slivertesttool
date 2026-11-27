@@ -29,12 +29,15 @@ def _clean_name(value: str) -> str:
     return name
 
 
-def _model_for(project_id: int, model_id: Any) -> ProjectModel:
+def _model_for(project_id: int, model_id: Any, *, lock: bool = False) -> ProjectModel:
     try:
         wanted = int(model_id)
     except (TypeError, ValueError):
         raise ServiceError("请选择式样书绑定的模型", code="VALIDATION_ERROR")
-    row = ProjectModel.query.filter_by(id=wanted, project_id=project_id).first()
+    query = ProjectModel.query.filter_by(id=wanted, project_id=project_id)
+    if lock:
+        query = query.with_for_update()
+    row = query.first()
     if row is None:
         raise ServiceError("模型不属于当前项目", code="VALIDATION_ERROR")
     return row
@@ -111,7 +114,7 @@ def get_book(project_id: int, book_id: Any) -> TestBook:
 def require_model(project_id: int, book: TestBook) -> tuple[int, str, str, Any]:
     if not book.model_id:
         raise ServiceError(
-            f"式样书「{book.name}」尚未绑定模型，请先在式样书管理中绑定。",
+            f"式样书「{book.name}」尚未绑定模型。请新建式样书并选择模型版本。",
             code="NO_MODEL",
         )
     try:
@@ -126,7 +129,7 @@ def create_book(user, project: Project, *, name: str, source_filename: str,
     existing = TestBook.query.filter_by(project_id=project.id, name=name).first()
     if existing is not None:
         raise ServiceError(f"式样书「{name}」已存在", code="DUPLICATE")
-    model = _model_for(project.id, model_id)
+    model = _model_for(project.id, model_id, lock=True)
     sort_order = (db.session.query(db.func.max(TestBook.sort_order))
                   .filter_by(project_id=project.id).scalar() or 0) + 1
     book = TestBook(
@@ -188,6 +191,13 @@ def delete_book(user, project: Project, book: TestBook, *,
 
 def update_book(user, project: Project, book: TestBook,
                 changes: dict[str, Any], *, commit: bool = True) -> TestBook:
+    if "model_id" in changes:
+        model = _model_for(project.id, changes["model_id"])
+        if model.id != book.model_id:
+            raise ServiceError(
+                "式样书创建后不能更改绑定的模型版本。请新建式样书并选择所需版本。",
+                code="VALIDATION_ERROR",
+            )
     old = book.to_dict()
     if "name" in changes:
         name = _clean_name(changes.get("name"))
@@ -199,9 +209,6 @@ def update_book(user, project: Project, book: TestBook,
         if clash is not None:
             raise ServiceError(f"式样书「{name}」已存在", code="DUPLICATE")
         book.name = name
-    if "model_id" in changes:
-        model = _model_for(project.id, changes.get("model_id"))
-        book.model_id = model.id
     if "source_filename" in changes:
         book.source_filename = str(changes.get("source_filename") or "")[:255]
     db.session.flush()

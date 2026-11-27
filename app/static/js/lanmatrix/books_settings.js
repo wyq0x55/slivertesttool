@@ -33,18 +33,8 @@
     el.hidden = !message;
   }
 
-  function modelOptions(selected, allowEmpty) {
-    let prefix = "";
-    if (allowEmpty) {
-      prefix = '<option value="">请选择模型</option>';
-    } else if (!selected) {
-      prefix = '<option value="" selected disabled>未绑定（请选择）</option>';
-    }
-    return prefix + models.map((model) => {
-      const label = model.version ? `${model.name}@${model.version}` : model.name;
-      const pick = String(model.id) === String(selected || "") ? " selected" : "";
-      return `<option value="${model.id}"${pick}>${esc(label)}</option>`;
-    }).join("");
+  function modelLabel(model) {
+    return model.version ? `${model.name}@${model.version}` : model.name;
   }
 
   function render() {
@@ -54,9 +44,7 @@
       return;
     }
     rowsEl.innerHTML = books.map((book) => {
-      const model = book.model || {};
-      const modelLabel = model.version
-        ? `${esc(model.name)}@${esc(model.version)}` : (model.name ? esc(model.name) : "未绑定");
+      const label = book.model ? modelLabel(book.model) : "未绑定";
       return `<tr data-book-id="${book.id}">
         <td>
           <input class="ipt lm-book-name" data-book-id="${book.id}"
@@ -64,13 +52,7 @@
                  ${canEdit ? "" : "disabled"}>
         </td>
         <td><code>${esc(book.source_filename || "—")}</code></td>
-        <td>
-          <select class="ipt lm-book-model" data-book-id="${book.id}"
-                  aria-label="绑定模型" ${canEdit ? "" : "disabled"}>
-            ${modelOptions(book.model_id, false)}
-          </select>
-          <div class="muted" style="font-size:11px;margin-top:3px">${modelLabel}</div>
-        </td>
+        <td>${esc(label)}</td>
         <td>${Number(book.test_count) || 0}</td>
         <td>${Number(book.io_count) || 0}</td>
         <td><span class="row-acts">
@@ -82,16 +64,15 @@
     rowsEl.querySelectorAll(".lm-book-save").forEach((button) => {
       button.addEventListener("click", () => saveName(Number(button.dataset.bookId)));
     });
-    rowsEl.querySelectorAll(".lm-book-model").forEach((select) => {
-      select.addEventListener("change", () => saveModel(Number(select.dataset.bookId), select.value));
-    });
     rowsEl.querySelectorAll(".lm-book-delete").forEach((button) => {
       button.addEventListener("click", () => removeBook(Number(button.dataset.bookId), button.dataset.name));
     });
   }
 
   function fillModelSelect() {
-    createModel.innerHTML = modelOptions("", true);
+    createModel.innerHTML = '<option value="">请选择模型</option>' + models.map((model) =>
+      `<option value="${model.id}">${esc(modelLabel(model))}</option>`
+    ).join("");
     createBtn.disabled = !canEdit || !models.length;
     if (!models.length) {
       createModel.innerHTML = '<option value="">请先在“模型管理”中添加模型</option>';
@@ -135,37 +116,6 @@
       await load();
     } catch (ex) {
       showError(ex.message);
-    }
-  }
-
-  async function saveModel(bookId, modelId) {
-    const book = books.find((entry) => entry.id === bookId);
-    if (!modelId) {
-      showError("式样书必须绑定一个模型版本");
-      await load();
-      return;
-    }
-    if (book && String(book.model_id) !== String(modelId) && window.LMUI && LMUI.confirm) {
-      const ok = await LMUI.confirm({
-        level: "normal",
-        title: `换绑式样书「${book.name}」的模型`,
-        body: "换绑会改变这本书字段解释和后续执行所用的模型版本。已有运行历史不会被改写。",
-        confirmText: "换绑",
-      });
-      if (!ok) {
-        await load();
-        return;
-      }
-    }
-    try {
-      await LMApi.updateBook(pid, bookId, {
-        model_id: Number(modelId),
-      });
-      toast("已换绑模型", true);
-      await load();
-    } catch (ex) {
-      toast(ex.message, false);
-      await load();
     }
   }
 
