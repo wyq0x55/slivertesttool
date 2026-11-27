@@ -10,7 +10,7 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy.engine import Connection, Engine
 
-HEAD_REVISION = "0008_test_books"
+HEAD_REVISION = "0009_curve_view_books"
 _MIGRATIONS_DIR = Path(__file__).resolve().parent
 
 
@@ -48,6 +48,9 @@ def _reconcile_head_invariants(conn: Connection) -> None:
     test_books_mod = importlib.import_module(
         "app.migrations.versions.0008_test_books"
     )
+    curve_view_books_mod = importlib.import_module(
+        "app.migrations.versions.0009_curve_view_books"
+    )
     baseline_mod.reconcile_baseline_schema(conn)
     rollups_mod.reconcile_governance_and_rollups(conn)
     step_budget_mod.reconcile_step_budget(conn)
@@ -56,6 +59,7 @@ def _reconcile_head_invariants(conn: Connection) -> None:
     clean_room_mod.reconcile_project_clean_room(conn)
     budget_stop_mod.reconcile_budget_stop(conn)
     test_books_mod.reconcile_test_books(conn)
+    curve_view_books_mod.reconcile_curve_view_books(conn)
 
 
 def _run_with_connection(conn: Connection, *, force_reconcile: bool = False) -> str:

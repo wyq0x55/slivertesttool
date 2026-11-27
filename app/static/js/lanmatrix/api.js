@@ -399,7 +399,11 @@
       const qs = new URLSearchParams(query || {}).toString();
       return `${BASE}/projects/${id}/tasks/${encodeURIComponent(key)}/curves${part}${qs ? "?" + qs : ""}`;
     },
-    curveViews(id, testId) { return request("GET", `/projects/${id}/curve-views`, { query: { test_id: testId } }); },
+    curveViews(id, testId, bookId) {
+      const query = { test_id: testId };
+      if (bookId != null) query.book_id = bookId;
+      return request("GET", `/projects/${id}/curve-views`, { query });
+    },
     createCurveView(id, body) { return request("POST", `/projects/${id}/curve-views`, { body }); },
     updateCurveView(id, viewId, body) { return request("PUT", `/projects/${id}/curve-views/${viewId}`, { body }); },
     deleteCurveView(id, viewId) { return request("DELETE", `/projects/${id}/curve-views/${viewId}`); },

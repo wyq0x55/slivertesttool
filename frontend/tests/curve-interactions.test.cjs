@@ -121,7 +121,7 @@ function fire(target, type, props) {
   return event;
 }
 
-function createHarness() {
+function createHarness({ books = {}, loadSavedViews } = {}) {
   const elements = new Map();
   const docListeners = new Map();
   const doc = {
@@ -194,9 +194,11 @@ function createHarness() {
 
   const requests = [];
   const LMApi = {
-    taskCurves(_pid, _key, part, query) {
+    taskCurves(_pid, taskKey, part, query) {
       requests.push({ part, query });
-      if (part === "") return Promise.resolve(baseContext);
+      if (part === "") return Promise.resolve({
+        ...baseContext, task: { ...baseContext.task, book_id: books[taskKey] },
+      });
       if (part === "/series") {
         const cols = String(query.columns || "").split(",").filter(Boolean);
         return Promise.resolve({
@@ -221,7 +223,8 @@ function createHarness() {
     },
     taskCurvesUrl: () => "#download",
     listProjectTasks() { return Promise.resolve({ tasks: [] }); },
-    curveViews() {
+    curveViews(projectId, testId, bookId) {
+      if (loadSavedViews) return loadSavedViews(projectId, testId, bookId);
       return Promise.resolve({
         views: [{ id: 7, name: "DoorView", layout: { lanes: [{ name: "sig_DOOR_SW", height: 30 }] } }],
       });
@@ -288,8 +291,8 @@ function createHarness() {
   vm.runInContext(renderSource, context, { filename: "curve_render.js" });
   vm.runInContext(curvesSource, context, { filename: "task_curves.js" });
 
-  async function openTask() {
-    doc.dispatch("lm-task-open", { projectId: 1, taskKey: "T1" });
+  async function openTask(taskKey = "T1") {
+    doc.dispatch("lm-task-open", { projectId: 1, taskKey });
     // load() -> fillCompare() -> curveViews() -> values(); also let the
     // debounced markUrl() timer (250 ms) settle before reading urlState.
     await new Promise(resolve => setTimeout(resolve, 300));
@@ -297,6 +300,29 @@ function createHarness() {
 
   return { doc, urlState, requests, openTask };
 }
+
+test("saved views follow the book from the opened task context", async () => {
+  const calls = [];
+  let resolveFirst;
+  const first = new Promise(resolve => { resolveFirst = resolve; });
+  const { doc, openTask } = createHarness({
+    books: { T1: 10, T2: 20 },
+    loadSavedViews(projectId, testId, bookId) {
+      calls.push({ projectId, testId, bookId });
+      return calls.length === 1 ? first : Promise.resolve({ views: [{ id: 20, name: "Second" }] });
+    },
+  });
+  await openTask();
+  await openTask("T2");
+  resolveFirst({ views: [{ id: 10, name: "First" }] });
+  await first;
+  await Promise.resolve();
+  assert.deepEqual(calls, [
+    { projectId: 1, testId: "TC_01", bookId: 10 },
+    { projectId: 1, testId: "TC_01", bookId: 20 },
+  ]);
+  assert.deepEqual(doc.getElementById("cv-view").options.map(option => option.value), ["", "20"]);
+});
 
 test("template exposes accessible batch dialog, A-B zoom control, and measurement table", () => {
   assert.match(template, /<dialog[^>]*id="cv-batch"[^>]*aria-labelledby="cv-batch-title"[^>]*closedby="any"/);

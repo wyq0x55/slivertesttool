@@ -9,11 +9,12 @@ from __future__ import annotations
 import math
 
 from flask import Blueprint, Response, g, request, send_file, stream_with_context
+from sqlalchemy.exc import IntegrityError
 
 from ...extensions import db
 from ...models import CurveView, Task
 from ...services import curve_context_service, task_curves_service as curves, task_service
-from ...services.lanmatrix import permissions
+from ...services.lanmatrix import books_service, permissions
 from ...services.lanmatrix.service import ServiceError
 from ._base import _project_and_role, err, login_required, ok, register_common
 
@@ -82,7 +83,7 @@ def curve_context(project_id, task_key):
     judge = curve_context_service.timeline(task, source.run_count, live=source.live)
     return _ok({
         **idx.metadata(lim.max_lanes),
-        "task": {"task_key": task.task_key, "test_id": task.test_id, "status": task.status,
+        "task": {"task_key": task.task_key, "test_id": task.test_id, "book_id": task.book_id, "status": task.status,
                  "run": source.run_count, "current_run": task.run_count or 1},
         "attempts": curves.attempts(task),
         "judge": judge,
@@ -199,7 +200,7 @@ def _chain(first, rest):
 
 
 # --------------------------------------------------------------------------- #
-# Saved views (per project + test case, shared by all members)
+# Saved views (per project, book and test case, shared by project members)
 # --------------------------------------------------------------------------- #
 _VIEW_KEYS = {"lanes", "range", "group"}
 
@@ -243,12 +244,50 @@ def _payload():
     return body
 
 
+def _view_book(project, book_id):
+    if project.project_type != "silver_books":
+        if book_id is not None:
+            raise ServiceError("该项目不支持 book_id", code="VALIDATION_ERROR")
+        return None
+    if type(book_id) is not int or not 0 < book_id <= 2_147_483_647:
+        raise ServiceError("必须提供有效的 book_id", code="VALIDATION_ERROR")
+    return books_service.get_book(project.id, book_id).id
+
+
+def _require_view_task(project_id, book_id, test_id):
+    if not isinstance(test_id, str) or not test_id or len(test_id) > 128:
+        raise ServiceError("缺少 test_id", code="VALIDATION_ERROR")
+    if not task_service.live(Task.query).filter_by(
+        project_id=project_id, book_id=book_id, test_id=test_id
+    ).first():
+        raise ServiceError("该项目没有这个测试用例的任务", code="NOT_FOUND")
+
+
+def _commit_view():
+    try:
+        db.session.commit()
+    except IntegrityError as exc:
+        db.session.rollback()
+        constraint = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+        if constraint in {"uq_curve_view_name", "uq_curve_view_book_name"}:
+            raise ServiceError("同名视图已存在", code="DUPLICATE") from exc
+        raise
+
+
 @bp.get("/projects/<int:project_id>/curve-views")
 @login_required
 def list_curve_views(project_id):
-    _project_and_role(project_id, "task.view")
+    project, _ = _project_and_role(project_id, "task.view")
     test_id = request.args.get("test_id", "")
-    rows = (CurveView.query.filter_by(project_id=project_id, test_id=test_id)
+    raw_book_id = request.args.get("book_id")
+    try:
+        book_id = int(raw_book_id) if raw_book_id is not None else None
+    except ValueError:
+        raise ServiceError("必须提供有效的 book_id", code="VALIDATION_ERROR") from None
+    book_id = _view_book(project, book_id)
+    if book_id is not None:
+        _require_view_task(project_id, book_id, test_id)
+    rows = (CurveView.query.filter_by(project_id=project_id, book_id=book_id, test_id=test_id)
             .order_by(CurveView.name.asc()).all())
     return ok({"views": [r.to_dict() for r in rows]})
 
@@ -256,26 +295,23 @@ def list_curve_views(project_id):
 @bp.post("/projects/<int:project_id>/curve-views")
 @login_required
 def create_curve_view(project_id):
-    _project_and_role(project_id, "task.upload")
+    project, _ = _project_and_role(project_id, "task.upload")
     body = _payload()
     test_id = body.get("test_id")
-    if not isinstance(test_id, str) or not test_id or len(test_id) > 128:
-        raise ServiceError("缺少 test_id", code="VALIDATION_ERROR")
-    if not Task.query.filter_by(project_id=project_id, test_id=test_id, deleted_at=None).first():
-        raise ServiceError("该项目没有这个测试用例的任务", code="NOT_FOUND")
+    book_id = _view_book(project, body.get("book_id"))
+    _require_view_task(project_id, book_id, test_id)
     name = _view_name(body)
-    if CurveView.query.filter_by(project_id=project_id, test_id=test_id, name=name).first():
-        raise ServiceError("同名视图已存在", code="DUPLICATE")
-    view = CurveView(project_id=project_id, test_id=test_id, name=name, layout=_layout(body),
-                     created_by=g.user.id)
+    view = CurveView(project_id=project_id, book_id=book_id, test_id=test_id,
+                     name=name, layout=_layout(body), created_by=g.user.id)
     db.session.add(view)
-    db.session.commit()
+    _commit_view()
     return ok({"view": view.to_dict()}, status=201)
 
 
 def _owned_view(project_id, view_id):
-    _, role = _project_and_role(project_id, "task.upload")
-    view = CurveView.query.filter_by(id=view_id, project_id=project_id).first()
+    project, role = _project_and_role(project_id, "task.upload")
+    scoped = CurveView.book_id.is_not(None) if project.project_type == "silver_books" else CurveView.book_id.is_(None)
+    view = CurveView.query.filter_by(id=view_id, project_id=project_id).filter(scoped).first()
     if view is None:
         raise ServiceError("视图不存在", code="NOT_FOUND")
     if view.created_by != g.user.id and not (g.user.is_system_admin or role == "project_admin"):
@@ -289,14 +325,10 @@ def update_curve_view(project_id, view_id):
     view = _owned_view(project_id, view_id)
     body = _payload()
     if "name" in body:
-        name = _view_name(body)
-        clash = CurveView.query.filter_by(project_id=project_id, test_id=view.test_id, name=name).first()
-        if clash is not None and clash.id != view.id:
-            raise ServiceError("同名视图已存在", code="DUPLICATE")
-        view.name = name
+        view.name = _view_name(body)
     if "layout" in body:
         view.layout = _layout(body)
-    db.session.commit()
+    _commit_view()
     return ok({"view": view.to_dict()})
 
 

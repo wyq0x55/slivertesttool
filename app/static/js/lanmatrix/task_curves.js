@@ -732,10 +732,13 @@
 
   // ---------------------------------------------------------- saved views
   async function loadViews() {
+    const epoch = gen;
+    let data;
     try {
-      const data = await LMApi.curveViews(task.projectId, ctx.task.test_id);
-      views = data.views || [];
-    } catch (_e) { views = []; }
+      data = await LMApi.curveViews(task.projectId, ctx.task.test_id, ctx.task.book_id);
+    } catch (_e) { data = { views: [] }; }
+    if (epoch !== gen) return;
+    views = data.views || [];
     const sel = $("cv-view");
     sel.replaceChildren(new Option("默认（期望优先）", ""));
     views.forEach(v => sel.add(new Option(v.name, String(v.id))));
@@ -750,6 +753,7 @@
     return { lanes: lanes.map(l => ({ name: l.name, height: l.height })), range: [view.start, view.end] };
   }
   async function saveView() {
+    const epoch = gen;
     const name = (currentView && currentView.name) || "";
     const form = document.createElement("form");
     form.className = "cv-pop";
@@ -761,18 +765,22 @@
     form.querySelector("[data-x]").addEventListener("click", () => form.remove());
     form.addEventListener("submit", async ev => {
       ev.preventDefault();
+      if (epoch !== gen) { form.remove(); return; }
       const n = form.querySelector("input").value.trim();
       if (!n || !lanes.length) return;
       try {
         const existing = views.find(v => v.name === n);
         const body = { name: n, layout: layoutNow() };
         const data = existing ? await LMApi.updateCurveView(task.projectId, existing.id, body)
-          : await LMApi.createCurveView(task.projectId, Object.assign({ test_id: ctx.task.test_id }, body));
+          : await LMApi.createCurveView(task.projectId, { ...body, test_id: ctx.task.test_id, book_id: ctx.task.book_id });
         form.remove();
+        if (epoch !== gen) return;
         if (window.LMUrl) LMUrl.replace({ cview: data.view.id });
-        await loadViews(); viewDirty = false; markUrl();
+        await loadViews();
+        if (epoch !== gen) return;
+        viewDirty = false; markUrl();
         status("视图「" + n + "」已保存。");
-      } catch (error) { status(error.message); }
+      } catch (error) { if (epoch === gen) status(error.message); }
     });
   }
   let deleteArmed = false;
@@ -784,11 +792,14 @@
       return;
     }
     deleteArmed = false; $("cv-view-delete").textContent = "删除视图";
+    const epoch = gen;
     try {
       await LMApi.deleteCurveView(task.projectId, currentView.id);
+      if (epoch !== gen) return;
       if (window.LMUrl) LMUrl.replace({ cview: null });
-      await loadViews(); status("视图已删除。");
-    } catch (error) { status(error.message); }
+      await loadViews();
+      if (epoch === gen) status("视图已删除。");
+    } catch (error) { if (epoch === gen) status(error.message); }
   }
 
   // ----------------------------------------------------------------- URL
