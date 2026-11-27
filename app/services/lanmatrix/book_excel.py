@@ -13,12 +13,19 @@ import datetime as _dt
 import io
 import json
 import re
+from copy import copy
 from pathlib import Path
 from typing import Any, BinaryIO, Optional, Union
+from xml.etree import ElementTree
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.cell.cell import ERROR_CODES, MergedCell
+from openpyxl.formula.translate import Translator
 from openpyxl.styles import Alignment, Font, PatternFill
-from openpyxl.utils import get_column_letter
+from openpyxl.utils import get_column_letter, range_boundaries
+from openpyxl.utils.datetime import to_excel
+from openpyxl.workbook.defined_name import DefinedName
 
 from . import matrix_excel as _mx
 
@@ -73,10 +80,6 @@ _COL_TEST_ID = 2
 _COL_ITEM_ID = 4
 _COL_LABEL = 2
 _COL_STEP_NO = _mx.COL_STEP_NO
-_COL_STEP_PURPOSE = _mx.COL_STEP_PURPOSE
-_COL_STEP_OP = _mx.COL_STEP_OP
-_COL_STEP_SUB = _mx.COL_STEP_SUB
-_COL_STEP_ARG = _mx.COL_STEP_ARG
 _COL_SIGNAL_START = _mx.COL_SIGNAL_START
 
 
@@ -148,60 +151,44 @@ def _detect_header(ws) -> tuple[int, dict[str, int]]:
 
 def _is_block_header(ws, row: int) -> bool:
     value = ws.cell(row, _COL_TEST_ID).value
-    item_id = ws.cell(row, _COL_ITEM_ID).value
-    if value is None or item_id in (None, ""):
-        return False
-    if not isinstance(value, str):
+    if not isinstance(value, str) or not value.strip():
         return False
     if value.strip() in _DETAIL_LABEL_NAMES:
         return False
     # The header is immediately followed by the first metadata label. Step rows
-    # never satisfy this, and a numeric category sheet has no other non-label
-    # value in column B with a populated item id in column D.
-    if row >= ws.max_row:
-        return False
+    # never satisfy this. Some of the source blocks leave the item id blank.
     return _text(ws.cell(row + 1, _COL_LABEL).value).strip() == DETAIL_LABELS[0][0]
 
 
-def _next_block_row(ws, start: int) -> Optional[int]:
-    for row in range(start, ws.max_row + 1):
-        if _is_block_header(ws, row):
-            return row
-    return None
+def _detail_blocks(ws) -> list[tuple[str, int, int]]:
+    end = ws.max_row + 1
+    headers = [row for row in range(1, end - 1) if _is_block_header(ws, row)]
+    return [(_text(ws.cell(row, _COL_TEST_ID).value).strip(), row, limit)
+            for row, limit in zip(headers, headers[1:] + [end])]
+
+
+def _step_header(ws, row: int, limit: int) -> Optional[int]:
+    return next((candidate for candidate in range(row + 1, min(row + 41, limit))
+                 if ws.cell(candidate, _COL_STEP_NO).value == "手順番号"), None)
 
 
 def _parse_detail_sheet(ws, out: dict[str, dict[str, Any]]) -> None:
-    row = 1
-    while row <= ws.max_row:
-        if not _is_block_header(ws, row):
-            row += 1
-            continue
-        test_id = _text(ws.cell(row, _COL_TEST_ID).value).strip()
-        item_id = _text(ws.cell(row, _COL_ITEM_ID).value).strip()
-        step_header = None
-        for candidate in range(row + 1, min(row + 40, ws.max_row) + 1):
-            if ws.cell(candidate, _COL_STEP_NO).value == "手順番号":
-                step_header = candidate
-                break
+    max_column = ws.max_column
+    for test_id, row, limit in _detail_blocks(ws):
+        step_header = _step_header(ws, row, limit)
         payload: dict[str, Any] = {
             "input_signals": [], "expected_signals": [], "steps": [],
         }
         if step_header is not None:
             input_signals, expected_signals, steps = _mx.parse_step_table(
-                ws, step_header,
-                stop_on_block=lambda sheet, r: _is_block_header(sheet, r),
+                ws, step_header, end_row=limit - 1, max_column=max_column,
             )
             payload = {
                 "input_signals": input_signals,
                 "expected_signals": expected_signals,
                 "steps": steps,
             }
-        if test_id:
-            out[test_id] = payload
-        elif item_id:
-            out[item_id] = payload
-        next_row = _next_block_row(ws, row + 1)
-        row = next_row if next_row is not None else ws.max_row + 1
+        out[test_id] = payload
 
 
 def parse_workbook(source: Union[str, BinaryIO], *,
@@ -294,6 +281,28 @@ def _write_summary(ws, items: list[dict[str, Any]]) -> None:
     ws.freeze_panes = "A2"
 
 
+def _step_cells(steps: dict, header: int):
+    inputs = steps.get("input_signals") or []
+    expecteds = steps.get("expected_signals") or []
+    signal_headers = ["入力値"] * len(inputs) + ["期待値"] * len(expecteds)
+    headers = ["手順番号", "手順目的", "操作手順", "サブルーチン", "引数",
+               *signal_headers, "確認タイミング"]
+    for column, label in enumerate(headers, start=_COL_STEP_NO):
+        yield (header, column), label
+    for column, pair in enumerate([*inputs, *expecteds], start=_COL_SIGNAL_START):
+        for index in range(2):
+            yield (header + index + 1, column), pair[index] if index < len(pair) else None
+    for row, step in enumerate(steps.get("steps") or [], start=header + 3):
+        values = [step.get(key) for key in ("no", "purpose", "operation", "subroutine", "args")]
+        for key, signals in (("inputs", inputs), ("expecteds", expecteds)):
+            entries = step.get(key) or []
+            values.extend(entries[index] if index < len(entries) else None
+                          for index in range(len(signals)))
+        values.append(step.get("timing"))
+        for column, value in enumerate(values, start=_COL_STEP_NO):
+            yield (row, column), value
+
+
 def _write_detail_sheet(ws, items: list[dict[str, Any]]) -> None:
     ws.column_dimensions["A"].width = 26
     ws.column_dimensions["B"].width = 42
@@ -305,58 +314,27 @@ def _write_detail_sheet(ws, items: list[dict[str, Any]]) -> None:
         ws.column_dimensions[get_column_letter(col)].width = 20
     row = 1
     for item in items:
-        steps = _steps_doc(item.get("steps"))
-        if not (steps.get("steps") or steps.get("input_signals")
-                or steps.get("expected_signals")):
-            continue
-        ws.cell(row, 1).value = item.get("sheet_name") or item.get("test_id")
-        header_row = row + 2
-        ws.cell(header_row, _COL_TEST_ID).value = item.get("test_id")
-        ws.cell(header_row, _COL_ITEM_ID).value = item.get("item_id")
-        for offset, (label, key) in enumerate(DETAIL_LABELS, start=1):
-            ws.cell(header_row + offset, _COL_LABEL).value = label
-            ws.cell(header_row + offset, 3).value = ": " + _text(
-                _display(item.get(key)))
-        step_header = header_row + len(DETAIL_LABELS) + 2
-        headers = ["手順番号", "手順目的", "操作手順", "サブルーチン", "引数"]
-        for index, value in enumerate(headers, start=_COL_STEP_NO):
-            ws.cell(step_header, index).value = value
-        inputs = steps.get("input_signals") or []
-        expecteds = steps.get("expected_signals") or []
-        for index in range(len(inputs)):
-            ws.cell(step_header, _COL_SIGNAL_START + index).value = "入力値"
-        for index in range(len(expecteds)):
-            ws.cell(step_header, _COL_SIGNAL_START + len(inputs) + index).value = "期待値"
-        ws.cell(step_header, _COL_SIGNAL_START + len(inputs) + len(expecteds)).value = "確認タイミング"
-        for sig_row, values in ((step_header + 1, [pair[0] if pair else "" for pair in inputs]),
-                                (step_header + 2, [pair[1] if len(pair) > 1 else "" for pair in inputs])):
-            for index, value in enumerate(values):
-                ws.cell(sig_row, _COL_SIGNAL_START + index).value = value
-        for sig_row, values in ((step_header + 1, [pair[0] if pair else "" for pair in expecteds]),
-                                (step_header + 2, [pair[1] if len(pair) > 1 else "" for pair in expecteds])):
-            for index, value in enumerate(values):
-                ws.cell(sig_row, _COL_SIGNAL_START + len(inputs) + index).value = value
-        step_row = step_header + 3
-        for step in steps.get("steps") or []:
-            ws.cell(step_row, _COL_STEP_NO).value = step.get("no")
-            ws.cell(step_row, _COL_STEP_PURPOSE).value = step.get("purpose")
-            ws.cell(step_row, _COL_STEP_OP).value = step.get("operation")
-            ws.cell(step_row, _COL_STEP_SUB).value = step.get("subroutine")
-            ws.cell(step_row, _COL_STEP_ARG).value = step.get("args")
-            for index, value in enumerate(step.get("inputs") or []):
-                ws.cell(step_row, _COL_SIGNAL_START + index).value = value
-            for index, value in enumerate(step.get("expecteds") or []):
-                ws.cell(step_row, _COL_SIGNAL_START + len(inputs) + index).value = value
-            ws.cell(step_row, _COL_SIGNAL_START + len(inputs) + len(expecteds)).value = step.get("timing")
-            step_row += 1
-        header_cell = ws.cell(step_header, _COL_STEP_NO)
-        header_cell.font = Font(bold=True)
-        for cell in ws[step_header]:
+        row = _write_detail_block(ws, item, row)
+
+
+def _write_detail_block(ws, item: dict, row: int) -> int:
+    steps = _steps_doc(item.get("steps"))
+    if not any(steps.get(key) for key in ("steps", "input_signals", "expected_signals")):
+        return row
+    ws.cell(row, 1).value = item.get("sheet_name") or item.get("test_id")
+    header = row + 2
+    ws.cell(header, _COL_TEST_ID).value = item.get("test_id")
+    ws.cell(header, _COL_ITEM_ID).value = item.get("item_id")
+    for offset, (label, key) in enumerate(DETAIL_LABELS, start=1):
+        ws.cell(header + offset, _COL_LABEL, label).font = Font(bold=True)
+        ws.cell(header + offset, 3).value = ": " + _text(_display(item.get(key)))
+    step_header = header + len(DETAIL_LABELS) + 2
+    for (cell_row, column), value in _step_cells(steps, step_header):
+        cell = ws.cell(cell_row, column, value)
+        if cell_row == step_header:
             cell.fill = PatternFill("solid", fgColor="E2EFDA")
-        bold_font = Font(bold=True)
-        for offset in range(1, len(DETAIL_LABELS) + 1):
-            ws.cell(header_row + offset, _COL_LABEL).font = bold_font
-        row = step_row + 2
+    ws.cell(step_header, _COL_STEP_NO).font = Font(bold=True)
+    return step_header + 5 + len(steps.get("steps") or [])
 
 
 def _category_sort_key(value: Any) -> tuple[int, Any]:
@@ -386,78 +364,357 @@ def build_workbook(items: list[dict[str, Any]], *,
     return wb
 
 
-def _drop_broken_defined_names(wb: Workbook, removed_titles: set[str]) -> None:
-    """Remove workbook names that would point at deleted dynamic sheets.
-
-    The original books carry Excel Table / print-area names such as
-    ``DB[...]``. Keeping those while replacing the summary sheet makes Excel
-    report a damaged workbook, so stale names are dropped before saving.
-    """
-    try:
-        names = list(wb.defined_names.keys())
-    except (AttributeError, TypeError):
+def _write_value(cell, value, cache, *, keep_formula=False, force=False) -> None:
+    if cell.data_type == "f" and not force:
+        if value is None:
+            cache.pop(cell.coordinate, None)
+        else:
+            cache[cell.coordinate] = value
         return
-    for name in names:
-        try:
-            definition = wb.defined_names[name]
-        except KeyError:
+    original = cell.value
+    if force or _text(_cell_or_none(original)) != _text(_cell_or_none(value)):
+        cell.value = value
+        if isinstance(value, str):
+            cell.data_type = "s"
+        cache.pop(cell.coordinate, None)
+
+
+def _translated_formula(formula, origin: str, destination: str):
+    if origin == destination:
+        return formula
+    return Translator(formula, origin=origin).translate_formula(destination)
+
+
+def _summary_formula_conflicts(key, cell, item, previous, cached, columns, source_row) -> bool:
+    """Check the template's identity formulas after changing their inputs."""
+    if cell.data_type != "f" or source_row is None:
+        return False
+    row = cell.row
+    prior = row - 1
+    if key == "test_id" and isinstance(cell.value, str) and cell.value.startswith(
+            '="QTS-"&DB[[#This Row],[項目ID') and cell.value.endswith("]]"):
+        original = _text(cached.cell(source_row, columns["item_id"]).value)
+        return original != _text(item.get("item_id")) and (
+            item.get(key) != "QTS-" + _text(item.get("item_id")))
+    if key not in ("category", "test_no"):
+        return False
+
+    def row_identity(values):
+        return (_text(values.get("sheet_name")),
+                _to_int(values.get("category")), _to_int(values.get("test_no")))
+
+    context_fields = ("sheet_name", "category", "test_no")
+    old = {field: cached.cell(source_row, columns[field]).value for field in context_fields}
+    old_prior = {field: cached.cell(source_row - 1, columns[field]).value
+                 for field in context_fields}
+    if row_identity(item) == row_identity(old) and row_identity(previous) == row_identity(old_prior):
+        return False
+    category = previous.get("category")
+    number = previous.get("test_no")
+    if key == "category" and cell.value == f"=IFERROR(IF(C{row}<>C{prior},B{prior}+1,B{prior}),1)":
+        if isinstance(category, int):
+            expected = category + (item.get("sheet_name") != previous.get("sheet_name"))
+        else:
+            expected = 1
+        return _to_int(item.get(key)) != expected
+    if key == "test_no" and cell.value == f"=IF(B{row}<>B{prior},1,IFERROR(E{prior}+1,1))":
+        same_category = _to_int(item.get("category")) == category
+        expected = number + 1 if same_category and isinstance(number, int) else 1
+        return _to_int(item.get(key)) != expected
+    return False
+
+
+def _update_summary(ws, cached, items, cache) -> tuple[dict, dict[str, str]]:
+    from .testmatrix_bridge import PRIORITY_EN_TO_JP, normalize_priority
+
+    header, columns = _detect_header(cached)
+    last_column = ws.max_column
+    data_rows = {
+        test_id: row
+        for row in range(header + 1, cached.max_row + 1)
+        if (test_id := _text(cached.cell(row, columns["test_id"]).value).strip())
+    }
+    source_rows = {
+        test_id: [(cell.coordinate, cell.value, cell.data_type, cell._style,
+                   cache.get(cell.coordinate))
+                  for cell in ws[row][:last_column]]
+        for test_id, row in data_rows.items()
+    }
+    for row in data_rows.values():
+        for cell in ws[row][:last_column]:
+            if not isinstance(cell, MergedCell):
+                cell.value = None
+                cache.pop(cell.coordinate, None)
+    exported = {}
+    previous = {}
+    for row, item in enumerate(items, start=header + 1):
+        item = dict(item)
+        source = source_rows.get(item.get("test_id"), ())
+        for column, (origin, value, data_type, style, cached_value) in enumerate(source, 1):
+            cell = ws.cell(row, column)
+            if isinstance(cell, MergedCell):
+                continue
+            if data_type == "f":
+                cell.value = _translated_formula(value, origin, cell.coordinate)
+                cache[cell.coordinate] = cached_value
+            else:
+                cell.value = value
+                cell.data_type = data_type
+            cell._style = style
+        for key, column in columns.items():
+            value = item.get(key)
+            cell = ws.cell(row, column)
+            original = cache.get(cell.coordinate) if cell.data_type == "f" else cell.value
+            if key in ("category", "test_no"):
+                value = _to_int(value)
+            if key == "priority" and value in PRIORITY_EN_TO_JP:
+                value = (original if normalize_priority(original) == value
+                         else PRIORITY_EN_TO_JP[value])
+            if key == "result":
+                value = _export_result(value, original)
+            if key == "exec_date" and isinstance(value, str):
+                try:
+                    value = _dt.datetime.fromisoformat(value)
+                except ValueError:
+                    pass
+            force = _summary_formula_conflicts(
+                key, cell, item, previous, cached, columns, data_rows.get(item.get("test_id")))
+            _write_value(cell, value, cache, force=force)
+            item[key] = value
+        exported[item.get("test_id")] = item
+        previous = item
+    for table in ws.tables.values():
+        left, top, right, original_bottom = range_boundaries(table.ref)
+        data_bottom = header + max(len(items), 1)
+        # Keep template padding rows while the row count is unchanged; resize only
+        # when items are added or removed.
+        bottom = (max(original_bottom, data_bottom)
+                  if len(items) == len(data_rows) else data_bottom)
+        if top != header or not left <= columns["test_id"] <= right:
             continue
-        text = (getattr(definition, "attr_text", None)
-                or getattr(definition, "value", None) or "")
-        if "DB[" in str(text) or any(title in str(text) for title in removed_titles):
-            try:
-                del wb.defined_names[name]
-            except KeyError:
-                pass
+        table.ref = f"{get_column_letter(left)}{top}:{get_column_letter(right)}{bottom}"
+        if table.autoFilter is not None:
+            table.autoFilter.ref = table.ref
+    categories = {
+        test_id: _text(_to_int(cached.cell(row, columns["category"]).value)).strip()
+        for test_id, row in data_rows.items()
+    }
+    return exported, categories
+
+
+def normalize_result(value: Any) -> str:
+    from .testmatrix_bridge import RESULT_JP_TO_EN
+
+    token = _text(value).strip()
+    return {"Passed": "Pass", "Failed": "Fail"}.get(
+        token, RESULT_JP_TO_EN.get(token, token))
+
+
+def _export_result(value, original):
+    outcome = normalize_result(value)
+    if outcome == normalize_result(original):
+        return original
+    return {"Pass": "Passed", "Fail": "Failed", "Not Tested": "-"}.get(outcome, value)
+
+
+def _detail_step_updates(cached, header, step_header, limit, item, max_column) -> tuple[int, dict]:
+    steps = _steps_doc(item.get("steps"))
+    if step_header is None and not any(steps.values()):
+        return header + len(DETAIL_LABELS), {}
+    old_cells = {}
+    old_end = header + len(DETAIL_LABELS)
+    if step_header is not None:
+        inputs, expecteds, old_steps = _mx.parse_step_table(
+            cached, step_header, end_row=limit - 1, max_column=max_column)
+        old_end = step_header + 2 + len(old_steps)
+        old_cells = dict(_step_cells({
+            "input_signals": inputs, "expected_signals": expecteds, "steps": old_steps,
+        }, step_header))
+        if (inputs, expecteds, old_steps) == tuple(
+                steps.get(key) or [] for key in ("input_signals", "expected_signals", "steps")):
+            return old_end, {}
+    else:
+        step_header = old_end + 2
+    new_cells = dict(_step_cells(steps, step_header)) if any(steps.values()) else {}
+    updates = {coord: None for coord in old_cells.keys() - new_cells.keys()}
+    updates.update(new_cells)
+    return old_end, updates
+
+
+def _update_details(wb, cached_wb, summary, items, original_categories, caches) -> None:
+    by_sheet = {source.title: _detail_blocks(source)
+                for source in cached_wb.worksheets if source.title.isdigit()}
+    imported_blocks = {test_id: (title, row) for title, blocks in by_sheet.items()
+                       for test_id, row, _ in blocks}
+    next_sheet = wb.index(summary) + 1 + sum(
+        name.isdigit() for name in wb.sheetnames[wb.index(summary) + 1:])
+    for title, blocks in by_sheet.items():
+        source = cached_wb[title]
+        ws = wb[title]
+        source_cache = caches[ws.title]
+        last_column = ws.max_column
+        end = source.max_row + 1
+        for test_id, header, limit in blocks:
+            item = items.get(test_id)
+            # Only the last block for a duplicated test id is authoritative. Earlier
+            # blocks are archived source and must keep their formulas untouched.
+            if item is not None and imported_blocks[test_id] != (title, header):
+                continue
+            category = _text(_to_int(item.get("category"))).strip() if item else ""
+            if item is None and test_id not in original_categories:
+                continue
+            original_sheet = imported_blocks[test_id][0]
+            if item is not None and category == original_categories.get(test_id):
+                category = original_sheet
+            step_header = _step_header(source, header, limit)
+            old_end, updates = _detail_step_updates(
+                source, header, step_header, limit, item or {}, last_column)
+            metadata_cells = {}
+            if category.isdigit():
+                for row in range(header + 1, step_header or min(limit, header + 14)):
+                    label = source.cell(row, _COL_LABEL).value
+                    for expected_label, key in DETAIL_LABELS:
+                        if label == expected_label:
+                            value = item.get(key)
+                            if key == "exec_date" and isinstance(value, (_dt.datetime, _dt.date)):
+                                value = value.strftime("%Y/%m/%d")
+                            metadata_cells[row, 3] = ": " + _text(value)
+                            break
+                metadata_cells[header, _COL_ITEM_ID] = item.get("item_id")
+            target = ws
+            offset = 0
+            new_end = max((row for row, _ in updates), default=old_end)
+            relocated = category.isdigit() and (
+                category != ws.title or (new_end > old_end and limit != end and new_end >= limit - 2)
+            )
+            if relocated:
+                if category not in wb.sheetnames:
+                    wb.create_sheet(category, index=next_sheet)
+                    next_sheet += 1
+                target = wb[category]
+                offset = target.max_row + 3 - header
+                target_cache = caches.setdefault(category, {})
+                for row in ws.iter_rows(min_row=header, max_row=old_end, max_col=last_column):
+                    for cell in row:
+                        if isinstance(cell, MergedCell):
+                            continue
+                        dest = target.cell(cell.row + offset, cell.column)
+                        dest._style = copy(cell._style)
+                        if cell.data_type == "f":
+                            dest.value = _translated_formula(cell.value, cell.coordinate,
+                                                             dest.coordinate)
+                            target_cache[dest.coordinate] = source_cache.get(cell.coordinate)
+                        else:
+                            dest.value = cell.value
+                            dest.data_type = cell.data_type
+                target.cell(header + offset - 2, 1).value = item.get("sheet_name") or test_id
+            if relocated or not category.isdigit():
+                for row in ws.iter_rows(min_row=header, max_row=old_end, max_col=last_column):
+                    for cell in row:
+                        if not isinstance(cell, MergedCell):
+                            cell.value = None
+                            source_cache.pop(cell.coordinate, None)
+            if category.isdigit():
+                target_cache = caches[target.title]
+                for (row, column), value in (updates | metadata_cells).items():
+                    cell = target.cell(row + offset, column)
+                    is_summary_lookup = (cell.data_type == "f" and isinstance(cell.value, str)
+                                         and "DB[" in cell.value
+                                         and (row, column) in metadata_cells)
+                    _write_value(cell, value, target_cache, keep_formula=is_summary_lookup)
+    for test_id, item in items.items():
+        if test_id in imported_blocks:
+            continue
+        category = _text(_to_int(item.get("category"))).strip()
+        if category.isdigit():
+            if category not in wb.sheetnames:
+                wb.create_sheet(category, index=next_sheet)
+                next_sheet += 1
+            ws = wb[category]
+            _write_detail_block(ws, item, ws.max_row + 2)
+
+
+def _restore_table_print_areas(wb: Workbook, source) -> None:
+    """Keep structured print-area formulas that the worksheet reader drops."""
+    with ZipFile(_as_seekable(source)) as original:
+        document = ElementTree.fromstring(original.read("xl/workbook.xml"))
+    for name in document.findall("./{*}definedNames/{*}definedName"):
+        value = name.text or ""
+        index = name.get("localSheetId")
+        if name.get("name") == "_xlnm.Print_Area" and index is not None and "DB[" in value:
+            sheet = wb[wb.sheetnames[int(index)]]
+            if not sheet.print_area:
+                sheet.defined_names.add(DefinedName(name.get("name"), attr_text=value))
 
 
 def rebuild_workbook(source: Union[str, BinaryIO],
                      items: list[dict[str, Any]], *,
-                     summary_sheet: str = SUMMARY_SHEET) -> Workbook:
-    """Write current rows into a preserved original workbook.
-
-    Only the summary and its following numeric detail sheets are dynamic. The
-    cover, introduction, strategy, overview and history sheets keep their
-    original content, styles and order so the exported file can be edited and
-    imported again as the same specification book.
-    """
-    wb = load_workbook(_as_seekable(source), data_only=False, read_only=False)
+                     summary_sheet: str = SUMMARY_SHEET) -> io.BytesIO:
+    """Update the original sheets and retain formula results for immediate import."""
+    source = _as_seekable(source)
+    wb = load_workbook(source, data_only=False)
+    cached_wb = load_workbook(_as_seekable(source), data_only=True)
     summary = (wb[summary_sheet] if summary_sheet in wb.sheetnames
                else next((wb[name] for name in wb.sheetnames
                           if name.endswith("TestRequirement")), None))
     if summary is None:
         raise BookExcelError(f"原书中未找到设定 sheet「{summary_sheet}」")
 
-    active_title = wb.active.title if wb.active is not None else None
-    summary_index = wb.sheetnames.index(summary.title)
-    removed_titles = {summary.title}
-    wb.remove(summary)
-    cursor = summary_index
-    while cursor < len(wb.sheetnames) and wb.sheetnames[cursor].isdigit():
-        removed_titles.add(wb.sheetnames[cursor])
-        wb.remove(wb[wb.sheetnames[cursor]])
-
-    grouped: dict[Any, list[dict[str, Any]]] = {}
-    for item in items:
-        category = item.get("category")
-        if category in (None, ""):
-            continue
-        grouped.setdefault(category, []).append(item)
-
-    new_summary = wb.create_sheet(summary.title, index=summary_index)
-    _write_summary(new_summary, items)
-    for offset, category in enumerate(sorted(grouped, key=_category_sort_key), start=1):
-        detail = wb.create_sheet(str(category), index=summary_index + offset)
-        _write_detail_sheet(detail, grouped[category])
-
-    _drop_broken_defined_names(wb, removed_titles)
-    if active_title in wb.sheetnames:
-        wb.active = wb.sheetnames.index(active_title)
-    return wb
+    _restore_table_print_areas(wb, source)
+    active_sheet = wb.active
+    caches = {}
+    for ws in wb.worksheets:
+        cached = cached_wb[ws.title]
+        caches[ws.title] = {
+            cell.coordinate: cached[cell.coordinate].value
+            for row in ws.iter_rows() for cell in row if cell.data_type == "f"
+        }
+    exported, original_categories = _update_summary(
+        summary, cached_wb[summary.title], items, caches[summary.title])
+    _update_details(wb, cached_wb, summary, exported, original_categories, caches)
+    if active_sheet is not None:
+        wb.active = wb.index(active_sheet)
+    wb.calculation.fullCalcOnLoad = True
+    return workbook_bytes(wb, caches=caches)
 
 
-def workbook_bytes(wb: Workbook) -> io.BytesIO:
+def workbook_bytes(wb: Workbook, *, caches: Optional[dict] = None) -> io.BytesIO:
     handle = io.BytesIO()
     wb.save(handle)
     handle.seek(0)
-    return handle
+    if not caches:
+        return handle
+    indexed = {
+        f"xl/worksheets/sheet{index}.xml": caches[ws.title]
+        for index, ws in enumerate(wb.worksheets, 1) if caches.get(ws.title)
+    }
+    output = io.BytesIO()
+    with ZipFile(handle) as original, ZipFile(output, "w", ZIP_DEFLATED) as result:
+        for name in original.namelist():
+            data = original.read(name)
+            if name in indexed:
+                data = _with_formula_cache(data, indexed[name], wb.epoch)
+            result.writestr(name, data)
+    output.seek(0)
+    return output
+
+
+def _with_formula_cache(data: bytes, cache: dict, epoch) -> bytes:
+    root = ElementTree.fromstring(data)
+    namespace = root.tag.rsplit("}", 1)[0] + "}"
+    for cell in root.iter(namespace + "c"):
+        value = cache.get(cell.get("r"))
+        if value is None or cell.find(namespace + "f") is None:
+            continue
+        node = cell.find(namespace + "v")
+        if node is None:
+            node = ElementTree.SubElement(cell, namespace + "v")
+        if isinstance(value, bool):
+            cell.set("t", "b")
+            value = int(value)
+        elif isinstance(value, str):
+            cell.set("t", "e" if value in ERROR_CODES else "str")
+        elif isinstance(value, (_dt.datetime, _dt.date, _dt.time, _dt.timedelta)):
+            value = to_excel(value, epoch)
+        node.text = str(value)
+    return ElementTree.tostring(root, encoding="utf-8")

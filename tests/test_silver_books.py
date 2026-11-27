@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import csv
 import io
 import zipfile
 
 import pytest
 from openpyxl import load_workbook
+from openpyxl.workbook.defined_name import DefinedName
+from openpyxl.worksheet.table import Table
 
 
 def _steps(purpose: str) -> dict:
@@ -310,6 +313,102 @@ def test_dashboard_compare_and_history_are_book_scoped(app_ctx, tmp_path):
         assert scoped["total"] == 2
         assert {item["outcome"] for item in scoped["items"]} == {"pass"}
 
+        books["OPEINHIB_STD"].name = "=OPEINHIB_STD"
+        db.session.commit()
+        client = app_ctx.test_client()
+        with client.session_transaction() as session:
+            session["lm_user_id"] = user.id
+        response = client.get(f"/api/v1/projects/{project.id}/test-run-history.csv")
+        assert response.status_code == 200
+        history_rows = list(csv.DictReader(io.StringIO(response.data.decode("utf-8-sig"))))
+        assert len(history_rows) == 4
+        assert {(row["test_id"], row["book_name"]) for row in history_rows} == {
+            ("QTS-001", "OPEINHIB"),
+            ("QTS-001", "'=OPEINHIB_STD"),
+        }
+
+
+def test_workbook_writeback_preserves_formulas_and_reimports_without_excel():
+    from app.services.lanmatrix import book_excel
+
+    first = _item("QTS-001", "old")
+    first["item_id"] = "001"
+    second = _item("QTS-002", "another test")
+    second["test_no"] = 2
+    workbook = book_excel.build_workbook([first, second])
+    overview = workbook.create_sheet("3.Overview", 0)
+    overview["A1"] = '=COUNTIF(DB[結果],"Passed")'
+    summary = workbook[book_excel.SUMMARY_SHEET]
+    summary.add_table(Table(displayName="DB", ref="A1:W3"))
+    summary.defined_names.add(DefinedName(
+        "_xlnm.Print_Area", attr_text="DB[[#All],[テストID]:[説明]]"))
+    formula = '="QTS-"&DB[[#This Row],[項目ID ※「-」を「_」に変換。ID;;を削除]]'
+    summary["A2"] = formula
+    summary["E3"] = "=IF(B3<>B2,1,IFERROR(E2+1,1))"
+    lookup = '=": "&VLOOKUP(B3,DB[],COLUMN(DB[結果]),0)'
+    detail = workbook["1"]
+    detail["D3"] = None
+    detail["C15"] = lookup
+    detail["B21"] = '=IF(ISNUMBER(INDIRECT("r[-1]c",FALSE)),INDIRECT("r[-1]c",FALSE)+1,1)'
+    source = book_excel.workbook_bytes(workbook, caches={
+        overview.title: {"A1": 0},
+        summary.title: {"A2": "QTS-001", "E3": 2},
+        detail.title: {"C15": ": -", "B21": 1},
+    })
+    edited = book_excel.parse_workbook(source)["items"]
+    edited[0]["result"] = "PASS"
+    edited[0]["steps"]["steps"][0]["purpose"] = "edited step"
+    edited[0]["steps"]["steps"].extend(
+        {"no": number, "operation": "CALL"} for number in range(2, 8))
+    edited.append(_item("QTS-003", "new", category=2))
+    output = book_excel.rebuild_workbook(source, edited)
+    result = load_workbook(output)
+    assert result[summary.title]["A2"].value == formula
+    assert result[summary.title]["E3"].value == summary["E3"].value
+    assert result[summary.title].tables["DB"].ref == "A1:W4"
+    with zipfile.ZipFile(output) as archive:
+        assert "DB[[#All],[テストID]:[説明]]" in archive.read("xl/workbook.xml").decode("utf-8")
+    assert result[overview.title]["A1"].value == overview["A1"].value
+    detail_formulas = {cell.value for row in result[detail.title].iter_rows()
+                       for cell in row if cell.data_type == "f"}
+    header = next(cell.row for row in result[detail.title].iter_rows()
+                  for cell in row if cell.column == 2 and cell.value == "QTS-001")
+    assert lookup.replace("B3", f"B{header}") in detail_formulas
+    assert detail["B21"].value in detail_formulas
+    reparsed = book_excel.parse_workbook(output)["items"]
+    assert [item["test_id"] for item in reparsed] == ["QTS-001", "QTS-002", "QTS-003"]
+    assert reparsed[0]["result"] == "Passed"
+    assert len(reparsed[0]["steps"]["steps"]) == 7
+    assert reparsed[0]["steps"]["steps"][0]["purpose"] == "edited step"
+    cached = load_workbook(output, data_only=True)
+    assert cached["1"].cell(header + 12, 3).value == ": Passed"
+
+    without_first = book_excel.rebuild_workbook(source, [edited[1]])
+    shrunk = load_workbook(without_first)
+    assert shrunk[summary.title]["E2"].value == 2
+    assert shrunk[summary.title].tables["DB"].ref == "A1:W2"
+    reparsed = book_excel.parse_workbook(without_first)["items"]
+    assert [item["test_id"] for item in reparsed] == ["QTS-002"]
+
+
+def test_duplicate_source_detail_blocks_keep_their_formulas():
+    from app.services.lanmatrix import book_excel
+
+    workbook = book_excel.build_workbook([
+        _item("QTS-001", "original block"), _item("QTS-001", "active block"),
+    ])
+    workbook[book_excel.SUMMARY_SHEET].delete_rows(3)
+    detail = workbook["1"]
+    detail["B21"] = detail["B44"] = "=1"
+    source = book_excel.workbook_bytes(workbook, caches={"1": {"B21": 1, "B44": 1}})
+    items = book_excel.parse_workbook(source)["items"]
+    assert items[0]["steps"]["steps"][0]["purpose"] == "active block"
+    items[0]["steps"]["steps"][0]["purpose"] = "edited active block"
+    output = book_excel.rebuild_workbook(source, items)
+    result = load_workbook(output)["1"]
+    assert result["B21"].value == result["B44"].value == "=1"
+    assert result["C21"].value == "original block"
+    assert result["C44"].value == "edited active block"
 
 def test_io_extract_requires_a_book_for_multi_book_projects(app_ctx, tmp_path):
     with app_ctx.app_context():

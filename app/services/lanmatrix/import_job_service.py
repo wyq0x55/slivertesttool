@@ -637,7 +637,7 @@ def _build_preview_rows(project, import_format, items, specs, identity_field,
             priority = testmatrix_bridge.normalize_priority(item.get("priority"))
             if priority:
                 values["priority"] = priority
-            values["result"] = testmatrix_bridge.normalize_result(item.get("result"))
+            values["result"] = book_excel.normalize_result(item.get("result"))
             steps = item.get("steps") or {}
             if (isinstance(steps, dict) and
                     (steps.get("steps") or steps.get("input_signals")

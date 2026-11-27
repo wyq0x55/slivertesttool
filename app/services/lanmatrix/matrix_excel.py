@@ -459,7 +459,8 @@ def _parse_block(ws, header_row: int) -> dict[str, Any]:
     }
 
 
-def parse_step_table(ws, step_header_row: int, *, stop_on_block=None):
+def parse_step_table(ws, step_header_row: int, *, stop_on_block=None,
+                     end_row=None, max_column=None):
     """Parse one procedure table into (input_signals, expected_signals, steps).
 
     The procedure-table geometry (``手順番号 .. 確認タイミング`` header on
@@ -470,7 +471,7 @@ def parse_step_table(ws, step_header_row: int, *, stop_on_block=None):
     function block header (Test-Matrix blocks are delimited by the ``ID;;``
     marker, which is always checked).
     """
-    n_in, n_exp, timing_col = _measure_step_columns(ws, step_header_row)
+    n_in, n_exp, timing_col = _measure_step_columns(ws, step_header_row, max_column)
     sig1 = step_header_row + 1
     sig2 = step_header_row + 2
     input_signals: list[list[str]] = []
@@ -485,7 +486,7 @@ def parse_step_table(ws, step_header_row: int, *, stop_on_block=None):
     r = step_header_row + 3
     # ``max_row``/``max_column`` rescan every cell of a non-read-only sheet on
     # each access; reading them per loop iteration made parsing quadratic.
-    max_row = ws.max_row
+    max_row = ws.max_row if end_row is None else end_row
     while r <= max_row:
         no = ws.cell(r, COL_STEP_NO).value
         if no is None or (isinstance(no, str) and no.startswith("ID;;")):
@@ -521,12 +522,14 @@ def _find_step_header(ws, header_row: int, look: int = 40) -> Optional[int]:
     return None
 
 
-def _measure_step_columns(ws, step_header_row: int) -> tuple[int, int, int]:
+def _measure_step_columns(ws, step_header_row: int,
+                          max_column=None) -> tuple[int, int, int]:
     """Return (n_input_signals, n_expected_signals, timing_column_index)."""
     n_in = n_exp = 0
     timing_col = COL_SIGNAL_START
     c = COL_SIGNAL_START
-    max_column = ws.max_column
+    if max_column is None:
+        max_column = ws.max_column
     while c <= max_column:
         v = ws.cell(step_header_row, c).value
         if v == "入力値":

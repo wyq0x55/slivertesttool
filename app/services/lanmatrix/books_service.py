@@ -322,9 +322,9 @@ def export_book(project: Project, book: TestBook) -> io.BytesIO:
         item["steps"] = _steps(item.get("steps"))
         items.append(item)
     source = book_source_path(project, book)
-    wb = (book_excel.rebuild_workbook(source, items)
-          if source.is_file() else book_excel.build_workbook(items))
-    return book_excel.workbook_bytes(wb)
+    if source.is_file():
+        return book_excel.rebuild_workbook(source, items)
+    return book_excel.workbook_bytes(book_excel.build_workbook(items))
 
 
 def _safe_filename(name: str, fallback: str) -> str:

@@ -643,14 +643,20 @@ TEST_RUN_HISTORY_CSV_HEADER = (
 
 def test_run_history_csv_rows(project: Project):
     """Yield every run record for a project in stable newest-first order."""
-    yield [csv_cell(value) for value in TEST_RUN_HISTORY_CSV_HEADER]
+    by_book = project.project_type == "silver_books"
+    header = TEST_RUN_HISTORY_CSV_HEADER + (("book_name",) if by_book else ())
+    yield [csv_cell(value) for value in header]
+    book_names = {}
+    if by_book:
+        book_names = dict(db.session.query(TestBook.id, TestBook.name)
+                          .filter_by(project_id=project.id).all())
     query = (
         TestRunRecord.query.filter(TestRunRecord.project_id == project.id)
         .order_by(TestRunRecord.executed_at.desc(), TestRunRecord.id.desc())
         .yield_per(500)
     )
     for record in query:
-        yield [
+        row = [
             csv_cell(project.code),
             csv_cell(project.name),
             csv_cell(record.test_id),
@@ -663,6 +669,9 @@ def test_run_history_csv_rows(project: Project):
             csv_cell(record.executed_at.isoformat() if record.executed_at else None),
             csv_cell(record.executed_on),
         ]
+        if by_book:
+            row.append(csv_cell(book_names.get(record.book_id)))
+        yield row
 
 
 def snapshot(project: Project) -> dict:
