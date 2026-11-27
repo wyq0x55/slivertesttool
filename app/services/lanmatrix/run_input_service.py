@@ -77,9 +77,30 @@ def _wanted_test_id_set(test_ids: Iterable[str] | None) -> set[str] | None:
     return {str(tid).strip() for tid in test_ids if str(tid).strip()}
 
 
-def _current(project_id: int, *, wanted_test_ids: set[str] | None = None) -> dict[str, list[dict[str, str]]]:
+def _wanted_uuid_set(row_uuids: Iterable[str] | None) -> set[str] | None:
+    if row_uuids is None:
+        return None
+    return {str(uuid).strip() for uuid in row_uuids if str(uuid).strip()}
+
+
+def _current(project_id: int, *, wanted_test_ids: set[str] | None = None,
+             wanted_book_ids: set[int] | None = None,
+             wanted_row_uuids: set[str] | None = None,
+             ) -> dict[str, list[dict[str, str]]]:
     test_rows = _rows(project_id, "test")
-    if wanted_test_ids is not None:
+    if wanted_row_uuids is not None:
+        # Exact row scope. A multi-book selection may pair one test id from one
+        # book with a different test id from another; filtering by the cross
+        # product of ids and books would pull in unselected rows and report a
+        # false stale-input conflict.
+        test_rows = [row for row in test_rows
+                     if (row.uuid or "") in wanted_row_uuids]
+    elif wanted_book_ids is not None:
+        # Multi-book projects repeat test ids across books; without this scope a
+        # snapshot for one book would be compared against another book's rows and
+        # be rejected as stale.
+        test_rows = [row for row in test_rows if row.book_id in wanted_book_ids]
+    if wanted_row_uuids is None and wanted_test_ids is not None:
         test_rows = [row for row in test_rows if export.row_test_id(row) in wanted_test_ids]
     return {
         "tests": [{
@@ -136,6 +157,8 @@ def assert_materialized(
     expected: dict[str, Any],
     *,
     test_ids: Iterable[str] | None = None,
+    book_ids: Iterable[int] | None = None,
+    row_uuids: Iterable[str] | None = None,
 ) -> None:
     """Lock the project and reject inputs that differ from the database."""
     if not isinstance(expected, dict):
@@ -143,9 +166,17 @@ def assert_materialized(
     lock_project(project_id)
     db.session.expire_all()
     wanted_test_ids = _wanted_test_id_set(test_ids)
-    current = _current(project_id, wanted_test_ids=wanted_test_ids)
+    wanted_book_ids = ({int(bid) for bid in book_ids}
+                       if book_ids is not None else None)
+    wanted_row_uuids = _wanted_uuid_set(row_uuids)
+    current = _current(project_id, wanted_test_ids=wanted_test_ids,
+                       wanted_book_ids=wanted_book_ids,
+                       wanted_row_uuids=wanted_row_uuids)
     wanted_tests = _expected_rows(expected, "tests", ("uuid", "test_id", "steps"))
-    if wanted_test_ids is not None:
+    if wanted_row_uuids is not None:
+        wanted_tests = [row for row in wanted_tests
+                        if row["uuid"] in wanted_row_uuids]
+    elif wanted_test_ids is not None:
         wanted_tests = [row for row in wanted_tests if row["test_id"] in wanted_test_ids]
     wanted = {
         "tests": wanted_tests,

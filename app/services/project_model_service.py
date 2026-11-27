@@ -42,7 +42,7 @@ from werkzeug.datastructures import FileStorage
 
 from ..config import BASE_DIR
 from ..extensions import db
-from ..models import Project, ProjectModel
+from ..models import Project, ProjectModel, TestBook
 
 
 class ModelError(Exception):
@@ -541,6 +541,14 @@ def resolve_ref(project_id: int, ref: str) -> tuple[int, str, str, Path]:
     return row.id, row.name, (row.version or ""), Path(row.sil_path)
 
 
+def resolve_id(project_id: int, model_id: int) -> tuple[int, str, str, Path]:
+    """Resolve a pinned model id to ``(id, name, version, sil_path)``."""
+    row = _select_model(project_id, "", model_id=model_id)
+    if row is None or not row.sil_path:
+        raise ModelError("该式样书绑定的模型不存在，请重新绑定。")
+    return row.id, row.name, (row.version or ""), Path(row.sil_path)
+
+
 def normalise_version(version: Optional[str]) -> str:
     """Validate a model version label and return the cleaned token.
 
@@ -983,6 +991,9 @@ def remove_model(project_id: int, name: str,
     row = _select_model(project_id, name, model_id=model_id)
     if row is None:
         return False
+    bound = TestBook.query.filter_by(project_id=project_id, model_id=row.id).first()
+    if bound is not None:
+        raise ModelError(f"模型「{row.name}」已绑定式样书「{bound.name}」，请先换绑后再删除。")
     was_current = bool(row.is_current)
     if row.kind == "bundle" and row.bundle_dir:
         shutil.rmtree(row.bundle_dir, ignore_errors=True)

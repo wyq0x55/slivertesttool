@@ -143,7 +143,7 @@
         j.current_attempt_id, j.updated_at, j.review_note]);
     }
     return [t.status, t.progress || 0, t.has_result ? 1 : 0,
-            t.result || "", fmtFinished(t),
+            t.result || "", fmtFinished(t), t.book_name || "",
             // A decision that lands while the list is open must repaint the
             // row, otherwise the poll keeps showing 待审核 on a rejected run.
             r.status || "", r.note || "", r.reviewer_name || ""].join("|");
@@ -190,7 +190,7 @@
       ? `<a class="btn small btn-icon lm-task-view" href="${esc(o.viewHref)}" ${data} title="查看">${ICO.view}</a>`
       : `<button class="btn small btn-icon lm-task-view" type="button" ${data} title="查看">${ICO.view}</button>`;
     const steps = !unit && t.test_id
-      ? `<button class="btn small btn-icon lm-task-steps" type="button" ${data} data-tid="${esc(t.test_id)}" title="手顺">${ICO.steps}</button>`
+      ? `<button class="btn small btn-icon lm-task-steps" type="button" ${data} data-tid="${esc(t.test_id)}" data-row-uuid="${esc(t.row_uuid || "")}" data-book-id="${t.book_id != null ? esc(t.book_id) : ""}" title="手顺">${ICO.steps}</button>`
       : "";
     const dl = (!unit && canDownload(t) && pid != null)
       ? `<a class="btn small btn-icon" href="${LMApi.projectTaskDownloadUrl(pid, t.task_id)}" title="下载结果">${ICO.download}</a>`
@@ -213,11 +213,14 @@
        every action posts (data-k), still in the row's tooltip, and still shown
        in full in the detail panel -- it stopped being a column, not data. */
     const tid = esc(t.test_id || "");
-    const tidTip = `${t.test_id || ""}${t.test_id ? "  ·  " : ""}任务 ${t.task_id || ""}`;
+    const bookTag = t.book_name
+      ? `<span class="tag" style="margin-right:6px" title="式样书：${esc(t.book_name)}">${esc(t.book_name)}</span>`
+      : "";
+    const tidTip = `${t.book_name ? "[" + t.book_name + "] " : ""}${t.test_id || ""}${t.test_id ? "  ·  " : ""}任务 ${t.task_id || ""}`;
     const tidCell = tid
       ? (o.viewHref
-        ? `<a href="${esc(o.viewHref)}" title="${esc(tidTip)}">${tid}</a>`
-        : `<a href="#" class="lm-task-open" ${data} title="${esc(tidTip)}">${tid}</a>`)
+        ? `${bookTag}<a href="${esc(o.viewHref)}" title="${esc(tidTip)}">${tid}</a>`
+        : `${bookTag}<a href="#" class="lm-task-open" ${data} title="${esc(tidTip)}">${tid}</a>`)
       // A task with no test id (legacy bundle upload) still needs an opener, so
       // it falls back to showing the key rather than rendering a dead cell.
       : (o.viewHref

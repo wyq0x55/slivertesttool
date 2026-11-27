@@ -50,6 +50,11 @@ class Task(db.Model):
 
     # Silver-specific execution parameters.
     test_id = db.Column(db.String(128), nullable=False, default="")
+    # Multi-book projects: the specification book that owns the matrix row and
+    # the row's stable UUID. Without these, two books that both contain test id
+    # "...-001" would share one task/result record.
+    book_id = db.Column(db.Integer, index=True, nullable=True)
+    row_uuid = db.Column(db.String(64), index=True, nullable=True)
     # Path to the ``.sil`` model to run against. For the current server-side
     # model registry this is the admin-registered *absolute* server path; the
     # legacy in-bundle flow still stores a path relative to the run directory.
@@ -109,6 +114,8 @@ class Task(db.Model):
             "submitter_id": self.submitter_id,
             "project_id": self.project_id,
             "test_id": self.test_id,
+            "book_id": self.book_id,
+            "row_uuid": self.row_uuid,
             "sil_name": self.sil_name,
             "sil_version": self.sil_version or "",
             "status": self.status,

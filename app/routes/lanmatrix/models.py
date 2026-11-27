@@ -148,9 +148,12 @@ def deprecate_project_model(project_id):
 def remove_project_model(project_id):
     _project_and_role(project_id, "model.manage")
     body = request.get_json(silent=True) or {}
-    removed = project_model_service.remove_model(
-        project_id, (body.get("name") or "").strip(),
-        model_id=body.get("model_id"))
+    try:
+        removed = project_model_service.remove_model(
+            project_id, (body.get("name") or "").strip(),
+            model_id=body.get("model_id"))
+    except project_model_service.ModelError as exc:
+        return err("MODEL_IN_USE", str(exc), status=409)
     return ok({"removed": removed,
                "models": project_model_service.list_models(
                    project_id, include_path=True)})

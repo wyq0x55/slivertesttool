@@ -57,6 +57,7 @@ def list_items(project_id):
         combinator=request.args.get("combinator", "and"),
         quick=request.args.get("q"),
         sheet=request.args.get("sheet"),
+        book_id=request.args.get("book_id"),
     )
     return ok(result)
 
@@ -109,6 +110,7 @@ def create_item(project_id):
         anchor_id=parsed_anchor_id,
         place="above" if place in ("above", "before") else "below",
         sheet=sheet,
+        book_id=body.get("book_id") or values.get("book_id"),
     )
     serialized = [it.to_dict() for it in items]
     return ok({"item": serialized[0], "items": serialized,
@@ -133,7 +135,9 @@ def add_pool_entry(project_id, sheet):
     values = body.get("values", {})
     if not isinstance(values, dict):
         values = {}
-    item = service.add_pool_entry(g.user, project, sheet, values)
+    item = service.add_pool_entry(
+        g.user, project, sheet, values,
+        book_id=body.get("book_id") or values.get("book_id"))
     return ok({"item": item.to_dict()}, status=201)
 
 @bp.post("/projects/<int:project_id>/pool/<sheet>/fields")

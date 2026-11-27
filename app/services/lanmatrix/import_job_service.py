@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import datetime as _dt
+import json
 import logging
-from typing import Any
+from pathlib import Path
+from typing import Any, Optional
 
 from sqlalchemy import text
 
 from ...extensions import db
-from ...models import DataJob, FieldDefinition, Project, ProjectMember, TestItemRow
+from ...models import (
+    DataJob, FieldDefinition, Project, ProjectMember, TestBook, TestItemRow,
+)
 from . import audit, fields as fld, fields_service, permissions, service, settings, validation
 from .validation import FieldSpec
 
@@ -17,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 _SPECIAL_FORMATS = {
     "test_matrix": ("test", fld.TEST_FIELDS, "test_id"),
+    "book": ("test", fld.BOOK_TEST_FIELDS, "test_id"),
     "libfunc": ("lib", fld.LIB_FIELDS, "lib_func"),
     "const": ("const", fld.CONST_FIELDS, "const_name"),
     "io": ("io", fld.IO_FIELDS, "io_name"),
@@ -28,10 +33,14 @@ def _utcnow() -> _dt.datetime:
     return _dt.datetime.now(_dt.timezone.utc)
 
 
-def _capture_row_snapshot(project_id: int, sheet: str) -> list[dict[str, Any]]:
+def _capture_row_snapshot(project_id: int, sheet: str,
+                          book_id: Optional[int] = None) -> list[dict[str, Any]]:
     rows = TestItemRow.query.filter_by(
         project_id=project_id, sheet=sheet, deleted_at=None,
-    ).order_by(TestItemRow.id).all()
+    )
+    if book_id is not None:
+        rows = rows.filter(TestItemRow.book_id == book_id)
+    rows = rows.order_by(TestItemRow.id).all()
     return [
         {
             "id": row.id,
@@ -46,7 +55,8 @@ def _capture_row_snapshot(project_id: int, sheet: str) -> list[dict[str, Any]]:
     ]
 
 
-def capture_snapshot(project_id: int, sheet: str) -> dict[str, Any]:
+def capture_snapshot(project_id: int, sheet: str,
+                     book_id: Optional[int] = None) -> dict[str, Any]:
     fields = FieldDefinition.query.filter_by(
         project_id=project_id, sheet=sheet,
     ).order_by(FieldDefinition.id).all()
@@ -56,7 +66,7 @@ def capture_snapshot(project_id: int, sheet: str) -> dict[str, Any]:
             "tm_id_prefix": project.tm_id_prefix if project else None,
             "tm_summary_sheet": project.tm_summary_sheet if project else None,
         },
-        "rows": _capture_row_snapshot(project_id, sheet),
+        "rows": _capture_row_snapshot(project_id, sheet, book_id=book_id),
         "fields": [
             {
                 "id": field.id,
@@ -81,7 +91,8 @@ def _lock_special_import_tables() -> None:
         return
     tables = ", ".join(
         connection.dialect.identifier_preparer.format_table(table)
-        for table in (TestItemRow.__table__, FieldDefinition.__table__)
+        for table in (TestItemRow.__table__, FieldDefinition.__table__,
+                      TestBook.__table__)
     )
     db.session.execute(text(
         f"LOCK TABLE {tables} IN SHARE ROW EXCLUSIVE MODE"
@@ -96,11 +107,33 @@ def _identity_key(import_format: str, identity: Any) -> str:
 def create_special_preview(
     user, project: Project, source, *, import_format: str,
     original_filename: str = "", mode: str = "upsert",
+    book_id: Optional[int] = None, model_id: Optional[int] = None,
+    book_name: str = "",
 ) -> DataJob:
     if import_format not in _SPECIAL_FORMATS:
         raise service.ServiceError("不支持的导入格式", code="VALIDATION_ERROR")
     if mode not in _SPECIAL_MODES:
         raise service.ServiceError(f"未知导入模式: {mode}", code="VALIDATION_ERROR")
+    if import_format == "book":
+        if project.project_type != "silver_books":
+            raise service.ServiceError(
+                "Silver 多式样书格式仅适用于「Silver 多式样书」项目",
+                code="VALIDATION_ERROR",
+            )
+        if mode != "upsert":
+            raise service.ServiceError(
+                "式样书导入只支持按 ID 合并", code="VALIDATION_ERROR",
+            )
+    if import_format == "io" and project.project_type == "silver_books":
+        # In a multi-book project the I/O pool is per specification book: two
+        # books may legitimately declare the same signal name. A project-wide
+        # pool here would make the second look like a duplicate.
+        if book_id in (None, ""):
+            raise service.ServiceError(
+                "请选择要导入到的式样书", code="VALIDATION_ERROR",
+            )
+    elif import_format == "io":
+        book_id = None
     if not project.is_editable:
         raise service.ServiceError("项目当前不可编辑", code="PROJECT_LOCKED")
     if mode == "replace_all":
@@ -110,11 +143,54 @@ def create_special_preview(
         )
 
     items, metadata = _parse_workbook(import_format, source, original_filename)
+    if import_format == "book":
+        from . import books_service
+
+        # The preview snapshot includes field definitions. Provision the book
+        # vocabulary before capturing it; otherwise a new book's commit would
+        # compare against a field list that its own creation just changed.
+        books_service.ensure_book_fields(user, project)
+    target_book = None
+    target_book_id = None
+    scoped_book_id = None
+    if import_format == "book":
+        from . import books_service, fields as _fields
+
+        if book_id not in (None, ""):
+            target_book = books_service.get_book(project.id, book_id)
+            target_book_id = target_book.id
+            book_name = target_book.name
+        else:
+            requested = (book_name or metadata.get("book_name")
+                         or Path(original_filename).stem or "").strip()
+            if not requested:
+                raise service.ServiceError(
+                    "式样书名称不能为空", code="VALIDATION_ERROR",
+                )
+            if len(requested) > 120:
+                raise service.ServiceError(
+                    "式样书名称不能超过 120 个字符", code="VALIDATION_ERROR",
+                )
+            if TestBook.query.filter_by(
+                    project_id=project.id, name=requested).first() is not None:
+                raise service.ServiceError(
+                    f"式样书「{requested}」已存在，请选择更新该式样书",
+                    code="DUPLICATE",
+                )
+            books_service.validate_model(project.id, model_id)
+            book_name = requested
+    if import_format == "io" and book_id not in (None, ""):
+        from . import books_service
+
+        scoped_book_id = books_service.get_book(project.id, book_id).id
+    if import_format == "book":
+        scoped_book_id = target_book_id
+
     sheet, field_definitions, identity_field = _SPECIAL_FORMATS[import_format]
     specs = _field_specs(project.id, sheet, field_definitions)
     rows, errors, inserts, updates = _build_preview_rows(
         project, import_format, items, specs, identity_field, mode,
-        metadata.get("id_prefix"),
+        metadata.get("id_prefix"), book_id=scoped_book_id,
     )
     invalid = len(items) - len(rows)
     preview = {
@@ -131,20 +207,39 @@ def create_special_preview(
         "errors": errors[:settings.IMPORT_ERROR_LIMIT],
         "rows": rows,
     }
+    snapshot = capture_snapshot(project.id, sheet, book_id=scoped_book_id)
+    if import_format == "book" and target_book_id is None:
+        # A book that does not exist yet owns zero rows. The generic capture
+        # treats ``book_id=None`` as "all sheets", which would make the first
+        # commit compare an empty new book against unrelated silver rows.
+        snapshot["rows"] = []
     parameters = {
         "mode": mode,
         "format": import_format,
-        "_snapshot": capture_snapshot(project.id, sheet),
+        "_snapshot": snapshot,
     }
     if import_format == "test_matrix":
         parameters["tm_id_prefix"] = metadata.get("id_prefix")
         parameters["tm_summary_sheet"] = metadata.get("summary_sheet")
+    if import_format == "book":
+        parameters["book_id"] = target_book_id
+        parameters["book_name"] = book_name
+        parameters["book_source_filename"] = original_filename
+        parameters["model_id"] = model_id
+    elif import_format == "io" and scoped_book_id is not None:
+        parameters["book_id"] = scoped_book_id
 
+    staged_source = None
+    if import_format == "book":
+        from . import books_service
+
+        staged_source = books_service.stage_book_source(project, source)
     job = DataJob(
         project_id=project.id,
         job_type="import",
         status="previewed",
         original_filename=original_filename,
+        stored_filename=staged_source,
         parameters=parameters,
         preview=preview,
         total_count=len(items),
@@ -159,7 +254,15 @@ def create_special_preview(
         new_value={"format": import_format, "mode": mode,
                    "valid": len(rows), "invalid": invalid},
     )
-    db.session.commit()
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        if staged_source:
+            from . import books_service
+
+            books_service.discard_book_source(staged_source)
+        raise
     return job
 
 
@@ -168,6 +271,8 @@ def commit_special_import(user, project: Project, job: DataJob) -> dict[str, Any
     project_id = project.id
     deleted = 0
     inserted = updated = 0
+    source_promotion = None
+    import_format = None
     try:
         job = (DataJob.query.filter_by(id=job_id)
                .with_for_update().populate_existing().first())
@@ -210,6 +315,35 @@ def commit_special_import(user, project: Project, job: DataJob) -> dict[str, Any
                 "import.replace", role, is_system_admin=is_system_admin,
             )
 
+        book = None
+        if import_format == "book":
+            if mode != "upsert":
+                raise service.ServiceError(
+                    "式样书导入只支持按 ID 合并", code="VALIDATION_ERROR",
+                )
+            from . import books_service
+
+            _lock_special_import_tables()
+            raw_book_id = parameters.get("book_id")
+            if raw_book_id not in (None, ""):
+                book = (TestBook.query.filter_by(
+                    id=int(raw_book_id), project_id=project.id,
+                ).with_for_update().populate_existing().first())
+                if book is None:
+                    raise service.ServiceError(
+                        "目标式样书已不存在，请重新预览", code="IMPORT_PREVIEW_STALE",
+                    )
+                if (job.original_filename or "").strip():
+                    book.source_filename = job.original_filename.strip()[:255]
+            else:
+                book = books_service.create_book(
+                    user, project,
+                    name=parameters.get("book_name") or "",
+                    source_filename=parameters.get("book_source_filename") or "",
+                    model_id=parameters.get("model_id"),
+                    commit=False,
+                )
+
         preview = job.preview or {}
         if preview.get("invalid", 0) > 0:
             raise service.ServiceError(
@@ -225,8 +359,14 @@ def commit_special_import(user, project: Project, job: DataJob) -> dict[str, Any
             )
 
         sheet, field_definitions, _identity_field = _SPECIAL_FORMATS[import_format]
+        snapshot_book_id = book.id if book is not None else parameters.get("book_id")
+        if snapshot_book_id in (None, ""):
+            snapshot_book_id = None
+        else:
+            snapshot_book_id = int(snapshot_book_id)
         _lock_special_import_tables()
-        if expected_snapshot != capture_snapshot(project.id, sheet):
+        if expected_snapshot != capture_snapshot(
+                project.id, sheet, book_id=snapshot_book_id):
             raise service.ServiceError(
                 "预览后的数据或字段已变化，请重新上传并预览",
                 code="IMPORT_PREVIEW_STALE",
@@ -235,7 +375,8 @@ def commit_special_import(user, project: Project, job: DataJob) -> dict[str, Any
         fields_service.ensure_fields(
             user, project, field_definitions, commit=False,
         )
-        if expected_snapshot["rows"] != _capture_row_snapshot(project.id, sheet):
+        if expected_snapshot["rows"] != _capture_row_snapshot(
+                project.id, sheet, book_id=snapshot_book_id):
             raise service.ServiceError(
                 "预览后的数据已变化，请重新上传并预览",
                 code="IMPORT_PREVIEW_STALE",
@@ -250,9 +391,12 @@ def commit_special_import(user, project: Project, job: DataJob) -> dict[str, Any
 
         if mode == "replace_all":
             now = _utcnow()
-            live = TestItemRow.query.filter_by(
+            live_q = TestItemRow.query.filter_by(
                 project_id=project.id, sheet=sheet, deleted_at=None,
-            ).populate_existing().all()
+            )
+            if snapshot_book_id is not None:
+                live_q = live_q.filter(TestItemRow.book_id == snapshot_book_id)
+            live = live_q.populate_existing().all()
             for item in live:
                 item.deleted_at = now
             deleted = len(live)
@@ -267,7 +411,12 @@ def commit_special_import(user, project: Project, job: DataJob) -> dict[str, Any
 
         current = TestItemRow.query.filter_by(
             project_id=project.id, sheet=sheet, deleted_at=None,
-        ).populate_existing().all()
+        )
+        if book is not None:
+            current = current.filter(TestItemRow.book_id == book.id)
+        if import_format == "io" and snapshot_book_id is not None:
+            current = current.filter(TestItemRow.book_id == snapshot_book_id)
+        current = current.populate_existing().all()
         by_case = {
             _identity_key(
                 import_format,
@@ -314,11 +463,17 @@ def commit_special_import(user, project: Project, job: DataJob) -> dict[str, Any
                     )
                 item = service.create_item(
                     user, project, values, draft=True, sheet=sheet,
+                    book_id=snapshot_book_id,
                     commit=False,
                 )
                 by_case[identity_key] = item
                 inserted += 1
 
+        if import_format == "book" and book is not None:
+            from . import books_service
+
+            source_promotion = books_service.promote_book_source(
+                project, book, job.stored_filename)
         job.status = "completed"
         job.success_count = inserted + updated
         job.error_count = 0
@@ -331,40 +486,67 @@ def commit_special_import(user, project: Project, job: DataJob) -> dict[str, Any
                        "deleted": deleted},
         )
         db.session.commit()
+        if import_format == "book":
+            from . import books_service
+
+            books_service.finalize_source_promotion(source_promotion)
     except permissions.PermissionDenied:
         db.session.rollback()
+        if import_format == "book":
+            from . import books_service
+
+            books_service.rollback_source_promotion(source_promotion)
         raise
     except service.VersionConflict as exc:
         db.session.rollback()
+        if import_format == "book":
+            from . import books_service
+
+            books_service.rollback_source_promotion(source_promotion)
         raise service.ServiceError(
             "预览后的目标行已变化，请重新上传并预览",
             code="IMPORT_PREVIEW_STALE",
         ) from exc
     except service.ServiceError:
         db.session.rollback()
+        if import_format == "book":
+            from . import books_service
+
+            books_service.rollback_source_promotion(source_promotion)
         raise
     except Exception as exc:  # noqa: BLE001 - rollback the complete import transaction
         logger.exception("Special import commit failed for job %s", job_id)
         db.session.rollback()
+        if import_format == "book":
+            from . import books_service
+
+            books_service.rollback_source_promotion(source_promotion)
         raise service.ServiceError(
             "导入失败，所有更改均已回滚", code="IMPORT_FAILED",
         ) from exc
 
-    return {
+    result = {
         "inserted": inserted,
         "updated": updated,
         "deleted": deleted,
         "mode": mode,
         "format": import_format,
     }
+    if snapshot_book_id is not None:
+        result["book_id"] = snapshot_book_id
+    return result
 
 
 def _parse_workbook(import_format: str, source, original_filename: str):
-    from . import const_excel, io_excel, libfunc_excel, matrix_excel
+    from . import book_excel, const_excel, io_excel, libfunc_excel, matrix_excel
 
     try:
         if import_format == "test_matrix":
             parsed = matrix_excel.parse_workbook(
+                source, source_filename=original_filename,
+            )
+        elif import_format == "book":
+            parsed = book_excel.parse_workbook(
                 source, source_filename=original_filename,
             )
         elif import_format == "libfunc":
@@ -392,7 +574,7 @@ def _parse_workbook(import_format: str, source, original_filename: str):
             "导入失败：未在文件中解析到任何可导入行",
             code="IMPORT_PARSE_ERROR",
         )
-    metadata = parsed if import_format == "test_matrix" else {}
+    metadata = parsed if import_format in ("test_matrix", "book") else {}
     return items, metadata
 
 
@@ -409,13 +591,16 @@ def _field_specs(project_id: int, sheet: str, defaults: list[dict[str, Any]]):
 
 
 def _build_preview_rows(project, import_format, items, specs, identity_field,
-                        mode, id_prefix):
-    from . import libconst_bridge, matrix_excel, testmatrix_bridge
+                        mode, id_prefix, book_id=None):
+    from . import book_excel, libconst_bridge, matrix_excel, testmatrix_bridge
 
     sheet = _SPECIAL_FORMATS[import_format][0]
     live_rows = TestItemRow.query.filter_by(
         project_id=project.id, sheet=sheet, deleted_at=None,
-    ).all()
+    )
+    if import_format in ("book", "io"):
+        live_rows = live_rows.filter(TestItemRow.book_id == book_id)
+    live_rows = live_rows.all()
     existing = {
         (str(row.get_field("io_name") or row.case_id).strip().lower()
          if import_format == "io" else row.case_id): row
@@ -443,6 +628,21 @@ def _build_preview_rows(project, import_format, items, specs, identity_field,
             )
             if identity:
                 values.setdefault("test_id", identity)
+        elif import_format == "book":
+            from . import testmatrix_bridge
+
+            values = {key: item.get(key) for key, _header in book_excel.SUMMARY_COLUMNS}
+            identity = str(item.get("test_id") or "").strip()
+            values["test_id"] = identity
+            priority = testmatrix_bridge.normalize_priority(item.get("priority"))
+            if priority:
+                values["priority"] = priority
+            values["result"] = testmatrix_bridge.normalize_result(item.get("result"))
+            steps = item.get("steps") or {}
+            if (isinstance(steps, dict) and
+                    (steps.get("steps") or steps.get("input_signals")
+                     or steps.get("expected_signals"))):
+                values["steps"] = json.dumps(steps, ensure_ascii=False, indent=2)
         elif import_format == "libfunc":
             values = libconst_bridge.map_lib_item(item)
             identity = str(item.get(identity_field) or "").strip()

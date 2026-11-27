@@ -34,6 +34,24 @@ def list_projects(user: LMUser, *, include_deleted: bool = False) -> list[Projec
     return [p for p in projects if p.id in member_ids or p.owner_id == user.id]
 
 
+PROJECT_TYPES = ("silver", "unit_test", "silver_books")
+
+
+def normalise_project_type(value: Any) -> str:
+    """Map caller-supplied project types onto the three supported kinds.
+
+    An unknown type keeps the legacy ``silver`` meaning: the matrix editor with
+    project-wide test rows. ``silver_books`` is the multi-workbook kind where
+    every row belongs to one specification book.
+    """
+    token = str(value or "").strip().lower()
+    if token in ("unit_test", "ut"):
+        return "unit_test"
+    if token in ("silver_books", "multi_book", "books"):
+        return "silver_books"
+    return "silver"
+
+
 def create_project(user: LMUser, *, code: str, name: str,
                    description: str = "", owner_id: Optional[int] = None,
                    project_type: str = "silver") -> Project:
@@ -42,7 +60,7 @@ def create_project(user: LMUser, *, code: str, name: str,
         raise ServiceError("项目编码不能为空", code="VALIDATION_ERROR")
     if Project.query.filter_by(code=code).first():
         raise ServiceError("项目编码已存在", code="DUPLICATE")
-    project_type = "unit_test" if str(project_type).strip().lower() in ("unit_test", "ut") else "silver"
+    project_type = normalise_project_type(project_type)
     project = Project(
         code=code, name=(name or "").strip() or code, description=description,
         status="draft", owner_id=owner_id or user.id, created_by=user.id,
@@ -103,7 +121,10 @@ def backfill_sheet_fields() -> int:
         actor = _heal_actor(project)
         if actor is None:
             continue
-        for sheet, specs in sheet_specs.items():
+        specs_by_sheet = dict(sheet_specs)
+        if project.project_type == "silver_books":
+            specs_by_sheet["test"] = fld.BOOK_TEST_FIELDS
+        for sheet, specs in specs_by_sheet.items():
             has_fields = FieldDefinition.query.filter_by(
                 project_id=project.id, sheet=sheet).first() is not None
             if has_fields:
@@ -183,6 +204,7 @@ def delete_project(user: LMUser, project: Project) -> dict[str, int]:
                            TestItemRow)
     from ...runners import run_layout
     from ...services import project_model_service
+    from . import books_service
 
     pid = project.id
     code = project.code
@@ -221,6 +243,7 @@ def delete_project(user: LMUser, project: Project) -> dict[str, int]:
         Task.workspace == str(code_workspace),
     ).first() is not None
     model_root = project_model_service.project_models_root(cfg, project)
+    book_root = books_service.project_book_root(project)
 
     task_ids = [t.id for t in tasks]
     if task_ids:
@@ -296,6 +319,16 @@ def delete_project(user: LMUser, project: Project) -> dict[str, int]:
         logging.getLogger(__name__).exception(
             "could not remove model root for deleted project %s: %s",
             code, model_root)
+
+    try:
+        shutil.rmtree(book_root, ignore_errors=False)
+    except FileNotFoundError:
+        pass
+    except Exception:
+        fs_errors += 1
+        logging.getLogger(__name__).exception(
+            "could not remove book root for deleted project %s: %s",
+            code, book_root)
 
     if skipped_shared:
         counts["shared_legacy_artifacts_skipped"] = skipped_shared

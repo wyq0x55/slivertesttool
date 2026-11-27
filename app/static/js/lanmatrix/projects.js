@@ -125,6 +125,7 @@
 
   function cardEl(p) {
     const isUt = p.project_type === "unit_test";
+    const isBooks = p.project_type === "silver_books";
     const st = String(p.status || "draft");
     const stZh = STATUS_ZH[p.status] || st;
     const hasDesc = (p.description || "").trim().length > 0;
@@ -138,6 +139,8 @@
     // rather than one of them looking like an exception.
     const typeTag = isUt
       ? el("span", { className: "ptype ptype-ut", text: "单元测试" })
+      : isBooks
+      ? el("span", { className: "ptype ptype-books", text: "Silver 多式样书" })
       : el("span", { className: "ptype ptype-silver", text: "Silver" });
 
     let middleZone;

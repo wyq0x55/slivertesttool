@@ -24,6 +24,7 @@ from .lanmatrix import (
     ProjectModel,
     RowWriteback,
     SbsRevision,
+    TestBook,
     TestItemRow,
     TestRunRecord,
 )
@@ -50,6 +51,7 @@ __all__ = [
     "Project",
     "ProjectModel",
     "SbsRevision",
+    "TestBook",
     "FieldDefinition",
     "TestItemRow",
     "TestRunRecord",

@@ -198,8 +198,10 @@
     },
     // Reference-pool "add new" (sheet: "io" | "const"). REST path only — the
     // collaboration path inserts through the Y.Doc and calls ensurePoolFields.
-    addPoolEntry(id, sheet, values) {
-      return request("POST", `/projects/${id}/pool/${sheet}/entries`, { body: { values } });
+    addPoolEntry(id, sheet, values, bookId) {
+      const body = { values };
+      if (bookId != null) body.book_id = bookId;
+      return request("POST", `/projects/${id}/pool/${sheet}/entries`, { body });
     },
     ensurePoolFields(id, sheet) {
       return request("POST", `/projects/${id}/pool/${sheet}/fields`, {});
@@ -264,7 +266,10 @@
     testMatrixExportUrl(id) { return `${BASE}/projects/${id}/testmatrix/export`; },
     libFuncExportUrl(id) { return `${BASE}/projects/${id}/libfunc/export`; },
     constExportUrl(id) { return `${BASE}/projects/${id}/const/export`; },
-    ioExportUrl(id) { return `${BASE}/projects/${id}/io/export`; },
+    ioExportUrl(id, bookId) {
+      const q = bookId != null ? `?book_id=${encodeURIComponent(bookId)}` : "";
+      return `${BASE}/projects/${id}/io/export${q}`;
+    },
     importLibFunc(id, file, mode) {
       const fd = new FormData();
       fd.append("file", file);
@@ -277,25 +282,51 @@
       fd.append("mode", mode || "upsert");
       return request("POST", `/projects/${id}/const/import`, { body: fd });
     },
-    importIo(id, file, mode) {
+    importIo(id, file, mode, bookId) {
       const fd = new FormData();
       fd.append("file", file);
       fd.append("mode", mode || "upsert");
+      if (bookId != null) fd.append("book_id", String(bookId));
       return request("POST", `/projects/${id}/io/import`, { body: fd });
     },
-    extractIo(id, sheets, mode, { collabReconcile } = {}) {
+    extractIo(id, sheets, mode, { collabReconcile, bookId } = {}) {
       return request("POST", `/projects/${id}/io/extract`, {
-        body: { sheets: sheets || ["lib"], mode: mode || "upsert" },
+        body: { sheets: sheets || ["lib"], mode: mode || "upsert", book_id: bookId },
         headers: collabReconcile ? { "X-Collab-Reconcile": "1" } : undefined,
       });
     },
+    // --- Specification books (multi-book Silver projects) ---
+    listBooks(id) { return request("GET", `/projects/${id}/books`); },
+    createBook(id, payload) { return request("POST", `/projects/${id}/books`, { body: payload }); },
+    updateBook(id, bookId, payload) {
+      return request("PATCH", `/projects/${id}/books/${bookId}`, { body: payload });
+    },
+    deleteBook(id, bookId) {
+      return request("DELETE", `/projects/${id}/books/${bookId}`);
+    },
+    importBook(id, file, { bookId = null, modelId = null, bookName = "" } = {}) {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("mode", "upsert");
+      if (bookId != null) fd.append("book_id", String(bookId));
+      if (modelId != null) fd.append("model_id", String(modelId));
+      if (bookName) fd.append("book_name", bookName);
+      return request("POST", `/projects/${id}/books/import`, { body: fd });
+    },
+    bookExportUrl(id, bookId) { return `${BASE}/projects/${id}/books/${bookId}/export`; },
+    allBooksExportUrl(id) { return `${BASE}/projects/${id}/books/export.zip`; },
     async exportProject(id, payload) {
       const resp = await request("POST", `/projects/${id}/exports`, { body: payload || {}, raw: true });
       return resp.blob();
     },
-    async exportSilverTestcases(id, format) {
+    async exportSilverTestcases(id, format, rowUuids) {
       const route = format === "legacy_judge" ? "legacy-judge" : "silver-json";
-      const resp = await request("GET", `/projects/${id}/${route}/export`, { raw: true, jsonErrors: true });
+      // Repeat the parameter instead of sending one comma-joined value: the
+      // server reads it with ``getlist``.
+      const qs = (Array.isArray(rowUuids) ? rowUuids : [])
+        .map((uuid) => `row_uuids=${encodeURIComponent(uuid)}`).join("&");
+      const path = `/projects/${id}/${route}/export${qs ? "?" + qs : ""}`;
+      const resp = await request("GET", path, { raw: true, jsonErrors: true });
       return resp.blob();
     },
 

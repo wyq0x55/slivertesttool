@@ -136,7 +136,8 @@ def import_const(user, project, source, *, mode: str = "upsert",
 
 
 def import_io(user, project, source, *, mode: str = "upsert",
-              original_filename: str = "") -> dict[str, Any]:
+              original_filename: str = "",
+              book_id: Any = None) -> dict[str, Any]:
     """Import an 入出力 (I/O signal pool) workbook.
 
     Unlike Lib / Const, the 入出力 pool enforces a two-column uniqueness contract
@@ -163,18 +164,22 @@ def import_io(user, project, source, *, mode: str = "upsert",
             "io_name / io_path（名称 / 路径）列。",
             code="IMPORT_PARSE_ERROR")
     return _run_io_import(user, project, items, mode=mode,
-                          source_label=original_filename)
+                          source_label=original_filename, book_id=book_id)
 
 
 # --------------------------------------------------------------------------- #
 # Export (editor rows -> workbook bytes)
 # --------------------------------------------------------------------------- #
-def _export_rows(project, sheet: str) -> list[dict[str, Any]]:
+def _export_rows(project, sheet: str,
+                 book_id: Any = None) -> list[dict[str, Any]]:
     from ...models import TestItemRow
 
-    rows = TestItemRow.query.filter_by(
+    query = TestItemRow.query.filter_by(
         project_id=project.id, sheet=sheet, deleted_at=None
-    ).order_by(TestItemRow.row_order).all()
+    )
+    if sheet == "io" and book_id not in (None, ""):
+        query = query.filter(TestItemRow.book_id == int(book_id))
+    rows = query.order_by(TestItemRow.row_order).all()
     return [r.to_dict() for r in rows]
 
 
@@ -206,13 +211,19 @@ def export_const(project):
     return buf
 
 
-def export_io(project):
+def export_io(project, book_id: Any = None):
     """Rebuild an 入出力 ``.xlsx`` from the project's ``io`` sheet rows."""
     import io
 
     from . import io_excel
 
-    items = _export_rows(project, "io")
+    if book_id in (None, "") and getattr(project, "project_type", "") == "silver_books":
+        from ...models import TestBook
+
+        books = TestBook.query.filter_by(project_id=project.id).all()
+        if len(books) == 1:
+            book_id = books[0].id
+    items = _export_rows(project, "io", book_id=book_id)
     wb = io_excel.build_workbook({"items": items})
     buf = io.BytesIO()
     wb.save(buf)
@@ -290,7 +301,8 @@ def collect_io_signals(bodies) -> dict[str, Any]:
 
 
 def extract_io_from_steps(user, project, *, sheets=("lib",), mode: str = "upsert",
-                          source_label: str = "extract") -> dict[str, Any]:
+                          source_label: str = "extract",
+                          book_id: Any = None) -> dict[str, Any]:
     """Harvest I/O signal declarations from step procedures into the pool.
 
     Every ``lib`` / ``test`` row stores its procedure in a ``steps`` field whose
@@ -324,7 +336,15 @@ def extract_io_from_steps(user, project, *, sheets=("lib",), mode: str = "upsert
         field_key = step_fields[sheet]
         rows = TestItemRow.query.filter_by(
             project_id=project.id, sheet=sheet, deleted_at=None
-        ).order_by(TestItemRow.row_order).all()
+        )
+        if book_id is not None:
+            # Per-book I/O: harvest test steps from the selected book only. Lib
+            # rows are project-wide, so they stay unscoped.
+            if sheet == "test":
+                rows = rows.filter(TestItemRow.book_id == int(book_id))
+            else:
+                rows = rows.filter(TestItemRow.book_id.is_(None))
+        rows = rows.order_by(TestItemRow.row_order).all()
         for row in rows:
             raw = row.get_field(field_key)
             body = _parse_json_field(raw)
@@ -341,7 +361,7 @@ def extract_io_from_steps(user, project, *, sheets=("lib",), mode: str = "upsert
 
     collected = collect_io_signals(bodies)
     summary = _run_io_import(user, project, collected["items"], mode=mode,
-                             source_label=source_label)
+                             source_label=source_label, book_id=book_id)
     summary["scanned_rows"] = collected["scanned_rows"]
     summary["distinct_signals"] = collected["distinct_signals"]
     summary["skipped_nameless"] = collected["skipped_nameless"]
@@ -456,7 +476,7 @@ def _run_import(user, project, items: list[dict[str, Any]], *, mode: str,
 # 入出力 import loop (name + path uniqueness)
 # --------------------------------------------------------------------------- #
 def _run_io_import(user, project, items: list[dict[str, Any]], *, mode: str,
-                   source_label: str) -> dict[str, Any]:
+                   source_label: str, book_id: Any = None) -> dict[str, Any]:
     """Import the 入出力 pool, keeping ``io_name`` AND ``io_path`` unique.
 
     Upsert keys on ``io_name`` (case-insensitive). A row is rejected — with a
@@ -475,15 +495,22 @@ def _run_io_import(user, project, items: list[dict[str, Any]], *, mode: str,
         raise service.ServiceError(f"未知导入模式: {mode}", code="VALIDATION_ERROR")
 
     fields_service.ensure_fields(user, project, fld.IO_FIELDS)
+    scoped_book_id = None if book_id in (None, "") else int(book_id)
 
     def _norm(v: Any) -> str:
         return str(v or "").strip().lower()
 
+    def _io_query():
+        query = TestItemRow.query.filter_by(
+            project_id=project.id, sheet="io", deleted_at=None)
+        return (query.filter(TestItemRow.book_id == scoped_book_id)
+                if scoped_book_id is not None
+                else query.filter(TestItemRow.book_id.is_(None)))
+
     deleted = 0
     if mode == "replace_all":
         now = _dt.datetime.now(_dt.timezone.utc)
-        live = TestItemRow.query.filter_by(
-            project_id=project.id, sheet="io", deleted_at=None).all()
+        live = _io_query().all()
         for row in live:
             row.deleted_at = now
         deleted = len(live)
@@ -495,8 +522,7 @@ def _run_io_import(user, project, items: list[dict[str, Any]], *, mode: str,
         db.session.commit()
 
     # Live pool after any replace_all: indexes for uniqueness + upsert lookup.
-    live_rows = TestItemRow.query.filter_by(
-        project_id=project.id, sheet="io", deleted_at=None).all()
+    live_rows = _io_query().all()
     by_name: dict[str, TestItemRow] = {}
     path_owner: dict[str, TestItemRow] = {}
     for r in live_rows:
@@ -542,7 +568,7 @@ def _run_io_import(user, project, items: list[dict[str, Any]], *, mode: str,
                 updated += 1
             else:
                 row = service.create_item(user, project, values, draft=True,
-                                          sheet="io")
+                                          sheet="io", book_id=scoped_book_id)
                 by_name[nm] = row
                 target = row
                 created += 1

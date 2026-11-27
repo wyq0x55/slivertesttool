@@ -1,0 +1,55 @@
+{% extends "lanmatrix/base_lm.html" %}
+{% from "lanmatrix/_crumb.html" import project_crumb %}
+{% from "lanmatrix/_settings_tabs.html" import settings_tabs with context %}
+{% block title %}式样书管理{% endblock %}
+{% block crumb %}{{ project_crumb(project_id, "式样书管理", "设置") }}{% endblock %}
+{% block content %}
+<div class="content lm-books-settings" data-project-id="{{ project_id }}">
+  {{ settings_tabs(project_id, "books") }}
+  <div class="page-head">
+    <div class="ttl">
+      <h1>式样书管理</h1>
+      <p>每本式样书固定绑定一个模型版本。测试 ID 只在书内唯一；IO 信号池按书隔离，Lib 与 Const 由项目共用。</p>
+    </div>
+  </div>
+
+  <section class="panel" id="lm-book-create-panel" hidden aria-labelledby="lm-book-create-title">
+    <h2 id="lm-book-create-title" style="font-size:15px;margin-bottom:12px">新建式样书</h2>
+    <div class="row wrap">
+      <input id="lm-book-create-name" class="ipt grow" maxlength="120"
+             placeholder="式样书名称" aria-label="式样书名称" autocomplete="off">
+      <select id="lm-book-create-model" class="ipt" aria-label="绑定模型"></select>
+      <button type="button" class="btn primary" id="lm-book-create">创建</button>
+    </div>
+    <div class="login-err" id="lm-book-error" role="alert"></div>
+  </section>
+
+  <div class="tablecard" style="margin-top:16px">
+    <div class="tc-head">
+      <h2>式样书列表</h2>
+      <span class="muted" style="font-size:12.5px">删除前需先清空正文、回收站与测试任务</span>
+      <span id="lm-book-status" class="lm-muted" role="status" aria-live="polite"></span>
+    </div>
+    <div style="overflow:auto">
+      <table class="lm-table">
+        <thead>
+          <tr>
+            <th scope="col">式样书</th>
+            <th scope="col">原文件</th>
+            <th scope="col">绑定模型</th>
+            <th scope="col">测试行</th>
+            <th scope="col">IO</th>
+            <th scope="col">操作</th>
+          </tr>
+        </thead>
+        <tbody id="lm-book-rows">
+          <tr><td colspan="6"><span class="muted">加载中…</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ static_asset_url('js/lanmatrix/books_settings.js') }}"></script>
+{% endblock %}

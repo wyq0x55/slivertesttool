@@ -178,6 +178,24 @@ def _task_reviews(tasks) -> dict:
     return reviews
 
 
+def _attach_book_names(project_id: int, tasks: list, payload: list) -> list:
+    book_ids = {t.book_id for t in tasks if getattr(t, "book_id", None)}
+    if not book_ids:
+        return payload
+    from ...models import TestBook
+    names = {
+        row.id: row.name
+        for row in TestBook.query.filter(
+            TestBook.project_id == project_id,
+            TestBook.id.in_(book_ids),
+        ).all()
+    }
+    for task, data in zip(tasks, payload):
+        if task.book_id:
+            data["book_name"] = names.get(task.book_id, "")
+    return payload
+
+
 def _require_task(project_id: int, task_key: str, capability: str):
     project, _ = _project_and_role(project_id, capability)
     task = task_service.get_project_task(project_id, task_key)
@@ -204,6 +222,7 @@ def list_project_tasks(project_id):
     # a rejection used to be invisible outside the reviewer's own queue.
     payload = review_service.attach_reviews(
         tasks, [t.to_dict() for t in tasks], _task_reviews(tasks))
+    _attach_book_names(project_id, tasks, payload)
     return ok({"tasks": payload,
                "total": total,
                "limit": limit,
@@ -248,6 +267,12 @@ def upload_project_tree(project_id):
     from ...runners import run_layout
 
     project, _ = _project_and_role(project_id, "task.upload")
+    if project.project_type == "silver_books":
+        return err(
+            "UNSUPPORTED_FOR_BOOKS",
+            "多式样书项目按式样书绑定模型并允许跨书重复测试 ID，请在测试矩阵中选择式样书及用例运行",
+            status=409,
+        )
     cfg = current_app.config_obj
     if not project_model_service.has_models(project_id):
         return err("NO_MODEL", "该项目尚未添加 .sil 模型，请先在“模型管理”中添加", status=409)
@@ -342,12 +367,15 @@ def _ambiguous_test_ids(grouped, test_ids):
     return [test_id for test_id in test_ids if len(grouped.get(test_id, [])) > 1]
 
 
-def _reject_unmaterialized_inputs(project_id, snapshot, *, test_ids=None):
+def _reject_unmaterialized_inputs(project_id, snapshot, *, test_ids=None,
+                                  book_ids=None, row_uuids=None):
     """Reject a run whose edited inputs are not yet committed."""
     from ...services.lanmatrix import run_input_service
 
     try:
-        run_input_service.assert_materialized(project_id, snapshot, test_ids=test_ids)
+        run_input_service.assert_materialized(
+            project_id, snapshot, test_ids=test_ids, book_ids=book_ids,
+            row_uuids=row_uuids)
     except run_input_service.RunInputsNotMaterialized as exc:
         db.session.rollback()
         return err(
@@ -386,6 +414,8 @@ def run_selected_tasks(project_id):
         return err("NO_MODEL", "该项目尚未添加 .sil 模型，请先在“模型管理”中添加", status=409)
 
     body = request.get_json(silent=True) or {}
+    if project.project_type == "silver_books":
+        return _run_selected_books(project, body, cfg)
     raw_ids = body.get("test_ids") or []
     if not isinstance(raw_ids, list) or not raw_ids:
         return err("VALIDATION_ERROR", "请至少选择一个 test id 提交", status=400)
@@ -478,6 +508,131 @@ def run_selected_tasks(project_id):
                "duplicates": duplicates},
               status=201)
 
+
+def _run_selected_books(project, body, cfg):
+    """Queue rows of a multi-book project, keyed by row UUID.
+
+    A test id alone cannot identify a row here: OPEINHIB and OPEINHIB_STD (for
+    example) share every id. The client therefore submits the rows it selected,
+    and each row's book supplies both the pinned model version and the isolated
+    staging workspace, so two books never share a log or task directory.
+    """
+    import shutil
+
+    from ...models import TestBook, TestItemRow
+    from ...runners import run_layout
+    from ...services.lanmatrix import books_service as books
+    from ...services.lanmatrix import silver_json_export as sje
+
+    raw_rows = body.get("items")
+    if not isinstance(raw_rows, list) or not raw_rows:
+        return err("VALIDATION_ERROR",
+                   "多式样书项目请选择具体的测试行（按行 UUID）后再运行",
+                   status=400)
+    wanted_uuids = []
+    for entry in raw_rows:
+        uuid = (entry or {}).get("uuid") if isinstance(entry, dict) else None
+        uuid = str(uuid or "").strip()
+        if uuid and uuid not in wanted_uuids:
+            wanted_uuids.append(uuid)
+    if not wanted_uuids:
+        return err("VALIDATION_ERROR", "缺少测试行 UUID", status=400)
+
+    rows = (TestItemRow.query
+            .filter(TestItemRow.project_id == project.id,
+                    TestItemRow.sheet == "test",
+                    TestItemRow.deleted_at.is_(None),
+                    TestItemRow.uuid.in_(wanted_uuids))
+            .all())
+    by_uuid = {row.uuid: row for row in rows}
+    missing = [uuid for uuid in wanted_uuids if uuid not in by_uuid]
+    selected = [by_uuid[uuid] for uuid in wanted_uuids if uuid in by_uuid]
+    if not selected:
+        return err("VALIDATION_ERROR", "选择的测试行已不存在", status=404,
+                   details={"missing": missing})
+
+    book_ids = {row.book_id for row in selected}
+    if None in book_ids:
+        return err("VALIDATION_ERROR",
+                   "所选行没有式样书归属，无法确定要绑定哪个模型", status=409)
+    books_by_id = {
+        book.id: book for book in TestBook.query.filter(
+            TestBook.project_id == project.id, TestBook.id.in_(book_ids)).all()
+    }
+    if len(books_by_id) != len(book_ids):
+        return err("VALIDATION_ERROR", "所选行引用的式样书已不存在", status=409)
+
+    resolved_models = {}
+    for book_id, book in books_by_id.items():
+        try:
+            resolved_models[book_id] = books.require_model(project.id, book)
+        except ServiceError as exc:
+            return err(exc.code, str(exc), status=409)
+
+    snapshot = body.get("expected_inputs")
+    selected_uuids = [row.uuid for row in selected if row.uuid]
+    if snapshot is not None:
+        conflict = _reject_unmaterialized_inputs(
+            project.id, snapshot, row_uuids=selected_uuids)
+        if conflict is not None:
+            return conflict
+
+    const_rows = (TestItemRow.query
+                  .filter_by(project_id=project.id, sheet="const", deleted_at=None)
+                  .order_by(TestItemRow.row_order.asc(), TestItemRow.id.asc())
+                  .all())
+    lib_rows = (TestItemRow.query
+                .filter_by(project_id=project.id, sheet="lib", deleted_at=None)
+                .order_by(TestItemRow.row_order.asc(), TestItemRow.id.asc())
+                .all())
+
+    submitter = g.user.username
+    clean_room = bool(body.get("clean_room", False))
+    proj_root = run_layout.project_root(cfg, project)
+    created, errors, duplicates = [], [], []
+    for row in selected:
+        test_id = sje.row_test_id(row)
+        book_id = row.book_id
+        model_id, model_name, model_version, sil_ref = resolved_models[book_id]
+        book_root = proj_root / "books" / f"book_{book_id}"
+        committed_attempt = None
+        try:
+            task, started = task_service.upsert_task(
+                task_name=test_id, file_name="(json runner)",
+                submitter=submitter, test_id=test_id,
+                sil_relpath=str(Path(sil_ref).resolve()),
+                sil_name=model_name, sil_version=model_version,
+                sil_model_id=model_id, workspace=str(book_root),
+                project_id=project.id, submitter_id=g.user.id, commit=False,
+                recover_stale=True, clean_room=clean_room,
+                book_id=book_id, row_uuid=row.uuid,
+            )
+            if not started:
+                duplicates.append({"test_id": test_id, "task_id": task.task_key,
+                                   "book_id": book_id, "uuid": row.uuid})
+                db.session.rollback()
+                continue
+            case_dir = run_layout.staging_dir(book_root, test_id) / test_id
+            run_evidence_service.validate_segment(test_id)
+            run_evidence_service.checked_path(book_root, case_dir)
+            shutil.rmtree(case_dir.parent, ignore_errors=True)
+            sje.materialise_run_dir(case_dir, row, const_rows, lib_rows, task)
+            submission_attempt = (task.id, task.run_count)
+            db.session.commit()
+            committed_attempt = submission_attempt
+            _enqueue_task(task)
+            created.append({"test_id": test_id, "task_id": task.task_key,
+                            "book_id": book_id, "uuid": row.uuid})
+        except Exception as exc:  # noqa: BLE001 - surface per-row failure
+            db.session.rollback()
+            if committed_attempt is not None:
+                task_service.fail_submission(*committed_attempt, str(exc))
+            errors.append({"test_id": test_id, "book_id": book_id,
+                           "uuid": row.uuid, "error": str(exc)})
+
+    return ok({"created": created, "missing": missing, "errors": errors,
+               "duplicates": duplicates}, status=201)
+
 @bp.post("/projects/<int:project_id>/tasks/rerun-selected")
 @login_required
 def rerun_selected_tasks(project_id):
@@ -517,14 +672,29 @@ def rerun_selected_tasks(project_id):
                 .all())
 
     rerun_test_ids = []
+    rerun_book_ids = set()
+    rerun_row_uuids = []
     for key in keys:
         existing = task_service.get_project_task(project_id, key)
         if existing is not None and existing.test_id:
             rerun_test_ids.append(existing.test_id)
+        if existing is not None and existing.book_id:
+            rerun_book_ids.add(existing.book_id)
+        if existing is not None and existing.row_uuid:
+            rerun_row_uuids.append(existing.row_uuid)
+    # Exact UUID scope when every selected task has one; otherwise fall back to
+    # the legacy id/book scope for pre-UUID tasks.
+    snapshot_scope = (
+        {"row_uuids": rerun_row_uuids}
+        if len(rerun_row_uuids) == len(keys)
+        else {"test_ids": rerun_test_ids,
+              "book_ids": sorted(rerun_book_ids) if rerun_book_ids else None}
+    )
 
     snapshot = body.get("expected_inputs") if isinstance(body, dict) else None
     if snapshot is not None:
-        conflict = _reject_unmaterialized_inputs(project.id, snapshot, test_ids=rerun_test_ids)
+        conflict = _reject_unmaterialized_inputs(
+            project.id, snapshot, **snapshot_scope)
         if conflict is not None:
             return conflict
 
@@ -532,8 +702,11 @@ def rerun_selected_tasks(project_id):
     lib_rows = _rows("lib")
     test_rows = _rows("test")
     grouped = _logical_test_rows(test_rows)
+    by_row_uuid = {row.uuid: row for row in test_rows if row.uuid}
     ambiguous = [tid for tid in rerun_test_ids if len(grouped.get(tid, [])) > 1]
-    if ambiguous:
+    # A multi-book project repeats ids by design; each task points at its own
+    # row UUID, so the id-level ambiguity check does not apply there.
+    if ambiguous and project.project_type != "silver_books":
         return err("AMBIGUOUS_TEST_ID", "同一个 test id 对应多行，无法确定要运行的用例",
                    details={"test_ids": ambiguous}, status=409)
     by_test_id = {test_id: rows[0] for test_id, rows in grouped.items() if len(rows) == 1}
@@ -547,7 +720,9 @@ def rerun_selected_tasks(project_id):
             missing.append({"task_id": key, "error": "任务不存在"})
             continue
         test_id = task.test_id
-        row = by_test_id.get(test_id)
+        row = by_row_uuid.get(task.row_uuid) if task.row_uuid else None
+        if row is None:
+            row = by_test_id.get(test_id)
         if row is None:
             missing.append({"task_id": key, "test_id": test_id,
                             "error": "test id 已不在项目表中"})
@@ -559,16 +734,38 @@ def rerun_selected_tasks(project_id):
         model_version = (task.sil_version or "").strip()
         model_id = task.sil_model_id
         sil_ref = (task.sil_relpath or "").strip()
+        if task.book_id:
+            # A retest follows the book's *current* binding: rebinding the book
+            # is the explicit action that moves future runs onto another build.
+            from ...services.lanmatrix import books_service
+            from ...models import TestBook
+
+            book = TestBook.query.filter_by(
+                id=task.book_id, project_id=project.id).first()
+            if book is None:
+                missing.append({"task_id": key, "test_id": test_id,
+                                "error": "式样书已不存在"})
+                continue
+            try:
+                model_id, model_name, model_version, sil_ref = (
+                    books_service.require_model(project.id, book))
+            except ServiceError as exc:
+                errors.append({"task_id": key, "test_id": test_id,
+                               "error": str(exc)})
+                continue
         committed_attempt = None
         try:
             if snapshot is not None:
-                conflict = _reject_unmaterialized_inputs(project.id, snapshot, test_ids=rerun_test_ids)
+                conflict = _reject_unmaterialized_inputs(
+                    project.id, snapshot, **snapshot_scope)
                 if conflict is not None:
                     return conflict
             # requeue_task (not upsert_task): upsert resolves its target by
             # ``(project_id, test_id)`` and would reset the NEWEST task carrying
             # this test id, which is not necessarily the row the user selected.
             proj_root = run_layout.project_root(cfg, project)
+            if task.book_id:
+                proj_root = proj_root / "books" / f"book_{task.book_id}"
             task_service.requeue_task(
                 task, sil_relpath=sil_ref, sil_name=model_name,
                 sil_version=model_version, sil_model_id=model_id,
@@ -609,13 +806,17 @@ def project_latest_tasks(project_id):
     """The newest run of every test id, with no recent-window truncation."""
     _project_and_role(project_id, "task.view")
     tasks = task_service.latest_per_test(project_id)
-    return ok({"tasks": [task.to_dict() for task in tasks], "total": len(tasks)})
+    payload = [task.to_dict() for task in tasks]
+    _attach_book_names(project_id, tasks, payload)
+    return ok({"tasks": payload, "total": len(tasks)})
 
 @bp.get("/projects/<int:project_id>/tasks/<task_key>")
 @login_required
 def project_task_status(project_id, task_key):
     _, task = _require_task(project_id, task_key, "task.view")
-    return ok({"task": task.to_dict()})
+    data = task.to_dict()
+    _attach_book_names(project_id, [task], [data])
+    return ok({"task": data})
 
 @bp.get("/projects/<int:project_id>/tasks/<task_key>/detail")
 @login_required
@@ -627,6 +828,7 @@ def project_task_detail(project_id, task_key):
     # The detail panel is where the task key now lives (the list dropped its
     # column), so it is also where the sign-off has to be readable in full.
     review_service.attach_reviews([task], [data], _task_reviews([task]))
+    _attach_book_names(project_id, [task], [data])
     return ok({"task": data})
 
 @bp.get("/projects/<int:project_id>/tasks/<task_key>/stream")

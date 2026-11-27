@@ -237,6 +237,11 @@ class Project(db.Model):
         cascade="all, delete-orphan", passive_deletes=True,
         order_by="FieldDefinition.display_order",
     )
+    books = db.relationship(
+        "TestBook", backref="project",
+        cascade="all, delete-orphan", passive_deletes=True,
+        order_by="TestBook.sort_order",
+    )
 
     @property
     def is_editable(self) -> bool:
@@ -417,6 +422,59 @@ db.Index(
 
 
 # --------------------------------------------------------------------------- #
+# Per-book specifications (Silver multi-book projects)
+# --------------------------------------------------------------------------- #
+# A "book" is one qualification specification workbook. Its test ids are unique
+# *within the book* but may repeat in another book (e.g. an OPEINHIB and an
+# OPEINHIB_STD book both start at 001). Every book pins one saved model version:
+# a later model upload must not silently change what an existing book runs
+# against.
+class TestBook(db.Model):
+    __tablename__ = "lm_test_books"
+    __table_args__ = (
+        db.UniqueConstraint("project_id", "name", name="uq_book_project_name"),
+        db.Index("ix_book_project_order", "project_id", "sort_order"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(
+        db.Integer, db.ForeignKey("lm_projects.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    name = db.Column(db.String(120), nullable=False)
+    source_filename = db.Column(db.String(255), nullable=False, default="")
+    # ``RESTRICT`` is deliberate: deleting a model that a book still runs against
+    # would leave the book bound to a missing file. The service blocks the delete
+    # and asks the operator to rebind first.
+    model_id = db.Column(
+        db.Integer,
+        db.ForeignKey("lm_project_models.id", ondelete="RESTRICT"),
+        nullable=True, index=True,
+    )
+    sort_order = db.Column(db.Integer, nullable=False, default=0, index=True)
+    created_by = db.Column(
+        db.Integer, db.ForeignKey("lm_users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
+    updated_at = db.Column(
+        db.DateTime, nullable=False, default=_utcnow, onupdate=_utcnow,
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "name": self.name,
+            "source_filename": self.source_filename or "",
+            "model_id": self.model_id,
+            "sort_order": self.sort_order,
+            "created_at": _iso(self.created_at),
+            "updated_at": _iso(self.updated_at),
+        }
+
+
+# --------------------------------------------------------------------------- #
 # SBS revision history
 # --------------------------------------------------------------------------- #
 # Every save of a bundle model's ``.sbs`` file appends a snapshot here so the
@@ -467,6 +525,18 @@ class TestItemRow(db.Model):
     __table_args__ = (
         db.Index("ix_item_project_case", "project_id", "case_id"),
         db.Index("ix_item_project_status", "project_id", "workflow_status"),
+        db.Index("ix_item_project_book_sheet", "project_id", "book_id", "sheet"),
+        # A live test id / I/O name is unique inside one book and sheet. Soft
+        # deleted rows are excluded so deleting a row and re-importing the book
+        # can recreate it without colliding with its own recycle-bin copy.
+        db.Index(
+            "uq_item_book_sheet_case", "book_id", "sheet", "case_id",
+            unique=True,
+            postgresql_where=db.text(
+                "book_id IS NOT NULL AND deleted_at IS NULL"),
+            sqlite_where=db.text(
+                "book_id IS NOT NULL AND deleted_at IS NULL"),
+        ),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -479,6 +549,12 @@ class TestItemRow(db.Model):
     project_id = db.Column(
         db.Integer, db.ForeignKey("lm_projects.id", ondelete="CASCADE"),
         nullable=False, index=True,
+    )
+    # Multi-book projects scope test/io rows to one specification book. Shared
+    # lib/const rows and pre-existing silver projects leave this NULL.
+    book_id = db.Column(
+        db.Integer, db.ForeignKey("lm_test_books.id", ondelete="CASCADE"),
+        nullable=True, index=True,
     )
     row_order = db.Column(db.Integer, nullable=False, default=0, index=True)
     # Which editor sheet/tab this row belongs to: test | const | lib.
@@ -615,6 +691,7 @@ class TestItemRow(db.Model):
             "uuid": self.uuid,
             "row_order": self.row_order,
             "sheet": self.sheet or "test",
+            "book_id": self.book_id,
             "case_id": self.case_id,
             "title": self.title,
             "module": self.module,
@@ -686,6 +763,10 @@ class TestRunRecord(db.Model):
         db.Integer, db.ForeignKey("lm_projects.id", ondelete="CASCADE"),
         nullable=False, index=True,
     )
+    book_id = db.Column(
+        db.Integer, db.ForeignKey("lm_test_books.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
     # Row identity is kept BOTH ways on purpose: ``row_uuid`` survives a row
     # being renamed, ``test_id`` survives a row being deleted and re-created.
     row_uuid = db.Column(db.String(64), nullable=True, index=True)
@@ -714,6 +795,7 @@ class TestRunRecord(db.Model):
     def to_dict(self) -> dict:
         return {
             "id": self.id,
+            "book_id": self.book_id,
             "row_uuid": self.row_uuid,
             "test_id": self.test_id,
             "task_key": self.task_key,

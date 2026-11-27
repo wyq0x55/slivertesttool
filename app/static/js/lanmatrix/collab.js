@@ -789,7 +789,7 @@
     // fills what the caller didn't explicitly provide.
     const inherit = {};
     if (anchorMap) {
-      ["category", "category_name"].forEach(function (k) {
+      ["category", "category_name", "book_id"].forEach(function (k) {
         const v = anchorMap.get(k);
         if (v !== null && v !== undefined && values[k] === undefined) inherit[k] = v;
       });

@@ -154,14 +154,14 @@ def test_reconcile_schema_sets_alembic_version_and_is_idempotent(monkeypatch, tm
             rev_first = conn.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalars().all()
-        assert rev_first == ["0007_budget_stop"]
+        assert rev_first == ["0008_test_books"]
 
         reconcile_schema()
         with db.engine.connect() as conn:
             rev_second = conn.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalars().all()
-        assert rev_second == ["0007_budget_stop"]
+        assert rev_second == ["0008_test_books"]
 
         existing_tables = set(inspect(db.engine).get_table_names())
         assert {
@@ -288,7 +288,7 @@ def test_legacy_db_upgrade_adds_governance_columns_and_backfills_rollups(
 
         with db.engine.connect() as conn:
             rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        assert rev == "0007_budget_stop"
+        assert rev == "0008_test_books"
 
         assert DashboardCaseFirstRun.query.filter_by(project_id=project_id).count() == 2
         assert DashboardDailyRollup.query.filter_by(project_id=project_id).count() == 2
@@ -700,7 +700,7 @@ def test_postgresql_disposable_schema_alembic_and_rollups(monkeypatch, tmp_path)
                         .scalars()
                         .all()
                     )
-                assert revisions == ["0007_budget_stop"]
+                assert revisions == ["0008_test_books"]
 
                 with db.engine.begin() as conn:
                     conn.execute(

@@ -129,7 +129,8 @@ def build_row_values(task: Task, verdict: str) -> dict[str, Any]:
     return values
 
 
-def _matching_rows(project_id: int, test_id: str) -> list[TestItemRow]:
+def _matching_rows(project_id: int, test_id: str, *,
+                   book_id: int | None = None) -> list[TestItemRow]:
     """Rows of ``project_id`` whose logical test id is ``test_id``.
 
     The logical id is the row's ``test_id`` field when set, else its
@@ -158,12 +159,14 @@ def _matching_rows(project_id: int, test_id: str) -> list[TestItemRow]:
     needle = (test_id or "").strip()
     if not needle:
         return []
-    candidates = (TestItemRow.query
-                  .filter_by(project_id=project_id, sheet="test", deleted_at=None)
-                  .filter(db.or_(
-                      TestItemRow.case_id == needle,
-                      TestItemRow.custom_values["test_id"].as_string() == needle))
-                  .all())
+    query = (TestItemRow.query
+             .filter_by(project_id=project_id, sheet="test", deleted_at=None)
+             .filter(db.or_(
+                 TestItemRow.case_id == needle,
+                 TestItemRow.custom_values["test_id"].as_string() == needle)))
+    if book_id is not None:
+        query = query.filter(TestItemRow.book_id == book_id)
+    candidates = query.all()
     return [row for row in candidates if sje.row_test_id(row) == needle]
 
 
@@ -177,10 +180,22 @@ def record_run(task: Task, verdict: str, *, commit=True) -> int:
     Still best-effort -- a write-back problem must never fail a run that already
     completed -- but now it is loud.
     """
-    if not task.project_id or not task.test_id:
+    if not task.project_id or not (task.test_id or task.row_uuid):
         return 0
     try:
-        rows = _matching_rows(task.project_id, task.test_id)
+        rows = []
+        if task.row_uuid:
+            # Multi-book projects can hold the same test id in several books, so
+            # the row's stable UUID — not the id — decides where evidence lands.
+            row = TestItemRow.query.filter_by(
+                project_id=task.project_id, uuid=task.row_uuid,
+                sheet="test", deleted_at=None,
+            ).first()
+            if row is not None:
+                rows = [row]
+        if not rows:
+            rows = _matching_rows(task.project_id, task.test_id,
+                                  book_id=task.book_id)
         if not rows:
             logger.info("no matrix row matches test_id=%r (project=%s, task=%s)",
                         task.test_id, task.project_id, task.task_key)
@@ -210,6 +225,7 @@ def record_run(task: Task, verdict: str, *, commit=True) -> int:
             # would otherwise show a flat line during a regression sweep.
             run_record = TestRunRecord(
                 project_id=task.project_id,
+                book_id=task.book_id,
                 row_uuid=row.uuid,
                 test_id=task.test_id,
                 task_key=task.task_key or "",

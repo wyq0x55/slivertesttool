@@ -10,6 +10,20 @@
   };
   const root = document.querySelector(".lm-editor");
   const pid = Number(root.dataset.projectId);
+  const PROJECT_TYPE = root.dataset.projectType || "silver";
+  // Multi-book projects keep every book's test rows in the same worksheet and
+  // the same collaboration room; the book is a per-row scope and the editor
+  // filters the view client-side. Two books may share a test id, so every
+  // identity outside the view (tasks, results) keys on the row UUID instead.
+  const IS_BOOKS = PROJECT_TYPE === "silver_books";
+  let books = [];
+  let currentBookId = null;
+  const currentBook = () => books.find((b) => b.id === currentBookId) || null;
+  function rowInCurrentBook(item) {
+    if (!IS_BOOKS) return true;
+    return currentBookId != null && item && Number(item.book_id) === Number(currentBookId);
+  }
+  const isBookScopedSheet = (sheet) => IS_BOOKS && (sheet === "test" || sheet === "io");
   // Mirrors task_service.MAX_LIST_LIMIT. Both uses below search run history for
   // a specific test_id, so they must ask for the widest window the server
   // allows -- the list default is far smaller and would report a test as
@@ -245,20 +259,30 @@
   // a full render whenever the structure differs, so passing it is always safe.
   function renderView(incremental) {
     const items = sheetItems[currentSheet] || [];
-    total = items.length;
+    total = isBookScopedSheet(currentSheet)
+      ? items.filter(rowInCurrentBook).length : items.length;
     let shown = items;
     if (currentSheet === "test") {
-      categoryPages = buildCategoryPages(items, "test");
+      const scoped = IS_BOOKS ? items.filter(rowInCurrentBook) : items;
+      categoryPages = buildCategoryPages(scoped, "test");
       if (page > categoryPages.length) page = categoryPages.length;
       if (page < 1) page = 1;
       const cur = categoryPages[page - 1];
       shown = cur ? cur.items : [];
+    } else if (currentSheet === "io" && IS_BOOKS) {
+      shown = items.filter(rowInCurrentBook);
+      categoryPages = buildCategoryPages(shown, currentSheet);
     } else {
       categoryPages = buildCategoryPages(items, currentSheet);
     }
     pushFields(currentSheet, sheetFields[currentSheet] || fields);
     pushData(currentSheet, applyResultOverlay(currentSheet, shown), incremental);
     document.getElementById("lm-count").textContent = `共 ${total} 条`;
+    if (isBookScopedSheet(currentSheet)) renderBookPager();
+    else {
+      const bp = document.getElementById("lm-book-pager");
+      if (bp) bp.replaceChildren();
+    }
     if (currentSheet === "test") renderPager();
     else document.getElementById("lm-pager").replaceChildren();
     applyRowFormats();             // repaint drops row colours → re-apply (result/priority)
@@ -383,8 +407,11 @@
       sheetItems[key] = items;
       // The test worksheet shows one テスト区分 page at a time; const/lib flat.
       if (key === "test") {
-        const pages = buildCategoryPages(items, "test");
-        pushData("test", pages.length ? pages[0].items : items);
+        const scoped = IS_BOOKS ? items.filter(rowInCurrentBook) : items;
+        const pages = buildCategoryPages(scoped, "test");
+        pushData("test", pages.length ? pages[0].items : scoped);
+      } else if (key === "io" && IS_BOOKS) {
+        pushData("io", items.filter(rowInCurrentBook));
       } else {
         pushData(key, items);
       }
@@ -401,6 +428,73 @@
 
   // Pager navigates テスト区分 pages (not fixed-size pages): each button jumps to
   // the previous/next category; the label shows the current category and its size.
+  async function loadBooks() {
+    if (!IS_BOOKS) return;
+    try {
+      const data = await LMApi.listBooks(pid);
+      books = (data && data.books) || [];
+    } catch (ex) {
+      books = [];
+      toast("式样书列表加载失败：" + ex.message, false);
+    }
+    if (!books.length) {
+      currentBookId = null;
+    } else if (currentBookId == null || !books.some((b) => b.id === currentBookId)) {
+      currentBookId = books[0].id;
+    }
+  }
+
+  // Two-level navigation: first choose the specification book, then the
+  // テスト区分 page inside it. The book control only appears for multi-book
+  // projects and sits before the 区分 pager in the same footer.
+  function renderBookPager() {
+    const el = document.getElementById("lm-book-pager");
+    if (!el) return;
+    if (!IS_BOOKS) {
+      el.replaceChildren();
+      return;
+    }
+    const wrap = document.createElement("div");
+    wrap.className = "lm-book-pager";
+    if (!books.length) {
+      const hint = document.createElement("span");
+      hint.className = "lm-muted";
+      hint.textContent = "尚未导入式样书";
+      wrap.appendChild(hint);
+    } else {
+      const label = document.createElement("span");
+      label.className = "lm-muted";
+      label.textContent = "式样书";
+      const select = document.createElement("select");
+      select.id = "lm-book-select";
+      select.setAttribute("aria-label", "选择式样书");
+      books.forEach((book) => {
+        const opt = document.createElement("option");
+        opt.value = String(book.id);
+        opt.textContent = `${book.name}（${book.test_count || 0}）`;
+        select.appendChild(opt);
+      });
+      select.value = currentBookId == null ? "" : String(currentBookId);
+      select.addEventListener("change", () => {
+        currentBookId = Number(select.value) || null;
+        page = 1;
+        renderView();
+      });
+      wrap.appendChild(label);
+      wrap.appendChild(select);
+    }
+    const info = currentBook();
+    if (info) {
+      const model = document.createElement("span");
+      model.className = "lm-muted";
+      model.textContent = info.model
+        ? `模型 ${info.model.version ? info.model.name + "@" + info.model.version : info.model.name}`
+        : "未绑定模型";
+      wrap.appendChild(model);
+    }
+    el.replaceChildren(wrap);
+  }
+
   function renderPager() {
     const pages = categoryPages.length;
     const el = document.getElementById("lm-pager");
@@ -444,18 +538,25 @@
   // required cells may stay blank and be filled inline afterwards.
   async function addRow(opts) {
     if (!projectEditable) { toast("项目当前不可编辑", false); return; }
+    if (isBookScopedSheet(currentSheet) && currentBookId == null) {
+      toast("请先创建或选择式样书", false);
+      return;
+    }
     try {
       const count = Math.max(1, Number(opts && opts.count) || 1);
+      const scopedValues = isBookScopedSheet(currentSheet)
+        ? { book_id: currentBookId } : {};
       let created = null;
       if (collabActive()) {
         created = collab.insertRow(currentSheet, {
           anchorId: opts && opts.anchor_id,
           place: opts && opts.place,
           count,
-          values: {},
+          values: scopedValues,
         });
       } else {
-        const reqOpts = Object.assign({ sheet: currentSheet }, opts || {});
+        const reqOpts = Object.assign({ sheet: currentSheet }, opts || {},
+                                      scopedValues);
         if (opts && opts.count !== undefined) reqOpts.count = count;
         const data = await LMApi.createItem(
           pid, { draft: true }, reqOpts);
@@ -955,10 +1056,17 @@
   // project's task results over REST (independent of collab) and let them
   // OVERRIDE the row's own result for colouring. See refreshTaskResults().
   let resultsByTestId = Object.create(null);
-  function effectiveResult(item) {
+  // Identity of a run result. Legacy projects key on the test id; multi-book
+  // projects key on the row UUID because two books can repeat the same id.
+  function resultKey(item) {
+    if (IS_BOOKS && item && item.uuid) return "u:" + item.uuid;
     const tid = rowTestId(item);
-    if (tid && Object.hasOwn(resultsByTestId, tid)) {
-      return resultsByTestId[tid];
+    return tid ? "t:" + tid : "";
+  }
+  function effectiveResult(item) {
+    const key = resultKey(item);
+    if (key && Object.hasOwn(resultsByTestId, key)) {
+      return resultsByTestId[key];
     }
     return item ? item.result : "";
   }
@@ -973,9 +1081,9 @@
     if (sheet !== "test" || !items || !items.length) return items;
     let touched = false;
     const out = items.map((it) => {
-      const tid = rowTestId(it);
-      if (!tid || !Object.hasOwn(resultsByTestId, tid)) return it;
-      const rv = resultsByTestId[tid];
+      const key = resultKey(it);
+      if (!key || !Object.hasOwn(resultsByTestId, key)) return it;
+      const rv = resultsByTestId[key];
       const shown = (rv == null || rv === "") ? "Not Tested" : rv;
       if (it.result === shown) return it;
       touched = true;
@@ -1035,11 +1143,13 @@
     const map = {};
     tasks.forEach((t) => {
       const tid = t && t.test_id != null ? String(t.test_id).trim() : "";
-      if (!tid) return;
+      const uuid = t && t.row_uuid ? String(t.row_uuid) : "";
+      if (!tid && !uuid) return;
       const r = t.result == null ? "" : String(t.result);
-      // Keep the FIRST verdict seen per test_id; list_project_tasks returns
+      // Keep the FIRST verdict seen per row; list_project_tasks returns
       // newest-first, so that is the latest run.
-      if (!Object.hasOwn(map, tid)) map[tid] = r;
+      const key = IS_BOOKS && uuid ? "u:" + uuid : "t:" + tid;
+      if (!Object.hasOwn(map, key)) map[key] = r;
     });
     const changed = JSON.stringify(map) !== JSON.stringify(resultsByTestId);
     resultsByTestId = map;
@@ -1065,9 +1175,9 @@
     let items;
     try { items = collab.getItems("test") || []; } catch (_e) { return; }
     items.forEach((it) => {
-      const tid = rowTestId(it);
-      if (!tid || !Object.hasOwn(resultsByTestId, tid)) return;
-      const rv = resultsByTestId[tid];
+      const key = resultKey(it);
+      if (!key || !Object.hasOwn(resultsByTestId, key)) return;
+      const rv = resultsByTestId[key];
       const shown = (rv == null || rv === "") ? "Not Tested" : rv;
       if (String(it.result == null ? "" : it.result) === shown) return;
       try { collab.setCell("test", it, { result: shown }); } catch (_e) { /* row gone / not ready */ }
@@ -1122,15 +1232,32 @@
     }
   }
 
-  async function readExecutionSnapshot(testIds) {
+  function splitRunKeys(keys) {
+    const uuids = [];
+    const testIds = [];
+    (keys || []).forEach((key) => {
+      const text = String(key || "");
+      if (text.startsWith("u:")) uuids.push(text.slice(2));
+      else if (text.startsWith("t:")) testIds.push(text.slice(2));
+      else if (text) (IS_BOOKS ? uuids : testIds).push(text);
+    });
+    return { uuids, testIds };
+  }
+
+  async function readExecutionSnapshot(keys) {
     const [tests, libs, constants] = await Promise.all([
       fetchAllItems("test", { unfiltered: true }),
       fetchAllItems("lib", { unfiltered: true }),
       fetchAllItems("const", { unfiltered: true }),
     ]);
-    const wanted = new Set((testIds || []).map((id) => String(id).trim()));
+    const { uuids, testIds } = splitRunKeys(keys);
+    const wantedUuids = new Set(uuids);
+    const wantedTids = new Set(testIds);
+    const include = (item) => (IS_BOOKS
+      ? wantedUuids.has(item.uuid)
+      : wantedTids.has(rowTestId(item)));
     return {
-      tests: tests.filter((item) => wanted.has(rowTestId(item))).map((item) => ({
+      tests: tests.filter(include).map((item) => ({
         uuid: item.uuid, test_id: rowTestId(item), steps: item.steps,
       })),
       lib: libs.map((item) => ({
@@ -1144,12 +1271,12 @@
     };
   }
 
-  async function executionSnapshot(testIds) {
+  async function executionSnapshot(keys) {
     await waitForCommittedEdits();
-    return readExecutionSnapshot(testIds);
+    return readExecutionSnapshot(keys);
   }
 
-  async function enqueueSelectedRuns(testIds, model) {
+  async function enqueueSelectedRuns(keys, model) {
     await waitForCommittedEdits();
     const waitMs = typeof window.__LM_COLLAB_MATERIALIZE_WAIT_MS === "number"
       ? window.__LM_COLLAB_MATERIALIZE_WAIT_MS : 8000;
@@ -1160,7 +1287,12 @@
       if (collabActive() && collabConn !== "connected") {
         throw new Error("协同连接未同步，请恢复连接后再运行。");
       }
-      const payload = { test_ids: testIds, expected_inputs: await readExecutionSnapshot(testIds) };
+      const { uuids, testIds } = splitRunKeys(keys);
+      const payload = IS_BOOKS
+        ? { items: uuids.map((uuid) => ({ uuid })),
+            expected_inputs: await readExecutionSnapshot(keys) }
+        : { test_ids: testIds,
+            expected_inputs: await readExecutionSnapshot(keys) };
       if (model) payload.model = model;
       try {
         return await LMApi.runSelectedTasks(pid, payload);
@@ -1181,16 +1313,18 @@
   function queueCandidates() {
     const seen = new Set();
     const out = [];
-    (sheetItems["test"] || []).forEach((it) => {
+    (sheetItems["test"] || []).filter(rowInCurrentBook).forEach((it) => {
       const tid = rowTestId(it);
-      if (!tid || seen.has(tid)) return;
-      seen.add(tid);
+      if (!tid) return;
+      const key = resultKey(it) || tid;
+      if (seen.has(key)) return;
+      seen.add(key);
       // Use the server-authoritative verdict (same source the row colouring
       // uses) so the result filter reflects the real last-run outcome, not a
       // possibly-stale sheet cell.
       const res = effectiveResult(it);
       out.push({
-        testId: tid, desc: queueRowDesc(it), tier: priorityTier(it.priority),
+        testId: tid, key, desc: queueRowDesc(it), tier: priorityTier(it.priority),
         result: res, resCat: resultCategory(res),
       });
     });
@@ -1212,7 +1346,7 @@
   function queueSelectByPriority(tier) {
     queueChecked = new Set();
     queueCandidates().forEach((r) => {
-      if (queueMatches(r, tier, queueResult)) queueChecked.add(r.testId);
+      if (queueMatches(r, tier, queueResult)) queueChecked.add(r.key);
     });
   }
 
@@ -1247,8 +1381,8 @@
         label.className = "lm-queue-row";
         const cb = document.createElement("input");
         cb.type = "checkbox";
-        cb.value = r.testId;
-        cb.checked = queueChecked.has(r.testId);
+        cb.value = r.key;
+        cb.checked = queueChecked.has(r.key);
         cb.addEventListener("change", () => {
           if (cb.checked) queueChecked.add(cb.value);
           else queueChecked.delete(cb.value);
@@ -1392,18 +1526,18 @@
 
   if (queueOk) {
     queueOk.addEventListener("click", async (e) => {
-      const testIds = Array.from(queueChecked);
-      if (!testIds.length) {
+      const keys = Array.from(queueChecked);
+      if (!keys.length) {
         e.preventDefault();
-        if (queueError) queueError.textContent = "请至少选择一个 test_id。";
+        if (queueError) queueError.textContent = "请至少选择一个测试用例。";
         return;
       }
       e.preventDefault();
       queueOk.disabled = true;
       if (queueError) queueError.textContent = "";
       try {
-        const model = (window.LMDefaultModel || "").trim();
-        const res = await enqueueSelectedRuns(testIds, model);
+        const model = IS_BOOKS ? "" : (window.LMDefaultModel || "").trim();
+        const res = await enqueueSelectedRuns(keys, model);
         const created = (res.created || []).length;
         const missing = (res.missing || []);
         const errors = (res.errors || []);
@@ -1455,11 +1589,45 @@
   // --- Export dialog (unifies generic + Japanese test-matrix export) ---
   const exportDialog = document.getElementById("lm-export-dialog");
   const exportFormatSel = document.getElementById("lm-export-format");
+  const exportBookSel = document.getElementById("lm-export-book");
+  const exportBookLabel = document.getElementById("lm-export-book-label");
+  function syncExportBooks() {
+    if (!exportFormatSel) return;
+    exportFormatSel.querySelectorAll("option[data-books-only]").forEach((opt) => {
+      opt.hidden = !IS_BOOKS;
+      opt.disabled = !IS_BOOKS;
+    });
+    if (!IS_BOOKS && exportFormatSel.value.startsWith("book_")) {
+      exportFormatSel.value = "test_matrix";
+    }
+    const wantsBook = IS_BOOKS &&
+      (exportFormatSel.value === "book_current" || exportFormatSel.value === "io");
+    if (exportBookLabel) exportBookLabel.hidden = !wantsBook;
+    if (exportBookSel) {
+      const prev = exportBookSel.value;
+      exportBookSel.replaceChildren();
+      books.forEach((book) => {
+        const opt = document.createElement("option");
+        opt.value = String(book.id);
+        opt.textContent = book.name;
+        exportBookSel.appendChild(opt);
+      });
+      const preferred = (prev && books.some((b) => String(b.id) === prev))
+        ? prev
+        : (currentBookId != null ? String(currentBookId)
+          : (books.length ? String(books[0].id) : ""));
+      if (preferred) exportBookSel.value = preferred;
+      exportBookSel.hidden = !wantsBook;
+    }
+  }
   function openExportDialog() {
     document.getElementById("lm-export-error").textContent = "";
+    if (IS_BOOKS) exportFormatSel.value = "book_current";
+    syncExportBooks();
     exportDialog.showModal();
   }
   document.getElementById("lm-export").addEventListener("click", openExportDialog);
+  if (exportFormatSel) exportFormatSel.addEventListener("change", syncExportBooks);
 
   const exportButton = document.getElementById("lm-export-ok");
   exportButton.addEventListener("click", async (e) => {
@@ -1469,7 +1637,19 @@
     const format = exportFormatSel ? exportFormatSel.value : "generic";
     exportButton.disabled = true;
     try {
-      if (format === "test_matrix" || format === "libfunc" || format === "const"
+      if (format === "book_current" || format === "book_all") {
+        const bookId = format === "book_current"
+          ? (exportBookSel && exportBookSel.value ? Number(exportBookSel.value) : currentBookId)
+          : null;
+        if (format === "book_current" && !bookId) {
+          throw new Error("请选择要导出的式样书");
+        }
+        const a = document.createElement("a");
+        a.href = format === "book_current"
+          ? LMApi.bookExportUrl(pid, bookId)
+          : LMApi.allBooksExportUrl(pid);
+        a.click();
+      } else if (format === "test_matrix" || format === "libfunc" || format === "const"
           || format === "io") {
         const urlFor = {
           test_matrix: LMApi.testMatrixExportUrl,
@@ -1477,13 +1657,22 @@
           const: LMApi.constExportUrl,
           io: LMApi.ioExportUrl,
         }[format];
+        const ioBookId = (format === "io" && IS_BOOKS)
+          ? (exportBookSel && exportBookSel.value ? Number(exportBookSel.value) : currentBookId)
+          : null;
+        if (format === "io" && IS_BOOKS && !ioBookId) {
+          throw new Error("请选择要导出入出力的式样书");
+        }
         const a = document.createElement("a");
-        a.href = urlFor(pid);
+        a.href = format === "io" ? urlFor(pid, ioBookId) : urlFor(pid);
         a.click();
       } else {
         const silverArchive = format === "legacy_judge" || format === "silver_json";
         const blob = silverArchive
-          ? await LMApi.exportSilverTestcases(pid, format)
+          ? await LMApi.exportSilverTestcases(
+              pid, format,
+              IS_BOOKS ? (sheetItems["test"] || []).filter(rowInCurrentBook)
+                .map((it) => it.uuid).filter(Boolean) : null)
           : await LMApi.exportProject(pid, {});
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -1540,8 +1729,11 @@
                label: "Lib 函数库 (lib_Func + 手順明细)" },
     const: { call: (id, file, mode) => LMApi.importConst(id, file, mode),
              label: "Const 常量表 (No. / 識別子名)" },
-    io: { call: (id, file, mode) => LMApi.importIo(id, file, mode),
+    io: { call: (id, file, mode, opts) =>
+            LMApi.importIo(id, file, mode, opts && opts.bookId),
           label: "入出力信号池 (名称 / 路径)" },
+    book: { call: (id, file, mode, opts) => LMApi.importBook(id, file, opts || {}),
+            label: "式样书 (日文多表格式)" },
   };
   const IMPORT_SHEETS = {
     generic: "test",
@@ -1549,7 +1741,107 @@
     libfunc: "lib",
     const: "const",
     io: "io",
+    book: "test",
   };
+
+  const importBookBlock = document.getElementById("lm-import-book-block");
+  const importBookSel = document.getElementById("lm-import-book");
+  const importBookName = document.getElementById("lm-import-book-name");
+  const importBookNameLabel = document.getElementById("lm-import-book-name-label");
+  const importModelSel = document.getElementById("lm-import-model");
+  const importModelLabel = document.getElementById("lm-import-model-label");
+  let importModels = [];
+  function importBookOptions(allowNew = true) {
+    if (!importBookSel) return;
+    const previous = importBookSel.value;
+    const opts = [];
+    if (allowNew) {
+      const fresh = document.createElement("option");
+      fresh.value = "__new__";
+      fresh.textContent = "＋ 新建式样书";
+      opts.push(fresh);
+    }
+    books.forEach((book) => {
+      const opt = document.createElement("option");
+      opt.value = String(book.id);
+      opt.textContent = book.name;
+      opts.push(opt);
+    });
+    importBookSel.replaceChildren(...opts);
+    const validValues = new Set(opts.map((o) => o.value));
+    if (previous && validValues.has(previous)) {
+      importBookSel.value = previous;
+    } else if (currentBookId != null && validValues.has(String(currentBookId))) {
+      importBookSel.value = String(currentBookId);
+    } else if (books.length) {
+      importBookSel.value = String(books[0].id);
+    } else if (allowNew) {
+      importBookSel.value = "__new__";
+    } else {
+      importBookSel.value = "";
+    }
+  }
+  async function loadImportModels() {
+    if (!IS_BOOKS || !importModelSel) return;
+    try {
+      const data = await LMApi.listProjectModels(pid);
+      importModels = (data && data.models) || [];
+    } catch (_e) { importModels = []; }
+    const opts = importModels.map((model) => {
+      const opt = document.createElement("option");
+      opt.value = String(model.id);
+      opt.textContent = model.version ? `${model.name}@${model.version}` : model.name;
+      return opt;
+    });
+    importModelSel.replaceChildren(...opts);
+  }
+  function syncImportBookUI() {
+    const format = importFormatSel ? importFormatSel.value : "generic";
+    const needsBook = IS_BOOKS && (format === "book" || format === "io");
+    if (importBookBlock) importBookBlock.hidden = !needsBook;
+    if (!needsBook) return;
+    const allowNew = format === "book";
+    importBookOptions(allowNew);
+    const creating = allowNew && importBookSel && importBookSel.value === "__new__";
+    if (importBookNameLabel) importBookNameLabel.hidden = !creating;
+    if (importBookName) {
+      importBookName.hidden = !creating;
+      if (creating && !importBookName.value && pendingFile) {
+        importBookName.value = String(pendingFile.name || "").replace(/\.xlsx$/i, "");
+      }
+    }
+    if (importModelLabel) importModelLabel.hidden = !creating;
+    if (importModelSel) importModelSel.hidden = !creating;
+  }
+  if (importBookSel) importBookSel.addEventListener("change", () => {
+    if (importCommitActive) return;
+    syncImportBookUI();
+    if (pendingFile) previewImport(pendingFile);
+  });
+  if (importModelSel) importModelSel.addEventListener("change", () => {
+    if (importCommitActive) return;
+    if (pendingFile && importBookSel && importBookSel.value === "__new__") {
+      previewImport(pendingFile);
+    }
+  });
+
+  function bookImportOptions() {
+    const format = importFormatSel ? importFormatSel.value : "generic";
+    if (!IS_BOOKS || (format !== "book" && format !== "io")) return {};
+    const value = importBookSel ? importBookSel.value : "__new__";
+    if (format === "io") {
+      const bookId = Number(value);
+      return Number.isFinite(bookId) && bookId > 0 ? { bookId } : {};
+    }
+    if (value === "__new__") {
+      return {
+        modelId: importModelSel && importModelSel.value
+          ? Number(importModelSel.value) : null,
+        bookName: importBookName ? importBookName.value.trim() : "",
+      };
+    }
+    return { bookId: Number(value) };
+  }
 
   async function previewImport(file, notice = "", refreshAfterCommit = false) {
     if (importCommitActive && !refreshAfterCommit) return;
@@ -1570,7 +1862,7 @@
     }
 
     try {
-      const data = await spec.call(pid, file, mode);
+      const data = await spec.call(pid, file, mode, bookImportOptions());
       if (requestId !== previewRequest) return;
       pendingJob = data.job || null;
       if (!pendingJob) throw new Error("服务器未返回导入预览任务");
@@ -1654,17 +1946,36 @@
   }
 
   function applyFormatUI() {
-    const oneStep = importFormatSel && importFormatSel.value !== "generic";
+    if (importFormatSel) {
+      importFormatSel.querySelectorAll("option[data-books-only]").forEach((opt) => {
+        opt.hidden = !IS_BOOKS;
+        opt.disabled = !IS_BOOKS;
+      });
+      if (!IS_BOOKS && importFormatSel.value === "book") {
+        importFormatSel.value = "test_matrix";
+      }
+    }
+    const format = importFormatSel ? importFormatSel.value : "generic";
+    const oneStep = format !== "generic";
+    const bookOnlyUpsert = format === "book";
     document.querySelectorAll("#lm-import-mode option[data-generic-only]")
       .forEach((o) => { o.hidden = oneStep; o.disabled = oneStep; });
-    if (oneStep) {
-      const m = document.getElementById("lm-import-mode");
-      if (m.selectedOptions[0] && m.selectedOptions[0].hidden) m.value = "upsert";
+    if (importModeSel) {
+      Array.from(importModeSel.options).forEach((o) => {
+        if (o.hasAttribute("data-generic-only")) return;
+        const hide = bookOnlyUpsert && o.value !== "upsert";
+        o.hidden = hide;
+        o.disabled = hide;
+      });
+      if (importModeSel.selectedOptions[0] && importModeSel.selectedOptions[0].hidden) {
+        importModeSel.value = "upsert";
+      }
     }
     const extractBlock = document.getElementById("lm-extract-io-block");
     if (extractBlock) {
-      extractBlock.hidden = !(importFormatSel && importFormatSel.value === "io");
+      extractBlock.hidden = format !== "io";
     }
+    syncImportBookUI();
   }
   if (importFormatSel) importFormatSel.addEventListener("change", () => {
     if (importCommitActive) return;
@@ -1696,9 +2007,14 @@
     if (importFormatSel) {
       const pref = currentSheet === "const" ? "const"
         : currentSheet === "lib" ? "libfunc"
-        : currentSheet === "io" ? "io" : importFormatSel.value;
+        : currentSheet === "io" ? "io"
+        : IS_BOOKS ? "book" : importFormatSel.value;
       importFormatSel.value = pref;
     }
+    if (importBookName) importBookName.value = "";
+    loadImportModels().finally(() => {
+      applyFormatUI();
+    });
     applyFormatUI();
     importDialog.showModal();
   }
@@ -1741,6 +2057,14 @@
       if (requestId !== previewRequest || pendingJob !== job) return;
       pendingJob = null;
       pendingFile = null;
+      if (IS_BOOKS) {
+        await loadBooks();
+        if (result && result.book_id != null) {
+          currentBookId = Number(result.book_id);
+          page = 1;
+        }
+        syncExportBooks();
+      }
       if (targetSheet !== currentSheet) {
         if (isUniver() && typeof grid.setActiveSheetKey === "function") {
           grid.setActiveSheetKey(targetSheet);
@@ -1782,11 +2106,25 @@
       return;
     }
     const mode = document.getElementById("lm-import-mode").value;
+    const ioBookId = IS_BOOKS
+      ? (importBookSel && importBookSel.value !== "__new__"
+          ? Number(importBookSel.value) : currentBookId)
+      : null;
+    if (IS_BOOKS && !ioBookId) {
+      err.textContent = "请先选择式样书，再抽取或导入入出力。";
+      return;
+    }
     extractIoBtn.disabled = true;
     try {
-      const data = await LMApi.extractIo(pid, sheets, mode, { collabReconcile: collabActive() });
+      const data = await LMApi.extractIo(pid, sheets, mode, {
+        collabReconcile: collabActive(), bookId: ioBookId,
+      });
       const s = data.summary || {};
       const rowErrors = s.errors || [];
+      if (IS_BOOKS) {
+        await loadBooks();
+        currentBookId = Number(ioBookId);
+      }
       // Surface the newly-merged signals on the io sheet.
       if (currentSheet !== "io") {
         if (isUniver() && typeof grid.setActiveSheetKey === "function") {
@@ -2122,7 +2460,11 @@
             };
             const [lib, cst, io] = await Promise.all(
               [grab("lib"), grab("const"), grab("io")]);
-            return { lib, const: cst, io };
+            const scopedBookId = IS_BOOKS ? (item.book_id ?? currentBookId) : null;
+            const scopedIo = (IS_BOOKS && scopedBookId != null)
+              ? io.filter((row) => Number(row.book_id) === Number(scopedBookId))
+              : io;
+            return { lib, const: cst, io: scopedIo };
           },
           // Add a new reference-pool entry (sheet: "io" | "const") from the step
           // editor's reference panel. Enforces the pool's uniqueness contract
@@ -2136,7 +2478,15 @@
             const uniq = key === "io" ? ["io_name", "io_path"] : ["const_name"];
             const labels = { io_name: "名称", io_path: "路径", const_name: "识别子名" };
             const norm = (v) => String(v == null ? "" : v).trim().toLowerCase();
-            const existing = await fetchAllItems(key);
+            const scopedBookId = (IS_BOOKS && key === "io")
+              ? (item.book_id ?? currentBookId) : null;
+            if (IS_BOOKS && key === "io" && scopedBookId == null) {
+              throw new Error("请先选择式样书，再向入出力信号池添加信号");
+            }
+            const allExisting = await fetchAllItems(key);
+            const existing = (IS_BOOKS && key === "io")
+              ? allExisting.filter((row) => Number(row.book_id) === Number(scopedBookId))
+              : allExisting;
             for (const f of uniq) {
               const want = norm(values[f]);
               if (!want) continue;
@@ -2146,9 +2496,11 @@
             }
             if (collabActive()) {
               try { await LMApi.ensurePoolFields(pid, key); } catch (_e) { /* columns provision best-effort */ }
-              collab.insertRow(key, { values });
+              const insertVals = (IS_BOOKS && key === "io")
+                ? Object.assign({}, values, { book_id: scopedBookId }) : values;
+              collab.insertRow(key, { values: insertVals });
             } else {
-              await LMApi.addPoolEntry(pid, key, values);
+              await LMApi.addPoolEntry(pid, key, values, scopedBookId);
             }
             return true;
           },
@@ -2166,8 +2518,9 @@
             item[stepsKey] = merged[stepsKey];
           },
           onEnqueue: testId ? (async (tid) => {
-            const model = (window.LMDefaultModel || "").trim();
-            const res = await enqueueSelectedRuns([tid], model);
+            const model = IS_BOOKS ? "" : (window.LMDefaultModel || "").trim();
+            const key = resultKey(item) || ("t:" + tid);
+            const res = await enqueueSelectedRuns([key], model);
             const errors = (res.errors || []);
             const missing = (res.missing || []);
             if (errors.length) throw new Error(errors[0].error || "入队失败");
@@ -2178,7 +2531,9 @@
           getStatus: testId ? (async (tid) => {
             const res = await LMApi.listProjectTasks(pid, MAX_LOOKUP);
             const tasks = (res && res.tasks) || [];
-            const mine = tasks.filter((t) => String(t.test_id) === String(tid));
+            const mine = tasks.filter((t) => (IS_BOOKS && item.uuid)
+              ? String(t.row_uuid || "") === String(item.uuid)
+              : String(t.test_id) === String(tid));
             if (!mine.length) return null;
             const latest = mine.toSorted((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))[0];
             return latest.status || null;
@@ -2266,6 +2621,7 @@
     } catch (_e) { /* best-effort */ }
     try {
       await loadProject();
+      await loadBooks();
       // Bring up real-time collaboration before the first data load so the
       // initial render already reads from the shared Y.Doc when it is active.
       await tryStartCollab();

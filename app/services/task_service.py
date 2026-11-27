@@ -98,9 +98,13 @@ def latest_per_test(project_id: int) -> List[Task]:
     Unlike ``list_tasks`` this is not a recent-window view: a case last run
     long ago still reports that run instead of looking as if it never ran.
     """
+    # Multi-book tasks carry a row UUID, which is unique inside the project even
+    # when two books repeat the same test id. Legacy tasks fall back to their
+    # test id, so this grouping is unchanged for existing projects.
+    identity = db.func.coalesce(db.func.nullif(Task.row_uuid, ""), Task.test_id)
     newest = (live(db.session.query(db.func.max(Task.id)))
               .filter(Task.project_id == project_id, Task.test_id.isnot(None), Task.test_id != "")
-              .group_by(Task.test_id))
+              .group_by(identity))
     return Task.query.filter(Task.id.in_(newest)).order_by(Task.id.desc()).all()
 
 
@@ -129,6 +133,8 @@ def create_task(
     submitter_id: Optional[int] = None,
     commit: bool = True,
     clean_room: bool = False,
+    book_id: Optional[int] = None,
+    row_uuid: Optional[str] = None,
 ) -> Task:
     """Persist a new QUEUED task and assign its public key."""
     task = Task(
@@ -147,6 +153,8 @@ def create_task(
         project_id=project_id,
         submitter_id=submitter_id,
         clean_room=bool(clean_room),
+        book_id=book_id,
+        row_uuid=row_uuid,
     )
     db.session.add(task)
     db.session.flush()  # obtain the autoincrement id
@@ -170,10 +178,23 @@ def find_task_by_test_id(test_id: str, project_id: Optional[int] = None) -> Opti
     return query.populate_existing().order_by(Task.id.desc()).first()
 
 
-def lock_submission(project_id: Optional[int], test_id: str) -> None:
+def find_task_by_row_uuid(row_uuid: str, project_id: Optional[int] = None) -> Optional[Task]:
+    """Latest task for a matrix row UUID (multi-book projects)."""
+    needle = (row_uuid or "").strip()
+    if not needle:
+        return None
+    query = live(Task.query).filter(Task.row_uuid == needle)
+    if project_id is not None:
+        query = query.filter(Task.project_id == project_id)
+    return query.populate_existing().order_by(Task.id.desc()).first()
+
+
+def lock_submission(project_id: Optional[int], test_id: str,
+                   row_uuid: Optional[str] = None) -> None:
     """Serialize a project's staging owner until its transaction finishes."""
     if db.engine.dialect.name == "postgresql":
-        identity = f"task-submission:{project_id}:{_staging_token(test_id)}".encode("utf-8")
+        scope = f"row:{row_uuid}" if row_uuid else _staging_token(test_id)
+        identity = f"task-submission:{project_id}:{scope}".encode("utf-8")
         lock_key = int.from_bytes(hashlib.sha256(identity).digest()[:8], "big", signed=True)
         db.session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_key})
 
@@ -196,7 +217,8 @@ def task_is_executing(task: Task) -> bool:
 
 
 def active_submission(project_id: Optional[int], test_id: str, *, require_live=False,
-                      resetting_task_id: Optional[int] = None) -> Optional[Task]:
+                      resetting_task_id: Optional[int] = None,
+                      row_uuid: Optional[str] = None) -> Optional[Task]:
     candidates = (live(Task.query).filter(
         Task.project_id == project_id,
         Task.status.in_([TaskStatus.QUEUED.value, TaskStatus.RUNNING.value]))
@@ -209,8 +231,13 @@ def active_submission(project_id: Optional[int], test_id: str, *, require_live=F
         # Only resetting the same row fences a dequeued worker via run_count.
         # Other queued rows may already be waiting for a license off-queue.
         candidates.sort(key=lambda task: task.id == resetting_task_id)
+    def matches(task: Task) -> bool:
+        if row_uuid:
+            return (task.row_uuid or "") == row_uuid
+        return _staging_token(task.test_id) == token
+
     return next((task for task in candidates
-                 if _staging_token(task.test_id) == token
+                 if matches(task)
                  and (not require_live or task.id != resetting_task_id
                       or task_is_executing(task))), None)
 
@@ -288,10 +315,11 @@ def requeue_task(
     Raises :class:`TaskStillActive` if an attempt is still queued or running; a live
     run must not be reset underneath the worker executing it.
     """
-    lock_submission(task.project_id, task.test_id)
+    lock_submission(task.project_id, task.test_id, row_uuid=task.row_uuid)
     db.session.refresh(task)
     if active_submission(task.project_id, task.test_id, require_live=True,
-                         resetting_task_id=task.id) is not None:
+                         resetting_task_id=task.id,
+                         row_uuid=task.row_uuid) is not None:
         raise TaskStillActive("任务仍在队列或执行中，无需重新测试。")
     _reset_for_run(
         task,
@@ -320,6 +348,8 @@ def upsert_task(
     commit: bool = True,
     recover_stale: bool = False,
     clean_room: bool = False,
+    book_id: Optional[int] = None,
+    row_uuid: Optional[str] = None,
 ) -> tuple[Task, bool]:
     """Create or re-queue the task for ``(project_id, test_id)``.
 
@@ -329,23 +359,30 @@ def upsert_task(
     task that is currently queued/running is returned untouched so a live run is
     not clobbered mid-flight. When no task exists yet a fresh one is created.
     """
-    lock_submission(project_id, test_id)
-    existing = find_task_by_test_id(test_id, project_id=project_id) if recover_stale else None
+    lock_submission(project_id, test_id, row_uuid=row_uuid)
+    finder = (find_task_by_row_uuid(row_uuid, project_id=project_id)
+              if row_uuid else None)
+    existing = (finder if recover_stale else None) or (
+        find_task_by_test_id(test_id, project_id=project_id) if recover_stale
+        and not row_uuid else None)
     active = active_submission(project_id, test_id, require_live=recover_stale,
-                               resetting_task_id=existing.id if existing else None)
+                               resetting_task_id=existing.id if existing else None,
+                               row_uuid=row_uuid)
     if active is not None:
         if commit:
             db.session.commit()
         return active, False
     if not recover_stale:
-        existing = find_task_by_test_id(test_id, project_id=project_id)
+        existing = finder or (None if row_uuid
+                              else find_task_by_test_id(test_id, project_id=project_id))
     if existing is None:
         return create_task(
             task_name=task_name, file_name=file_name, submitter=submitter,
             test_id=test_id, sil_relpath=sil_relpath, sil_name=sil_name,
             sil_version=sil_version, sil_model_id=sil_model_id,
             workspace=workspace, project_id=project_id, submitter_id=submitter_id,
-            commit=commit, clean_room=clean_room), True
+            commit=commit, clean_room=clean_room,
+            book_id=book_id, row_uuid=row_uuid), True
 
     if not recover_stale and TaskStatus(existing.status) in (TaskStatus.QUEUED, TaskStatus.RUNNING):
         return existing, False

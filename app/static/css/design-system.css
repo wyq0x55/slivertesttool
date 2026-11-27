@@ -367,6 +367,7 @@ input::placeholder,textarea::placeholder{ color:var(--text-3); }
 .ptype{ font-size:11px; font-weight:600; padding:2px 8px; border-radius:999px;
   border:1px solid var(--border); background:var(--surface-2); color:var(--text-2); }
 .ptype-ut{ background:var(--run-soft); color:var(--run-text); border-color:transparent; }
+.ptype-books{ background:var(--brand-soft); color:var(--brand-text); border-color:transparent; }
 .card h3{ font-size:15.5px; font-weight:600; letter-spacing:-0.015em; margin-bottom:5px; line-height:1.3; }
 .card h3 a{ color:var(--text); } .card h3 a:hover{ color:var(--brand-text); }
 .card .desc{ font-size:13px; color:var(--text-3); line-height:1.5; display:-webkit-box; -webkit-line-clamp:2;

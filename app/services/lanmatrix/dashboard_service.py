@@ -61,6 +61,7 @@ from ...models import (
     DashboardVersionRollup,
     LMUser,
     Project,
+    TestBook,
     TestItemRow,
     TestRunRecord,
 )
@@ -387,20 +388,30 @@ def _parse_compare_ref(ref: str) -> tuple[str, str]:
 
 
 def _latest_non_cancelled(project_id: int, model_name: str,
-                          model_version: str) -> dict[str, TestRunRecord]:
-    """Latest non-cancelled run of each test id for one model identity.
+                          model_version: str, *, by_book: bool = False,
+                          ) -> dict[str, TestRunRecord]:
+    """Latest non-cancelled run of each case for one model identity.
 
     The identity is ``model_name`` plus ``model_version``. Sharing a version
     label does not merge two models. A cancelled row is not a result: an older
     non-cancelled run is kept, and a test id with only cancelled runs is absent.
+
+    With ``by_book`` the case identity is ``(book_id, test_id)``, so a multi-book
+    project never folds the same テストID from two specification books into one
+    result. Without it the identity is the test id alone, which is the behaviour
+    every single-book project relies on. Keys are opaque to callers; only
+    :func:`compare_versions` consumes them.
     """
     test_id_key = db.func.trim(TestRunRecord.test_id)
+    book_key = db.func.coalesce(
+        db.cast(TestRunRecord.book_id, db.String), "")
+    partition = [book_key, test_id_key] if by_book else test_id_key
     normalized_outcome = db.func.lower(db.func.trim(TestRunRecord.outcome))
     ranked = (
         db.session.query(
             TestRunRecord.id.label("record_id"),
             db.func.row_number().over(
-                partition_by=test_id_key,
+                partition_by=partition,
                 order_by=(TestRunRecord.executed_at.desc(),
                           TestRunRecord.id.desc()),
             ).label("run_rank"),
@@ -423,12 +434,15 @@ def _latest_non_cancelled(project_id: int, model_name: str,
     chosen: dict[str, TestRunRecord] = {}
     for row in rows:
         test_id = (row.test_id or "").strip()
-        if not test_id or test_id in chosen:
+        if not test_id:
             continue
         outcome = (row.outcome or "").strip().lower()
         if not outcome or outcome == "cancelled":
             continue
-        chosen[test_id] = row
+        case_key = f"{row.book_id or ''}|{test_id}" if by_book else test_id
+        if case_key in chosen:
+            continue
+        chosen[case_key] = row
     return chosen
 
 
@@ -482,29 +496,63 @@ def compare_versions(project_id: int, left: str, right: str, *,
     page = 1 if page < 1 else int(page)
     page_size = 1 if page_size < 1 else int(page_size)
 
-    left_rows = _latest_non_cancelled(project_id, left_name, left_version)
-    right_rows = _latest_non_cancelled(project_id, right_name, right_version)
+    project = db.session.get(Project, project_id)
+    by_book = bool(project and project.project_type == "silver_books")
+    left_rows = _latest_non_cancelled(
+        project_id, left_name, left_version, by_book=by_book)
+    right_rows = _latest_non_cancelled(
+        project_id, right_name, right_version, by_book=by_book)
 
     summary = {key: 0 for key in COMPARE_CHANGES}
     items = []
-    test_ids = sorted(set(left_rows) | set(right_rows))
+    case_keys = set(left_rows) | set(right_rows)
+
+    def case_sort_key(case_key: str):
+        row = left_rows.get(case_key) or right_rows.get(case_key)
+        test_id = (row.test_id or "").strip() if row is not None else ""
+        if by_book:
+            return (test_id, int(row.book_id or 0) if row is not None else 0,
+                    case_key)
+        return (test_id, case_key)
+
+    case_keys = sorted(case_keys, key=case_sort_key)
+    book_names: dict[int, str] = {}
+    if by_book:
+        book_ids = {
+            row.book_id for row in list(left_rows.values()) + list(right_rows.values())
+            if row.book_id
+        }
+        if book_ids:
+            book_names = {
+                book.id: book.name
+                for book in TestBook.query.filter(
+                    TestBook.project_id == project_id,
+                    TestBook.id.in_(book_ids),
+                ).all()
+            }
     start = (page - 1) * page_size
     stop = start + page_size
-    for index, test_id in enumerate(test_ids):
-        left_row = left_rows.get(test_id)
-        right_row = right_rows.get(test_id)
+    for index, case_key in enumerate(case_keys):
+        left_row = left_rows.get(case_key)
+        right_row = right_rows.get(case_key)
         left_outcome = _compare_outcome(left_row)
         right_outcome = _compare_outcome(right_row)
         change = _compare_change(left_outcome, right_outcome)
         summary[change] += 1
         if start <= index < stop:
-            items.append({
-                "test_id": test_id,
+            row = right_row or left_row
+            item = {
+                "test_id": (row.test_id or "").strip() if row is not None else "",
                 "left_outcome": left_outcome,
                 "right_outcome": right_outcome,
                 "change": change,
                 "row_uuid": _compare_row_uuid(left_row, right_row),
-            })
+            }
+            if by_book:
+                book_id = row.book_id if row is not None else None
+                item["book_id"] = book_id
+                item["book_name"] = book_names.get(book_id, "") if book_id else ""
+            items.append(item)
 
     return {
         "left": left_ref,
@@ -512,21 +560,33 @@ def compare_versions(project_id: int, left: str, right: str, *,
         "summary": summary,
         "page": page,
         "page_size": page_size,
-        "total": len(test_ids),
+        "total": len(case_keys),
         "items": items,
     }
 
 
 def test_run_history(project_id: int, test_id: str, *,
+                     row_uuid: Optional[str] = None,
+                     book_id: Optional[int] = None,
                      page: int = 1, page_size: int = 100) -> dict:
     """Return a bounded, newest-first page of matrix-backed run summaries."""
     test_id = (test_id or "").strip()
+    row_uuid = (row_uuid or "").strip() or None
     page = max(1, int(page))
     page_size = min(max(1, int(page_size)), settings.PAGE_SIZE_MAX)
     query = TestRunRecord.query.filter(
         TestRunRecord.project_id == project_id,
         TestRunRecord.test_id == test_id,
     )
+    if row_uuid:
+        query = query.filter(TestRunRecord.row_uuid == row_uuid)
+    elif book_id is not None:
+        query = query.filter(TestRunRecord.book_id == book_id)
+    book_name = ""
+    if book_id is not None:
+        book = TestBook.query.filter_by(
+            id=book_id, project_id=project_id).first()
+        book_name = book.name if book is not None else ""
     total = query.count()
     offset = (page - 1) * page_size
     rows = []
@@ -537,7 +597,7 @@ def test_run_history(project_id: int, test_id: str, *,
             .limit(page_size)
             .all()
         )
-    return {
+    payload = {
         "test_id": test_id,
         "page": page,
         "page_size": page_size,
@@ -560,6 +620,10 @@ def test_run_history(project_id: int, test_id: str, *,
             for row in rows
         ],
     }
+    if book_id is not None:
+        payload["book_id"] = book_id
+        payload["book_name"] = book_name
+    return payload
 
 
 TEST_RUN_HISTORY_CSV_HEADER = (

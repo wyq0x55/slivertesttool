@@ -354,6 +354,9 @@
   let compareRequestId = 0;
   let historyPage = 1;
   let historyTestId = "";
+  let historyRowUuid = "";
+  let historyBookId = "";
+  let historyBookName = "";
   let historyRequestId = 0;
 
   function outcomeText(value) {
@@ -369,12 +372,17 @@
 
   function renderCompareRow(item) {
     const href = matrixRowHref(item.row_uuid);
-    const label = esc(item.test_id);
+    const bookPrefix = item.book_name
+      ? "[" + esc(item.book_name) + "] " : "";
+    const label = bookPrefix + esc(item.test_id);
     const testCell = href
       ? '<a href="' + esc(href) + '">' + label + "</a>"
       : label;
     const historyButton = '<button type="button" class="btn" data-history-test-id="'
-      + esc(item.test_id) + '" aria-controls="lm-vc-history">历史</button>';
+      + esc(item.test_id) + '" data-history-row-uuid="' + esc(item.row_uuid || "")
+      + '" data-history-book-id="' + esc(item.book_id || "")
+      + '" data-history-book-name="' + esc(item.book_name || "")
+      + '" aria-controls="lm-vc-history">历史</button>';
     return "<tr><td>" + testCell + " " + historyButton + "</td><td>"
       + esc(outcomeText(item.left_outcome)) + "</td><td>"
       + esc(outcomeText(item.right_outcome)) + "</td><td>"
@@ -438,7 +446,9 @@
     const status = $("lm-vc-history-status");
     const body = $("lm-vc-history-rows");
     const items = data.items || [];
-    if (title) title.textContent = "用例运行历史 · " + (data.test_id || historyTestId);
+    const scope = data.book_name || historyBookName;
+    if (title) title.textContent = "用例运行历史 · "
+      + (scope ? scope + " · " : "") + (data.test_id || historyTestId);
     if (body) {
       body.innerHTML = items.length
         ? items.map(renderRunHistoryRow).join("")
@@ -483,6 +493,8 @@
         page: String(historyPage),
         page_size: "50",
       });
+      if (historyRowUuid) query.set("row_uuid", historyRowUuid);
+      if (!historyRowUuid && historyBookId) query.set("book_id", historyBookId);
       const resp = await fetch(
         "/api/v1/projects/" + encodeURIComponent(projectId)
           + "/test-run-history?" + query.toString(),
@@ -517,6 +529,9 @@
         const button = target.closest("[data-history-test-id]");
         if (!button) return;
         historyTestId = button.dataset.historyTestId || "";
+        historyRowUuid = button.dataset.historyRowUuid || "";
+        historyBookId = button.dataset.historyBookId || "";
+        historyBookName = button.dataset.historyBookName || "";
         historyPage = 1;
         loadRunHistory(1);
       });
@@ -596,6 +611,9 @@
     });
     historyRequestId += 1;
     historyTestId = "";
+    historyRowUuid = "";
+    historyBookId = "";
+    historyBookName = "";
   }
 
   function bindVersionCompare() {

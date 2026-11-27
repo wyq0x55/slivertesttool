@@ -15,6 +15,7 @@ register_common(bp)
 # Registration imports: order is explicit and side-effect is limited to adding
 # routes to the shared blueprint.
 from . import projects as _projects  # noqa: E402,F401
+from . import books as _books  # noqa: E402,F401
 from . import fields as _fields  # noqa: E402,F401
 from . import models as _models  # noqa: E402,F401
 from . import items as _items  # noqa: E402,F401

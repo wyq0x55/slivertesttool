@@ -14,7 +14,7 @@ _log = logging.getLogger(__name__)
 from sqlalchemy.orm.attributes import set_committed_value
 
 from ...extensions import db
-from ...models import LMUser, Project, TestItemRow
+from ...models import LMUser, Project, TestBook, TestItemRow
 from . import audit, queries, settings, validation
 from .errors import ServiceError, VersionConflict
 from .fields_service import field_specs, list_fields
@@ -30,7 +30,8 @@ def _utcnow() -> _dt.datetime:
 def list_items(project_id: int, *, page: int = 1, page_size: Optional[int] = None,
                sort: Optional[str] = None, filters: Optional[list] = None,
                combinator: str = "and", quick: Optional[str] = None,
-               sheet: Optional[str] = None) -> dict:
+               sheet: Optional[str] = None,
+               book_id: Optional[int] = None) -> dict:
     if page_size is None:
         page_size = settings.PAGE_SIZE
     q = TestItemRow.query.filter(
@@ -39,6 +40,8 @@ def list_items(project_id: int, *, page: int = 1, page_size: Optional[int] = Non
     )
     if sheet:
         q = q.filter(TestItemRow.sheet == sheet)
+    if book_id not in (None, ""):
+        q = q.filter(TestItemRow.book_id == int(book_id))
     clause = queries.build_filter_clause(filters or [], combinator)
     if clause is not None:
         q = q.filter(clause)
@@ -76,20 +79,35 @@ def get_item(project_id: int, item_id: int) -> TestItemRow:
 # --------------------------------------------------------------------------- #
 # Items — mutate (with validation + optimistic lock + audit)
 # --------------------------------------------------------------------------- #
-def _unique_checker(project_id: int, field_key: str, exclude_id: Optional[int]):
+def _unique_checker(project_id: int, field_key: str, exclude_id: Optional[int],
+                    book_id: Optional[int] = None):
     def check(fkey: str, value: Any) -> bool:
         if fkey != "case_id":
             return True  # only case_id is uniqueness-enforced at DB level in V1
         q = TestItemRow.query.filter_by(
             project_id=project_id, case_id=value, deleted_at=None)
+        q = (q.filter(TestItemRow.book_id == book_id)
+             if book_id is not None else q.filter(TestItemRow.book_id.is_(None)))
         if exclude_id is not None:
             q = q.filter(TestItemRow.id != exclude_id)
         return q.first() is None
     return check
 
 
+def _valid_book_id(project_id: int, book_id: Optional[int]) -> Optional[int]:
+    if book_id in (None, ""):
+        return None
+    try:
+        wanted = int(book_id)
+    except (TypeError, ValueError):
+        raise ServiceError("式样书不存在", code="NOT_FOUND")
+    if TestBook.query.filter_by(id=wanted, project_id=project_id).first() is None:
+        raise ServiceError("式样书不存在", code="NOT_FOUND")
+    return wanted
+
+
 def _apply_field_defaults(project_id: int, values: dict[str, Any],
-                          specs: list) -> dict[str, Any]:
+                          specs: list, book_id: Optional[int] = None) -> dict[str, Any]:
     """Fill in field ``default_value`` for keys the caller left empty.
 
     Also auto-generates a unique ``case_id`` when none was supplied, so a user
@@ -103,21 +121,29 @@ def _apply_field_defaults(project_id: int, values: dict[str, Any],
             values[key] = fdef.default_value
     case_id = values.get("case_id")
     if not case_id or (isinstance(case_id, str) and not case_id.strip()):
-        values["case_id"] = _auto_case_id(project_id)
+        values["case_id"] = _auto_case_id(project_id, book_id=book_id)
     return values
 
 
-def _auto_case_id(project_id: int) -> str:
+def _auto_case_id(project_id: int, book_id: Optional[int] = None) -> str:
     base = _dt.datetime.now().strftime("TC_%Y%m%d_%H%M%S")
     candidate, n = base, 1
-    while TestItemRow.query.filter_by(
-            project_id=project_id, case_id=candidate, deleted_at=None).first():
+    while _case_id_exists(project_id, candidate, book_id):
         n += 1
         candidate = f"{base}_{n}"
     return candidate
 
 
-def _allocate_case_ids(project_id: int, count: int) -> list[str]:
+def _case_id_exists(project_id: int, case_id: str, book_id: Optional[int]) -> bool:
+    q = TestItemRow.query.filter_by(
+        project_id=project_id, case_id=case_id, deleted_at=None)
+    return (q.filter(TestItemRow.book_id == book_id)
+            if book_id is not None else q.filter(TestItemRow.book_id.is_(None))
+            ).first() is not None
+
+
+def _allocate_case_ids(project_id: int, count: int,
+                       book_id: Optional[int] = None) -> list[str]:
     base = _dt.datetime.now().strftime("TC_%Y%m%d_%H%M%S")
     existing = (
         db.session.query(TestItemRow.case_id)
@@ -125,6 +151,8 @@ def _allocate_case_ids(project_id: int, count: int) -> list[str]:
             TestItemRow.project_id == project_id,
             TestItemRow.deleted_at.is_(None),
             TestItemRow.case_id.like(f"{base}%"),
+            (TestItemRow.book_id == book_id)
+            if book_id is not None else TestItemRow.book_id.is_(None),
         )
         .all()
     )
@@ -162,22 +190,26 @@ def _shift_row_orders(project_id: int, from_order: int, delta: int) -> None:
 def create_item(user: LMUser, project: Project, values: dict[str, Any],
                 *, draft: bool = False, anchor_id: Optional[int] = None,
                 place: str = "below", sheet: Optional[str] = None,
-                commit: bool = True) -> TestItemRow:
+                book_id: Optional[int] = None, commit: bool = True) -> TestItemRow:
     from . import fields as fld
     specs = field_specs(project.id)
     values = dict(values or {})
+    if book_id is None:
+        book_id = values.pop("book_id", None)
     # ``sheet`` is a row attribute (which editor tab the row lives on), not a
     # field value — accept it either as a keyword or inside ``values``.
     row_sheet = (sheet or values.pop("sheet", None) or fld.DEFAULT_SHEET)
     if row_sheet not in fld.SHEETS:
         row_sheet = fld.DEFAULT_SHEET
+    book_id = _valid_book_id(project.id, book_id)
     # Only validate/apply fields that belong to this row's sheet, so required
     # fields from other tabs don't block a const/lib row and vice-versa.
     specs = [s for s in specs if getattr(s, "sheet", "test") == row_sheet]
-    values = _apply_field_defaults(project.id, values, specs)
+    values = _apply_field_defaults(project.id, values, specs, book_id=book_id)
     coerced, errors = validation.validate_record(
         specs, values,
-        unique_checker=lambda k, v: _unique_checker(project.id, k, None)(k, v),
+        unique_checker=lambda k, v: _unique_checker(
+            project.id, k, None, book_id=book_id)(k, v),
         enforce_required=not draft)
     if validation.has_blocking(errors):
         raise ServiceError("输入数据校验失败", code="VALIDATION_ERROR",
@@ -193,7 +225,7 @@ def create_item(user: LMUser, project: Project, values: dict[str, Any],
             target_order = anchor.row_order + (1 if place == "below" else 0)
             _shift_row_orders(project.id, target_order, 1)
     item = TestItemRow(project_id=project.id, row_order=target_order,
-                       sheet=row_sheet,
+                       sheet=row_sheet, book_id=book_id,
                        created_by=user.id, updated_by=user.id, version=1)
     _apply_values(item, coerced, specs)
     # Inherit the anchor row's テスト区分 (category) for a positional insert, so a
@@ -225,7 +257,8 @@ def create_items(user: LMUser, project: Project, values: dict[str, Any],
                  *, count: int = 1, draft: bool = False,
                  commit: bool = True, anchor_id: Optional[int] = None,
                  place: str = "below",
-                 sheet: Optional[str] = None) -> list[TestItemRow]:
+                 sheet: Optional[str] = None,
+                 book_id: Optional[int] = None) -> list[TestItemRow]:
     """Create ``count`` (1..200) rows at once, optionally above/below ``anchor_id``."""
     if isinstance(count, bool) or (
             isinstance(count, float) and not count.is_integer()):
@@ -239,11 +272,14 @@ def create_items(user: LMUser, project: Project, values: dict[str, Any],
     if n_rows == 1:
         return [create_item(
             user, project, values, draft=draft, anchor_id=anchor_id,
-            place=place, sheet=sheet, commit=commit)]
+            place=place, sheet=sheet, book_id=book_id, commit=commit)]
 
     from . import fields as fld
     specs = field_specs(project.id)
     raw_input = dict(values or {})
+    if book_id is None:
+        book_id = raw_input.pop("book_id", None)
+    book_id = _valid_book_id(project.id, book_id)
     row_sheet = (sheet or raw_input.pop("sheet", None) or fld.DEFAULT_SHEET)
     if row_sheet not in fld.SHEETS:
         row_sheet = fld.DEFAULT_SHEET
@@ -264,7 +300,7 @@ def create_items(user: LMUser, project: Project, values: dict[str, Any],
     if has_explicit_case_id and not draft:
         raise ServiceError("批量插入多行时不能指定固定 case_id",
                            code="VALIDATION_ERROR")
-    case_ids = _allocate_case_ids(project.id, n_rows)
+    case_ids = _allocate_case_ids(project.id, n_rows, book_id=book_id)
 
     prepared: list[tuple[dict[str, Any], dict[str, Any]]] = []
     seen_case_ids: set[str] = set()
@@ -275,7 +311,8 @@ def create_items(user: LMUser, project: Project, values: dict[str, Any],
         def _check_unique(fkey: str, val: Any) -> bool:
             if fkey == "case_id" and val in seen_case_ids:
                 return False
-            return _unique_checker(project.id, fkey, None)(fkey, val)
+            return _unique_checker(
+                project.id, fkey, None, book_id=book_id)(fkey, val)
 
         coerced, errors = validation.validate_record(
             specs, row_values,
@@ -302,6 +339,7 @@ def create_items(user: LMUser, project: Project, values: dict[str, Any],
             project_id=project.id,
             row_order=target_order + idx,
             sheet=row_sheet,
+            book_id=book_id,
             created_by=user.id,
             updated_by=user.id,
             version=1,
@@ -351,9 +389,16 @@ _POOL_LABELS: dict[str, str] = {
 
 
 def _check_pool_unique(project_id: int, sheet: str, keys: tuple[str, ...],
-                       values: dict[str, Any]) -> None:
-    rows = TestItemRow.query.filter_by(
-        project_id=project_id, sheet=sheet, deleted_at=None).all()
+                       values: dict[str, Any],
+                       book_id: Optional[int] = None) -> None:
+    query = TestItemRow.query.filter_by(
+        project_id=project_id, sheet=sheet, deleted_at=None)
+    # The I/O pool is per specification book; const/lib stay project-wide.
+    if sheet == "io":
+        query = (query.filter(TestItemRow.book_id == book_id)
+                 if book_id is not None
+                 else query.filter(TestItemRow.book_id.is_(None)))
+    rows = query.all()
     for key in keys:
         want = str(values.get(key, "") or "").strip().lower()
         if not want:
@@ -367,7 +412,8 @@ def _check_pool_unique(project_id: int, sheet: str, keys: tuple[str, ...],
 
 
 def add_pool_entry(user: LMUser, project: Project, sheet: str,
-                   values: dict[str, Any], *, commit: bool = True) -> TestItemRow:
+                   values: dict[str, Any], *, book_id: Optional[int] = None,
+                   commit: bool = True) -> TestItemRow:
     """Create one reference-pool row (``io`` / ``const``).
 
     Provisions the sheet's field set on demand (so a fresh project renders the
@@ -384,8 +430,13 @@ def add_pool_entry(user: LMUser, project: Project, sheet: str,
             raise ServiceError(f"{_POOL_LABELS.get(key, key)} 不能为空",
                                code="VALIDATION_ERROR")
     fields_service.ensure_fields(user, project, getattr(fld, _POOL_SPECS[sheet]))
-    _check_pool_unique(project.id, sheet, _POOL_UNIQUE[sheet], values)
-    return create_item(user, project, values, sheet=sheet, commit=commit)
+    scoped_book = None
+    if sheet == "io":
+        scoped_book = _valid_book_id(project.id, book_id)
+    _check_pool_unique(project.id, sheet, _POOL_UNIQUE[sheet], values,
+                       book_id=scoped_book)
+    return create_item(user, project, values, sheet=sheet,
+                       book_id=scoped_book, commit=commit)
 
 
 def update_item(user: LMUser, project: Project, item: TestItemRow,
@@ -415,7 +466,8 @@ def update_item(user: LMUser, project: Project, item: TestItemRow,
         if spec is None or spec.is_readonly:
             continue
         value, errs = validation.validate_value(
-            spec, raw, unique_checker=_unique_checker(project.id, key, item.id))
+            spec, raw, unique_checker=_unique_checker(
+                project.id, key, item.id, book_id=item.book_id))
         coerced[key] = value
         errors.extend(errs)
     if validation.has_blocking(errors):
@@ -469,15 +521,15 @@ def _apply_values(item: TestItemRow, coerced: dict[str, Any], specs: list) -> No
 def duplicate_item(user: LMUser, project: Project, item: TestItemRow) -> TestItemRow:
     data = item.to_dict()
     data.pop("id", None)
-    data["case_id"] = _next_case_id(project.id, item.case_id)
-    return create_item(user, project, data)
+    data["case_id"] = _next_case_id(project.id, item.case_id, book_id=item.book_id)
+    return create_item(user, project, data, sheet=item.sheet, book_id=item.book_id)
 
 
-def _next_case_id(project_id: int, base: str) -> str:
+def _next_case_id(project_id: int, base: str,
+                  book_id: Optional[int] = None) -> str:
     candidate = f"{base}_copy"
     n = 1
-    while TestItemRow.query.filter_by(
-            project_id=project_id, case_id=candidate, deleted_at=None).first():
+    while _case_id_exists(project_id, candidate, book_id):
         n += 1
         candidate = f"{base}_copy{n}"
     return candidate
@@ -554,8 +606,9 @@ def bulk_duplicate(user: LMUser, project: Project,
     for src in rows:
         data = src.to_dict()
         data.pop("id", None)
-        data["case_id"] = _next_case_id(project.id, src.case_id)
-        dup = create_item(user, project, data,
+        data["case_id"] = _next_case_id(project.id, src.case_id, book_id=src.book_id)
+        dup = create_item(user, project, data, sheet=src.sheet,
+                          book_id=src.book_id,
                           anchor_id=anchor_id, place="below", commit=False)
         anchor_id = dup.id  # keep copies contiguous and in order
         created.append(dup)
@@ -741,7 +794,7 @@ def move_items(user: LMUser, project: Project, ids: list[int],
 # Row-state keys that materialization manages itself and must never copy blindly
 # from the Y.Map onto the row (identity / ordering / audit bookkeeping).
 _MATERIALIZE_SKIP = frozenset({
-    "id", "uuid", "row_order", "sheet", "version",
+    "id", "uuid", "row_order", "sheet", "book_id", "version",
     "created_at", "created_by", "updated_at", "updated_by",
 })
 
@@ -799,8 +852,10 @@ def materialize_create(user: LMUser, project: Project, state: dict[str, Any],
     if row_sheet not in fld.SHEETS:
         row_sheet = fld.DEFAULT_SHEET
     order = row_order if row_order is not None else _max_row_order(project.id) + 1
+    row_book_id = _valid_book_id(project.id, state.get("book_id"))
     kwargs: dict[str, Any] = dict(
-        project_id=project.id, sheet=row_sheet, row_order=order,
+        project_id=project.id, sheet=row_sheet, book_id=row_book_id,
+        row_order=order,
         created_by=user.id, updated_by=user.id, version=1)
     row_uuid = (state.get("uuid") or "").strip()
     if row_uuid:
@@ -808,7 +863,7 @@ def materialize_create(user: LMUser, project: Project, state: dict[str, Any],
     item = TestItemRow(**kwargs)
     _apply_materialized_values(item, state)
     if not (item.case_id or "").strip():
-        item.case_id = _auto_case_id(project.id)
+        item.case_id = _auto_case_id(project.id, book_id=row_book_id)
     db.session.add(item)
     db.session.flush()
     audit.record("item.materialize", actor_id=user.id, object_type="item",

@@ -245,7 +245,7 @@
       if (f.status && LMTaskRow.mergedVerdict(t).cls !== f.status) return false;
       if (f.submitter && !String(t.submitter || "").toLowerCase().includes(f.submitter)) return false;
       if (f.text) {
-        const hay = (t.task_id + " " + (t.task_name || "") + " " + t.test_id).toLowerCase();
+        const hay = (t.task_id + " " + (t.task_name || "") + " " + t.test_id + " " + (t.book_name || "")).toLowerCase();
         if (!hay.includes(f.text)) return false;
       }
       return true;
@@ -319,7 +319,7 @@
     document.querySelectorAll(".lm-task-view").forEach((b) =>
       b.addEventListener("click", () => openDetail(b.dataset.k)));
     document.querySelectorAll(".lm-task-steps").forEach((b) =>
-      b.addEventListener("click", () => openSteps(b.dataset.tid)));
+      b.addEventListener("click", () => openSteps(b.dataset.tid, b.dataset.rowUuid || "", b.dataset.bookId || "")));
     document.querySelectorAll(".lm-task-open").forEach((a) =>
       a.addEventListener("click", (e) => { e.preventDefault(); openDetail(a.dataset.k); }));
     document.querySelectorAll(".lm-task-sel").forEach((cb) =>
@@ -710,6 +710,7 @@
       $("lm-d-message").textContent = t.message || "";
       renderDetailReview(t);
       $("lm-d-sub").innerHTML = "test id <code>" + esc(t.test_id || "") + "</code>" +
+        (t.book_name ? " · 式样书 <strong>" + esc(t.book_name) + "</strong>" : "") +
         " · 任务 <code>" + esc(t.task_id || key) + "</code>" +
         (t.submitter ? " · 提交者 " + esc(t.submitter) : "") +
         (created ? " · " + esc(created) : "");
@@ -927,9 +928,10 @@
     return acc;
   }
 
-  async function openSteps(testId) {
+  async function openSteps(testId, rowUuid, bookId) {
     if (!window.LMStepsEditor) { toast("步骤编辑器未加载", false); return; }
     const tid = String(testId == null ? "" : testId).trim();
+    const wantUuid = String(rowUuid == null ? "" : rowUuid).trim();
     if (!tid) { toast("该任务缺少 test id", false); return; }
     try {
       const items = await fetchTestItems();
@@ -937,11 +939,18 @@
         const direct = it && it.test_id != null ? String(it.test_id).trim() : "";
         return direct || (it && it.case_id != null ? String(it.case_id).trim() : "");
       };
-      const row = items.find((it) => logicalId(it) === tid);
+      // In a multi-book project the same test id exists in several books. Use
+      // the task's row UUID first; the id lookup is only the legacy fallback.
+      const row = (wantUuid
+        ? items.find((it) => it && String(it.uuid || "") === wantUuid)
+        : null) || items.find((it) => logicalId(it) === tid);
       if (!row) {
         toast(`在测试表中未找到 test id「${tid}」对应的行`, false);
         return;
       }
+      const scopedBookId = row.book_id != null
+        ? Number(row.book_id)
+        : (bookId ? Number(bookId) : null);
       LMStepsEditor.open(row, {
         fieldKey: "steps",
         testId: tid,
@@ -959,12 +968,16 @@
             try { return await fetchSheetItems(sheet); } catch (_e) { return []; }
           };
           const [lib, cst, io] = await Promise.all([grab("lib"), grab("const"), grab("io")]);
-          return { lib, const: cst, io };
+          const scopedIo = scopedBookId != null
+            ? io.filter((entry) => Number(entry.book_id) === scopedBookId)
+            : io;
+          return { lib, const: cst, io: scopedIo };
         },
         // Add a new io/const pool entry from the reference panel.
         addPool: async (sheet, values) => {
           const key = String(sheet) === "io" ? "io" : "const";
-          await LMApi.addPoolEntry(pid, key, values);
+          await LMApi.addPoolEntry(
+            pid, key, values, key === "io" ? scopedBookId : null);
           return true;
         },
         // Re-run this test id from the drawer's enqueue button.
@@ -972,7 +985,9 @@
         onEnqueue: async (id) => {
           const targetId = String(id).trim();
           const items = await fetchSheetItems("test");
-          const matched = items.filter((item) => logicalId(item) === targetId);
+          const matched = (scopedBookId != null && row.uuid)
+            ? items.filter((item) => item && String(item.uuid || "") === String(row.uuid))
+            : items.filter((item) => logicalId(item) === targetId);
           const libs = await fetchSheetItems("lib");
           const constants = await fetchSheetItems("const");
           const expected = {
@@ -980,7 +995,10 @@
             lib: libs.map((item) => ({ uuid: item.uuid, name: String(item.lib_func || item.lib_name || item.case_id || "").trim(), steps: item.lib_stb, params: item.lib_para || "", init: item.isinit })),
             const: constants.map((item) => ({ uuid: item.uuid, name: String(item.const_name || "").trim(), value: item.const_value })),
           };
-          const res = await LMApi.runSelectedTasks(pid, { test_ids: [targetId], expected_inputs: expected });
+          const payload = (scopedBookId != null && row.uuid)
+            ? { items: [{ uuid: row.uuid }], expected_inputs: expected }
+            : { test_ids: [targetId], expected_inputs: expected };
+          const res = await LMApi.runSelectedTasks(pid, payload);
           const errors = (res.errors || []);
           const missing = (res.missing || []);
           if (errors.length) throw new Error(errors[0].error || "入队失败");
@@ -999,7 +1017,9 @@
           // (Proper fix is a dedicated per-test status endpoint -- see PLAN.md.)
           const res = await LMApi.listProjectTasks(pid, MAX_LOOKUP);
           const tasks = (res && res.tasks) || [];
-          const mine = tasks.filter((t) => String(t.test_id) === String(id));
+          const mine = tasks.filter((t) => (scopedBookId != null && row.uuid)
+            ? String(t.row_uuid || "") === String(row.uuid)
+            : String(t.test_id) === String(id));
           if (!mine.length) return null;
           mine.sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
           return mine[0].status || null;

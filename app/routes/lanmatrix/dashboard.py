@@ -143,11 +143,18 @@ def version_compare(project_id: int):
 @bp.get("/projects/<int:project_id>/test-run-history")
 @login_required
 def test_run_history(project_id: int):
-    """Return paged matrix-backed run summaries for one exact test id."""
+    """Return paged matrix-backed run summaries for one exact test id.
+
+    Multi-book projects repeat テストIDs across books, so the caller may pass
+    the row UUID (preferred) or the book id to disambiguate. Callers that pass
+    neither keep the legacy single-project behaviour.
+    """
     from ...services.lanmatrix import dashboard_service
 
     _project_and_role(project_id, "project.view")
     test_id = arg_str("test_id", max_length=128)
+    row_uuid = arg_str("row_uuid", max_length=64)
+    book_id = arg_int("book_id", minimum=1)
     if not test_id:
         return err("VALIDATION_ERROR", "参数 test_id 必填", status=400)
     page = arg_int("page", 1, minimum=1)
@@ -156,7 +163,8 @@ def test_run_history(project_id: int):
         maximum=settings.PAGE_SIZE_MAX,
     )
     return ok(dashboard_service.test_run_history(
-        project_id, test_id, page=page, page_size=page_size,
+        project_id, test_id, row_uuid=row_uuid, book_id=book_id,
+        page=page, page_size=page_size,
     ))
 
 

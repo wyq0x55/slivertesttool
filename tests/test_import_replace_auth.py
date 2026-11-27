@@ -938,7 +938,7 @@ def test_postgresql_special_import_locks_item_and_field_tables(
     import_job_service._lock_special_import_tables()
 
     assert executed == [
-        "LOCK TABLE lm_test_items, lm_field_definitions IN SHARE ROW EXCLUSIVE MODE",
+        "LOCK TABLE lm_test_items, lm_field_definitions, lm_test_books IN SHARE ROW EXCLUSIVE MODE",
     ]
 
 

@@ -519,26 +519,44 @@ def reviews_for_tasks(tasks: Iterable, users: Optional[dict] = None) -> dict:
     Returns an empty mapping rather than raising: the task list must still
     render if the matrix cannot be read.
     """
-    wanted: dict[int, set] = {}
+    wanted_tids: dict[int, set[str]] = {}
+    wanted_uuids: dict[int, set[str]] = {}
     for task in tasks:
         pid = getattr(task, "project_id", None)
+        if not pid:
+            continue
+        ruuid = (getattr(task, "row_uuid", "") or "").strip()
         tid = (getattr(task, "test_id", "") or "").strip()
-        if pid and tid:
-            wanted.setdefault(int(pid), set()).add(tid)
-    if not wanted:
+        if ruuid:
+            wanted_uuids.setdefault(int(pid), set()).add(ruuid)
+        elif tid:
+            wanted_tids.setdefault(int(pid), set()).add(tid)
+    project_ids = set(wanted_tids) | set(wanted_uuids)
+    if not project_ids:
         return {}
 
     out: dict = {}
     try:
-        for pid, needles in wanted.items():
-            ids = list(needles)
+        for pid in project_ids:
+            needles = wanted_tids.get(pid) or set()
+            uuids = wanted_uuids.get(pid) or set()
+            predicates = []
+            if uuids:
+                predicates.append(TestItemRow.uuid.in_(list(uuids)))
+            if needles:
+                ids = list(needles)
+                predicates.append(TestItemRow.case_id.in_(ids))
+                predicates.append(
+                    TestItemRow.custom_values["test_id"].as_string().in_(ids))
             rows = (TestItemRow.query
                     .filter_by(project_id=pid, sheet="test", deleted_at=None)
                     .filter(TestItemRow.review_status != NONE)
-                    .filter(db.or_(
-                        TestItemRow.case_id.in_(ids),
-                        TestItemRow.custom_values["test_id"].as_string().in_(ids)))
+                    .filter(db.or_(*predicates))
                     .all())
+            for row in rows:
+                if row.uuid and row.uuid in uuids:
+                    out[(pid, f"u:{row.uuid}")] = task_review_dict(
+                        row, count=1, users=users)
             best: dict = {}
             for row in rows:
                 tid = sje.row_test_id(row)
@@ -592,6 +610,10 @@ def attach_reviews(tasks: list, payload: list, reviews: dict) -> list:
     """Merge a review mapping into already-serialised task dicts, in order."""
     for task, data in zip(tasks, payload):
         pid = getattr(task, "project_id", None)
+        ruuid = (getattr(task, "row_uuid", "") or "").strip()
+        if pid and ruuid:
+            data["review"] = reviews.get((int(pid), f"u:{ruuid}"))
+            continue
         tid = (getattr(task, "test_id", "") or "").strip()
         data["review"] = reviews.get((int(pid), tid)) if pid and tid else None
     return payload

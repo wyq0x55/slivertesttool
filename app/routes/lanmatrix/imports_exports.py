@@ -136,7 +136,7 @@ def import_const(project_id):
 def import_io(project_id):
     """Import an 入出力 (I/O signal pool) workbook: one signal -> one editor row
     (io_name / io_path / io_note), keeping name AND path unique."""
-    return _import_special(project_id, "io")
+    return _import_special(project_id, "io", book_id=request.form.get("book_id"))
 
 @bp.post("/projects/<int:project_id>/io/extract")
 @login_required
@@ -161,12 +161,21 @@ def extract_io(project_id):
         form_sheets = request.form.get("sheets")
         raw_sheets = form_sheets.split(",") if form_sheets else ["lib"]
     sheets = [str(s).strip() for s in raw_sheets if str(s).strip()] or ["lib"]
+    book_id = payload.get("book_id") or request.form.get("book_id")
+    if project.project_type == "silver_books":
+        if not book_id:
+            return err("VALIDATION_ERROR",
+                       "多式样书项目请先选择式样书，再抽取入出力。", status=400)
+        from ...services.lanmatrix import books_service
+
+        book_id = books_service.get_book(project.id, book_id).id
     blocked = _collab_bulk_write_blocked(project_id)
     if blocked:
         return blocked
     try:
         summary = libconst_bridge.extract_io_from_steps(
-            g.user, project, sheets=sheets, mode=mode, source_label="extract")
+            g.user, project, sheets=sheets, mode=mode, source_label="extract",
+            book_id=book_id)
     except (ServiceError, PermissionDenied, VersionConflict):
         raise
     except Exception as exc:  # noqa: BLE001 - never leak an opaque HTML 500
@@ -175,7 +184,7 @@ def extract_io(project_id):
                    f"抽取失败：{type(exc).__name__}: {exc}", status=400)
     return ok({"summary": summary}, status=201)
 
-def _import_special(project_id, import_format):
+def _import_special(project_id, import_format, book_id=None):
     """Create a DataJob preview for one of the dedicated workbook formats."""
     project, _ = _project_and_role(project_id, "import.run")
     if not project.is_editable:
@@ -190,7 +199,7 @@ def _import_special(project_id, import_format):
         return err("VALIDATION_ERROR", "仅支持 .xlsx 文件", status=400)
     job = import_job_service.create_special_preview(
         g.user, project, file.stream, import_format=import_format,
-        mode=mode, original_filename=file.filename,
+        mode=mode, original_filename=file.filename, book_id=book_id,
     )
     return ok({"job": job.to_dict(with_preview=True)}, status=201)
 
@@ -241,7 +250,15 @@ def export_io(project_id):
     from ...services.lanmatrix import libconst_bridge
 
     project, _ = _project_and_role(project_id, "export.run")
-    buf = libconst_bridge.export_io(project)
+    book_id = request.args.get("book_id")
+    if project.project_type == "silver_books":
+        if not book_id:
+            return err("VALIDATION_ERROR",
+                       "多式样书项目请指定式样书后再导出入出力。", status=400)
+        from ...services.lanmatrix import books_service
+
+        book_id = books_service.get_book(project.id, book_id).id
+    buf = libconst_bridge.export_io(project, book_id=book_id)
     ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     return send_file(buf, as_attachment=True,
                      download_name=f"{project.code}_io_{ts}.xlsx",
@@ -252,7 +269,8 @@ def _export_testcase_archive(project_id, *, legacy):
 
     project, _ = _project_and_role(project_id, "export.run")
     buf = testcase_archive_service.export_project(
-        project, legacy=legacy, test_ids=request.args.getlist("test_ids"))
+        project, legacy=legacy, test_ids=request.args.getlist("test_ids"),
+        row_uuids=request.args.getlist("row_uuids"))
     format_name = "legacy_judge" if legacy else "silver_json"
     ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     return send_file(buf, as_attachment=True,

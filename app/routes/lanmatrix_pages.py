@@ -352,8 +352,11 @@ def project_settings(project_id: int):
     user = _current_user()
     if user is None:
         return redirect(url_for("lanmatrix_pages.login"))
-    if _is_ut(_project(project_id)):
+    project = _project(project_id)
+    if _is_ut(project):
         return redirect(url_for("lanmatrix_pages.ut_binding", project_id=project_id))
+    if project is not None and project.project_type == "silver_books":
+        return redirect(url_for("lanmatrix_pages.books_page", project_id=project_id))
     return redirect(url_for("lanmatrix_pages.fields", project_id=project_id))
 
 
@@ -369,6 +372,19 @@ def ut_binding(project_id: int):
         return redirect(url_for("lanmatrix_pages.fields", project_id=project_id))
     return render_template(
         "lanmatrix/ut_binding.html", user=user.to_dict(), project_id=project_id)
+
+
+@pages_bp.get("/projects/<int:project_id>/settings/books")
+def books_page(project_id: int):
+    """多式样书项目的书注册表：名称、固定模型版本与数据量。"""
+    user = _current_user()
+    if user is None:
+        return redirect(url_for("lanmatrix_pages.login"))
+    project = _project(project_id)
+    if project is None or project.project_type != "silver_books":
+        return redirect(url_for("lanmatrix_pages.models_page", project_id=project_id))
+    return render_template(
+        "lanmatrix/books.html", user=user.to_dict(), project_id=project_id)
 
 
 @pages_bp.get("/projects/<int:project_id>/members")

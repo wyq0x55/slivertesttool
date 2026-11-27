@@ -26,6 +26,7 @@ from typing import Any, Optional
 # so importing it here keeps the template-field set derived from — and always in
 # sync with — the Excel schema.
 from . import matrix_excel as _mx
+from . import book_excel as _bx
 
 # --------------------------------------------------------------------------- #
 # Data types (FR-GRID-003)
@@ -153,6 +154,25 @@ def _build_test_fields() -> list[dict[str, Any]]:
 TEST_FIELDS: list[dict[str, Any]] = _build_test_fields()
 
 TEST_FIELD_KEYS = frozenset(f["field_key"] for f in TEST_FIELDS)
+
+
+def _build_book_fields() -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for key, jp in _bx.SUMMARY_COLUMNS:
+        result.append({
+            "field_key": key,
+            "display_name": jp or key,
+            "data_type": "text",
+            "sheet": "test",
+        })
+    result.append(dict(_STEPS_FIELD))
+    return result
+
+
+# The multi-book category keeps the same ``test`` sheet but provisions the
+# workbook's 23-column vocabulary (including シート名 / 項目ID / グループID).
+BOOK_TEST_FIELDS: list[dict[str, Any]] = _build_book_fields()
+BOOK_TEST_FIELD_KEYS = frozenset(f["field_key"] for f in BOOK_TEST_FIELDS)
 
 # --------------------------------------------------------------------------- #
 # Lib(Func) import fields
