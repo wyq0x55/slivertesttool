@@ -1,7 +1,7 @@
 /* Per-project model management (card layout, mirrors member management):
  * list the project's .sil models as cards, register a server-side .sil path,
- * or upload a dll + sbs + pdb bundle (the server generates an empty .sil whose
- * only module line is "<dll> -S <sbs>"), edit SBS, and delete models.
+ * or upload dll + sbs + pdb. An uploaded .sil is retargeted at those files and
+ * its modules, properties and SBS variables become the runnable configuration.
  * The "添加模型" button + add panel appear only to users with model.manage. */
 (function () {
   "use strict";
@@ -39,7 +39,8 @@
   const CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
 
   function modelCard(m) {
-    const kind = esc(KIND_LABEL[m.kind] || m.kind || "");
+    const uploaded = m.test_config && m.test_config.source === "uploaded-sil";
+    const kind = esc(uploaded ? "上传配置" : (KIND_LABEL[m.kind] || m.kind || ""));
     const status = m.exists === false
       ? '<span class="tag tag-bad">服务器缺失</span>'
       : '<span class="tag tag-ok">正常</span>';
@@ -53,6 +54,18 @@
       : '<span class="tag tag-nover" title="未标注版本，结果会归入“(未标注)”">未标版本</span>';
     const note = m.version_note
       ? `<div class="mnote" title="版本说明">${esc(m.version_note)}</div>` : "";
+    const cfg = m.test_config;
+    let configNote = "";
+    if (cfg && cfg.source === "uploaded-sil") {
+      const modules = Array.isArray(cfg.modules) ? cfg.modules.length : 0;
+      const vars = Array.isArray(cfg.sbs_variables) ? cfg.sbs_variables : [];
+      const shown = vars.slice(0, 8).map(esc).join("、");
+      const more = vars.length > 8 ? " 等" : "";
+      const step = cfg.properties && cfg.properties.macroStep
+        ? "，macroStep " + esc(cfg.properties.macroStep) : "";
+      const varText = vars.length ? "，变量 " + shown + more : "";
+      configNote = `<div class="mnote">可测试配置：${modules} 个模块${step}${varText}</div>`;
+    }
     let actions = "";
     if (canManage && !cur) {
       actions += `<button class="btn btn-sm btn-primary lm-model-cur" data-model-id="${m.id}" data-name="${esc(m.name)}">设为当前</button>`;
@@ -84,6 +97,7 @@
         </div>
         <div class="mpath">${esc(m.path || "—")}</div>
         ${note}
+        ${configNote}
         <div class="foot">
           <span class="tag tag-kind">${kind}</span>
           <span class="mact">${actions}</span>
@@ -95,7 +109,7 @@
     if (!models.length) {
       rowsEl.innerHTML = '<div class="state" style="grid-column:1/-1">' +
         `<div class="glyph">${CUBE}</div><h3>尚无模型</h3>` +
-        '<p>登记服务器上的 .sil 路径，或上传 dll + sbs + pdb 生成模型。</p></div>';
+        '<p>上传 .sil、dll、pdb 与 sbs，或登记服务器上的 .sil 路径。</p></div>';
       return;
     }
     rowsEl.innerHTML = models.map(modelCard).join("");
@@ -165,6 +179,8 @@
     const dll = $("lm-bundle-dll").files[0];
     const sbs = $("lm-bundle-sbs").files[0];
     const pdb = $("lm-bundle-pdb").files[0];
+    const silInput = $("lm-bundle-sil");
+    const sil = silInput && silInput.files ? silInput.files[0] : null;
     if (!dll || !sbs || !pdb) { showError("请同时选择 dll、sbs 与 pdb 文件"); return; }
     const bVerEl = $("lm-bundle-version");
     const fd = new FormData();
@@ -173,6 +189,7 @@
     fd.append("dll", dll, dll.name);
     fd.append("sbs", sbs, sbs.name);
     fd.append("pdb", pdb, pdb.name);
+    if (sil) { fd.append("sil", sil, sil.name); }
     for (const file of $("lm-bundle-extra").files) {
       fd.append("extra", file, file.name);
     }
@@ -182,10 +199,11 @@
       const data = await LMApi.uploadProjectModel(pid, fd);
       $("lm-bundle-name").value = "";
       $("lm-bundle-dll").value = ""; $("lm-bundle-sbs").value = ""; $("lm-bundle-pdb").value = "";
+      if (silInput) { silInput.value = ""; }
       $("lm-bundle-extra").value = "";
       if (bVerEl) { bVerEl.value = ""; }
       render(data.models || []);
-      toast("已上传并生成 .sil", true);
+      toast(sil ? "已按 .sil 形成可测试配置" : "已上传并生成 .sil", true);
     } catch (ex) {
       showError(ex.message);
     } finally {

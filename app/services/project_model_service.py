@@ -4,11 +4,12 @@ Model management lives inside a project: every project owns its own list of
 Silver plant models. A model is registered in one of two ways:
 
 * **Path** -- an administrator/editor registers an absolute server-side
-  ``.sil`` path (``add_path_model``). The file is opened in place, exactly like
-  the legacy global model registry.
-* **Bundle** -- the user uploads a ``host.dll`` + ``host.sbs`` + ``host.pdb``
-  set through the web UI (``add_bundle_model``). The service stores the files
-  in a per-project directory and generates a fresh ``.sil`` through the real
+  ``.sil`` path (``add_path_model``). The file is copied into the project and
+  its module paths are rewritten to that copy.
+* **Bundle** -- the user uploads ``dll`` + ``sbs`` + ``pdb``. With an uploaded
+  ``.sil``, that file's modules, properties and SBS variables become the
+  runnable configuration and its paths are retargeted at the uploaded files.
+  Without a ``.sil``, the service generates a fresh one through the real
   Silver API: an empty configuration is created in memory
   (``LocalSilverNative(sil=None)``), the module line ``<dll> -S <sbs>`` is
   injected with ``add_module`` and the result is written with ``save()`` (see
@@ -27,6 +28,7 @@ a project with no registered model cannot silently inherit another/global model.
 from __future__ import annotations
 
 import datetime as _dt
+import json
 import re
 import shutil
 import tempfile
@@ -167,7 +169,7 @@ def _generate_sil(config, sil_path: Path, dll_ref: str, sbs_ref: str) -> None:
 # --------------------------------------------------------------------------- #
 def list_models(project_id: int, include_path: bool = False) -> List[dict]:
     rows = _query(project_id).order_by(ProjectModel.id.asc()).all()
-    return [r.to_dict(include_path=include_path) for r in rows]
+    return [_with_test_config(row.to_dict(include_path=include_path), row) for row in rows]
 
 
 def has_models(project_id: int) -> bool:
@@ -685,22 +687,187 @@ def add_path_model(project_id: int, name: str, path: str,
     return row.to_dict(include_path=True)
 
 
+
+_PLANT_RE = re.compile(
+    r"(?P<dll>(?:[A-Za-z]:[\\/]|\\\\)?[^\s\"'<>]+\.dll)\s+-S\s+"
+    r"(?P<sbs>(?:[A-Za-z]:[\\/]|\\\\)?[^\s\"'<>]+\.sbs)",
+    re.IGNORECASE,
+)
+_SILVER_BUILTINS = {"python.dll", "csvwriter.dll", "silver.dll"}
+_TEST_CONFIG_NAME = "test_config.json"
+
+
+def _read_test_config(row) -> Optional[dict]:
+    bundle = getattr(row, "bundle_dir", None)
+    if not bundle:
+        return None
+    path = Path(bundle) / _TEST_CONFIG_NAME
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _with_test_config(entry: dict, row) -> dict:
+    summary = _read_test_config(row)
+    if summary:
+        entry["test_config"] = summary
+    return entry
+
+
+def _local_binaries(model_dir: Path) -> dict:
+    """Map each uploaded dll/sbs/pdb basename to the one saved file."""
+    found = {}
+    for path in model_dir.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in {".dll", ".sbs", ".pdb"}:
+            continue
+        key = path.name.lower()
+        previous = found.get(key)
+        if previous is not None and previous.resolve() != path.resolve():
+            raise ModelError(f"上传文件名重复：{path.name}")
+        found[key] = path
+    return found
+
+
+def _public_module_line(line: str) -> str:
+    """Show a module line with file names only, never server paths."""
+    return _MODULE_PATH_RE.sub(
+        lambda match: Path(match.group("path").replace("\\", "/")).name,
+        line,
+    )
+
+
+def _ensure_plant_module(text: str, dll_ref: str, sbs_ref: str) -> str:
+    line = f"{dll_ref} -S {sbs_ref}"
+    if text.lstrip("\ufeff \t\r\n").startswith("<"):
+        if "</modules>" not in text:
+            raise ModelError(".sil 没有 <modules>，无法形成可测试配置。")
+        block = (
+            "<module><uuid>uploaded-plant</uuid>"
+            f"<sil-line>{escape(line)}</sil-line>"
+            "<enabled>true</enabled></module>"
+        )
+        return text.replace("</modules>", block + "</modules>", 1)
+    return line + "\n" + text
+
+
+def _unresolved_modules(text: str, by_basename: dict) -> list:
+    missing = []
+    accepted = set(by_basename.values())
+    for match in _MODULE_PATH_RE.finditer(text):
+        raw = match.group("path")
+        base = Path(raw.replace("\\", "/")).name.lower()
+        if raw in accepted or base in _SILVER_BUILTINS:
+            continue
+        label = Path(raw.replace("\\", "/")).name or raw
+        if label not in missing:
+            missing.append(label)
+    return missing
+
+
+def _summarize_configuration(text: str, sbs_text: str, dll_name: str,
+                             sbs_name: str, pdb_name: str) -> dict:
+    properties = {
+        name: value
+        for name, value in re.findall(
+            r'<property\s+name="([^"]+)"\s+value="([^"]*)"', text)
+    }
+    if text.lstrip("\ufeff \t\r\n").startswith("<"):
+        modules = [
+            _public_module_line(re.sub(r"\s+", " ", item).strip())
+            for item in re.findall(r"<sil-line>(.*?)</sil-line>", text, flags=re.S)
+        ]
+    else:
+        modules = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#") and ".dll" in stripped.lower():
+                modules.append(_public_module_line(stripped))
+    variables = []
+    for match in re.finditer(r"\bvariable\s+([A-Za-z_][\w]*)", sbs_text):
+        name = match.group(1)
+        if name not in variables:
+            variables.append(name)
+    return {
+        "source": "uploaded-sil",
+        "modules": modules,
+        "properties": properties,
+        "sbs_variables": variables,
+        "files": {"dll": dll_name, "sbs": sbs_name, "pdb": pdb_name},
+    }
+
+
+def _bind_uploaded_sil(sil_path: Path, model_dir: Path, dll_ref: str, sbs_ref: str,
+                       dll_name: str, sbs_name: str, pdb_name: str) -> None:
+    """Retarget an uploaded ``.sil`` at the saved dll/sbs and record its config."""
+    try:
+        original = sil_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise ModelError(".sil 必须是 UTF-8 文本配置。") from exc
+    if not original.strip():
+        raise ModelError(".sil 是空文件。")
+    by_basename = {
+        name: _module_ref(path) for name, path in _local_binaries(model_dir).items()
+    }
+    forced = {}
+    pairs = list(_PLANT_RE.finditer(original))
+    if len(pairs) == 1:
+        forced[pairs[0].group("dll")] = dll_ref
+        forced[pairs[0].group("sbs")] = sbs_ref
+    elif len(pairs) > 1:
+        missing = []
+        for pair in pairs:
+            for key in ("dll", "sbs"):
+                raw = pair.group(key)
+                base = Path(raw.replace("\\", "/")).name.lower()
+                if base not in by_basename:
+                    label = Path(raw.replace("\\", "/")).name
+                    if label not in missing:
+                        missing.append(label)
+        if missing:
+            raise ModelError("配置引用了未上传的文件：" + "、".join(missing))
+
+    def replace(match):
+        raw = match.group("path")
+        if raw in forced:
+            return forced[raw]
+        base = Path(raw.replace("\\", "/")).name.lower()
+        return by_basename.get(base, raw)
+
+    rewritten = rewrite_model_module_paths(original, replace)
+    if dll_ref not in rewritten or sbs_ref not in rewritten:
+        rewritten = _ensure_plant_module(rewritten, dll_ref, sbs_ref)
+    unresolved = _unresolved_modules(rewritten, by_basename)
+    if unresolved:
+        raise ModelError("配置引用了未上传的文件：" + "、".join(unresolved))
+    sil_path.write_text(rewritten, encoding="utf-8", newline="\n")
+    sbs_text = (model_dir / sbs_name).read_text(encoding="utf-8", errors="replace")
+    summary = _summarize_configuration(
+        rewritten, sbs_text, dll_name, sbs_name, pdb_name)
+    (model_dir / _TEST_CONFIG_NAME).write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def add_bundle_model(project_id: int, name: str, dll: FileStorage,
                      sbs: FileStorage, config,
                      pdb: Optional[FileStorage] = None,
                      created_by: Optional[int] = None,
                      version: Optional[str] = None,
                      version_note: Optional[str] = None,
-                     extra: Optional[List[FileStorage]] = None) -> dict:
-    """Store an uploaded ``dll`` + ``sbs`` (+ ``pdb``) set and generate the ``.sil``.
+                     extra: Optional[List[FileStorage]] = None,
+                     sil: Optional[FileStorage] = None) -> dict:
+    """Store an uploaded ``dll`` + ``sbs`` + ``pdb`` set.
 
-    A per-project model directory is created and all uploaded files are saved
-    into it side by side. A fresh ``.sil`` is then generated through the Silver
-    API (an empty config with a single ``<dll> -S <sbs>`` module, then
-    ``save()``). The module line references the dll/sbs by their path relative
-    to the Silver working directory (e.g.
-    ``instance/model/project_1/host/host.dll``). The dll's matching ``.pdb``
-    must sit in the same directory or Silver cannot locate the debug symbols.
+    When ``sil`` is uploaded, its modules, properties and SBS variables become
+    the runnable configuration and every referenced dll/sbs/pdb is retargeted
+    at the saved copies. Otherwise a fresh ``.sil`` is generated through the
+    Silver API (an empty config with a single ``<dll> -S <sbs>`` module).
+    The module line references the dll/sbs by their path relative to the Silver
+    working directory. The dll's matching ``.pdb`` must sit in the same
+    directory or Silver cannot locate the debug symbols.
     """
     name = (name or "").strip()
     # Validate before any file is written: rejecting the version afterwards
@@ -737,6 +904,14 @@ def add_bundle_model(project_id: int, name: str, dll: FileStorage,
         filenames.add(filename.lower())
         extra_files.append((upload, filename))
 
+    sil_name = None
+    if sil is not None and getattr(sil, "filename", None):
+        sil_name = _safe_filename(sil.filename, "model.sil")
+        if not sil_name.lower().endswith(".sil"):
+            raise ModelError("配置文件必须是 .sil。")
+        if sil_name.lower() in filenames:
+            raise ModelError(f"上传文件名重复：{sil_name}")
+
     seg = _version_dir_name(name, version)
     model_dir = _new_model_dir(config, project_id, name, version)
 
@@ -770,10 +945,19 @@ def add_bundle_model(project_id: int, name: str, dll: FileStorage,
                     symbols_destination = _submodule_path(
                         model_dir, str(destination.with_suffix(".pdb").relative_to(model_dir.resolve())))
                     (model_dir / filename).rename(symbols_destination)
-        sil_path = model_dir / f"{seg}.sil"
         dll_ref = _module_ref(model_dir / dll_name)
         sbs_ref = _module_ref(model_dir / sbs_name)
-        _generate_sil(config, sil_path, dll_ref, sbs_ref)
+        alongside = (model_dir / dll_name).with_suffix(".pdb")
+        if alongside.name.lower() != pdb_name.lower() and not alongside.exists():
+            shutil.copy2(model_dir / pdb_name, alongside)
+        if sil_name:
+            sil.save(str(model_dir / sil_name))
+            sil_path = model_dir / sil_name
+            _bind_uploaded_sil(
+                sil_path, model_dir, dll_ref, sbs_ref, dll_name, sbs_name, pdb_name)
+        else:
+            sil_path = model_dir / f"{seg}.sil"
+            _generate_sil(config, sil_path, dll_ref, sbs_ref)
     except Exception:  # noqa: BLE001 - clean up a half-written bundle
         shutil.rmtree(model_dir, ignore_errors=True)
         raise
@@ -790,7 +974,7 @@ def add_bundle_model(project_id: int, name: str, dll: FileStorage,
     _query(project_id).filter(ProjectModel.id != row.id).update(
         {ProjectModel.is_current: False}, synchronize_session="fetch")
     db.session.commit()
-    return row.to_dict(include_path=True)
+    return _with_test_config(row.to_dict(include_path=True), row)
 
 
 def remove_model(project_id: int, name: str,

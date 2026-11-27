@@ -43,9 +43,10 @@ Environment settings are `UT_AGENT_ROOT`, `UT_AGENT_PYTHON`,
 The model endpoint and credentials use the existing global AI settings.
 
 The project configuration requires only the manifest, index and Product/source
-root. Both paths are on the execution server; the binding page can type them or
-pick them through `GET /ut/server-paths` (project editors only), which lists
-directory and CSV names one directory at a time and never file contents.
+root. Clients upload a source zip and the function-index CSV
+(`POST /ut/sources`); the platform stores them under
+`WORKSPACE_DIR/ut_sources/p<id>` and records those paths. `GET /ut/server-paths`
+remains for operators who still bind an existing server directory.
 `execution_backend` is not a setting: the server records `clang` for
 every configuration and job, and ignores a submitted value. Configure `host_clang`,
 `host_llvm_cov`, `host_llvm_profdata` and, if the declared ABI requires it,
@@ -81,7 +82,10 @@ steps. When that many consecutive observations project an overrun, the function
 yields. Silver freezes `2` for an empty setting and passes the count explicitly
 to ut-agent. Older batch snapshots with an empty or missing count also use `2`.
 The count is a generation input, so the same IR, rules, ceiling and
-count stop at the same point. The forecast reads measured costs but only decides
+count stop at the same point. Silver also passes the batch's forecast
+history, so a function whose previous run exhausted the budget stops
+after the same consecutive observations, not only when the live cost
+projection crosses the ceiling. The forecast reads measured costs but only decides
 *when to stop*, never what an expectation is. The function keeps its finished
 cases and leaves unfinished obligations for review; the batch continues with
 its other functions.

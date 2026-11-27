@@ -4,6 +4,7 @@
     PUT  /config                         update binding (project.edit)
     GET  /budget/suggestion              ?target_obligations&safety_factor; read-only ceiling advice (project.view)
     GET  /server-paths                   ?kind=directory|csv&path; server listing (project.edit)
+    POST /sources                        multipart source zip and/or index csv (project.edit)
     POST /targets/import                 re-read the project index (item.edit)
     GET  /targets                        実施一覧 with each target's latest job
     POST /batches                        {target_ids, label} → queue (item.edit)
@@ -35,7 +36,7 @@ from flask import Blueprint, Response, g, request
 from ...jobqueue import ut_tasks
 from ...services.lanmatrix.errors import RequestParamError, ServiceError
 from ...services.ut_pipeline import export as ut_export
-from ...services.ut_pipeline import budget, pipeline, server_paths, toolchains, witness
+from ...services.ut_pipeline import budget, pipeline, server_paths, source_upload, toolchains, witness
 from ...services.ut_pipeline.repair import normalize_csv
 from ._base import _project_and_role, arg_int, arg_str, err, login_required, ok, register_common
 
@@ -127,6 +128,19 @@ def validate_manifest(project_id: int):
 def manifest_options(project_id: int):
     _project_and_role(project_id, "project.view")
     return ok(pipeline.manifest_options())
+
+
+@bp.post("/sources")
+@login_required
+def upload_sources(project_id: int):
+    """Upload a source zip and/or function-index CSV into this project."""
+    _project_and_role(project_id, "project.edit")
+    return ok(source_upload.store_sources(
+        project_id,
+        source=request.files.get("source"),
+        index=request.files.get("index"),
+        user_id=g.user.id,
+    ))
 
 
 @bp.get("/server-paths")

@@ -9,8 +9,7 @@
   <div class="page-head">
     <div class="ttl">
       <h1>模型管理</h1>
-      <p>每个项目维护自己的 Silver <code>.sil</code> 模型 — 登记服务器上的 <code>.sil</code> 路径，或上传
-        <code>dll + sbs + pdb</code> 由平台生成仅含 <code>&lt;dll&gt; -S &lt;sbs&gt;</code> 的空 <code>.sil</code>。</p>
+      <p>每个项目维护自己的 Silver <code>.sil</code> 模型。上传 <code>.sil + dll + pdb + sbs</code> 后，平台按其中的模块、属性和变量形成可测试配置；也可以只上传 <code>dll + sbs + pdb</code> 生成空配置，或登记服务器上已有的 <code>.sil</code> 路径。</p>
     </div>
     <div class="head-actions">
       <button type="button" id="lm-model-toggle" class="btn btn-primary" hidden>
@@ -32,15 +31,16 @@
         </div>
       </div>
       <div>
-        <div class="mform-cap">上传 dll + sbs + pdb（自动生成 .sil，可选上传子模块 dll/pdb）</div>
+        <div class="mform-cap">上传 .sil + dll + pdb + sbs（按文件中的配置形成可测试模型；不上传 .sil 时仍自动生成）</div>
         <div class="row wrap">
           <input id="lm-bundle-name" class="ipt" placeholder="名称（可留空，用 dll 文件名）" aria-label="名称（可留空，用 dll 文件名）" autocomplete="off">
+          <label class="filepick">sil<input type="file" id="lm-bundle-sil" accept=".sil"></label>
           <label class="filepick">dll<input type="file" id="lm-bundle-dll" accept=".dll"></label>
           <label class="filepick">sbs<input type="file" id="lm-bundle-sbs" accept=".sbs"></label>
           <label class="filepick">pdb<input type="file" id="lm-bundle-pdb" accept=".pdb"></label>
           <label class="filepick">子模块 dll/pdb（可选）<input type="file" id="lm-bundle-extra" accept=".dll,.pdb" multiple></label>
           <input id="lm-bundle-version" class="ipt lm-ipt-ver" placeholder="版本号（可留空）" aria-label="版本号（可留空）" autocomplete="off">
-          <button type="button" class="btn btn-primary btn-sm" id="lm-bundle-add">上传并生成 .sil</button>
+          <button type="button" class="btn btn-primary btn-sm" id="lm-bundle-add">上传模型</button>
         </div>
       </div>
       <div class="mform-err" id="lm-model-error" hidden></div>

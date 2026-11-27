@@ -6,9 +6,7 @@ The page shows project/source locations, pointer width and test requirements by
 default. Compiler compatibility, excluded directories, environment assumptions,
 AI assistance and tool paths live in a collapsed advanced section. Boolean
 options use native checkboxes. The page preserves additional imported fields and
-exposes the full JSON for advanced editing. Server filesystem paths remain appropriate for the source
-tree, function index and execution tools, but are no longer the primary way to
-author a ProjectManifest.
+exposes the full JSON for advanced editing. Source and the function index are uploaded by each client and stored for that project. Execution-tool paths remain server paths. Neither is the primary way to author a ProjectManifest.
 
 ## API and ownership
 

@@ -26,8 +26,8 @@ UT_CONFIG_FIELDS = (
     "manifest_document: ProjectManifest object; validated by ut-agent and stored by the server "
     "(mutually exclusive with manifest_path)",
     "manifest_path: server path of an existing ProjectManifest",
-    "index_csv: server path of the project index CSV (required)",
-    "product_root: server path of the product source root (required)",
+    "index_csv: server path of the project index CSV; prefer ut upload-sources",
+    "product_root: server path of the product source root; prefer ut upload-sources",
     "max_repair_rounds: integer 0-20",
     "stub_mode: deterministic or llm",
     "stub_max_rounds: integer 1-5 (llm stub mode)",
@@ -171,8 +171,8 @@ def register(command, group):
     group("model", "List, upload, register or select project models.", "model list 1")
     command("model", "list", "List the project's saved models and versions.", "list 1",
             handler=simple("models.list_project_models"))
-    upload = command("model", "upload", "Upload a compiled model (dll, sbs, optional pdb and extra files) as a new saved version.",
-                     "upload 1 --name plant --version v1 --dll plant.dll --sbs plant.sbs --confirm",
+    upload = command("model", "upload", "Upload dll, sbs, pdb and optional .sil. An uploaded .sil becomes the runnable configuration.",
+                     "upload 1 --name plant --version v1 --dll plant.dll --sbs plant.sbs --sil plant.sil --confirm",
                      write=True, handler=model_upload)
     upload.add_argument("--name", required=True)
     upload.add_argument("--version", required=True)
@@ -180,6 +180,7 @@ def register(command, group):
     upload.add_argument("--dll", type=Path, required=True)
     upload.add_argument("--sbs", type=Path, required=True)
     upload.add_argument("--pdb", type=Path)
+    upload.add_argument("--sil", type=Path, help="Existing .sil configuration. Paths inside it are retargeted at the uploaded files.")
     upload.add_argument("--extra", type=Path, action="append", default=[], help="Additional dependency file; repeat as needed.")
     use = command("model", "use", "Make a saved model the project's current model.", "use 1 --name plant --confirm",
                   write=True, handler=model_use)
@@ -200,6 +201,11 @@ def register(command, group):
                        "validate-manifest 1 --json @manifest.json", handler=ut_validate)
     validate.add_argument("--json", dest="json_input", required=True, metavar="JSON|@FILE|@-",
                           help="The manifest document itself.")
+    upload_sources = command("ut", "upload-sources", "Upload a source zip and/or function-index CSV for a distributed client.",
+                             "upload-sources 1 --source Soft.zip --index index.csv --confirm",
+                             write=True, handler=ut_upload_sources)
+    upload_sources.add_argument("--source", type=Path, help="Zip whose root is the Product/source root.")
+    upload_sources.add_argument("--index", type=Path, help="Function-index CSV.")
     paths = command("ut", "paths", "Browse server paths for configuration values.", "paths 1 --path D:/product",
                     handler=ut_paths)
     paths.add_argument("--path", default="")
@@ -770,6 +776,8 @@ def model_upload(args):
     files = [("dll", _input_file(args.dll)), ("sbs", _input_file(args.sbs))]
     if args.pdb is not None:
         files.append(("pdb", _input_file(args.pdb)))
+    if args.sil is not None:
+        files.append(("sil", _input_file(args.sil)))
     files += [("extra", _input_file(path)) for path in args.extra]
     form = [("name", args.name), ("version", args.version), ("version_note", args.note)]
     gated = _gate(args, [("models.upload_project_model", _params(args), None, None)],
@@ -808,6 +816,21 @@ def ut_validate(args):
 
     body = {"manifest_document": _json_input(args.json_input)}
     return _call(_client(args), "ut_pipeline.validate_manifest", _params(args), body=body)
+
+
+def ut_upload_sources(args):
+    if args.source is None and args.index is None:
+        raise CliError("INPUT_FILE", "Upload a --source zip, an --index CSV, or both.", 2)
+    files = []
+    if args.source is not None:
+        files.append(("source", _input_file(args.source)))
+    if args.index is not None:
+        files.append(("index", _input_file(args.index)))
+    gated = _gate(args, [("ut_pipeline.upload_sources", _params(args), None, None)],
+                  file_fields=[key for key, _ in files])
+    if gated:
+        return gated
+    return _call(_client(args), "ut_pipeline.upload_sources", _params(args), files=files)
 
 
 def ut_paths(args):

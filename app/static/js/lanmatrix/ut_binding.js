@@ -22,7 +22,6 @@
   var busy = true, loaded = false;
   var choices = null;
   var suggestion = null;
-  var pickers = Array.prototype.slice.call(root.querySelectorAll("[data-path-picker]"));
   function $(id) { return document.getElementById(id); }
   function field(path) { return $("ut-m-" + path.replace(".", "-")); }
   function object(value) { return value !== null && typeof value === "object" && !Array.isArray(value); }
@@ -327,7 +326,9 @@
     });
     $("ut-manifest-export").disabled = locked;
     $("ut-budget-fill").disabled = locked || readonly || suggestion === null;
-    pickers.forEach(function (button) { button.disabled = locked || readonly; });
+    ["ut-source-file", "ut-index-file", "ut-source-upload"].forEach(function (id) {
+      $(id).disabled = locked || readonly;
+    });
     policyView();
     changed();
   }
@@ -343,6 +344,7 @@
     };
     $("ut-c-manifest_path").value = c.manifest_path || "";
     $("ut-manifest-sha256").textContent = c.manifest_sha256 || "—";
+    renderSource(c);
     renderFields(); renderRaw(); clearError();
     loaded = true; savedState = state(); changed();
     if (c.manifest_error) fail(c.manifest_error, null, false);
@@ -380,18 +382,66 @@
       $("ut-c-" + k).addEventListener(event, function () { if (editable()) { lock(false); } });
     });
   });
-  // A picked path goes through the input's own events, so dirty tracking and
-  // saving treat it exactly like a typed one.
-  pickers.forEach(function (button) {
-    button.addEventListener("click", async function () {
-      if (!editable()) return;
-      var input = $(button.dataset.pathTarget);
-      var path = await LMUtPathPicker.open({ pid: pid, kind: button.dataset.pathPicker,
-        title: button.dataset.pathTitle, value: input.value });
-      if (path == null || !editable() || path === input.value) return;
-      input.value = path;
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+  function renderSource(c) {
+    var info = c && c.source_upload;
+    var node = $("ut-source-status");
+    if (info && (info.source_name || info.index_name)) {
+      var parts = [];
+      if (info.source_name) parts.push("源码 " + info.source_name + "（" + (info.source_files || 0) + " 个文件）");
+      if (info.index_name) parts.push("索引 " + info.index_name);
+      node.textContent = "已上传：" + parts.join("，") + "。再次上传会替换对应文件。";
+      return;
+    }
+    if ((c && c.product_root) || (c && c.index_csv)) {
+      node.textContent = "当前仍绑定服务器上的源码路径。上传 zip 或索引后，将改用本项目保存的副本。";
+      return;
+    }
+    node.textContent = "尚未上传。请选择源码 zip 和函数索引 CSV。";
+  }
+  function rememberUploadedPaths(result) {
+    if (result.product_root) $("ut-c-product_root").value = result.product_root;
+    if (result.index_csv) $("ut-c-index_csv").value = result.index_csv;
+    savedConfig = savedConfig || {};
+    savedConfig.product_root = $("ut-c-product_root").value;
+    savedConfig.index_csv = $("ut-c-index_csv").value;
+    savedConfig.source_upload = result.source_upload || null;
+    if (savedState) {
+      var parsed = JSON.parse(savedState);
+      KEYS.forEach(function (key, index) {
+        if (key === "product_root" || key === "index_csv") parsed[1][index] = configValue(key);
+      });
+      savedState = JSON.stringify(parsed);
+    } else {
+      savedState = state();
+    }
+    renderSource(savedConfig);
+    changed();
+  }
+  $("ut-source-upload").addEventListener("click", async function () {
+    if (!editable()) return;
+    clearError();
+    var source = $("ut-source-file").files && $("ut-source-file").files[0];
+    var index = $("ut-index-file").files && $("ut-index-file").files[0];
+    if (!source && !index) {
+      fail("请选择源码压缩包或函数索引 CSV。", $("ut-source-file"));
+      return;
+    }
+    var body = new FormData();
+    if (source) body.append("source", source, source.name);
+    if (index) body.append("index", index, index.name);
+    var result;
+    try {
+      lock(true);
+      result = await LMApi.utUploadSources(pid, body);
+      $("ut-source-file").value = "";
+      $("ut-index-file").value = "";
+      rememberUploadedPaths(result);
+      LMUt.say("源码已上传。");
+    } catch (e) {
+      fail(e.message, $("ut-source-file"));
+    } finally {
+      lock(false);
+    }
   });
   function edited() {
     if (!editable()) return;

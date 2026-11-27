@@ -456,6 +456,9 @@
     utPutConfig(pid, values) {
       return request("PUT", `/projects/${pid}/ut/config`, { body: values });
     },
+    utUploadSources(pid, formData) {
+      return request("POST", `/projects/${pid}/ut/sources`, { body: formData });
+    },
     utValidateManifest(pid, manifestDocument) {
       return request("POST", `/projects/${pid}/ut/manifest/validate`,
         { body: { manifest_document: manifestDocument } });

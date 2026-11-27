@@ -82,7 +82,8 @@ def upload_project_model(project_id):
             current_app.config_obj, pdb=pdb, extra=request.files.getlist("extra"),
             created_by=g.user.id,
             version=request.form.get("version"),
-            version_note=request.form.get("version_note"))
+            version_note=request.form.get("version_note"),
+            sil=request.files.get("sil"))
     except project_model_service.ModelError as exc:
         return err("VALIDATION_ERROR", str(exc), status=400)
     return ok({"model": entry,

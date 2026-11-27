@@ -102,6 +102,8 @@ def config_document(config: Optional[UtPipelineConfig]) -> Optional[dict]:
     if config is None:
         return None
     result = dict(config.to_dict(), manifest_document=None, manifest_sha256=None, manifest_error=None)
+    from .source_upload import upload_status
+    result['source_upload'] = upload_status(config.project_id)
     if config.manifest_path:
         try:
             result.update(binding.read_manifest(config.manifest_path, bridge=get_bridge()))

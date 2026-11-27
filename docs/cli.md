@@ -249,9 +249,10 @@ python -m silver_cli task rerun 7 T000001 --confirm
 | `task wait PID TID...` | Poll `tasks.project_task_status`, then report detail and jdgrslt per run; exit 8 if any run did not pass, 9 on timeout |
 | `task report PID [--test-id ...] [--status S\|not_run] [--output FILE]` | Test-sheet items joined with each case's latest run, verdict, jdgrslt and errors; `.md` output writes Markdown |
 | `task cancel PID TID` / `task download PID TID --output FILE` | `tasks.cancel_project_task` / `tasks.download_project_task` |
-| `model list/upload/use PID` | `models.list_project_models` / `upload_project_model` (multipart dll, sbs, pdb, extra) / `set_current_project_model` |
+| `model list/upload/use PID` | `models.list_project_models` / `upload_project_model` (multipart dll, sbs, pdb, optional sil, extra) / `set_current_project_model` |
 | `ut options/config PID` | `ut_pipeline.manifest_options` / `get_config` |
 | `ut configure PID --json @FILE` | `ut_pipeline.put_config`; fields are listed in `--help` |
+| `ut upload-sources PID --source ZIP --index CSV` | `upload_sources`; stores the client's source tree and function index |
 | `ut validate-manifest PID --json @FILE` / `ut paths PID --path DIR` | `validate_manifest` (persists nothing, no `--confirm`) / `browse_server_paths` |
 | `ut import-targets PID` / `ut targets PID [--function F]` | `import_targets` / `list_targets` |
 | `ut run PID --function F... [--source S] [--wait]` | Resolve each function to exactly one indexed target, then `create_batch`; `--wait` polls `list_jobs` |
@@ -334,6 +335,7 @@ python -m silver_cli call tasks.upload_project_tree --param project_id=7 --form 
 ```powershell
 python -m silver_cli call models.list_project_models --param project_id=7
 python -m silver_cli call models.upload_project_model --param project_id=7 --form name=plant --form version=v1 --file 'dll=C:\model\plant.dll' --file 'sbs=C:\model\plant.sbs' --file 'pdb=C:\model\plant.pdb' --confirm
+python -m silver_cli call models.upload_project_model --param project_id=7 --form name=plant --form version=v1 --file 'dll=C:\model\plant.dll' --file 'sbs=C:\model\plant.sbs' --file 'pdb=C:\model\plant.pdb' --file 'sil=C:\model\plant.sil' --confirm
 python -m silver_cli call tasks.run_selected_tasks --param project_id=7 --json '@run.json' --confirm
 ```
 

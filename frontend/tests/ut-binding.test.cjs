@@ -526,7 +526,7 @@ test("import rejects extension, oversize, invalid UTF-8 and non-object JSON with
 
 test("readers can inspect and export but cannot import, validate or save", async () => {
   const h = harness(false, { manifest_document: manifest(), execution_backend: "clang", stub_mode: "llm" }); await settle();
-  for (const id of ["ut-c-stub_mode", "ut-c-stub_model", "ut-c-stub_max_rounds", "ut-c-host_clang", "ut-m-project-id", "ut-manifest-file", "ut-manifest-import"]) assert.equal(h.get(id).disabled, true);
+  for (const id of ["ut-c-stub_mode", "ut-c-stub_model", "ut-c-stub_max_rounds", "ut-c-host_clang", "ut-m-project-id", "ut-manifest-file", "ut-manifest-import", "ut-source-file", "ut-index-file", "ut-source-upload"]) assert.equal(h.get(id).disabled, true);
   assert.equal(h.get("ut-manifest-json").readOnly, true);
   assert.deepEqual(JSON.parse(h.get("ut-manifest-json").value), manifest());
   await h.import(JSON.stringify({ project: { id: "forbidden" } }));
@@ -577,30 +577,25 @@ test("server manifest errors are visible and legacy location is never sent as in
   assert.equal(Object.hasOwn(h.writes[0], "manifest_path"), false);
 });
 
-test("server path pickers fill the bound paths like typed input", async () => {
-  const h = harness(true, { manifest_document: manifest(), product_root: "D:\\Old", index_csv: "D:\\Old\\i.csv" },
-    { pick: "D:\\Project\\Soft" });
+test("uploaded source is shown and saved paths stay with the binding", async () => {
+  const html = fs.readFileSync(path.join(base, "app/templates/lanmatrix/ut_binding.html"), "utf8");
+  assert.match(html, /id="ut-source-file"/);
+  assert.match(html, /id="ut-index-file"/);
+  assert.match(html, /id="ut-source-upload"/);
+  assert.doesNotMatch(html, /data-path-picker/);
+  const h = harness(true, {
+    manifest_document: manifest(),
+    product_root: "D:\\ws\\ut_sources\\p4\\source",
+    index_csv: "D:\\ws\\ut_sources\\p4\\index.csv",
+    source_upload: { source_name: "Soft.zip", source_files: 4, index_name: "funcs.csv" },
+  });
   await settle();
-  assert.equal(h.get("picker-directory").disabled, false);
-  await h.emit("picker-directory", "click");
-  assert.deepEqual(JSON.parse(JSON.stringify(h.picked)), [{ pid: 4, kind: "directory", title: "选择源码根目录", value: "D:\\Old" }]);
-  assert.equal(h.get("ut-c-product_root").value, "D:\\Project\\Soft");
-  assert.equal(h.get("ut-draft-state").textContent, "有未保存的更改");
-  await h.emit("picker-csv", "click");
-  assert.equal(h.picked[1].kind, "csv");
-  assert.equal(h.picked[1].value, "D:\\Old\\i.csv");
+  assert.equal(h.get("ut-c-product_root").type, "hidden");
+  assert.equal(h.get("ut-c-index_csv").type, "hidden");
+  assert.match(h.get("ut-source-status").textContent, /Soft\.zip/);
+  assert.match(h.get("ut-source-status").textContent, /funcs\.csv/);
+  assert.equal(h.get("ut-source-upload").disabled, false);
   await h.save();
-  assert.equal(h.writes[0].product_root, "D:\\Project\\Soft");
-});
-
-test("a cancelled pick leaves the binding unchanged and read-only users get no picker", async () => {
-  const h = harness(true, { manifest_document: manifest(), product_root: "D:\\Old" });
-  await settle();
-  await h.emit("picker-directory", "click");
-  assert.equal(h.get("ut-c-product_root").value, "D:\\Old");
-  assert.equal(h.get("ut-draft-state").textContent, "已保存");
-  const reader = harness(false); await settle();
-  assert.equal(reader.get("picker-directory").disabled, true);
-  await reader.emit("picker-directory", "click");
-  assert.equal(reader.picked.length, 0);
+  assert.equal(h.writes[0].product_root, "D:\\ws\\ut_sources\\p4\\source");
+  assert.equal(h.writes[0].index_csv, "D:\\ws\\ut_sources\\p4\\index.csv");
 });

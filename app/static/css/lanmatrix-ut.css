@@ -81,6 +81,9 @@
 .ut-group-title .ut-hint{ display:block; margin-top:4px; font-weight:400; }
 /* Path field + 浏览 button read as one control. */
 .ut-path-input{ display:flex; align-items:stretch; }
+.ut-source-actions{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.ut-source-actions .ut-hint{ margin:0; }
+
 .lm-ut-binding .ut-path-input input{ flex:1 1 auto; border-top-right-radius:0; border-bottom-right-radius:0; }
 .ut-path-input .btn{ flex:0 0 auto; height:auto; margin-left:-1px; border-color:var(--border-strong);
   border-top-left-radius:0; border-bottom-left-radius:0; }
