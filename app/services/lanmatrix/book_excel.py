@@ -393,12 +393,14 @@ def _translated_formula(formula, origin: str, destination: str):
     return Translator(formula, origin=origin).translate_formula(destination)
 
 
-def _write_summary_formula(key, cell, value, item, previous, cached, columns, source_row, cache):
+def _write_summary_formula(key, cell, value, item, previous, cached, header_row, columns, source_row, cache):
     """Preserve imported category and test numbers when row order breaks their sequence."""
     original = cache.get(cell.coordinate)
     row = cell.row
     prior = row - 1
-    if key == "test_id" and cell.value == f'="QTS-"&DB[[#This Row],[{SUMMARY_HEADERS[5]}]]':
+    item_id_header = (_text(cached.cell(header_row, columns["item_id"]).value).strip()
+                      if "item_id" in columns else SUMMARY_HEADERS[5]) or SUMMARY_HEADERS[5]
+    if key == "test_id" and cell.value == f'="QTS-"&DB[[#This Row],[{item_id_header}]]':
         if not _same_value(item.get("item_id"), cached.cell(source_row, columns["item_id"]).value):
             if value != "QTS-" + _text(item.get("item_id")):
                 raise _formula_conflict(cell)
@@ -515,7 +517,7 @@ def _update_summary(ws, cached, items, cache) -> tuple[dict, dict[str, str], dic
                     pass
             if cell.data_type == "f":
                 _write_summary_formula(
-                    key, cell, value, item, previous, cached, columns, source_row or row, cache)
+                    key, cell, value, item, previous, cached, header, columns, source_row or row, cache)
             else:
                 _write_value(cell, value, cache)
             actual = cache.get(cell.coordinate) if cell.data_type == "f" else cell.value
@@ -590,10 +592,18 @@ def _write_detail_formula(cell, field, source, header, lookup_columns, lookup_id
     key = cache.get(key_cell.coordinate) if key_cell.data_type == "f" else key_cell.value
     if key != lookup_id or any(char in lookup_id for char in "*?~"):
         raise _formula_conflict(cell)
-    lookup = f'VLOOKUP(B{header},DB[],COLUMN(DB[{name}]),0)'
-    formula = f'=": "&{lookup}' if field != "item_id" else f"={lookup}"
-    date_formula = field == "exec_date" and cell.value == f'=": "&TEXT({lookup},"yyyy/mm/dd")'
-    if name is None or (cell.value != formula and not date_formula):
+    lookups = (
+        f'VLOOKUP(B{header},DB[],COLUMN(DB[{name}]),0)',
+        f'VLOOKUP(B{header},DB[#Data],COLUMN(DB[{name}]),0)',
+    )
+    formulas = tuple(
+        f'=": "&{lookup}' if field != "item_id" else f"={lookup}"
+        for lookup in lookups
+    )
+    date_formula = field == "exec_date" and cell.value in tuple(
+        f'=": "&TEXT({lookup},"yyyy/mm/dd")' for lookup in lookups
+    )
+    if name is None or (cell.value not in formulas and not date_formula):
         raise _formula_conflict(cell)
     if date_formula:
         if isinstance(value, _dt.date):

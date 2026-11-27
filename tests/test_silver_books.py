@@ -584,3 +584,78 @@ def test_run_input_snapshot_scopes_by_exact_row_uuid(app_ctx, tmp_path):
                 project.id, expected,
                 test_ids=["QTS-001", "QTS-002"],
                 book_ids=[first.id, second.id])
+
+
+def test_workbook_writeback_recognizes_db_data_lookup_and_header_variant():
+    from app.services.lanmatrix import book_excel
+
+    workbook = book_excel.build_workbook([_item("QTS-001", "old")])
+    summary = workbook[book_excel.SUMMARY_SHEET]
+    short_header = "項目ID ※「-」を「_」に変換。を削除"
+    summary["F1"] = short_header
+    summary.add_table(Table(displayName="DB", ref="A1:W2"))
+    summary["A2"] = f'="QTS-"&DB[[#This Row],[{short_header}]]'
+    detail = workbook["1"]
+    detail["C15"] = '=": "&VLOOKUP(B3,DB[#Data],COLUMN(DB[結果]),0)'
+    source = book_excel.workbook_bytes(workbook, caches={
+        summary.title: {"A2": "QTS-001"},
+        detail.title: {"C15": ": -"},
+    })
+
+    items = book_excel.parse_workbook(source)["items"]
+    items[0]["result"] = "PASS"
+    output = book_excel.rebuild_workbook(source, items)
+
+    formulas = load_workbook(output)
+    assert formulas[summary.title]["A2"].value == summary["A2"].value
+    assert formulas["1"]["C15"].value == detail["C15"].value
+    cached = load_workbook(output, data_only=True)
+    assert cached["1"]["C15"].value == ": Passed"
+
+
+def test_export_book_http_maps_formula_conflict_to_400(app_ctx, tmp_path):
+    from app.extensions import db
+    from app.models import TestBook, TestItemRow
+    from app.services.lanmatrix import book_excel, books_service, import_job_service
+
+    with app_ctx.app_context():
+        user, project, model = _setup(app_ctx, tmp_path)
+        workbook = book_excel.build_workbook([_item("QTS-001", "old")])
+        workbook[book_excel.SUMMARY_SHEET]["G2"] = '="old"'
+        raw = book_excel.workbook_bytes(
+            workbook, caches={book_excel.SUMMARY_SHEET: {"G2": "old"}})
+
+        job = import_job_service.create_special_preview(
+            user, project, raw,
+            import_format="book", mode="upsert",
+            original_filename="conflict.xlsx", book_name="CONFLICT",
+            model_id=model.id,
+        )
+        import_job_service.commit_special_import(user, project, job)
+        book = TestBook.query.filter_by(project_id=project.id, name="CONFLICT").one()
+        row = TestItemRow.query.filter_by(
+            project_id=project.id, book_id=book.id, case_id="QTS-001",
+            deleted_at=None).one()
+        custom = dict(row.custom_values or {})
+        custom["purpose"] = "edited"
+        row.custom_values = custom
+        db.session.commit()
+
+        with pytest.raises(books_service.ServiceError) as exc_info:
+            books_service.export_book(project, book)
+        assert exc_info.value.code == "BOOK_EXPORT_INVALID"
+        assert "!G2" in str(exc_info.value)
+
+        client = app_ctx.test_client()
+        with client.session_transaction() as sess:
+            sess["lm_user_id"] = user.id
+        resp = client.get(f"/api/v1/projects/{project.id}/books/{book.id}/export")
+        assert resp.status_code == 400
+        payload = resp.get_json()
+        assert payload["error"]["code"] == "BOOK_EXPORT_INVALID"
+        assert "!G2" in payload["error"]["message"]
+
+        zip_resp = client.get(f"/api/v1/projects/{project.id}/books/export.zip")
+        assert zip_resp.status_code == 400
+        zip_payload = zip_resp.get_json()
+        assert zip_payload["error"]["code"] == "BOOK_EXPORT_INVALID"

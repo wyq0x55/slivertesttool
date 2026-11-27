@@ -330,7 +330,14 @@ def export_book(project: Project, book: TestBook) -> io.BytesIO:
         items.append(item)
     source = book_source_path(project, book)
     if source.is_file():
-        return book_excel.rebuild_workbook(source, items)
+        try:
+            return book_excel.rebuild_workbook(source, items)
+        except book_excel.BookExcelError as exc:
+            raise ServiceError(
+                f"式样书「{book.name}」导出失败：{exc}",
+                code="BOOK_EXPORT_INVALID",
+                details={"book_id": book.id},
+            ) from exc
     return book_excel.workbook_bytes(book_excel.build_workbook(items))
 
 
