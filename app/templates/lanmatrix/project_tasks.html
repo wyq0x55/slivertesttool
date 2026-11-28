@@ -252,33 +252,53 @@
       </div>
       <p class="cv-status" id="cv-status" role="status" aria-live="polite">尚未读取 output.csv。</p>
       <div class="cv-body" id="cv-body" hidden>
-        <aside class="cv-signals" aria-label="变量">
-          <input id="cv-search" type="search" placeholder="搜索变量名或显示名…" aria-label="搜索变量名或显示名…" autocomplete="off">
-          <div class="cv-filters" role="group" aria-label="变量筛选">
-            <button type="button" class="cv-chip" data-filter="judged" aria-pressed="true">判定涉及</button>
-            <button type="button" class="cv-chip" data-filter="changed" aria-pressed="false">有变化</button>
-            <button type="button" class="cv-chip" data-filter="all" aria-pressed="false">全部</button>
+        <aside class="cv-sidebar" aria-label="变量和明细">
+          <div class="curve-tabs" role="tablist" aria-label="变量和明细">
+            <button class="curve-tab" type="button" role="tab" id="cv-lower-tab-signals" data-lower="signals" aria-selected="true" aria-controls="cv-lower-pane-signals">变量</button>
+            <button class="curve-tab" type="button" role="tab" id="cv-lower-tab-events" data-lower="events" aria-selected="false" aria-controls="cv-lower-pane-events" tabindex="-1">事件列表</button>
+            <button class="curve-tab" type="button" role="tab" id="cv-lower-tab-checks" data-lower="checks" aria-selected="false" aria-controls="cv-lower-pane-checks" tabindex="-1">判定检查点</button>
+            <button class="curve-tab" type="button" role="tab" id="cv-lower-tab-raw" data-lower="raw" aria-selected="false" aria-controls="cv-lower-pane-raw" tabindex="-1">原始数据</button>
           </div>
-          <button class="btn small" id="cv-batch-open" type="button" aria-haspopup="dialog">批量选变量</button>
-          <dialog class="cv-batch" id="cv-batch" aria-labelledby="cv-batch-title" closedby="any">
-            <form id="cv-batch-form" method="dialog">
-              <h2 id="cv-batch-title">批量选变量</h2>
-              <div class="cv-batch-head">
-                <label for="cv-batch-names">变量名或显示名</label>
-                <button class="btn small ghost" id="cv-batch-fill" type="button">填入当前泳道</button>
-              </div>
-              <p class="submuted" id="cv-batch-help">每行一个，可用 * 作通配符（如 m_ACT_MOT*）。以 # 开头的行作为备注。</p>
-              <textarea id="cv-batch-names" rows="7" aria-describedby="cv-batch-help" spellcheck="false" autofocus></textarea>
-              <p class="cv-batch-error" id="cv-batch-error" role="status"></p>
-              <div class="cv-group">
-                <button class="btn small primary" type="submit" value="replace">仅显示匹配项</button>
-                <button class="btn small" type="submit" value="append">添加到当前泳道</button>
-                <button class="btn small ghost" id="cv-batch-cancel" type="submit" value="cancel">取消</button>
-              </div>
-            </form>
-          </dialog>
-          <p class="cv-count submuted" id="cv-count"></p>
-          <div id="cv-tree" class="cv-tree"></div>
+          <div data-pane="signals" id="cv-lower-pane-signals" class="cv-signals" role="tabpanel" aria-labelledby="cv-lower-tab-signals">
+            <input id="cv-search" type="search" placeholder="搜索变量名或显示名…" aria-label="搜索变量名或显示名…" autocomplete="off">
+            <div class="cv-filters" role="group" aria-label="变量筛选">
+              <button type="button" class="cv-chip" data-filter="judged" aria-pressed="true">判定涉及</button>
+              <button type="button" class="cv-chip" data-filter="changed" aria-pressed="false">有变化</button>
+              <button type="button" class="cv-chip" data-filter="all" aria-pressed="false">全部</button>
+            </div>
+            <button class="btn small" id="cv-batch-open" type="button" aria-haspopup="dialog">批量选变量</button>
+            <dialog class="cv-batch" id="cv-batch" aria-labelledby="cv-batch-title" closedby="any">
+              <form id="cv-batch-form" method="dialog">
+                <h2 id="cv-batch-title">批量选变量</h2>
+                <div class="cv-batch-head">
+                  <label for="cv-batch-names">变量名或显示名</label>
+                  <button class="btn small ghost" id="cv-batch-fill" type="button">填入当前泳道</button>
+                </div>
+                <p class="submuted" id="cv-batch-help">每行一个，可用 * 作通配符（如 m_ACT_MOT*）。以 # 开头的行作为备注。</p>
+                <textarea id="cv-batch-names" rows="7" aria-describedby="cv-batch-help" spellcheck="false" autofocus></textarea>
+                <p class="cv-batch-error" id="cv-batch-error" role="status"></p>
+                <div class="cv-group">
+                  <button class="btn small primary" type="submit" value="replace">仅显示匹配项</button>
+                  <button class="btn small" type="submit" value="append">添加到当前泳道</button>
+                  <button class="btn small ghost" id="cv-batch-cancel" type="submit" value="cancel">取消</button>
+                </div>
+              </form>
+            </dialog>
+            <p class="cv-count submuted" id="cv-count"></p>
+            <div id="cv-tree" class="cv-tree"></div>
+          </div>
+          <div data-pane="events" hidden id="cv-lower-pane-events" role="tabpanel" aria-labelledby="cv-lower-tab-events">
+            <div class="cv-pane-bar"><label class="jchk"><input type="checkbox" id="cv-events-lanes" checked><span>只看泳道中的变量</span></label><label class="jchk"><input type="checkbox" id="cv-events-range" checked><span>只看当前区间</span></label><span class="submuted" id="cv-events-info"></span></div>
+            <div class="cv-table-wrap" role="region" aria-labelledby="cv-lower-tab-events" tabindex="0"><table class="tbl cv-table" id="cv-events" aria-label="事件列表"></table></div>
+            <div class="cv-pager"><button class="btn small" id="cv-events-prev" type="button">上一页</button><button class="btn small" id="cv-events-next" type="button">下一页</button></div>
+          </div>
+          <div data-pane="checks" hidden id="cv-lower-pane-checks" role="tabpanel" aria-labelledby="cv-lower-tab-checks">
+            <div class="cv-table-wrap" role="region" aria-labelledby="cv-lower-tab-checks" tabindex="0"><table class="tbl cv-table" id="cv-checks" aria-label="判定检查点"></table></div>
+          </div>
+          <div data-pane="raw" hidden id="cv-lower-pane-raw" role="tabpanel" aria-labelledby="cv-lower-tab-raw">
+            <div class="cv-table-wrap" role="region" aria-labelledby="cv-lower-tab-raw" tabindex="0"><table class="tbl cv-table" id="cv-raw" aria-label="原始数据"></table></div>
+            <div class="cv-pager"><button class="btn small" id="cv-raw-prev" type="button">上一页</button><span class="submuted" id="cv-raw-page"></span><button class="btn small" id="cv-raw-next" type="button">下一页</button></div>
+          </div>
         </aside>
         <div class="cv-main">
           <div class="cv-cursors" id="cv-cursors">
@@ -292,7 +312,7 @@
           <div class="cv-canvas-wrap" id="cv-wrap">
             <canvas id="cv-canvas" tabindex="0" role="img" aria-label="变量泳道图：共享时间轴，可键盘操作"></canvas>
             <div class="cv-tip" id="cv-tip" hidden></div>
-            <p class="cv-empty muted" id="cv-empty" hidden>从左侧选择变量。</p>
+            <p class="cv-empty muted" id="cv-empty" hidden>在「变量」标签页中选择要显示的变量。</p>
           </div>
           <canvas id="cv-minimap" class="cv-minimap" aria-label="全程缩略图：拖动选择显示区间"></canvas>
           <div class="cv-compare-note submuted" id="cv-compare-note" hidden></div>
@@ -305,25 +325,6 @@
               </table>
             </div>
           </details>
-        </div>
-      </div>
-      <div class="cv-lower" id="cv-lower" hidden>
-        <div class="curve-tabs" role="tablist" aria-label="明细">
-          <button class="curve-tab" type="button" role="tab" id="cv-lower-tab-events" data-lower="events" aria-selected="true" aria-controls="cv-lower-pane-events">事件列表</button>
-          <button class="curve-tab" type="button" role="tab" id="cv-lower-tab-checks" data-lower="checks" aria-selected="false" aria-controls="cv-lower-pane-checks" tabindex="-1">判定检查点</button>
-          <button class="curve-tab" type="button" role="tab" id="cv-lower-tab-raw" data-lower="raw" aria-selected="false" aria-controls="cv-lower-pane-raw" tabindex="-1">原始数据</button>
-        </div>
-        <div data-pane="events" id="cv-lower-pane-events" role="tabpanel" aria-labelledby="cv-lower-tab-events">
-          <div class="cv-pane-bar"><label class="jchk"><input type="checkbox" id="cv-events-lanes" checked><span>只看泳道中的变量</span></label><label class="jchk"><input type="checkbox" id="cv-events-range" checked><span>只看当前区间</span></label><span class="submuted" id="cv-events-info"></span></div>
-          <div class="cv-table-wrap"><table class="tbl cv-table" id="cv-events" aria-label="事件列表"></table></div>
-          <div class="cv-pager"><button class="btn small" id="cv-events-prev" type="button">上一页</button><button class="btn small" id="cv-events-next" type="button">下一页</button></div>
-        </div>
-        <div data-pane="checks" hidden id="cv-lower-pane-checks" role="tabpanel" aria-labelledby="cv-lower-tab-checks">
-          <div class="cv-table-wrap"><table class="tbl cv-table" id="cv-checks" aria-label="判定检查点"></table></div>
-        </div>
-        <div data-pane="raw" hidden id="cv-lower-pane-raw" role="tabpanel" aria-labelledby="cv-lower-tab-raw">
-          <div class="cv-table-wrap"><table class="tbl cv-table" id="cv-raw" aria-label="原始数据"></table></div>
-          <div class="cv-pager"><button class="btn small" id="cv-raw-prev" type="button">上一页</button><span class="submuted" id="cv-raw-page"></span><button class="btn small" id="cv-raw-next" type="button">下一页</button></div>
         </div>
       </div>
     </section>

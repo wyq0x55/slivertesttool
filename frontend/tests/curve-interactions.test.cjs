@@ -384,6 +384,20 @@ test("right-click places cursor B, measurement table shows signed right-minus-le
   assert.equal(urlState.cr, "1~2");
 });
 
+test("a narrow chart uses the same time coordinates for drawing and cursor input", async () => {
+  const { doc, openTask } = createHarness();
+  doc.getElementById("cv-wrap").clientWidth = 300;
+  await openTask();
+  const canvas = doc.getElementById("cv-canvas");
+  const midpoint = 206;
+
+  assert.equal(canvas.width, 300);
+  const event = fire(canvas, "contextmenu", { button: 2, clientX: midpoint, clientY: 80 });
+  assert.equal(event.defaultPrevented, true);
+  assert.equal(doc.getElementById("cv-cur-b").textContent, "5 s");
+  assert.ok(canvas._ctx2d.calls.some(call => call.op === "fillText" && call.text === "B" && call.x === midpoint + 8));
+});
+
 test("cursor line can be dragged directly with live readout and cancel rollback", async () => {
   const { doc, openTask } = createHarness();
   await openTask();

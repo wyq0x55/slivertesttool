@@ -13,7 +13,7 @@
   if (!panel || !window.LMCurveRender) return;
   const R = window.LMCurveRender;
   const canvas = $("cv-canvas"), mini = $("cv-minimap"), wrap = $("cv-wrap"), tip = $("cv-tip");
-  const LABEL_W = 240, MINI_H = 44;
+  const MINI_H = 44;
   const HEIGHT = { digital: 30, discrete: 36, analog: 92, constant: 30 };
 
   // ------------------------------------------------------------------ state
@@ -33,7 +33,7 @@
   let views = [], currentView = null;
   let liveTimer = 0, fetchTimer = 0, urlTimer = 0;
   let pending = new Set();
-  let eventsOffset = 0, rawOffset = 0, lower = "events";
+  let eventsOffset = 0, rawOffset = 0, lower = "signals", density = null;
   let colorSlots = new Map();
   let defaultKey = "";
   let lastModel = null;
@@ -132,7 +132,8 @@
     series = new Map(); other = new Map(); compare = null; readouts = { a: new Map(), b: new Map() };
     drag = null; lastModel = null;
     views = []; currentView = null; colorSlots = new Map(); eventsOffset = 0; rawOffset = 0; defaultKey = "";
-    $("cv-body").hidden = true; $("cv-lower").hidden = true; $("cv-live").hidden = true;
+    density = null;
+    $("cv-body").hidden = true; $("cv-live").hidden = true;
     $("cv-first-fail").hidden = true; $("cv-compare-note").hidden = true;
     $("cv-run").replaceChildren(); $("cv-compare").replaceChildren(new Option("不对比", ""));
     $("cv-view").replaceChildren(new Option("默认（期望优先）", ""));
@@ -160,7 +161,7 @@
     }
     view = { start: ctx.domain[0], end: ctx.domain[1] };
     fillRuns(); fillCompare(); summary();
-    $("cv-body").hidden = false; $("cv-lower").hidden = false;
+    $("cv-body").hidden = false;
     $("cv-live").hidden = !ctx.live;
     $("cv-download").hidden = !ctx.can_download;
     $("cv-download").href = LMApi.taskCurvesUrl(task.projectId, task.taskKey, "/download", params());
@@ -180,6 +181,7 @@
     if (restore && restore.b !== null) cursors.b = restore.b;
     showCursors(); refreshCursors();
     requestDraw(true);
+    loadDensity();
     loadLower();
   }
 
@@ -450,9 +452,11 @@
     start = Math.max(lo, Math.min(start, hi - span));
     return { start, end: Math.min(hi, start + span) || start + span };
   }
-  function plotWidth() { return Math.max(1, wrap.clientWidth - LABEL_W - 8); }
-  function timeAtX(x) { return view.start + (x - LABEL_W) / plotWidth() * (view.end - view.start); }
-  function xAtTime(t) { return LABEL_W + (t - view.start) / (view.end - view.start) * plotWidth(); }
+  function labelWidth(width = wrap.clientWidth) { return Math.min(240, Math.round(width * 0.4)); }
+  function plotWidth() { return Math.max(1, wrap.clientWidth - labelWidth() - 8); }
+  function timeAtX(x) { return view.start + (x - labelWidth()) / plotWidth() * (view.end - view.start); }
+  function xAtTime(t) { return labelWidth() + (t - view.start) / (view.end - view.start) * plotWidth(); }
+  function clampPlotX(x) { return Math.max(labelWidth(), Math.min(labelWidth() + plotWidth(), x)); }
 
   let drawQueued = false;
   function requestDraw(refetch) {
@@ -534,7 +538,7 @@
     });
     const drawnCursors = drag?.kind === "cursor" && drag.moved ? { ...cursors, [drag.key]: drag.time } : cursors;
     const zoomBand = drag?.kind === "zoom" && drag.moved ? [drag.x0, drag.x1] : null;
-    const m = { width, labelW: LABEL_W, theme: th, view, lanes: out, steps: ctx.judge.steps,
+    const m = { width, labelW: labelWidth(width), theme: th, view, lanes: out, steps: ctx.judge.steps,
                 cursors: drawnCursors, hoverX, focusStep, compare: compare && compare.result, zoomBand };
     m.height = R.layout(m);
     return m;
@@ -575,9 +579,7 @@
     lastModel = m;
   }
 
-  let density = null;
   async function loadDensity() {
-    density = null;
     if (!ctx) return;
     const epoch = gen;
     try {
@@ -595,7 +597,7 @@
     mini.width = Math.round(width * dpr); mini.height = Math.round(MINI_H * dpr);
     const g = mini.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0);
     R.renderMinimap(R.canvasPainter(g), { width, height: MINI_H, theme: th, domain: ctx.domain, view,
-                                          labelW: LABEL_W, steps: ctx.judge.steps, density });
+                                          labelW: labelWidth(width), steps: ctx.judge.steps, density });
   }
 
   function setView(start, end) {
@@ -870,7 +872,7 @@
     if (!ctx) return;
     if (lower === "events") loadEvents();
     else if (lower === "checks") renderChecks();
-    else loadRaw();
+    else if (lower === "raw") loadRaw();
   }
   async function loadEvents() {
     const q = params({ offset: eventsOffset, limit: 200 });
@@ -895,7 +897,6 @@
       $("cv-events-info").textContent = data.total ? `${eventsOffset + 1}–${eventsOffset + data.events.length} / ${data.total} 个跳变` : "没有跳变";
       $("cv-events-prev").disabled = eventsOffset === 0;
       $("cv-events-next").disabled = eventsOffset + data.events.length >= data.total;
-      if (!density) loadDensity();
     } catch (error) { status(error.message); }
   }
   function renderChecks() {
@@ -945,7 +946,7 @@
     return lastModel.lanes.findIndex(l => y >= l.y && y < l.y + l.height);
   }
   function cursorAtX(x, y) {
-    if (x < LABEL_W || x > LABEL_W + plotWidth() || (y >= R.AXIS_H && y < R.AXIS_H + R.BAND_H)) return null;
+    if (x !== clampPlotX(x) || (y >= R.AXIS_H && y < R.AXIS_H + R.BAND_H)) return null;
     const distance = key => {
       const t = cursors[key];
       return t === null || t < view.start || t > view.end ? Infinity : Math.abs(x - xAtTime(t));
@@ -953,28 +954,26 @@
     const a = distance("a"), b = distance("b");
     return Math.min(a, b) > 6 ? null : a <= b ? "a" : "b";
   }
-  function cursorTimeAtX(x) {
-    return timeAtX(Math.max(LABEL_W, Math.min(LABEL_W + plotWidth(), x)));
-  }
   canvas.addEventListener("pointerdown", ev => {
     if (!ctx || drag || ev.button !== 0) return;
     canvas.focus();
     const r = canvas.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
+    const labelW = labelWidth();
     const i = laneAtY(y);
     const cursor = ev.shiftKey ? null : cursorAtX(x, y);
     if (cursor) {
       drag = { kind: "cursor", key: cursor, x0: x, time: cursors[cursor], moved: false };
-    } else if (x < LABEL_W && i >= 0) {
+    } else if (x < labelW && i >= 0) {
       const lane = lastModel.lanes[i];
-      if (x > LABEL_W - 26 && y < lane.y + 18) { // remove ×
+      if (x > labelW - 26 && y < lane.y + 18) { // remove ×
         focusLane = -1; toggleLane(lanes[i], false); return;
       }
       const edge = Math.abs(y - (lane.y + lane.height)) <= 4;
       drag = { kind: edge ? "resize" : "move", index: i, y0: y, h0: lanes[i].height, moved: false };
-    } else if (y < R.AXIS_H && x >= LABEL_W) {
-      const clamped = Math.max(LABEL_W, Math.min(LABEL_W + plotWidth(), x));
+    } else if (y < R.AXIS_H && x >= labelW) {
+      const clamped = clampPlotX(x);
       drag = { kind: "zoom", x0: clamped, x1: clamped, moved: false, shift: ev.shiftKey };
-    } else if (y < R.AXIS_H + R.BAND_H && y >= R.AXIS_H && x >= LABEL_W) {
+    } else if (y < R.AXIS_H + R.BAND_H && y >= R.AXIS_H && x >= labelW) {
       const t = timeAtX(x), s = stepAt(t);
       if (s) focusOnStep(s.step);
       return;
@@ -993,12 +992,12 @@
       if (drag.kind === "cursor") {
         if (Math.abs(x - drag.x0) > 3) drag.moved = true;
         if (drag.moved) {
-          drag.time = cursorTimeAtX(x);
+          drag.time = timeAtX(clampPlotX(x));
           showCursors({ ...cursors, [drag.key]: drag.time });
           requestDraw(false);
         }
       } else if (drag.kind === "zoom") {
-        drag.x1 = Math.max(LABEL_W, Math.min(LABEL_W + plotWidth(), x));
+        drag.x1 = clampPlotX(x);
         if (Math.abs(drag.x1 - drag.x0) > 3) drag.moved = true;
         requestDraw(false);
       } else if (drag.kind === "pan") {
@@ -1022,7 +1021,7 @@
       }
       return;
     }
-    canvas.style.cursor = x < LABEL_W
+    canvas.style.cursor = x < labelWidth()
       ? (laneAtY(y) >= 0 && lastModel && Math.abs(y - (lastModel.lanes[laneAtY(y)].y + lastModel.lanes[laneAtY(y)].height)) <= 4 ? "ns-resize" : "grab")
       : cursorAtX(x, y) ? "ew-resize" : y < R.AXIS_H ? "zoom-in" : "crosshair";
     hover(x, y);
@@ -1032,14 +1031,14 @@
     const r = canvas.getBoundingClientRect(), x = ev.clientX - r.left;
     const d = drag, committed = ev.type === "pointerup"; drag = null;
     if (d.kind === "cursor") {
-      if (committed && d.moved) setCursor(d.key, cursorTimeAtX(x));
+      if (committed && d.moved) setCursor(d.key, timeAtX(clampPlotX(x)));
       else { showCursors(); requestDraw(false); }
     } else if (d.kind === "zoom") {
       if (committed && d.moved) {
         const a = timeAtX(Math.min(d.x0, d.x1)), b = timeAtX(Math.max(d.x0, d.x1));
         setView(a, b);
       } else if (committed) {
-        setCursor(d.shift ? "b" : "a", cursorTimeAtX(x));
+        setCursor(d.shift ? "b" : "a", timeAtX(clampPlotX(x)));
       } else {
         requestDraw(false);
       }
@@ -1057,7 +1056,7 @@
   canvas.addEventListener("contextmenu", ev => {
     if (!ctx || ev.button !== 2 || drag) return;
     const r = canvas.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
-    if (x < LABEL_W || x > LABEL_W + plotWidth() || (y >= R.AXIS_H && y < R.AXIS_H + R.BAND_H)) return;
+    if (x !== clampPlotX(x) || (y >= R.AXIS_H && y < R.AXIS_H + R.BAND_H)) return;
     ev.preventDefault();
     setCursor("b", timeAtX(x));
   });
@@ -1065,7 +1064,7 @@
   canvas.addEventListener("wheel", ev => {
     if (!ctx) return;
     ev.preventDefault();
-    const r = canvas.getBoundingClientRect(), x = Math.max(LABEL_W, ev.clientX - r.left);
+    const r = canvas.getBoundingClientRect(), x = Math.max(labelWidth(), ev.clientX - r.left);
     const span = view.end - view.start;
     if (ev.shiftKey || Math.abs(ev.deltaX) > Math.abs(ev.deltaY)) {
       const dt = (ev.deltaX || ev.deltaY) / plotWidth() * span;
@@ -1076,14 +1075,14 @@
   }, { passive: false });
   canvas.addEventListener("dblclick", ev => {
     const r = canvas.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
-    if (y >= R.AXIS_H && y < R.AXIS_H + R.BAND_H && x >= LABEL_W) {
+    if (y >= R.AXIS_H && y < R.AXIS_H + R.BAND_H && x >= labelWidth()) {
       const s = stepAt(timeAtX(x));
       if (s) document.dispatchEvent(new CustomEvent("lm-judge-focus-step", { detail: { step: s.step } }));
     }
   });
 
   function hover(x, y) {
-    if (x < LABEL_W || !lastModel) { hoverX = null; tip.hidden = true; requestDraw(false); return; }
+    if (x < labelWidth() || !lastModel) { hoverX = null; tip.hidden = true; requestDraw(false); return; }
     hoverX = x; requestDraw(false);
     const t = timeAtX(x), s = stepAt(t), i = laneAtY(y);
     const rows = [];
@@ -1143,13 +1142,13 @@
   mini.addEventListener("pointerdown", ev => {
     if (!ctx) return;
     const r = mini.getBoundingClientRect(), x = ev.clientX - r.left;
-    const W = r.width - 8 - LABEL_W, dom = ctx.domain, span = (dom[1] - dom[0]) || 1;
-    const tAt = px => dom[0] + (px - LABEL_W) / W * span;
-    const a = LABEL_W + (view.start - dom[0]) / span * W, b = LABEL_W + (view.end - dom[0]) / span * W;
+    const labelW = labelWidth(), width = plotWidth(), dom = ctx.domain, span = (dom[1] - dom[0]) || 1;
+    const tAt = px => dom[0] + (px - labelW) / width * span;
+    const a = labelW + (view.start - dom[0]) / span * width, b = labelW + (view.end - dom[0]) / span * width;
     let kind = "move";
     if (Math.abs(x - a) <= 5) kind = "left"; else if (Math.abs(x - b) <= 5) kind = "right";
     else if (x < a || x > b) { const s = view.end - view.start, t = tAt(x); setView(t - s / 2, t + s / 2); }
-    mdrag = { kind, x0: x, v0: Object.assign({}, view), tAt, perPx: span / W };
+    mdrag = { kind, x0: x, v0: Object.assign({}, view), tAt, perPx: span / width };
     mini.setPointerCapture(ev.pointerId);
   });
   mini.addEventListener("pointermove", ev => {
@@ -1324,7 +1323,7 @@
   });
   $("cv-search").addEventListener("input", tree);
   document.querySelectorAll(".cv-chip").forEach(b => b.addEventListener("click", () => { filter = b.dataset.filter; syncFilterChips(); tree(); }));
-  // The lower tablist shares one activation path for clicks and arrow keys, so
+  // The sidebar tablist shares one activation path for clicks and arrow keys, so
   // aria-selected, the roving tabindex, the visible pane and the data load can
   // never drift apart.
   function activateLower(tab) {

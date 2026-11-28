@@ -1,4 +1,4 @@
-// The curve panel's second tablist (明细: 事件列表 / 判定检查点 / 原始数据) must be
+// The curve sidebar tablist (变量 / 事件列表 / 判定检查点 / 原始数据) must be
 // a complete ARIA tab widget: every tab controls a labelled tabpanel, and arrow
 // keys / Home / End move selection with a roving tabindex, exactly like the
 // upper 判定结果 / 变量曲线 tabs. task_curves.js is executed against a minimal DOM
@@ -15,7 +15,7 @@ const template = fs.readFileSync(
 const source = fs.readFileSync(
   path.join(root, "app/static/js/lanmatrix/task_curves.js"), "utf8");
 
-const NAMES = ["events", "checks", "raw"];
+const NAMES = ["signals", "events", "checks", "raw"];
 
 // ---------------------------------------------------------------- template
 
@@ -49,17 +49,17 @@ test("each lower tab controls a labelled tabpanel via matching ids", () => {
       `${name} pane is labelled by its tab`);
 
     // Initial visibility still matches the initial selection.
-    assert.equal(pane.has("hidden"), name !== "events",
-      `${name} pane starts ${name === "events" ? "visible" : "hidden"}`);
+    assert.equal(pane.has("hidden"), name !== "signals",
+      `${name} pane starts ${name === "signals" ? "visible" : "hidden"}`);
   }
 });
 
 test("the roving tabindex starts on the selected tab only", () => {
   for (const name of NAMES) {
     const tab = attrs(tagFor(new RegExp(`<button[^>]*id="cv-lower-tab-${name}"[^>]*>`)));
-    assert.equal(tab.get("aria-selected"), String(name === "events"));
+    assert.equal(tab.get("aria-selected"), String(name === "signals"));
     assert.equal(tab.has("tabindex") ? tab.get("tabindex") : "0",
-      name === "events" ? "0" : "-1");
+      name === "signals" ? "0" : "-1");
   }
 });
 
@@ -197,18 +197,18 @@ function assertSelection({ tabs, panes }, name, message) {
 
 test("ArrowRight moves to the next tab and focuses it", () => {
   const dom = load();
-  const event = fire(byName(dom.tabs, "events"), "keydown", { key: "ArrowRight" });
+  const event = fire(byName(dom.tabs, "signals"), "keydown", { key: "ArrowRight" });
 
   assert.equal(event.defaultPrevented, true, "the tab key is consumed");
-  assertSelection(dom, "checks", "ArrowRight");
-  assert.equal(dom.document.activeElement, byName(dom.tabs, "checks"));
-  assert.equal(paneFor(dom.panes, "checks").hidden, false);
-  assert.equal(paneFor(dom.panes, "events").hidden, true);
+  assertSelection(dom, "events", "ArrowRight");
+  assert.equal(dom.document.activeElement, byName(dom.tabs, "events"));
+  assert.equal(paneFor(dom.panes, "events").hidden, false);
+  assert.equal(paneFor(dom.panes, "signals").hidden, true);
 });
 
 test("ArrowLeft wraps from the first tab to the last", () => {
   const dom = load();
-  fire(byName(dom.tabs, "events"), "keydown", { key: "ArrowLeft" });
+  fire(byName(dom.tabs, "signals"), "keydown", { key: "ArrowLeft" });
   assertSelection(dom, "raw", "ArrowLeft wrap");
   assert.equal(dom.document.activeElement, byName(dom.tabs, "raw"));
 });
@@ -216,8 +216,8 @@ test("ArrowLeft wraps from the first tab to the last", () => {
 test("ArrowRight wraps from the last tab to the first", () => {
   const dom = load();
   fire(byName(dom.tabs, "raw"), "keydown", { key: "ArrowRight" });
-  assertSelection(dom, "events", "ArrowRight wrap");
-  assert.equal(dom.document.activeElement, byName(dom.tabs, "events"));
+  assertSelection(dom, "signals", "ArrowRight wrap");
+  assert.equal(dom.document.activeElement, byName(dom.tabs, "signals"));
 });
 
 test("Home and End jump to the ends of the tablist", () => {
@@ -227,8 +227,8 @@ test("Home and End jump to the ends of the tablist", () => {
   assert.equal(dom.document.activeElement, byName(dom.tabs, "raw"));
 
   fire(byName(dom.tabs, "raw"), "keydown", { key: "Home" });
-  assertSelection(dom, "events", "Home");
-  assert.equal(dom.document.activeElement, byName(dom.tabs, "events"));
+  assertSelection(dom, "signals", "Home");
+  assert.equal(dom.document.activeElement, byName(dom.tabs, "signals"));
 });
 
 test("click activation still moves selection, focus path unchanged", () => {
@@ -241,28 +241,28 @@ test("click activation still moves selection, focus path unchanged", () => {
 test("modified arrow keys are ignored", () => {
   for (const modifier of ["ctrlKey", "altKey", "metaKey"]) {
     const dom = load();
-    const event = fire(byName(dom.tabs, "events"), "keydown", {
+    const event = fire(byName(dom.tabs, "signals"), "keydown", {
       key: "ArrowRight", [modifier]: true,
     });
     assert.equal(event.defaultPrevented, false, `${modifier}+ArrowRight is not consumed`);
-    assertSelection(dom, "events", `${modifier}+ArrowRight`);
+    assertSelection(dom, "signals", `${modifier}+ArrowRight`);
   }
 });
 
 test("keys during IME composition are ignored", () => {
   const dom = load();
-  const composing = fire(byName(dom.tabs, "events"), "keydown", { key: "ArrowRight", isComposing: true });
+  const composing = fire(byName(dom.tabs, "signals"), "keydown", { key: "ArrowRight", isComposing: true });
   assert.equal(composing.defaultPrevented, false);
-  assertSelection(dom, "events", "isComposing");
+  assertSelection(dom, "signals", "isComposing");
 
-  const legacy = fire(byName(dom.tabs, "events"), "keydown", { key: "ArrowRight", keyCode: 229 });
+  const legacy = fire(byName(dom.tabs, "signals"), "keydown", { key: "ArrowRight", keyCode: 229 });
   assert.equal(legacy.defaultPrevented, false);
-  assertSelection(dom, "events", "keyCode 229");
+  assertSelection(dom, "signals", "keyCode 229");
 });
 
 test("other keys are not handled", () => {
   const dom = load();
-  const event = fire(byName(dom.tabs, "events"), "keydown", { key: "Tab" });
+  const event = fire(byName(dom.tabs, "signals"), "keydown", { key: "Tab" });
   assert.equal(event.defaultPrevented, false);
-  assertSelection(dom, "events", "Tab");
+  assertSelection(dom, "signals", "Tab");
 });
