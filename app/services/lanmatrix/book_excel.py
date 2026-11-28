@@ -90,9 +90,28 @@ class BookExcelError(Exception):
 def _as_seekable(source: Union[str, BinaryIO]) -> Union[str, io.BytesIO]:
     if isinstance(source, (str, Path)):
         return str(source)
-    if hasattr(source, "seek"):
+    if isinstance(source, io.BytesIO):
         source.seek(0)
         return source
+
+    # Werkzeug upload streams are ``SpooledTemporaryFile`` objects. On CPython
+    # 3.10 they have ``seek`` but not ``seekable``, which openpyxl's zipfile
+    # reader needs, so buffer those into memory before parsing.
+    seekable = False
+    try:
+        seekable = bool(source.seekable())  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 - missing/broken seekable()
+        seekable = False
+    if seekable:
+        try:
+            source.seek(0)  # type: ignore[attr-defined]
+            return source
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        source.seek(0)  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001
+        pass
     return io.BytesIO(source.read())
 
 
@@ -749,6 +768,46 @@ def _restore_table_print_areas(wb: Workbook, source) -> None:
                 sheet.defined_names.add(DefinedName(name.get("name"), attr_text=value))
 
 
+def _clear_nested_view_autofilters(wb: Workbook, source) -> None:
+    """Drop sheet-level autoFilter hoisted by openpyxl from <customSheetView>.
+
+    openpyxl's worksheet reader parses any <autoFilter> element, including one
+    nested inside a personal <customSheetView>, into ``ws.auto_filter``. When a
+    worksheet also hosts an Excel Table with its own autoFilter, re-saving that
+    hoisted top-level <autoFilter> produces a workbook Microsoft Excel refuses
+    to open. Clear ``ws.auto_filter`` whenever the original sheet XML had no
+    direct top-level <autoFilter> child.
+    """
+    with ZipFile(_as_seekable(source)) as original:
+        names = set(original.namelist())
+        if "xl/workbook.xml" not in names or "xl/_rels/workbook.xml.rels" not in names:
+            return
+        workbook_xml = ElementTree.fromstring(original.read("xl/workbook.xml"))
+        rels_xml = ElementTree.fromstring(original.read("xl/_rels/workbook.xml.rels"))
+        rel_targets = {}
+        for rel in rels_xml.findall("./{*}Relationship"):
+            rid = rel.get("Id")
+            target = (rel.get("Target") or "").lstrip("/")
+            if rid and target:
+                rel_targets[rid] = target if target.startswith("xl/") else f"xl/{target}"
+        rel_attr = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+        for sheet_el in workbook_xml.findall("./{*}sheets/{*}sheet"):
+            title = sheet_el.get("name")
+            if not title or title not in wb.sheetnames:
+                continue
+            ws = wb[title]
+            if not ws.auto_filter.ref:
+                continue
+            part = rel_targets.get(sheet_el.get(rel_attr) or "")
+            if not part or part not in names:
+                continue
+            sheet_xml = ElementTree.fromstring(original.read(part))
+            if sheet_xml.find("./{*}autoFilter") is None:
+                ws.auto_filter.ref = None
+                ws.auto_filter.filterColumn.clear()
+                ws.auto_filter.sortState = None
+
+
 def rebuild_workbook(source: Union[str, BinaryIO],
                      items: list[dict[str, Any]], *,
                      summary_sheet: str = SUMMARY_SHEET) -> io.BytesIO:
@@ -763,6 +822,7 @@ def rebuild_workbook(source: Union[str, BinaryIO],
         raise BookExcelError(f"原书中未找到设定 sheet「{summary_sheet}」")
 
     _restore_table_print_areas(wb, source)
+    _clear_nested_view_autofilters(wb, source)
     active_sheet = wb.active
     caches = {}
     for ws in wb.worksheets:

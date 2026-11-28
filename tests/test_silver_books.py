@@ -659,3 +659,89 @@ def test_export_book_http_maps_formula_conflict_to_400(app_ctx, tmp_path):
         assert zip_resp.status_code == 400
         zip_payload = zip_resp.get_json()
         assert zip_payload["error"]["code"] == "BOOK_EXPORT_INVALID"
+
+
+def test_rebuild_workbook_drops_custom_sheet_view_autofilter_hoisted_by_openpyxl():
+    import io
+    from xml.etree import ElementTree
+    from zipfile import ZIP_DEFLATED, ZipFile
+    from openpyxl.worksheet.table import Table
+
+    from app.services.lanmatrix import book_excel
+
+    workbook = book_excel.build_workbook([_item("QTS-001", "old")])
+    summary = workbook[book_excel.SUMMARY_SHEET]
+    summary.add_table(Table(displayName="DB", ref="A1:W2"))
+    raw = book_excel.workbook_bytes(workbook)
+
+    # Inject a <customSheetViews><customSheetView><autoFilter .../> like real Excel personal views.
+    injected = io.BytesIO()
+    with ZipFile(raw) as zin, ZipFile(injected, "w", ZIP_DEFLATED) as zout:
+        for name in zin.namelist():
+            data = zin.read(name)
+            if name == "xl/worksheets/sheet1.xml":
+                text = data.decode("utf-8")
+                marker = "</sheetData>"
+                custom = (
+                    "<customSheetViews><customSheetView guid=\"{11111111-1111-1111-1111-111111111111}\">"
+                    "<autoFilter ref=\"A1:S99\"/>"
+                    "</customSheetView></customSheetViews>"
+                )
+                data = text.replace(marker, marker + custom, 1).encode("utf-8")
+            zout.writestr(name, data)
+    injected.seek(0)
+
+    items = book_excel.parse_workbook(injected)["items"]
+    items[0]["result"] = "PASS"
+    rebuilt = book_excel.rebuild_workbook(injected, items)
+
+    with ZipFile(rebuilt) as zout:
+        sheet_xml = ElementTree.fromstring(zout.read("xl/worksheets/sheet1.xml"))
+        wb_xml = ElementTree.fromstring(zout.read("xl/workbook.xml"))
+    assert sheet_xml.find("./{*}autoFilter") is None
+    assert not [
+        el for el in wb_xml.findall("./{*}definedNames/{*}definedName")
+        if el.get("name") == "_xlnm._FilterDatabase"
+    ]
+
+
+def test_rebuild_workbook_keeps_a_source_sheet_autofilter():
+    from xml.etree import ElementTree
+    from zipfile import ZipFile
+    from openpyxl.worksheet.table import Table
+
+    from app.services.lanmatrix import book_excel
+
+    workbook = book_excel.build_workbook([_item("QTS-001", "old")])
+    summary = workbook[book_excel.SUMMARY_SHEET]
+    summary.add_table(Table(displayName="DB", ref="A1:W2"))
+    summary.auto_filter.ref = "A1:W2"
+    raw = book_excel.workbook_bytes(workbook)
+
+    rebuilt = book_excel.rebuild_workbook(
+        raw, book_excel.parse_workbook(raw)["items"])
+
+    with ZipFile(rebuilt) as zout:
+        sheet_xml = ElementTree.fromstring(zout.read("xl/worksheets/sheet1.xml"))
+    assert sheet_xml.find("./{*}autoFilter").get("ref") == "A1:W2"
+
+
+def test_book_workbook_accepts_werkzeug_spooled_upload_stream():
+    from tempfile import SpooledTemporaryFile
+
+    from app.services.lanmatrix import book_excel
+
+    raw = book_excel.workbook_bytes(
+        book_excel.build_workbook([_item("QTS-001", "uploaded")])
+    )
+
+    upload = SpooledTemporaryFile()
+    upload.write(raw.getvalue())
+    upload.seek(0)
+
+    parsed = book_excel.parse_workbook(upload)["items"]
+    assert [item["test_id"] for item in parsed] == ["QTS-001"]
+
+    parsed[0]["result"] = "PASS"
+    rebuilt = book_excel.rebuild_workbook(upload, parsed)
+    assert book_excel.parse_workbook(rebuilt)["items"][0]["result"] == "Passed"
