@@ -278,6 +278,8 @@ class UtAgentBridge:
         # ut-agent only reads the file between obligations.
         if stop_file is not None:
             args += ["--stop-file", stop_file]
+        if history_dir is not None:
+            args += ["--forecast-history-dir", str(history_dir)]
         for name in functions:
             args += ["--function", name]
         if self.settings.extractor:

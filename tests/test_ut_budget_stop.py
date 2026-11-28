@@ -45,6 +45,14 @@ def test_the_observation_count_is_one_to_ten(tmp_path, monkeypatch, value):
     assert seen == []
 
 
+def test_forecast_history_is_sent_to_generation_when_present(tmp_path, monkeypatch):
+    bridge, seen = _bridge(monkeypatch)
+    history = tmp_path / "forecast-history"
+    bridge.generate("m.json", "i.csv", "P", tmp_path, ["f"], progress_dir=tmp_path,
+                    history_dir=history, budget_stop_observations=2)
+    assert seen[0][seen[0].index("--forecast-history-dir") + 1] == str(history)
+
+
 def test_the_stop_file_is_always_sent_when_given(tmp_path, monkeypatch):
     bridge, seen = _bridge(monkeypatch)
     path = str(tmp_path / "stop.request")
