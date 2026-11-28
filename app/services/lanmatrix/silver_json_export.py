@@ -416,11 +416,12 @@ def _convert_step(step: dict,
         if _blank_cell(cell):
             continue
         jname, ident = _split_cell(cell)
-        if params is not None and ident in params:
-            dflt = params[ident]
+        parameter = _parameter_expected(ident, params)
+        if parameter is not None:
+            operator, baked, param = parameter
             chk: dict[str, Any] = {"var": path, "label": name,
-                                   "expected": 0 if dflt is None else dflt,
-                                   "param": ident}
+                                   "expected": f"{operator}{baked}",
+                                   "param": param}
         else:
             chk = {"var": path, "label": name, "expected": ident}
         if jname:
@@ -434,6 +435,28 @@ def _convert_step(step: dict,
         out.update(_timing_step_fields(tinfo))
 
     return out
+
+
+def _parameter_expected(ident: str,
+                        params: Optional[dict]) -> Optional[tuple[str, Any, str]]:
+    """A comparison expression that is just a formal parameter.
+
+    LibFunc rows may declare ``pos`` as a formal parameter and then check
+    ``>=pos`` (or the full-width ``≧pos``). The runner needs the comparison
+    operator and a baked fallback value, plus the parameter marker so the
+    caller's actual argument replaces the fallback at run time. Reuse the
+    runner's operator vocabulary so ``>=``, ``≧`` and their equivalents cannot
+    drift apart between export and execution.
+    """
+    if not params:
+        return None
+    from ...runners.silver_json import step_parser
+
+    operator, expr = step_parser._split_operator(ident)
+    if expr not in params:
+        return None
+    default = params[expr]
+    return operator, 0 if default is None else default, expr
 
 
 _SAFE_RE = re.compile(r"[^0-9A-Za-z._-]+")

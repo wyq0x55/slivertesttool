@@ -129,6 +129,30 @@ def test_list_arguments_and_defaults_are_validated(tmp_path):
     assert case["steps"][0]["actions"][0]["args"] == ["BASE+1"]
 
 
+@pytest.mark.parametrize("cell,operator", [
+    (">=pos", ">="), ("≧pos", ">="), ("<=pos", "<="), ("≦pos", "<="),
+])
+def test_expected_formal_parameter_keeps_operator_and_runtime_binding(
+        tmp_path, cell, operator):
+    from app.services.run_validation_service import validate_documents
+
+    procedure = body(steps=[{"no": 1, "subroutine": "Set", "args": ["7"]}])
+    library = row(lib_func="Set", lib_para="pos",
+                  lib_stb=body(steps=[{"no": 1, "expecteds": [cell]}]))
+    manifest = exporter.materialise_run_dir(
+        tmp_path / "TC-1", row(steps=procedure), [], [library])
+    library_doc = json.loads(manifest["lib_json"].read_text(encoding="utf-8"))
+    spec = library_doc["subroutines"]["Set"]
+    check = spec["steps"][0]["checks"][0]
+
+    assert check["expected"] == f"{operator}0"
+    assert check["param"] == "pos"
+    parsed = validate_documents(spec, {"constants": {}}, library_doc)
+    assert parsed[0].checks[0].op == operator
+    assert parsed[0].checks[0].exp_value == 0
+    assert parsed[0].checks[0].param == "pos"
+
+
 @pytest.mark.parametrize("expression,operation", [("2**1000000000", "pow"),
                                                    ("1<<1000000000", "lshift"),
                                                    ("'X'*1000000000", "mul")])
